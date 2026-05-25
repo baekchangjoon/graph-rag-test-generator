@@ -12,7 +12,8 @@ class PathExplorerKindTest {
     @Test
     void containsAllEngines() {
         assertThat(PathExplorerKind.values())
-                .containsExactly(
+                .containsExactlyInAnyOrder(
+                        PathExplorerKind.MANUAL,
                         PathExplorerKind.JDART,
                         PathExplorerKind.FUZZER,
                         PathExplorerKind.EVOSUITE);

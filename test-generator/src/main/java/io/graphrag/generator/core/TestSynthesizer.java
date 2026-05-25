@@ -1,12 +1,19 @@
 package io.graphrag.generator.core;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.FixtureStatement;
+import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.ExploredPath;
 import io.graphrag.model.HttpMethod;
+import io.graphrag.model.JsonMappers;
+import io.graphrag.model.SampleInput;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +51,113 @@ public final class TestSynthesizer {
         appendClassClose(sb);
 
         return sb.toString();
+    }
+
+    /**
+     * 멀티-path 합성: 한 클래스에 N개 @Test 메소드. 각 메소드는 자기 path의 fixture/cleanup을
+     * try-finally로 인라인 보유.
+     */
+    public static String synthesizeMulti(MultiPathSynthesisInput input) {
+        Endpoint ep = input.endpoint();
+        String className = deriveClassName(ep);
+
+        StringBuilder sb = new StringBuilder();
+        appendHeader(sb, input.testPackage());
+        appendClassOpen(sb, className);
+        appendStaticFieldsMulti(sb);
+        appendBeforeAll(sb);
+        for (PathContext pc : input.paths()) {
+            appendPathTestMethod(sb, ep, pc);
+        }
+        appendClassClose(sb);
+        return sb.toString();
+    }
+
+    private static void appendStaticFieldsMulti(StringBuilder sb) {
+        sb.append("    static String JDBC_URL = System.getenv(\"JDBC_URL\");\n");
+        sb.append("    static String JDBC_USER = System.getenv(\"JDBC_USER\");\n");
+        sb.append("    static String JDBC_PASS = System.getenv(\"JDBC_PASS\");\n\n");
+    }
+
+    private static void appendPathTestMethod(StringBuilder sb, Endpoint ep, PathContext pc) {
+        ExploredPath path = pc.path();
+        List<CapturedSql> captured = pc.capturedSql();
+        List<FixtureStatement> fixtures = FixtureComposer.fromCapturedSqls(captured);
+        List<FixtureStatement> cleanup = FixtureComposer.cleanupFor(captured);
+        String methodName = "path_" + sanitizeMethodId(path.id());
+
+        sb.append("    @Test\n");
+        sb.append("    void ").append(methodName).append("() throws Exception {\n");
+        sb.append("        String testId = \"t-\" + java.util.UUID.randomUUID().toString().substring(0, 8);\n");
+        if (!fixtures.isEmpty()) {
+            sb.append("        try (Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS)) {\n");
+            for (FixtureStatement fx : fixtures) {
+                appendPreparedStatement(sb, "            ", fx);
+            }
+            sb.append("        }\n");
+        }
+
+        String requestBody = renderJsonBody(path.sampleInput());
+        sb.append("        try {\n");
+        sb.append("            given()\n");
+        sb.append("                .contentType(ContentType.JSON)\n");
+        sb.append("                .body(").append(quoteString(requestBody)).append(")\n");
+        sb.append("            .when()\n");
+        sb.append("                .").append(ep.method().name().toLowerCase(Locale.ROOT))
+                .append("(\"").append(ep.path()).append("\")\n");
+        sb.append("            .then()\n");
+        sb.append("                .statusCode(").append(path.exitStatus()).append(");\n");
+        sb.append("        } finally {\n");
+        if (!cleanup.isEmpty()) {
+            sb.append("            try (Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS)) {\n");
+            for (FixtureStatement fx : cleanup) {
+                appendPreparedStatement(sb, "                ", fx);
+            }
+            sb.append("            }\n");
+        }
+        sb.append("        }\n");
+        sb.append("    }\n\n");
+    }
+
+    private static void appendPreparedStatement(StringBuilder sb, String indent, FixtureStatement fx) {
+        sb.append(indent).append("try (PreparedStatement ps = conn.prepareStatement(\n");
+        sb.append(indent).append("        ").append(quoteString(fx.sql())).append(")) {\n");
+        for (int i = 0; i < fx.params().size(); i++) {
+            sb.append(indent).append("    ps.setObject(").append(i + 1).append(", ")
+                    .append(quoteValue(fx.params().get(i))).append(");\n");
+        }
+        sb.append(indent).append("    ps.executeUpdate();\n");
+        sb.append(indent).append("}\n");
+    }
+
+    private static String sanitizeMethodId(String s) {
+        // Java identifier-safe
+        StringBuilder out = new StringBuilder();
+        for (char c : s.toCharArray()) {
+            if (Character.isJavaIdentifierPart(c)) out.append(c);
+            else out.append('_');
+        }
+        return out.toString();
+    }
+
+    private static final ObjectMapper BODY_MAPPER = JsonMappers.standard();
+
+    private static String renderJsonBody(SampleInput input) {
+        Object body = input == null ? null : input.body();
+        if (body == null) return "{}";
+        try {
+            // Map은 키 정렬해서 결정적 출력
+            if (body instanceof Map<?, ?> m) {
+                Map<String, Object> sorted = new TreeMap<>();
+                for (Map.Entry<?, ?> entry : m.entrySet()) {
+                    sorted.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+                return BODY_MAPPER.writeValueAsString(sorted);
+            }
+            return BODY_MAPPER.writeValueAsString(body);
+        } catch (Exception ex) {
+            return "{}";
+        }
     }
 
     /**
