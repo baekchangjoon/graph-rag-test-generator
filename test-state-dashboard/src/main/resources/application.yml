@@ -1,0 +1,18 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: test-state-dashboard
+  jackson:
+    default-property-inclusion: non_null
+
+dashboard:
+  leak:
+    ttl-seconds: 300
+    scan-interval-ms: 30000
+
+logging:
+  level:
+    root: INFO
+    io.graphrag: DEBUG
