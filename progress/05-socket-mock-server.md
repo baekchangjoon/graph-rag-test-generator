@@ -44,6 +44,12 @@ src/main/java/io/graphrag/socketmock/
 1. **테스트 hex 1자리**: "A", "B" 잘못된 hex → "0A", "0B"로 수정
 2. **포트 충돌**: 고정 포트(9000) 사용 시 BindException → ServerSocket(0)로 ephemeral 포트 할당
 3. **CI 환경**: 모든 테스트가 localhost ephemeral 포트 사용, 충돌 없음
+4. **ByteArrayDecoder 제거**: 초기 pipeline에 ByteArrayDecoder를 넣었으나, ByteBuf → byte[]로 변환된 메시지가 MockChannelHandler의 channelRead(ctx, ByteBuf) 분기에 안 잡힘. decoder 제거 후 직접 ByteBuf 처리.
+5. **Socket read timeout**: 클라이언트 테스트에서 `setSoTimeout(3000)` 추가. 응답 없으면 hang 대신 명확한 SocketTimeoutException.
+
+## 검증
+
+`./gradlew :socket-mock-server:test` 결과: BUILD SUCCESSFUL. 14 tests passed (3 admin API, 6 registry, 2 channel handler, 3 server manager).
 
 ## 의도적으로 후속 phase로 미룬 항목
 
