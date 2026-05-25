@@ -1,0 +1,15 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: graph-rag-builder
+
+graph:
+  archive:
+    dir: .graph-rag-cache
+
+logging:
+  level:
+    root: INFO
+    io.graphrag: DEBUG

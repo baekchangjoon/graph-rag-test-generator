@@ -1,6 +1,8 @@
 plugins {
     java
     application
+    alias(libs.plugins.spring.boot)
+    alias(libs.plugins.spring.dep.mgmt)
 }
 
 application {
@@ -9,10 +11,15 @@ application {
 
 dependencies {
     implementation(project(":shared-model"))
-    implementation(libs.bundles.jackson)
-    implementation(libs.slf4j.api)
-    runtimeOnly(libs.logback.classic)
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation(libs.datasource.proxy)
 
-    testImplementation(libs.bundles.testing.base)
-    testRuntimeOnly(libs.bundles.junit.runtime)
+    // 분석 환경에서 JPA SUT를 부팅하기 위한 deps.
+    // 운영 코드에는 noop이지만 테스트/분석 harness에서 사용됨.
+    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation(libs.h2)
+    testImplementation(libs.testcontainers.postgres)
+    testImplementation(libs.testcontainers.junit)
 }
