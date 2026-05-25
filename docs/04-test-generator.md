@@ -1,0 +1,197 @@
+# 04 — 도구 2: Test Generator
+
+Graph RAG의 사실과 사용자 사양을 입력으로, **결정적**으로 테스트 자산을 합성한다.
+
+LLM은 도구 안에 없다. 입력이 같으면 출력이 같다.
+
+## 책임 경계
+
+```
+입력:
+  - GenerationRequest (SCHEMAS.md 참조)
+  - Graph RAG 사실 (도구 1 API 조회)
+  - 기존 산출물 (이전 iteration 결과)
+
+처리:
+  1. 입력 파싱 + 기존 산출물 분석
+  2. Graph RAG 조회 (필요한 사실들)
+  3. 규칙 적용 → 사양 결정
+  4. 큰 골격: 템플릿. 가변 길이 슬롯: 프로그램.
+  5. (옵션) self-check: compile + run + JaCoCo
+
+출력:
+  - GenerationResult (테스트 코드/데이터 + 리포트)
+```
+
+## 합성 방식: C (하이브리드, 템플릿-우위)
+
+이전 답변에서 검토한 세 방식 중 C를 선택. RestAssured 스타일로 통일되면서 변형이 줄어 사실상 A에 가까운 C.
+
+```
+큰 골격 (변형 적음)        → 템플릿 (Mustache)
+  - 테스트 클래스 구조
+  - @BeforeAll, @BeforeEach
+  - RestAssured given/when/then 체인
+
+가변 길이 리스트로 채워지는 슬롯 → 프로그램 (Composer)
+  - 픽스처 INSERT 시퀀스 (FK 순서 + N개 행)
+  - WireMock 스텁 등록 라인 (N개)
+  - Socket mock expectation 라인 (N개)
+  - Assertion 라인 (응답 JSON 경로 + 상태)
+```
+
+## 출력 형태 (RestAssured)
+
+```java
+class OrdersPostTest {
+
+    @BeforeAll
+    static void config() {
+        RestAssured.baseURI = env("APP_BASE_URI");
+        httpMock   = HttpMockClient.from(env("HTTP_MOCK_ADMIN"));
+        socketMock = SocketMockClient.from(env("SOCKET_MOCK_ADMIN"));
+        jdbc       = Jdbc.from(env("JDBC_URL"), env("JDBC_USER"), env("JDBC_PASS"));
+        auth       = AuthClient.from(env("AUTH_BASE_URI"));   // mode=real일 때만 활성
+    }
+
+    @BeforeEach
+    void setUp() throws Exception {
+        scope = TestScope.create();
+        userId = scope.testId + "-user";
+
+        // 사전 데이터 (apiParam 유래는 unique로 치환, literal은 유지)
+        jdbc.update("INSERT INTO users(id, name) VALUES (?, ?)", userId, "John");
+
+        // HTTP mock (baggage 매칭으로 격리)
+        httpMock.stub("/inventory/stock")
+                .withQueryParam("type", equalTo("EXPRESS"))
+                .withBaggage("test-id", scope.testId)
+                .respondJson("{\"available\": 50}")
+                .register();
+
+        // Socket mock (프로토콜에 session field 있을 때만)
+        socketMock.bind("inventory", 9000)
+                  .withSessionField("session", scope.testId)
+                  .onReceiveHex("01 02 03")
+                  .respondHex("02 00")
+                  .register();
+
+        // 토큰 (auth_mode = real)
+        token = auth.login("test-user", "test-password");
+    }
+
+    @AfterEach
+    void cleanup() throws Exception {
+        // 자기 스코프만 cleanup. FK 역순.
+        jdbc.update("DELETE FROM orders WHERE user_id=?", userId);
+        jdbc.update("DELETE FROM users WHERE id=?", userId);
+        scope.cleanup();
+    }
+
+    @Test
+    void createOrder_express_userId() {
+        given(scope.rest.given())
+            .header("Authorization", "Bearer " + token)
+            .header("baggage", "test-id=" + scope.testId)
+            .contentType(ContentType.JSON)
+            .body(String.format(
+                "{\"amount\":100,\"type\":\"EXPRESS\",\"userId\":\"%s\"}",
+                userId))
+        .when()
+            .post("/api/orders")
+        .then()
+            .statusCode(201)
+            .body("status", equalTo("PENDING"));
+    }
+}
+```
+
+DB 상태 검증은 없다. 응답 검증만.
+
+## 규칙 카탈로그
+
+도구 2의 본체는 다음 규칙들이다.
+
+### 치환 규칙 (origin 기반)
+
+| 규칙 | 트리거 | 동작 |
+|---|---|---|
+| API_PARAM 치환 | `binding.origin == API_PARAM` | 변수 추출, testId 기반 unique 값 부여 (path constraint 충족 범위 안에서) |
+| LITERAL 보존 | `binding.origin == LITERAL` | 그대로 유지 |
+| COMPUTED 처리 | `binding.origin == COMPUTED` | 케이스별 판단. 안전한 default 또는 경고 |
+
+### 픽스처 합성 규칙
+
+| 규칙 | 동작 |
+|---|---|
+| FK 정렬 | 부모 → 자식 순으로 INSERT |
+| UNIQUE 충돌 회피 | testId 기반 unique 키 사용 |
+| NOT NULL 채움 | 스키마 default 또는 안전한 dummy |
+| Cleanup 합성 | FK 역순 DELETE, 자기 스코프(`WHERE <unique-key>=?`)만 |
+
+### Mock 격리 규칙
+
+| 규칙 | 동작 |
+|---|---|
+| HTTP: propagation 있음 | `withBaggage("test-id", scope.testId)` 추가 |
+| HTTP: propagation 없음 | **경고** + 직렬 실행 마크 또는 인스턴스 분리 힌트 |
+| Socket: session field 있음 | session field 매칭 |
+| Socket: session field 없음 | **직렬 실행 마크** (`@Execution(SAME_THREAD)`) |
+
+### 인증 규칙
+
+| 규칙 | 동작 |
+|---|---|
+| `auth_mode == real` AND `endpoint.auth_required` | 토큰 발급 + Authorization 헤더 |
+| `auth_mode == disabled` | 토큰 코드 생략. SUT 환경변수로 auth 비활성 가정 |
+| `endpoint.auth_required == false` | 인증 코드 생략 |
+
+### Coverage delta 계산 규칙
+
+| 규칙 | 동작 |
+|---|---|
+| 새로 커버된 path | 기존 baseline에 없던 `covers_paths` |
+| 미커버 분기 | 그래프의 `not_yet_exercised` 와 비교 |
+| 경고: scope-unreachable 테이블 | cleanup 불가 → 경고 + recommendation |
+
+## 디렉터리
+
+```
+test-generator/
+├── input-parser/                 GenerationRequest 파싱
+├── existing-analyzer/            기존 테스트 파일 파싱
+├── graph-rag-client/             도구 1 API 호출
+├── gap-analyzer/                 목표 vs 현재 + Graph RAG 사실 비교
+├── rules/                        결정 규칙 카탈로그
+├── composers/                    가변 길이 슬롯 합성 (프로그램)
+│   ├── fixture-composer/
+│   ├── http-mock-composer/
+│   ├── socket-mock-composer/
+│   └── assertion-composer/
+├── templates/                    큰 골격 (Mustache)
+│   ├── test-class.mustache
+│   ├── before-all.mustache
+│   ├── before-each.mustache
+│   ├── after-each.mustache
+│   └── test-method.mustache
+├── snippets/                     작은 정형 조각
+│   ├── fixture-jdbc-line.mustache
+│   ├── wiremock-stub.mustache
+│   ├── socket-expect.mustache
+│   └── assertion-line.mustache
+├── self-check/                   compile/run/JaCoCo
+├── coverage-reporter/            delta 계산 + 리포트
+└── api/                          외부 진입점 (CLI/REST)
+```
+
+## 결정성 보장
+
+- 동일 입력 → 동일 출력 (commit SHA 단위)
+- 시간/Random 사용 금지 (필요 시 input에서 받은 시드 사용)
+- 템플릿/스니펫 변경 시 명시적 버전 bump
+
+## 자원 사용
+
+- LLM 호출 없음 → 비용 변동성 낮음
+- 큰 비용 항목: graph-rag-client 조회 + self-check 실행
+- self-check는 옵션. 비활성 시 합성만 수행.
