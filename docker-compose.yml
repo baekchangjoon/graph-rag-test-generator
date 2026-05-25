@@ -1,0 +1,49 @@
+# Phase 0 PoC 테스트 실행 환경.
+#
+# 생성된 테스트(test-generator 출력)가 이 환경에서 실행됨.
+# 분석 환경(graph-rag-builder가 SQL을 캡처하는 환경)은 Testcontainers/H2로 별도.
+#
+# 사용:
+#   1. docker compose up -d   # postgres + wiremock + socket-mock + dashboard 기동
+#   2. demo-sut을 별도 빌드/실행 (또는 추후 sut 컨테이너 이미지 추가)
+#   3. 생성된 테스트 실행: JDBC_URL/APP_BASE_URI 환경변수로 가리키도록
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./samples/demo-sut/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+
+  wiremock:
+    image: wiremock/wiremock:latest
+    ports:
+      - "9091:8080"
+    command: ["--global-response-templating"]
+
+  socket-mock:
+    build:
+      context: .
+      dockerfile: socket-mock-server/Dockerfile
+    ports:
+      - "9099:9099"        # admin REST
+      - "9000-9010:9000-9010"   # mock TCP ports
+    depends_on: []
+
+  test-state-dashboard:
+    build:
+      context: .
+      dockerfile: test-state-dashboard/Dockerfile
+    ports:
+      - "8099:8080"
+    environment:
+      DASHBOARD_LEAK_TTL_SECONDS: 300
+
+  # demo-sut은 임시로 호스트에서 실행:
+  # cd samples/demo-sut && ./gradlew bootRun
+  # JDBC_URL=jdbc:postgresql://localhost:5432/app JDBC_USER=app JDBC_PASS=app
+  # JAVA_TOOL_OPTIONS="-javaagent:./agents/opentelemetry-javaagent.jar" 등 부여

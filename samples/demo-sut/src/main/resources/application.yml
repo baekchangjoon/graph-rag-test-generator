@@ -1,0 +1,21 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: demo-sut
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+  datasource:
+    url: ${JDBC_URL:jdbc:postgresql://localhost:5432/app}
+    username: ${JDBC_USER:app}
+    password: ${JDBC_PASS:app}
+    driver-class-name: org.postgresql.Driver
+
+logging:
+  level:
+    org.hibernate.SQL: INFO

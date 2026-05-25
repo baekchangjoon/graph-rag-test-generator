@@ -13,5 +13,11 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation(libs.testcontainers.postgres)
     testImplementation(libs.testcontainers.junit)
-    testRuntimeOnly(libs.bundles.junit.runtime)
+    testImplementation(libs.h2)
+    testImplementation(libs.datasource.proxy)
+    testImplementation(libs.restassured)
+    // E2E 테스트에서 graph-rag-builder + test-generator + shared-model 사용
+    testImplementation(project(":shared-model"))
+    testImplementation(project(":graph-rag-builder"))
+    testImplementation(project(":test-generator"))
 }
