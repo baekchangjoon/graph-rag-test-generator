@@ -20,6 +20,7 @@ include(
     ":testlib-api",
     ":testlib-adapter-noop",
     ":test-state-dashboard",
+    ":socket-mock-server",
     ":graph-rag-builder",
     ":test-generator",
 )

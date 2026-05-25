@@ -1,0 +1,11 @@
+server:
+  port: 9099
+
+spring:
+  application:
+    name: socket-mock-server
+
+logging:
+  level:
+    root: INFO
+    io.graphrag: DEBUG
