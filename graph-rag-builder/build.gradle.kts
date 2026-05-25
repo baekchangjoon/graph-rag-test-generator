@@ -14,6 +14,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
     implementation(libs.datasource.proxy)
     implementation(libs.mybatis)
+    implementation(libs.wiremock)
 
     // 분석 환경에서 JPA SUT를 부팅하기 위한 deps.
     // 운영 코드에는 noop이지만 테스트/분석 harness에서 사용됨.

@@ -16,6 +16,7 @@ dependencies {
     testImplementation(libs.h2)
     testImplementation(libs.datasource.proxy)
     testImplementation(libs.restassured)
+    testImplementation(libs.wiremock)
     // E2E 테스트에서 graph-rag-builder + test-generator + shared-model 사용
     testImplementation(project(":shared-model"))
     testImplementation(project(":graph-rag-builder"))
