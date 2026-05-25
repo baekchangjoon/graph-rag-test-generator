@@ -3,6 +3,8 @@ package io.graphrag.generator.core;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.FixtureStatement;
+import io.graphrag.generator.compose.http.HttpStubComposer;
+import io.graphrag.model.CapturedHttpCall;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExploredPath;
@@ -55,22 +57,38 @@ public final class TestSynthesizer {
 
     /**
      * 멀티-path 합성: 한 클래스에 N개 @Test 메소드. 각 메소드는 자기 path의 fixture/cleanup을
-     * try-finally로 인라인 보유.
+     * try-finally로 인라인 보유. capturedHttpCalls가 있는 path는 WireMock stub 등록도 포함.
      */
     public static String synthesizeMulti(MultiPathSynthesisInput input) {
         Endpoint ep = input.endpoint();
         String className = deriveClassName(ep);
+        boolean hasHttp = input.paths().stream()
+                .anyMatch(pc -> !pc.capturedHttpCalls().isEmpty());
 
         StringBuilder sb = new StringBuilder();
-        appendHeader(sb, input.testPackage());
+        appendHeader(sb, input.testPackage(), hasHttp);
         appendClassOpen(sb, className);
         appendStaticFieldsMulti(sb);
-        appendBeforeAll(sb);
+        appendBeforeAllMulti(sb, hasHttp);
         for (PathContext pc : input.paths()) {
             appendPathTestMethod(sb, ep, pc);
         }
         appendClassClose(sb);
         return sb.toString();
+    }
+
+    private static void appendBeforeAllMulti(StringBuilder sb, boolean hasHttp) {
+        sb.append("    @BeforeAll\n");
+        sb.append("    static void config() {\n");
+        sb.append("        RestAssured.baseURI = System.getenv(\"APP_BASE_URI\");\n");
+        if (hasHttp) {
+            sb.append("        String wmAdmin = System.getenv(\"HTTP_MOCK_ADMIN\");\n");
+            sb.append("        if (wmAdmin != null) {\n");
+            sb.append("            java.net.URI u = java.net.URI.create(wmAdmin);\n");
+            sb.append("            WireMock.configureFor(u.getHost(), u.getPort());\n");
+            sb.append("        }\n");
+        }
+        sb.append("    }\n\n");
     }
 
     private static void appendStaticFieldsMulti(StringBuilder sb) {
@@ -82,6 +100,7 @@ public final class TestSynthesizer {
     private static void appendPathTestMethod(StringBuilder sb, Endpoint ep, PathContext pc) {
         ExploredPath path = pc.path();
         List<CapturedSql> captured = pc.capturedSql();
+        List<CapturedHttpCall> httpCalls = pc.capturedHttpCalls();
         List<FixtureStatement> fixtures = FixtureComposer.fromCapturedSqls(captured);
         List<FixtureStatement> cleanup = FixtureComposer.cleanupFor(captured);
         String methodName = "path_" + sanitizeMethodId(path.id());
@@ -89,6 +108,19 @@ public final class TestSynthesizer {
         sb.append("    @Test\n");
         sb.append("    void ").append(methodName).append("() throws Exception {\n");
         sb.append("        String testId = \"t-\" + java.util.UUID.randomUUID().toString().substring(0, 8);\n");
+
+        // WireMock stub 등록 (HTTP capture가 있는 path만)
+        if (!httpCalls.isEmpty()) {
+            sb.append("        WireMock.reset();\n");
+            for (CapturedHttpCall call : httpCalls) {
+                String stub = HttpStubComposer.compose(call);
+                // 들여쓰기 보정
+                for (String line : stub.split("\n")) {
+                    sb.append("        ").append(line).append("\n");
+                }
+            }
+        }
+
         if (!fixtures.isEmpty()) {
             sb.append("        try (Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS)) {\n");
             for (FixtureStatement fx : fixtures) {
@@ -161,10 +193,11 @@ public final class TestSynthesizer {
     }
 
     /**
-     * 클래스명 도출: 마지막 path 세그먼트 + HTTP 메소드 + "Test"
+     * 클래스명 도출: 마지막 path 세그먼트 (kebab/snake-case PascalCase 변환) + HTTP 메소드 + "Test"
      * 예: POST /api/orders → "OrdersPostTest"
      *     GET /api/users → "UsersGetTest"
      *     POST /api/users/{id}/orders → "OrdersPostTest"
+     *     POST /api/orders/with-inventory → "WithInventoryPostTest"
      */
     private static String deriveClassName(Endpoint ep) {
         String[] parts = ep.path().split("/");
@@ -173,14 +206,30 @@ public final class TestSynthesizer {
             String p = parts[i];
             if (p.isEmpty()) continue;
             if (p.startsWith("{") && p.endsWith("}")) continue;   // path variable 스킵
-            last = sanitize(p);
+            last = toPascalCase(p);
             break;
         }
-        return capitalize(last) + capitalize(ep.method().name().toLowerCase(Locale.ROOT)) + "Test";
+        return last + capitalize(ep.method().name().toLowerCase(Locale.ROOT)) + "Test";
     }
 
-    private static String sanitize(String s) {
-        return s.replaceAll("[^a-zA-Z0-9]", "");
+    /** kebab/snake/공백 구분자를 word boundary로 보고 각 단어를 capitalize. */
+    private static String toPascalCase(String s) {
+        StringBuilder out = new StringBuilder();
+        boolean atWordStart = true;
+        for (char c : s.toCharArray()) {
+            if (c == '-' || c == '_' || c == ' ' || c == '.') {
+                atWordStart = true;
+                continue;
+            }
+            if (!Character.isLetterOrDigit(c)) continue;
+            if (atWordStart) {
+                out.append(Character.toUpperCase(c));
+                atWordStart = false;
+            } else {
+                out.append(c);
+            }
+        }
+        return out.length() == 0 ? "Resource" : out.toString();
     }
 
     private static String capitalize(String s) {
@@ -189,6 +238,10 @@ public final class TestSynthesizer {
     }
 
     private static void appendHeader(StringBuilder sb, String pkg) {
+        appendHeader(sb, pkg, false);
+    }
+
+    private static void appendHeader(StringBuilder sb, String pkg, boolean withWireMock) {
         sb.append("package ").append(pkg).append(";\n\n");
         sb.append("import io.restassured.RestAssured;\n");
         sb.append("import io.restassured.http.ContentType;\n");
@@ -200,7 +253,12 @@ public final class TestSynthesizer {
         sb.append("import java.sql.DriverManager;\n");
         sb.append("import java.sql.PreparedStatement;\n");
         sb.append("import java.util.UUID;\n\n");
-        sb.append("import static io.restassured.RestAssured.given;\n\n");
+        sb.append("import static io.restassured.RestAssured.given;\n");
+        if (withWireMock) {
+            sb.append("import com.github.tomakehurst.wiremock.client.WireMock;\n");
+            sb.append("import static com.github.tomakehurst.wiremock.client.WireMock.*;\n");
+        }
+        sb.append("\n");
     }
 
     private static void appendClassOpen(StringBuilder sb, String className) {
