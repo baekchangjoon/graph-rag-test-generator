@@ -66,13 +66,18 @@ public final class TestSynthesizer {
                 .anyMatch(pc -> !pc.capturedHttpCalls().isEmpty());
         boolean hasSocket = input.paths().stream()
                 .anyMatch(pc -> !pc.capturedSocketIO().isEmpty());
+        boolean hasWs = input.paths().stream()
+                .anyMatch(pc -> !pc.capturedWsMessages().isEmpty());
 
         StringBuilder sb = new StringBuilder();
-        appendHeader(sb, input.testPackage(), hasHttp);
+        appendHeader(sb, input.testPackage(), hasHttp, hasWs);
         appendClassOpen(sb, className);
         appendStaticFieldsMulti(sb);
         if (hasSocket) {
             appendSocketHelpers(sb);
+        }
+        if (hasWs) {
+            appendWsHelpers(sb);
         }
         appendBeforeAllMulti(sb, hasHttp);
         for (PathContext pc : input.paths()) {
@@ -80,6 +85,21 @@ public final class TestSynthesizer {
         }
         appendClassClose(sb);
         return sb.toString();
+    }
+
+    private static void appendWsHelpers(StringBuilder sb) {
+        sb.append("    static String WS_BASE_URI = System.getenv(\"WS_BASE_URI\");   // e.g. ws://localhost:8080/ws\n\n");
+        sb.append("    private static org.springframework.messaging.simp.stomp.StompSession connectStomp(\n");
+        sb.append("            java.util.function.BiConsumer<String, Object> messageSink) throws Exception {\n");
+        sb.append("        org.springframework.web.socket.messaging.WebSocketStompClient client =\n");
+        sb.append("            new org.springframework.web.socket.messaging.WebSocketStompClient(\n");
+        sb.append("                new org.springframework.web.socket.client.standard.StandardWebSocketClient());\n");
+        sb.append("        client.setMessageConverter(\n");
+        sb.append("            new org.springframework.messaging.converter.MappingJackson2MessageConverter());\n");
+        sb.append("        return client.connectAsync(WS_BASE_URI,\n");
+        sb.append("                new org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter() {})\n");
+        sb.append("            .get(5, java.util.concurrent.TimeUnit.SECONDS);\n");
+        sb.append("    }\n\n");
     }
 
     private static void appendSocketHelpers(StringBuilder sb) {
@@ -128,6 +148,7 @@ public final class TestSynthesizer {
         List<CapturedSql> captured = pc.capturedSql();
         List<CapturedHttpCall> httpCalls = pc.capturedHttpCalls();
         List<io.graphrag.model.CapturedSocketIO> socketIO = pc.capturedSocketIO();
+        List<io.graphrag.model.CapturedWsMessage> wsMessages = pc.capturedWsMessages();
         List<FixtureStatement> fixtures = FixtureComposer.fromCapturedSqls(captured);
         List<FixtureStatement> cleanup = FixtureComposer.cleanupFor(captured);
         String methodName = "path_" + sanitizeMethodId(path.id());
@@ -135,6 +156,27 @@ public final class TestSynthesizer {
         sb.append("    @Test\n");
         sb.append("    void ").append(methodName).append("() throws Exception {\n");
         sb.append("        String testId = \"t-\" + java.util.UUID.randomUUID().toString().substring(0, 8);\n");
+
+        // WebSocket/STOMP setup (capture가 있는 path만)
+        if (!wsMessages.isEmpty()) {
+            sb.append("        java.util.concurrent.BlockingQueue<Object> wsReceived =\n");
+            sb.append("            new java.util.concurrent.LinkedBlockingQueue<>();\n");
+            sb.append("        org.springframework.messaging.simp.stomp.StompSession wsSession = connectStomp((dest, payload) -> wsReceived.add(payload));\n");
+            // INBOUND messages → subscribe to those destinations
+            for (io.graphrag.model.CapturedWsMessage msg : wsMessages) {
+                if (msg.direction() == io.graphrag.model.WsMessageDirection.INBOUND) {
+                    sb.append("        wsSession.subscribe(").append(quoteString(msg.destination()))
+                            .append(", new org.springframework.messaging.simp.stomp.StompFrameHandler() {\n");
+                    sb.append("            @Override public java.lang.reflect.Type getPayloadType(\n");
+                    sb.append("                org.springframework.messaging.simp.stomp.StompHeaders h) { return byte[].class; }\n");
+                    sb.append("            @Override public void handleFrame(\n");
+                    sb.append("                org.springframework.messaging.simp.stomp.StompHeaders h, Object payload) {\n");
+                    sb.append("                wsReceived.add(payload);\n");
+                    sb.append("            }\n");
+                    sb.append("        });\n");
+                }
+            }
+        }
 
         // WireMock stub 등록 (HTTP capture가 있는 path만)
         if (!httpCalls.isEmpty()) {
@@ -173,6 +215,13 @@ public final class TestSynthesizer {
 
         String requestBody = renderJsonBody(path.sampleInput());
         sb.append("        try {\n");
+        // OUTBOUND WS messages: test → SUT 직접 송신
+        for (io.graphrag.model.CapturedWsMessage msg : wsMessages) {
+            if (msg.direction() == io.graphrag.model.WsMessageDirection.OUTBOUND) {
+                sb.append("            wsSession.send(").append(quoteString(msg.destination()))
+                        .append(", ").append(renderWsPayload(msg.payload())).append(");\n");
+            }
+        }
         sb.append("            given()\n");
         sb.append("                .contentType(ContentType.JSON)\n");
         sb.append("                .body(").append(quoteString(requestBody)).append(")\n");
@@ -181,7 +230,23 @@ public final class TestSynthesizer {
                 .append("(\"").append(ep.path()).append("\")\n");
         sb.append("            .then()\n");
         sb.append("                .statusCode(").append(path.exitStatus()).append(");\n");
+        // INBOUND WS messages: SUT → test, 큐에서 poll
+        long inboundCount = wsMessages.stream()
+                .filter(m -> m.direction() == io.graphrag.model.WsMessageDirection.INBOUND)
+                .count();
+        if (inboundCount > 0) {
+            sb.append("            for (int i = 0; i < ").append(inboundCount).append("; i++) {\n");
+            sb.append("                Object received = wsReceived.poll(5,\n");
+            sb.append("                    java.util.concurrent.TimeUnit.SECONDS);\n");
+            sb.append("                if (received == null) {\n");
+            sb.append("                    throw new AssertionError(\"expected WS message not received\");\n");
+            sb.append("                }\n");
+            sb.append("            }\n");
+        }
         sb.append("        } finally {\n");
+        if (!wsMessages.isEmpty()) {
+            sb.append("            try { wsSession.disconnect(); } catch (Exception ignored) {}\n");
+        }
         if (!cleanup.isEmpty()) {
             sb.append("            try (Connection conn = DriverManager.getConnection(JDBC_URL, JDBC_USER, JDBC_PASS)) {\n");
             for (FixtureStatement fx : cleanup) {
@@ -191,6 +256,30 @@ public final class TestSynthesizer {
         }
         sb.append("        }\n");
         sb.append("    }\n\n");
+    }
+
+    private static String renderWsPayload(Object payload) {
+        if (payload == null) return "new byte[0]";
+        if (payload instanceof byte[] bytes) {
+            // bytes를 hex literal로
+            StringBuilder hex = new StringBuilder("new byte[] {");
+            for (int i = 0; i < bytes.length; i++) {
+                if (i > 0) hex.append(", ");
+                hex.append("(byte) 0x").append(String.format("%02X", bytes[i]));
+            }
+            hex.append("}");
+            return hex.toString();
+        }
+        if (payload instanceof String s) {
+            return quoteString(s) + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+        }
+        // Map 등 → JSON 직렬화 후 bytes
+        try {
+            String json = BODY_MAPPER.writeValueAsString(payload);
+            return quoteString(json) + ".getBytes(java.nio.charset.StandardCharsets.UTF_8)";
+        } catch (Exception e) {
+            return "new byte[0]";
+        }
     }
 
     private static void appendPreparedStatement(StringBuilder sb, String indent, FixtureStatement fx) {
@@ -280,10 +369,14 @@ public final class TestSynthesizer {
     }
 
     private static void appendHeader(StringBuilder sb, String pkg) {
-        appendHeader(sb, pkg, false);
+        appendHeader(sb, pkg, false, false);
     }
 
     private static void appendHeader(StringBuilder sb, String pkg, boolean withWireMock) {
+        appendHeader(sb, pkg, withWireMock, false);
+    }
+
+    private static void appendHeader(StringBuilder sb, String pkg, boolean withWireMock, boolean withWs) {
         sb.append("package ").append(pkg).append(";\n\n");
         sb.append("import io.restassured.RestAssured;\n");
         sb.append("import io.restassured.http.ContentType;\n");
