@@ -1,0 +1,19 @@
+[
+  {
+    "id": "sql-order-1",
+    "path_id": "happy-201",
+    "type": "INSERT",
+    "raw_sql": "INSERT INTO orders(id, user_id, amount, type, status) VALUES (?, ?, ?, ?, ?)",
+    "bindings": [
+      { "position": 0, "value": "ord-1", "origin": "COMPUTED", "origin_ref": null },
+      { "position": 1, "value": "u-1", "origin": "API_PARAM", "origin_ref": "apiParam.userId" },
+      { "position": 2, "value": 100, "origin": "API_PARAM", "origin_ref": "apiParam.amount" },
+      { "position": 3, "value": "EXPRESS", "origin": "API_PARAM", "origin_ref": "apiParam.type" },
+      { "position": 4, "value": "PENDING", "origin": "LITERAL", "origin_ref": null }
+    ],
+    "source": "JPA_REPOSITORY_DERIVED",
+    "source_location": { "class": "io.graphrag.demo.domain.OrderRepository", "method": "save", "line": 1 },
+    "affected_tables": ["orders"],
+    "affected_columns": ["id", "user_id", "amount", "type", "status"]
+  }
+]

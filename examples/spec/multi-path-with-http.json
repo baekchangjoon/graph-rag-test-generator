@@ -1,0 +1,144 @@
+{
+  "endpoint": {
+    "id": "POST:/api/orders/with-inventory",
+    "method": "POST",
+    "path": "/api/orders/with-inventory",
+    "project": "demo-sut",
+    "handler_class": "io.graphrag.demo.api.OrdersController",
+    "handler_method": "createWithInventory",
+    "auth_required": false,
+    "required_roles": []
+  },
+  "paths": [
+    {
+      "path": {
+        "id": "happy-201",
+        "endpoint_id": "POST:/api/orders/with-inventory",
+        "discovered_by": "MANUAL",
+        "sample_input": {
+          "headers": {},
+          "path_params": {},
+          "query_params": {},
+          "body": {
+            "userId": "u-1",
+            "amount": 10,
+            "type": "EXPRESS"
+          }
+        },
+        "path_constraint": null,
+        "branches_taken": [],
+        "exit_status": 201,
+        "exit_response_shape": null,
+        "coverage_signature": "cov-happy",
+        "code_version": "v1"
+      },
+      "captured_sql": [
+        {
+          "id": "sql-user-1",
+          "path_id": "happy-201",
+          "type": "INSERT",
+          "raw_sql": "INSERT INTO users(id, name) VALUES (?, ?)",
+          "bindings": [
+            { "position": 0, "value": "u-1", "origin": "API_PARAM", "origin_ref": "apiParam.userId" },
+            { "position": 1, "value": "John", "origin": "LITERAL", "origin_ref": null }
+          ],
+          "source": "JPA_REPOSITORY_DERIVED",
+          "source_location": { "class": "io.graphrag.demo.domain.UserRepository", "method": "save", "line": 1 },
+          "affected_tables": ["users"],
+          "affected_columns": ["id", "name"]
+        },
+        {
+          "id": "sql-order-1",
+          "path_id": "happy-201",
+          "type": "INSERT",
+          "raw_sql": "INSERT INTO orders(id, user_id, amount, type, status) VALUES (?, ?, ?, ?, ?)",
+          "bindings": [
+            { "position": 0, "value": "ord-1", "origin": "COMPUTED", "origin_ref": null },
+            { "position": 1, "value": "u-1", "origin": "API_PARAM", "origin_ref": "apiParam.userId" },
+            { "position": 2, "value": 10, "origin": "API_PARAM", "origin_ref": "apiParam.amount" },
+            { "position": 3, "value": "EXPRESS", "origin": "API_PARAM", "origin_ref": "apiParam.type" },
+            { "position": 4, "value": "RESERVED", "origin": "LITERAL", "origin_ref": null }
+          ],
+          "source": "JPA_REPOSITORY_DERIVED",
+          "source_location": { "class": "io.graphrag.demo.domain.OrderRepository", "method": "save", "line": 1 },
+          "affected_tables": ["orders"],
+          "affected_columns": ["id", "user_id", "amount", "type", "status"]
+        }
+      ],
+      "captured_http_calls": [
+        {
+          "id": "http-inv-1",
+          "path_id": "happy-201",
+          "method": "GET",
+          "url_template": "/inventory/stock?type={type}",
+          "url_concrete": "/inventory/stock?type=EXPRESS",
+          "url_bindings": [
+            { "position": 0, "value": "EXPRESS", "origin": "API_PARAM", "origin_ref": "apiParam.type" }
+          ],
+          "request_headers": { "Accept": "application/json" },
+          "request_body": null,
+          "request_body_bindings": [],
+          "response_status": 200,
+          "response_body_observed": { "available": 50 },
+          "response_fields_read_by_sut": ["available"],
+          "client_type": "REST_TEMPLATE",
+          "target_external_id": "inventory-service"
+        }
+      ],
+      "captured_socket_io": []
+    },
+    {
+      "path": {
+        "id": "bad-amount-400",
+        "endpoint_id": "POST:/api/orders/with-inventory",
+        "discovered_by": "MANUAL",
+        "sample_input": {
+          "headers": {},
+          "path_params": {},
+          "query_params": {},
+          "body": {
+            "userId": "u-1",
+            "amount": 0,
+            "type": "EXPRESS"
+          }
+        },
+        "path_constraint": null,
+        "branches_taken": [],
+        "exit_status": 400,
+        "exit_response_shape": null,
+        "coverage_signature": "cov-bad-amount",
+        "code_version": "v1"
+      },
+      "captured_sql": [],
+      "captured_http_calls": [],
+      "captured_socket_io": []
+    },
+    {
+      "path": {
+        "id": "missing-user-404",
+        "endpoint_id": "POST:/api/orders/with-inventory",
+        "discovered_by": "MANUAL",
+        "sample_input": {
+          "headers": {},
+          "path_params": {},
+          "query_params": {},
+          "body": {
+            "userId": "ghost",
+            "amount": 5,
+            "type": "STANDARD"
+          }
+        },
+        "path_constraint": null,
+        "branches_taken": [],
+        "exit_status": 404,
+        "exit_response_shape": null,
+        "coverage_signature": "cov-no-user",
+        "code_version": "v1"
+      },
+      "captured_sql": [],
+      "captured_http_calls": [],
+      "captured_socket_io": []
+    }
+  ],
+  "test_package": "com.example.tests.orders"
+}

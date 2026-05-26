@@ -1,0 +1,36 @@
+[
+  {
+    "id": "happy-201",
+    "endpoint_id": "POST:/api/orders",
+    "discovered_by": "MANUAL",
+    "sample_input": {
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": { "userId": "u-1", "amount": 100, "type": "EXPRESS" }
+    },
+    "path_constraint": null,
+    "branches_taken": [],
+    "exit_status": 201,
+    "exit_response_shape": null,
+    "coverage_signature": "cov-happy",
+    "code_version": "v1"
+  },
+  {
+    "id": "bad-amount-400",
+    "endpoint_id": "POST:/api/orders",
+    "discovered_by": "MANUAL",
+    "sample_input": {
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": { "userId": "u-1", "amount": 0, "type": "EXPRESS" }
+    },
+    "path_constraint": null,
+    "branches_taken": [],
+    "exit_status": 400,
+    "exit_response_shape": null,
+    "coverage_signature": "cov-bad-amount",
+    "code_version": "v1"
+  }
+]

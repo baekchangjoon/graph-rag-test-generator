@@ -1,0 +1,12 @@
+[
+  {
+    "id": "POST:/api/orders",
+    "method": "POST",
+    "path": "/api/orders",
+    "project": "demo-sut",
+    "handler_class": "io.graphrag.demo.api.OrdersController",
+    "handler_method": "create",
+    "auth_required": false,
+    "required_roles": []
+  }
+]

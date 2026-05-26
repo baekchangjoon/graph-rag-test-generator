@@ -1,0 +1,41 @@
+{
+  "endpoint": {
+    "id": "POST:/api/orders",
+    "method": "POST",
+    "path": "/api/orders",
+    "project": "demo-sut",
+    "handler_class": "io.graphrag.demo.api.OrdersController",
+    "handler_method": "create",
+    "auth_required": false,
+    "required_roles": []
+  },
+  "paths": [
+    {
+      "path": {
+        "id": "happy-201",
+        "endpoint_id": "POST:/api/orders",
+        "discovered_by": "MANUAL",
+        "sample_input": {
+          "headers": {},
+          "path_params": {},
+          "query_params": {},
+          "body": {
+            "userId": "u-1",
+            "amount": 100,
+            "type": "EXPRESS"
+          }
+        },
+        "path_constraint": null,
+        "branches_taken": [],
+        "exit_status": 201,
+        "exit_response_shape": null,
+        "coverage_signature": "cov-happy-201",
+        "code_version": "v1"
+      },
+      "captured_sql": [],
+      "captured_http_calls": [],
+      "captured_socket_io": []
+    }
+  ],
+  "test_package": "com.example.tests.orders"
+}
