@@ -23,6 +23,7 @@ include(
     ":socket-mock-server",
     ":graph-rag-builder",
     ":test-generator",
+    ":socket-capture-agent",
 )
 
 // Phase 0 PoC SUT (separate samples directory)

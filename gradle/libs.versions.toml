@@ -28,6 +28,7 @@ postgres = "42.7.4"
 h2 = "2.3.232"
 datasource-proxy = "1.10"
 mybatis = "3.5.16"
+bytebuddy = "1.15.10"
 
 # Utilities
 ulid = "5.2.3"
@@ -79,6 +80,8 @@ h2 = { module = "com.h2database:h2", version.ref = "h2" }
 # SQL 캡처 (graph-rag-builder 분석 환경)
 datasource-proxy = { module = "net.ttddyy:datasource-proxy", version.ref = "datasource-proxy" }
 mybatis = { module = "org.mybatis:mybatis", version.ref = "mybatis" }
+bytebuddy = { module = "net.bytebuddy:byte-buddy", version.ref = "bytebuddy" }
+bytebuddy-agent = { module = "net.bytebuddy:byte-buddy-agent", version.ref = "bytebuddy" }
 
 # Utilities
 ulid-creator = { module = "com.github.f4b6a3:ulid-creator", version.ref = "ulid" }

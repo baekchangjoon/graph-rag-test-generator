@@ -64,17 +64,43 @@ public final class TestSynthesizer {
         String className = deriveClassName(ep);
         boolean hasHttp = input.paths().stream()
                 .anyMatch(pc -> !pc.capturedHttpCalls().isEmpty());
+        boolean hasSocket = input.paths().stream()
+                .anyMatch(pc -> !pc.capturedSocketIO().isEmpty());
 
         StringBuilder sb = new StringBuilder();
         appendHeader(sb, input.testPackage(), hasHttp);
         appendClassOpen(sb, className);
         appendStaticFieldsMulti(sb);
+        if (hasSocket) {
+            appendSocketHelpers(sb);
+        }
         appendBeforeAllMulti(sb, hasHttp);
         for (PathContext pc : input.paths()) {
             appendPathTestMethod(sb, ep, pc);
         }
         appendClassClose(sb);
         return sb.toString();
+    }
+
+    private static void appendSocketHelpers(StringBuilder sb) {
+        sb.append("    static String SOCKET_MOCK_ADMIN = System.getenv(\"SOCKET_MOCK_ADMIN\");\n\n");
+        sb.append("    private static void registerSocketExpectation(int port, String sessionId,\n");
+        sb.append("                                                  String onReceiveHex, String respondHex) {\n");
+        sb.append("        try {\n");
+        sb.append("            String body = String.format(\n");
+        sb.append("                \"{\\\"port\\\":%d,\\\"sessionId\\\":\\\"%s\\\",\\\"onReceiveHex\\\":\\\"%s\\\",\\\"respondHex\\\":\\\"%s\\\"}\",\n");
+        sb.append("                port, sessionId, onReceiveHex, respondHex);\n");
+        sb.append("            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder()\n");
+        sb.append("                .uri(java.net.URI.create(SOCKET_MOCK_ADMIN + \"/__admin/expectations\"))\n");
+        sb.append("                .header(\"Content-Type\", \"application/json\")\n");
+        sb.append("                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))\n");
+        sb.append("                .build();\n");
+        sb.append("            java.net.http.HttpClient.newHttpClient().send(req,\n");
+        sb.append("                java.net.http.HttpResponse.BodyHandlers.discarding());\n");
+        sb.append("        } catch (Exception e) {\n");
+        sb.append("            throw new RuntimeException(\"socket mock setup failed\", e);\n");
+        sb.append("        }\n");
+        sb.append("    }\n\n");
     }
 
     private static void appendBeforeAllMulti(StringBuilder sb, boolean hasHttp) {
@@ -101,6 +127,7 @@ public final class TestSynthesizer {
         ExploredPath path = pc.path();
         List<CapturedSql> captured = pc.capturedSql();
         List<CapturedHttpCall> httpCalls = pc.capturedHttpCalls();
+        List<io.graphrag.model.CapturedSocketIO> socketIO = pc.capturedSocketIO();
         List<FixtureStatement> fixtures = FixtureComposer.fromCapturedSqls(captured);
         List<FixtureStatement> cleanup = FixtureComposer.cleanupFor(captured);
         String methodName = "path_" + sanitizeMethodId(path.id());
@@ -119,6 +146,21 @@ public final class TestSynthesizer {
                     sb.append("        ").append(line).append("\n");
                 }
             }
+        }
+
+        // Socket mock 등록 (socket capture가 있는 path만). OUTBOUND/INBOUND 쌍으로.
+        if (!socketIO.isEmpty()) {
+            String request = socketIO.stream()
+                    .filter(s -> s.direction() == io.graphrag.model.SocketDirection.OUTBOUND)
+                    .map(io.graphrag.model.CapturedSocketIO::byteHex)
+                    .findFirst().orElse("");
+            String response = socketIO.stream()
+                    .filter(s -> s.direction() == io.graphrag.model.SocketDirection.INBOUND)
+                    .map(io.graphrag.model.CapturedSocketIO::byteHex)
+                    .findFirst().orElse("");
+            int port = socketIO.stream().findFirst().map(io.graphrag.model.CapturedSocketIO::endpointPort).orElse(0);
+            sb.append("        registerSocketExpectation(").append(port).append(", testId, ");
+            sb.append(quoteString(request)).append(", ").append(quoteString(response)).append(");\n");
         }
 
         if (!fixtures.isEmpty()) {
