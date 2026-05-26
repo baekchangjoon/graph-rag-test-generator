@@ -29,6 +29,7 @@ h2 = "2.3.232"
 datasource-proxy = "1.10"
 mybatis = "3.5.16"
 bytebuddy = "1.15.10"
+neo4j-driver = "5.26.0"
 
 # Utilities
 ulid = "5.2.3"
@@ -57,6 +58,8 @@ mockito-junit = { module = "org.mockito:mockito-junit-jupiter", version.ref = "m
 testcontainers-core = { module = "org.testcontainers:testcontainers", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
 testcontainers-postgres = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-neo4j = { module = "org.testcontainers:neo4j", version.ref = "testcontainers" }
+neo4j-driver = { module = "org.neo4j.driver:neo4j-java-driver", version.ref = "neo4j-driver" }
 
 # RestAssured
 restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassured" }

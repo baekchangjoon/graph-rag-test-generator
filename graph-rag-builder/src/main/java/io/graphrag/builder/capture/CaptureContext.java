@@ -2,6 +2,7 @@ package io.graphrag.builder.capture;
 
 import io.graphrag.model.CapturedHttpCall;
 import io.graphrag.model.CapturedSql;
+import io.graphrag.model.CapturedWsMessage;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,6 +22,7 @@ public final class CaptureContext {
     private final String pathId;
     private final List<CapturedSql> capturedSql = new ArrayList<>();
     private final List<CapturedHttpCall> capturedHttpCalls = new ArrayList<>();
+    private final List<CapturedWsMessage> capturedWsMessages = new ArrayList<>();
 
     public CaptureContext(String pathId) {
         this.pathId = Objects.requireNonNull(pathId, "pathId");
@@ -42,6 +44,14 @@ public final class CaptureContext {
 
     public synchronized List<CapturedHttpCall> capturedHttpCalls() {
         return Collections.unmodifiableList(new ArrayList<>(capturedHttpCalls));
+    }
+
+    public synchronized void addCapturedWsMessage(CapturedWsMessage msg) {
+        capturedWsMessages.add(msg);
+    }
+
+    public synchronized List<CapturedWsMessage> capturedWsMessages() {
+        return Collections.unmodifiableList(new ArrayList<>(capturedWsMessages));
     }
 
     public static CaptureContext current() { return CURRENT.get(); }
