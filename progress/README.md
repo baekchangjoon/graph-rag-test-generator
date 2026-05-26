@@ -16,6 +16,7 @@
 | **Phase 6 — 5M 레거시 아키텍처** | [14-phase6-legacy-arch](14-phase6-legacy-arch.md) |
 | **합성기 통합 + WebSocket E2E + javaagent + JaCoCo + Socket synth** | [16-phase3-5-completion](16-phase3-5-completion.md) |
 | **잔여 항목 (archive HTTP, WS 자동 캡처, 실 Socket stream wrap, fuzzer, Neo4j store)** | [17-residuals](17-residuals.md) |
+| **최종 잔여 항목 (testlib HTTP 모드, response field tracker, JaCoCo scorer, Socket-system installer, Phase 4/5 E2E)** | [17-final-coverage-e2e-completion](17-final-coverage-e2e-completion.md) |
 
 ## 시간순 인덱스
 
@@ -39,6 +40,7 @@
 | 15 | Phase 2 합성기 통합 | HTTP stub이 TestSynthesizer 출력에 자동 포함 + Phase 2 합성 E2E |
 | 16 | Phase 3-5 완결 | JaCoCo + CLI + Socket synth + WebSocket E2E + javaagent |
 | 17 | 잔여 일괄 완료 | Archive HTTP, STOMP 자동 캡처, 실 Socket wrap, fuzzer, Neo4j |
+| 17b | 최종 잔여 일괄 완료 | testlib HTTP 모드, response field tracker, JaCoCo scorer, Socket-system installer, Phase 4/5 socket E2E |
 
 ## 최종 상태 (Phase별)
 
@@ -47,19 +49,19 @@
 | 0 — JPA single path | ✅ Phase0E2eTest | ✅ | — |
 | 1 — multi-path + javac + MyBatis | ✅ Phase1MultiPathE2eTest | ✅ | + MyBatis Interceptor |
 | 2 — HTTP + WireMock | ✅ Phase2HttpE2eTest, Phase2HttpSynthesisE2eTest | ✅ stubFor 자동 | + archive 영속 |
-| 3 — WebSocket/STOMP | ✅ Phase3WebSocketE2eTest | 🔶 모델만 | + StompCaptureInterceptor |
-| 4 — Netty Socket | — | ✅ socket helper 합성 | + ProtocolDecoder SPI |
-| 5 — Raw Socket javaagent | — | — | + RecordingStream + SocketByteRecorder + ByteBuddy agent |
+| 3 — WebSocket/STOMP | ✅ Phase3WebSocketE2eTest | ✅ TestSynthesizer WS 통합 | + StompCaptureInterceptor |
+| 4 — Netty Socket | ✅ Phase4NettySocketE2eTest | ✅ socket helper 합성 + SocketMockComposer 검증 | + ProtocolDecoder SPI + NettyPricingClient |
+| 5 — Raw Socket javaagent | ✅ Phase5RawSocketE2eTest | ✅ SocketByteRecorder 캡처 → composer | + SocketSystemInstaller (bootstrap inject) + RawSocketPricingClient |
 | 6 — 5M 레거시 | 📄 docs/10-legacy-scaling.md | — | + Neo4j GraphStore |
 
 ## 누적 수치
 
 - 모듈: 9개
-- commit: 25개 (main)
-- 테스트 클래스: 60+
-- 테스트 케이스: 100+ (전부 GREEN, Neo4j 통합 3개는 환경 gated)
+- commit: 27개 (main)
+- 테스트 클래스: 70+
+- 테스트 케이스: 130+ (전부 GREEN, Neo4j 통합 3개는 환경 gated)
 - 설계 문서: 10 (docs/)
-- 진행 기록: 18 (progress/)
+- 진행 기록: 19 (progress/)
 
 ## 패턴 + 원칙 (전 phase 일관)
 
@@ -74,7 +76,11 @@
 각 항목은 외부 환경 접근 또는 운영 작업 비중이 큼:
 
 - 5M 레거시 PoC 실행 → 실제 레거시 프로젝트 + Neo4j 클러스터 + 분산 워커
-- 실 java.net.Socket auto-instrument → Boot-Class-Path 설정 + bootstrap classloader
+- 실 java.net.Socket auto-instrument의 운영 검증 → `-javaagent` startup attach + 외부 SUT 프로세스
+  (SocketSystemInstaller API/bootstrap inject은 완료 — in-process 단위테스트에선 advice fire 제한)
+- JaCoCo runtime의 운영 적용 → SUT JVM에 jacocoagent.jar attach → exec.dump 외부 분석
+  (JacocoCoverageScorer API + LoggerRuntime in-process는 완료 — JUL bridge 제약은 운영에선 무관)
+- ResponseFieldReadTracker 자동 추출 → Jackson Mixin 또는 ByteBuddy getter hook (Phase 7+)
 - Neo4j 통합 테스트 실행 → Docker 환경 (`GRAPH_RAG_NEO4J_TEST=1`)
 - OpenAPI 응답 합성 강화 → 외부 시스템 사양 입수
 - Socket 프로토콜 디코더 등록 → 프로토콜 사양 입수
