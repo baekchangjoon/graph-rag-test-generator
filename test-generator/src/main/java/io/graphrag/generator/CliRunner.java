@@ -2,9 +2,12 @@ package io.graphrag.generator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.graphrag.generator.archive.ArchiveReader;
+import io.graphrag.generator.archive.BuilderClient;
 import io.graphrag.generator.core.MultiPathSynthesisInput;
 import io.graphrag.generator.core.TestSynthesizer;
 import io.graphrag.generator.output.TestArtifactWriter;
+import io.graphrag.generator.result.GenerationResult;
+import io.graphrag.generator.result.GenerationResultBuilder;
 import io.graphrag.model.JsonMappers;
 
 import java.io.PrintStream;
@@ -31,7 +34,7 @@ import java.util.Set;
 public final class CliRunner {
 
     private static final Set<String> ALLOWED_FLAGS = Set.of(
-            "--spec", "--archive", "--endpoint", "--package", "--out");
+            "--spec", "--archive", "--builder", "--endpoint", "--package", "--out", "--report");
 
     private CliRunner() {}
 
@@ -69,16 +72,31 @@ public final class CliRunner {
         }
 
         String generated = TestSynthesizer.synthesizeMulti(input);
+        Path written;
         try {
             TestArtifactWriter writer = new TestArtifactWriter(Paths.get(outPath));
             String className = extractClassName(generated);
-            Path written = writer.write(input.testPackage(), className, generated);
+            written = writer.write(input.testPackage(), className, generated);
             out.println("wrote: " + written);
-            return 0;
         } catch (Exception ex) {
             err.println("error: write failed: " + ex.getMessage());
             return 5;
         }
+
+        // GenerationResult JSON 출력 (옵셔널)
+        String reportPath = flags.get("--report");
+        if (reportPath != null) {
+            try {
+                GenerationResult result = GenerationResultBuilder.build(input, written);
+                ObjectMapper mapper = JsonMappers.standard();
+                Files.writeString(Paths.get(reportPath),
+                        mapper.writerWithDefaultPrettyPrinter().writeValueAsString(result));
+                out.println("report: " + reportPath);
+            } catch (Exception ex) {
+                err.println("warn: report write failed: " + ex.getMessage());
+            }
+        }
+        return 0;
     }
 
     private static MultiPathSynthesisInput buildInput(Map<String, String> flags) throws Exception {
@@ -102,7 +120,15 @@ public final class CliRunner {
             }
             return ArchiveReader.load(dir).buildInput(endpoint, pkg);
         }
-        throw new CliError(2, "either --spec or --archive is required");
+        if (flags.containsKey("--builder")) {
+            String endpoint = flags.get("--endpoint");
+            String pkg = flags.get("--package");
+            if (endpoint == null || pkg == null) {
+                throw new CliError(2, "--builder mode requires --endpoint and --package");
+            }
+            return new BuilderClient(flags.get("--builder")).buildInput(endpoint, pkg);
+        }
+        throw new CliError(2, "either --spec, --archive, or --builder is required");
     }
 
     private static Map<String, String> parseFlags(String[] args) {
@@ -140,8 +166,9 @@ public final class CliRunner {
     private static String usage() {
         return """
                 usage:
-                  test-generator --spec <spec.json> --out <output-dir>
-                  test-generator --archive <archive-dir> --endpoint <id> --package <pkg> --out <dir>
+                  test-generator --spec <spec.json> --out <output-dir> [--report result.json]
+                  test-generator --archive <archive-dir> --endpoint <id> --package <pkg> --out <dir> [--report result.json]
+                  test-generator --builder <builder-url> --endpoint <id> --package <pkg> --out <dir> [--report result.json]
                 """;
     }
 
