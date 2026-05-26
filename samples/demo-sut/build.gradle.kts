@@ -9,6 +9,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-websocket")
+    implementation(libs.netty.all)
     runtimeOnly(libs.postgres.jdbc)
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -22,4 +23,6 @@ dependencies {
     testImplementation(project(":shared-model"))
     testImplementation(project(":graph-rag-builder"))
     testImplementation(project(":test-generator"))
+    testImplementation(project(":socket-mock-server"))
+    testImplementation(project(":socket-capture-agent"))
 }

@@ -30,6 +30,7 @@ datasource-proxy = "1.10"
 mybatis = "3.5.16"
 bytebuddy = "1.15.10"
 neo4j-driver = "5.26.0"
+jacoco = "0.8.12"
 
 # Utilities
 ulid = "5.2.3"
@@ -60,6 +61,9 @@ testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.re
 testcontainers-postgres = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
 testcontainers-neo4j = { module = "org.testcontainers:neo4j", version.ref = "testcontainers" }
 neo4j-driver = { module = "org.neo4j.driver:neo4j-java-driver", version.ref = "neo4j-driver" }
+
+# JaCoCo runtime API (programmatic in-process coverage)
+coverage-jacoco-core = { module = "org.jacoco:org.jacoco.core", version.ref = "jacoco" }
 
 # RestAssured
 restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassured" }

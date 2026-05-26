@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.mybatis)
     implementation(libs.wiremock)
     implementation(libs.neo4j.driver)
+    implementation(libs.coverage.jacoco.core)
     implementation("org.springframework:spring-messaging")
 
     // 분석 환경에서 JPA SUT를 부팅하기 위한 deps.
