@@ -9,6 +9,7 @@ import io.graphrag.model.SourceLocation;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -18,6 +19,8 @@ import java.util.regex.Pattern;
  *
  * <p>Phase 0: SQL 타입 판별, 영향 테이블 best-effort 추출, 바인딩 origin은 모두 COMPUTED.
  * Phase 1+에서 dataflow 분석으로 API_PARAM/LITERAL 분류 강화.
+ *
+ * <p>Option A (docs/12): SELECT 의 row snapshot 결과를 함께 받는 오버로드 추가.
  */
 public final class CapturedSqlBuilder {
 
@@ -30,6 +33,18 @@ public final class CapturedSqlBuilder {
                                     String rawSql,
                                     List<?> parameterValues,
                                     CapturedSqlSource source) {
+        return build(pathId, rawSql, parameterValues, source, List.of());
+    }
+
+    /**
+     * Option A: SELECT 의 row snapshot (`readResultRows`) 까지 함께 기록.
+     * 다른 SQL 타입에서는 빈 리스트 권장.
+     */
+    public static CapturedSql build(String pathId,
+                                    String rawSql,
+                                    List<?> parameterValues,
+                                    CapturedSqlSource source,
+                                    List<Map<String, Object>> readResultRows) {
         CapturedSqlType type = detectType(rawSql);
         List<Binding> bindings = new ArrayList<>(parameterValues.size());
         for (int i = 0; i < parameterValues.size(); i++) {
@@ -44,10 +59,14 @@ public final class CapturedSqlBuilder {
                 source,
                 new SourceLocation("unknown", "unknown", -1),
                 extractTables(rawSql),
-                List.of());
+                List.of(),
+                readResultRows);
     }
 
-    private static CapturedSqlType detectType(String sql) {
+    /**
+     * SQL 첫 토큰 기반 타입 판별. Listener 가 SELECT 분기 처리에 쓰기 위해 public.
+     */
+    public static CapturedSqlType detectType(String sql) {
         String trimmed = sql.stripLeading().toUpperCase();
         if (trimmed.startsWith("SELECT")) return CapturedSqlType.SELECT;
         if (trimmed.startsWith("INSERT")) return CapturedSqlType.INSERT;
