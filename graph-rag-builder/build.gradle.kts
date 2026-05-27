@@ -30,7 +30,17 @@ dependencies {
     // 운영 코드에는 noop이지만 테스트/분석 harness에서 사용됨.
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
+    // jdbc-intercept-agent contract — JdbcAgentBaggageBridge 어댑터가 사용.
+    // agent-core (javaagent jar) 는 SUT JVM 에 -javaagent 로 attach 되며 graph-rag 의 compile 의존
+    // 아님 — runtime 만 필요.
+    implementation("io.jdbcintercept:agent-api:1.0.0-SNAPSHOT")
+    // OTEL Baggage API (선택) — Servlet handler thread propagation 우회용.
+    // 없어도 compile/실행 모두 정상. 있으면 어댑터가 baggage 에서 path-id fallback 조회.
+    compileOnly("io.opentelemetry:opentelemetry-api:1.49.0")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("io.opentelemetry:opentelemetry-api:1.49.0")
+    testImplementation("io.opentelemetry:opentelemetry-context:1.49.0")
     testImplementation(libs.h2)
     testImplementation(libs.testcontainers.postgres)
     testImplementation(libs.testcontainers.junit)

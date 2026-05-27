@@ -11,6 +11,7 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         mavenCentral()
+        mavenLocal()   // io.jdbcintercept:agent-api / agent-core (Option A bridge)
     }
 }
 
