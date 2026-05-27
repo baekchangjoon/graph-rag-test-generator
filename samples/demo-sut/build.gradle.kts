@@ -6,7 +6,15 @@ plugins {
 
 // jdbc-intercept-agent core jar — resolved as a runtime-only configuration so we can
 // pass its file path to the test JVM via -javaagent.
-val jdbcAgent: Configuration by configurations.creating
+// Opt-in via -Pagent.enabled=true (agent repo currently private; default build skips).
+val agentEnabled = providers.gradleProperty("agent.enabled").orNull == "true"
+val jdbcAgent: Configuration = configurations.create("jdbcAgent")
+
+if (!agentEnabled) {
+    sourceSets.test {
+        java.exclude("io/graphrag/demo/PhaseAgentE2eTest.java")
+    }
+}
 
 dependencies {
     implementation("org.springframework.boot:spring-boot-starter-web")
@@ -31,12 +39,19 @@ dependencies {
     testImplementation(project(":socket-capture-agent"))
 
     // Agent attach E2E — agent-api on compile, agent-core via custom configuration for -javaagent
-    testImplementation("io.jdbcintercept:agent-api:1.0.0-SNAPSHOT")
-    jdbcAgent("io.jdbcintercept:agent-core:1.0.0-SNAPSHOT")
+    if (agentEnabled) {
+        testImplementation("io.jdbcintercept:agent-api:1.0.0-SNAPSHOT")
+        jdbcAgent("io.jdbcintercept:agent-core:1.0.0-SNAPSHOT")
+    }
 }
 
 tasks.test {
-    val agentJar = jdbcAgent.singleFile.absolutePath
-    jvmArgs("-javaagent:$agentJar")
-    systemProperty("graphrag.jdbcAgentJar", agentJar)
+    if (agentEnabled) {
+        val agentJar = jdbcAgent.singleFile.absolutePath
+        jvmArgs("-javaagent:$agentJar")
+        systemProperty("graphrag.jdbcAgentJar", agentJar)
+    } else {
+        // Skip agent-only E2E when agent integration disabled (default).
+        exclude("**/PhaseAgentE2eTest.class")
+    }
 }

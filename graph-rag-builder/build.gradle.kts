@@ -16,6 +16,21 @@ tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
     archiveClassifier.set("boot")
 }
 
+val agentEnabled = providers.gradleProperty("agent.enabled").orNull == "true"
+
+// When agent integration is disabled (default: agent repo is private, CI cannot resolve),
+// exclude bridge classes + ServiceLoader file + bridge unit test from compile/test.
+if (!agentEnabled) {
+    sourceSets.main {
+        java.exclude("io/graphrag/builder/capture/JdbcAgentBaggageBridge.java")
+        java.exclude("io/graphrag/builder/capture/CaptureContextRegistry.java")
+        resources.exclude("META-INF/services/io.jdbcintercept.api.JdbcCaptureListener")
+    }
+    sourceSets.test {
+        java.exclude("io/graphrag/builder/capture/JdbcAgentBaggageBridgeTest.java")
+    }
+}
+
 dependencies {
     implementation(project(":shared-model"))
     implementation("org.springframework.boot:spring-boot-starter-web")
@@ -31,9 +46,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
 
     // jdbc-intercept-agent contract — JdbcAgentBaggageBridge 어댑터가 사용.
-    // agent-core (javaagent jar) 는 SUT JVM 에 -javaagent 로 attach 되며 graph-rag 의 compile 의존
-    // 아님 — runtime 만 필요.
-    implementation("io.jdbcintercept:agent-api:1.0.0-SNAPSHOT")
+    // Opt-in via -Pagent.enabled=true (agent repo is private; default build skips).
+    if (agentEnabled) {
+        implementation("io.jdbcintercept:agent-api:1.0.0-SNAPSHOT")
+    }
     // OTEL Baggage API (선택) — Servlet handler thread propagation 우회용.
     // 없어도 compile/실행 모두 정상. 있으면 어댑터가 baggage 에서 path-id fallback 조회.
     compileOnly("io.opentelemetry:opentelemetry-api:1.49.0")
