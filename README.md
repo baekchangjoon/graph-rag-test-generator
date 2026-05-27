@@ -277,6 +277,8 @@ GRAPH_RAG_NEO4J_TEST=1 ./gradlew :graph-rag-builder:test --tests "*Neo4j*"
 ├── socket-capture-agent/    # ByteBuddy javaagent + RecordingStreams (Phase 5)
 ├── graph-rag-builder/       # 도구 1: 캡처 (JPA/MyBatis/HTTP/STOMP) + 영속 (File/Neo4j) + Query API
 ├── test-generator/          # 도구 2: 결정적 합성 + javac 검증 + CLI
+├── scout-launcher/          # Stage 3: YAML config 기반 SUT 부팅 + HTTP scout + archive 생성
+├── scout-step-translator/   # Stage 2: paths.json/endpoints.json → scout-launcher config.yml
 └── samples/demo-sut/        # PoC 대상 Spring Boot 3 + JPA + STOMP SUT
 ```
 
