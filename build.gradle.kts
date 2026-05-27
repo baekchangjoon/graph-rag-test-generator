@@ -11,6 +11,17 @@ subprojects {
     // 모든 Java 모듈에 공통 적용
     plugins.withId("java") {
         apply(plugin = "jacoco")
+        apply(plugin = "maven-publish")
+
+        afterEvaluate {
+            configure<PublishingExtension> {
+                publications {
+                    create<MavenPublication>("maven") {
+                        from(components["java"])
+                    }
+                }
+            }
+        }
 
         configure<JavaPluginExtension> {
             toolchain {

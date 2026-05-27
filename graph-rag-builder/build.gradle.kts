@@ -9,6 +9,13 @@ application {
     mainClass.set("io.graphrag.builder.BuilderApplication")
 }
 
+// 외부 프로젝트(예: petclinic) 가 testImplementation 로 사용할 수 있도록 plain jar 도 publishing
+// (Spring Boot 플러그인이 bootJar 활성 시 default jar 비활성. enabling.)
+tasks.named<Jar>("jar") { enabled = true; archiveClassifier.set("") }
+tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
+    archiveClassifier.set("boot")
+}
+
 dependencies {
     implementation(project(":shared-model"))
     implementation("org.springframework.boot:spring-boot-starter-web")
