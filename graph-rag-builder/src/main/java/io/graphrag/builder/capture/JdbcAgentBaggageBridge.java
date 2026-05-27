@@ -39,6 +39,19 @@ public final class JdbcAgentBaggageBridge implements JdbcCaptureListener {
     /** Baggage key the scout test sets and this bridge reads. */
     public static final String BAGGAGE_KEY = "graphrag.path-id";
 
+    /** System property the scout-launcher sets to ask SUT-side bridge to dump archives on shutdown. */
+    public static final String ARCHIVE_DIR_PROP = "graphrag.archive.output.dir";
+
+    static {
+        // Activated only when scout-launcher (or user) passes -Dgraphrag.archive.output.dir=…
+        String dir = System.getProperty(ARCHIVE_DIR_PROP);
+        if (dir != null && !dir.isBlank()) {
+            Runtime.getRuntime().addShutdownHook(new Thread(
+                    () -> ArchiveShutdownWriter.dump(dir),
+                    "graphrag-archive-dump"));
+        }
+    }
+
     public JdbcAgentBaggageBridge() {}
 
     @Override
@@ -49,8 +62,9 @@ public final class JdbcAgentBaggageBridge implements JdbcCaptureListener {
         }
         if (pathId == null) return;
 
-        CaptureContext ctx = CaptureContextRegistry.forPathId(pathId);
-        if (ctx == null) return;
+        // Auto-create context on first capture for this pathId. Out-of-process scout never
+        // calls CaptureContextRegistry.register() — capture is the only signal of an active path.
+        CaptureContext ctx = CaptureContextRegistry.computeIfAbsent(pathId);
 
         ctx.addCapturedSql(toCapturedSql(pathId, q));
     }

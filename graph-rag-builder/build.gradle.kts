@@ -18,12 +18,12 @@ tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
 
 val agentEnabled = providers.gradleProperty("agent.enabled").orNull == "true"
 
-// When agent integration is disabled (default: agent repo is private, CI cannot resolve),
-// exclude bridge classes + ServiceLoader file + bridge unit test from compile/test.
+// When agent integration is disabled, exclude only the classes that depend on agent-api.
+// CaptureContextRegistry + ArchiveShutdownWriter are framework-agnostic and used by
+// scout-launcher's shutdown-hook archive writer regardless of capture path.
 if (!agentEnabled) {
     sourceSets.main {
         java.exclude("io/graphrag/builder/capture/JdbcAgentBaggageBridge.java")
-        java.exclude("io/graphrag/builder/capture/CaptureContextRegistry.java")
         resources.exclude("META-INF/services/io.jdbcintercept.api.JdbcCaptureListener")
     }
     sourceSets.test {

@@ -1,5 +1,6 @@
 package io.graphrag.builder.capture;
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -36,6 +37,17 @@ public final class CaptureContextRegistry {
     public static CaptureContext forPathId(String pathId) {
         if (pathId == null) return null;
         return BY_PATH_ID.get(pathId);
+    }
+
+    /** Get or create a context for the given path id. Idempotent + thread-safe. */
+    public static CaptureContext computeIfAbsent(String pathId) {
+        Objects.requireNonNull(pathId, "pathId");
+        return BY_PATH_ID.computeIfAbsent(pathId, CaptureContext::new);
+    }
+
+    /** Immutable snapshot of (pathId → context) entries — used by archive dump on shutdown. */
+    public static Map<String, CaptureContext> snapshot() {
+        return Map.copyOf(BY_PATH_ID);
     }
 
     /** Removes and returns the context (null if none). */
