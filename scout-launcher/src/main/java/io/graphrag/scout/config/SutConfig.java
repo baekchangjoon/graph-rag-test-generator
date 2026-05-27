@@ -22,7 +22,8 @@ public record SutConfig(
     @JsonProperty("agents")           List<String> agents,
     @JsonProperty("boot-classpath")   List<String> bootClasspath,
     @JsonProperty("system-properties") Map<String, String> systemProperties,
-    @JsonProperty("health-check")     HealthCheck healthCheck
+    @JsonProperty("health-check")     HealthCheck healthCheck,
+    @JsonProperty("otel")             OtelConfig otel
 ) {
     public SutConfig {
         if (jar == null && mainClass == null) {
@@ -35,6 +36,7 @@ public record SutConfig(
         bootClasspath = List.copyOf(Objects.requireNonNullElse(bootClasspath, List.of()));
         systemProperties = Map.copyOf(Objects.requireNonNullElse(systemProperties, Map.of()));
         if (healthCheck == null) healthCheck = HealthCheck.DEFAULT;
+        if (otel == null) otel = OtelConfig.DISABLED;
     }
 
     public record HealthCheck(
