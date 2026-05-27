@@ -28,6 +28,7 @@ include(
     ":scout-launcher",
     ":scout-step-translator",
     ":path-discovery-static",
+    ":coverage-feedback",
 )
 
 // Phase 0 PoC SUT (separate samples directory)

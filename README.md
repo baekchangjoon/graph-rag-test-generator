@@ -280,6 +280,7 @@ GRAPH_RAG_NEO4J_TEST=1 ./gradlew :graph-rag-builder:test --tests "*Neo4j*"
 ├── scout-launcher/          # Stage 3: YAML config 기반 SUT 부팅 + HTTP scout + archive 생성
 ├── scout-step-translator/   # Stage 2: paths.json/endpoints.json → scout-launcher config.yml
 ├── path-discovery-static/   # Stage 1: AST 기반 Spring controller 스캐너 → paths.json + endpoints.json
+├── coverage-feedback/       # Stage 5+6: JaCoCo XML parse + iteration delta + termination decision
 └── samples/demo-sut/        # PoC 대상 Spring Boot 3 + JPA + STOMP SUT
 ```
 
