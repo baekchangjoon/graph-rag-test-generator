@@ -44,9 +44,8 @@ jobs:
           path: jdbc-intercept-agent
 
       - name: Publish jdbc-intercept-agent to Maven Local
-        run: |
-          cd jdbc-intercept-agent/jdbc-intercept-agent
-          ./gradlew publishToMavenLocal --no-daemon --stacktrace -x test
+        working-directory: jdbc-intercept-agent
+        run: ./gradlew publishToMavenLocal --no-daemon --stacktrace -x test
 
       - name: Build (with agent integration)
         run: ./gradlew build -Pagent.enabled=true --no-daemon --stacktrace
