@@ -27,6 +27,7 @@ include(
     ":socket-capture-agent",
     ":scout-launcher",
     ":scout-step-translator",
+    ":path-discovery-static",
 )
 
 // Phase 0 PoC SUT (separate samples directory)
