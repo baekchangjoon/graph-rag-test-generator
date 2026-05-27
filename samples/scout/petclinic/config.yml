@@ -74,3 +74,6 @@ scout:
 output:
   archive-dir: /tmp/graph-rag-scout/petclinic-archive
   clear-before-run: true
+  # project name is embedded into endpoints.json and used by test-generator
+  # for package/class naming hints.
+  project: petclinic

@@ -13,10 +13,12 @@ import java.util.Objects;
  */
 public record OutputConfig(
     @JsonProperty("archive-dir")      String archiveDir,
-    @JsonProperty("clear-before-run") Boolean clearBeforeRun
+    @JsonProperty("clear-before-run") Boolean clearBeforeRun,
+    @JsonProperty("project")          String project
 ) {
     public OutputConfig {
         Objects.requireNonNull(archiveDir, "output.archive-dir required");
         if (clearBeforeRun == null) clearBeforeRun = false;
+        if (project == null || project.isBlank()) project = "scout";
     }
 }

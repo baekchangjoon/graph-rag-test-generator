@@ -20,6 +20,7 @@ public final class PipelineRunner {
     public void run() throws Exception {
         prepareOutputDir();
 
+        java.util.List<ScoutResult> results;
         try (DockerComposeOrchestrator deps = new DockerComposeOrchestrator(
                 cfg.dependencies() == null ? null : cfg.dependencies().dockerCompose())) {
             deps.start();
@@ -28,12 +29,14 @@ public final class PipelineRunner {
                 sut.start();
 
                 HttpScout scout = new HttpScout(cfg.scout());
-                scout.run();
+                results = scout.run();
 
                 System.out.println("[scout] all scout steps issued; shutting down SUT to flush archive");
-            } // SUT shutdown — archive written by SUT-side wiring shutdown hook
+            } // SUT shutdown — archive captured_sql.json written by SUT-side wiring shutdown hook
 
-            System.out.println("[scout] archive written under " + Paths.get(cfg.output().archiveDir()).toAbsolutePath());
+            Path archiveRoot = Paths.get(cfg.output().archiveDir());
+            new ScoutMetadataWriter(archiveRoot, cfg.output().project()).write(results);
+            System.out.println("[scout] archive written under " + archiveRoot.toAbsolutePath());
         } // docker compose down
     }
 
