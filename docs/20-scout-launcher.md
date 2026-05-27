@@ -85,6 +85,19 @@ scout:
 output:
   archive-dir: /tmp/graph-rag-scout/petclinic-archive
   clear-before-run: true
+  # T3: files (matched by name, at any depth) that survive a `clear-before-run` wipe.
+  # Typical use: a Stage 1 static analyzer wrote paths.json + endpoints.json at the
+  # archive root; we want to clear stale per-path subdirs from the last run without
+  # losing those Stage 1 outputs.
+  preserve-files:
+    - paths.json
+    - endpoints.json
+  # T3: after the scout run, any path-id whose live response status differs from
+  # its configured `expected-status` has its per-path subdir relocated to
+  # `<archive-dir>/quarantine/<path-id>/`. Lets Stage 6 (coverage-feedback) see
+  # which Stage 1 predictions were wrong (R3).
+  strict-mode: false        # default; set true to enable quarantine pass
+  project: petclinic
 ```
 
 ## 4. Path-id propagation — how the bridge sees it
