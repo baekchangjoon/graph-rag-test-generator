@@ -9,7 +9,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Executes the configured HTTP {@link CaptureStep}s against the live SUT.
@@ -33,25 +36,33 @@ public final class HttpScout {
                 .build();
     }
 
-    public void run() throws IOException, InterruptedException {
+    /**
+     * Issues every step in order and returns one {@link ScoutResult} per step. Results are
+     * collected even if a step's status differs from {@code expectedStatus} — synthesis
+     * downstream may want to replay a 4xx-asserting test.
+     */
+    public List<ScoutResult> run() throws IOException, InterruptedException {
+        List<ScoutResult> results = new ArrayList<>(cfg.steps().size());
         for (CaptureStep step : cfg.steps()) {
-            issue(step);
+            results.add(issue(step));
         }
+        return results;
     }
 
-    void issue(CaptureStep step) throws IOException, InterruptedException {
+    ScoutResult issue(CaptureStep step) throws IOException, InterruptedException {
         URI uri = URI.create(cfg.baseUrl() + step.path());
-        HttpRequest.Builder b = HttpRequest.newBuilder(uri)
-                .timeout(Duration.ofSeconds(30))
-                .header(HEADER_PATH_ID, step.pathId())
-                .header("baggage", "graphrag.path-id=" + step.pathId());
+        Map<String, String> sentHeaders = new LinkedHashMap<>();
+        sentHeaders.put(HEADER_PATH_ID, step.pathId());
+        sentHeaders.put("baggage", "graphrag.path-id=" + step.pathId());
         if (step.contentType() != null && !step.contentType().isBlank()) {
-            b.header("Content-Type", step.contentType());
+            sentHeaders.put("Content-Type", step.contentType());
         } else if (step.body() != null) {
-            b.header("Content-Type", "application/json");
+            sentHeaders.put("Content-Type", "application/json");
         }
-        for (var e : step.headers().entrySet()) b.header(e.getKey(), e.getValue());
+        sentHeaders.putAll(step.headers());
 
+        HttpRequest.Builder b = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(30));
+        for (var e : sentHeaders.entrySet()) b.header(e.getKey(), e.getValue());
         HttpRequest.BodyPublisher body = step.body() == null
                 ? HttpRequest.BodyPublishers.noBody()
                 : HttpRequest.BodyPublishers.ofString(step.body());
@@ -64,6 +75,14 @@ public final class HttpScout {
             System.err.println("[scout] WARN: expected " + step.expectedStatus()
                     + " but got " + resp.statusCode() + " for " + step.pathId());
         }
+
+        // Flatten response headers to a simple map, joining multi-valued entries with comma
+        // (the standard HTTP serialization). Test-generator only reads scalar values.
+        Map<String, String> respHeaders = new LinkedHashMap<>();
+        resp.headers().map().forEach((k, vs) -> respHeaders.put(k, String.join(",", vs)));
+
+        return new ScoutResult(step, sentHeaders, step.body(),
+                               resp.statusCode(), respHeaders, resp.body());
     }
 
     public List<CaptureStep> steps() { return cfg.steps(); }
