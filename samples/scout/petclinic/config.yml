@@ -73,7 +73,11 @@ scout:
 
 output:
   archive-dir: /tmp/graph-rag-scout/petclinic-archive
-  clear-before-run: true
+  # T1 PoC convention: never clear the archive root so manually-authored
+  # paths.json / endpoints.json (Stage 1 output) survive a scout run. T3
+  # will add `preserve-files` for the finer-grained per-file protection
+  # that lets Stage 1 outputs coexist with ScoutMetadataWriter overwrites.
+  clear-before-run: false
   # project name is embedded into endpoints.json and used by test-generator
   # for package/class naming hints.
   project: petclinic

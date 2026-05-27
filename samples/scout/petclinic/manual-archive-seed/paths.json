@@ -1,0 +1,59 @@
+[
+  {
+    "id": "static_list-owners",
+    "endpoint_id": "GET:/api/owners",
+    "discovered_by": "MANUAL",
+    "sample_input": {
+      "headers": { "Accept": "application/json" },
+      "path_params": {},
+      "query_params": {},
+      "body": null
+    },
+    "path_constraint": null,
+    "branches_taken": [
+      "OwnerRestController.listOwners:happy"
+    ],
+    "exit_status": 200,
+    "exit_response_shape": null,
+    "coverage_signature": "static:list-owners:v1",
+    "code_version": "manual-seed-v1"
+  },
+  {
+    "id": "static_get-owner-1",
+    "endpoint_id": "GET:/api/owners/{ownerId}",
+    "discovered_by": "MANUAL",
+    "sample_input": {
+      "headers": { "Accept": "application/json" },
+      "path_params": { "ownerId": "1" },
+      "query_params": {},
+      "body": null
+    },
+    "path_constraint": null,
+    "branches_taken": [
+      "OwnerRestController.findOwner:found"
+    ],
+    "exit_status": 200,
+    "exit_response_shape": null,
+    "coverage_signature": "static:get-owner-by-id:v1",
+    "code_version": "manual-seed-v1"
+  },
+  {
+    "id": "static_list-vets",
+    "endpoint_id": "GET:/api/vets",
+    "discovered_by": "MANUAL",
+    "sample_input": {
+      "headers": { "Accept": "application/json" },
+      "path_params": {},
+      "query_params": {},
+      "body": null
+    },
+    "path_constraint": null,
+    "branches_taken": [
+      "VetRestController.listVets:happy"
+    ],
+    "exit_status": 200,
+    "exit_response_shape": null,
+    "coverage_signature": "static:list-vets:v1",
+    "code_version": "manual-seed-v1"
+  }
+]
