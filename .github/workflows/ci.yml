@@ -15,31 +15,45 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # SHA-pinned versions (action tags can be re-pointed; SHAs are immutable).
+    # Comment after each pin records the released version it resolves to.
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout graph-rag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12   # v4.7.0
         with:
           distribution: 'corretto'
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@cc4fc85e6b35bafd578d5ffbc76a5518407e1af0   # v4.2.1
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      # Note: graph-rag-builder + samples/demo-sut have an optional integration with
-      # io.jdbcintercept:agent-{api,core} (docs/19). The agent lives in a separate repo
-      # and is currently private — CI builds graph-rag WITHOUT the agent integration
-      # (default behavior; see -Pagent.enabled in graph-rag-builder/build.gradle.kts).
-      # Local developers run with -Pagent.enabled=true after publishToMavenLocal in agent repo.
-      - name: Build
-        run: ./gradlew build --no-daemon --stacktrace
+      # graph-rag-builder bridges io.jdbcintercept:agent-{api,core} when
+      # -Pagent.enabled=true (docs/19). The agent lives in a separate public repo
+      # and we resolve it via mavenLocal — checkout + publishToMavenLocal here.
+      # Ref pinned to immutable SHA for supply-chain safety.
+      - name: Checkout jdbc-intercept-agent
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
+        with:
+          repository: baekchangjoon/jdbc-intercept-agent
+          ref: 57ae51bc967b15fdb6d893edd533b5d1e57b07ec    # main as of feat/snapshot-rows merge
+          path: jdbc-intercept-agent
+
+      - name: Publish jdbc-intercept-agent to Maven Local
+        run: |
+          cd jdbc-intercept-agent/jdbc-intercept-agent
+          ./gradlew publishToMavenLocal --no-daemon --stacktrace -x test
+
+      - name: Build (with agent integration)
+        run: ./gradlew build -Pagent.enabled=true --no-daemon --stacktrace
 
       - name: Upload test reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882   # v4.4.3
         with:
           name: test-reports
           path: '**/build/reports/tests/**'
