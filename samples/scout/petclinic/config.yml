@@ -32,18 +32,24 @@ sut:
 
   # graph-rag bridge + its deps go on the boot classpath so the agent's ServiceLoader can
   # discover JdbcAgentBaggageBridge (which writes the archive on shutdown).
+  # opentelemetry-api + opentelemetry-context are auto-prepended by the launcher when
+  # otel.enabled=true below; no need to list them here.
   boot-classpath:
     - ${HOME}/.m2/repository/io/graphrag/graph-rag-builder/0.1.0-SNAPSHOT/graph-rag-builder-0.1.0-SNAPSHOT.jar
     - ${HOME}/.m2/repository/io/graphrag/shared-model/0.1.0-SNAPSHOT/shared-model-0.1.0-SNAPSHOT.jar
     - ${HOME}/.m2/repository/io/jdbcintercept/agent-api/1.0.0-SNAPSHOT/agent-api-1.0.0-SNAPSHOT.jar
-    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.18.2/jackson-databind-2.18.2.jar
-    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.18.2/jackson-core-2.18.2.jar
-    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.18.2/jackson-annotations-2.18.2.jar
 
   health-check:
     url: http://localhost:8084/actuator/health
     timeout-seconds: 60
     interval-millis: 1000
+
+  # OTEL javaagent restores the inbound `baggage:` header (set by HttpScout) onto the
+  # Tomcat handler thread so the bridge can read graphrag.path-id during JDBC calls.
+  # The launcher auto-downloads opentelemetry-javaagent.jar + opentelemetry-api.jar
+  # + opentelemetry-context.jar into ~/.cache/graphrag-scout/ on first run.
+  otel:
+    enabled: true
 
 dependencies:
   docker-compose:

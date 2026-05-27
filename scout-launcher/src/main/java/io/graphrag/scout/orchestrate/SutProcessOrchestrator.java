@@ -40,23 +40,47 @@ public final class SutProcessOrchestrator implements AutoCloseable {
         waitForHealth();
     }
 
-    List<String> buildCommand() {
+    List<String> buildCommand() throws IOException, InterruptedException {
         List<String> cmd = new ArrayList<>();
         cmd.add(javaBinary());
-        for (String a : cfg.agents()) {
-            cmd.add("-javaagent:" + Path.of(a).toAbsolutePath());
+
+        // OTEL javaagent must come BEFORE jdbc-intercept-agent so its Servlet instrumentation
+        // restores baggage onto the Tomcat handler thread before any JDBC call runs.
+        OtelAgentResolver otel = cfg.otel().enabled() ? new OtelAgentResolver(cfg.otel()) : null;
+        if (otel != null) {
+            cmd.add("-javaagent:" + otel.resolveAgentJar());
         }
-        if (!cfg.bootClasspath().isEmpty()) {
-            StringBuilder bcp = new StringBuilder();
-            for (int i = 0; i < cfg.bootClasspath().size(); i++) {
-                if (i > 0) bcp.append(java.io.File.pathSeparator);
-                bcp.append(Path.of(cfg.bootClasspath().get(i)).toAbsolutePath());
-            }
-            cmd.add("-Xbootclasspath/a:" + bcp);
+        for (String a : cfg.agents()) {
+            // Allow agent args via "path=k=v,k=v" form. -javaagent: itself uses "=" to delimit
+            // agent args from the jar path, so we split on the first "=" only.
+            int eq = a.indexOf('=');
+            String jar = eq < 0 ? a : a.substring(0, eq);
+            String agentArgs = eq < 0 ? "" : a.substring(eq);   // includes leading '=' if present
+            cmd.add("-javaagent:" + Path.of(jar).toAbsolutePath() + agentArgs);
+        }
+        java.util.List<String> bootEntries = new java.util.ArrayList<>();
+        if (otel != null) {
+            // Place OTEL API + Context first so the bridge's reflection finds them via
+            // bootstrap delegation regardless of where it's loaded from.
+            bootEntries.add(otel.resolveApiJar().toString());
+            bootEntries.add(otel.resolveContextJar().toString());
+        }
+        for (String b : cfg.bootClasspath()) {
+            bootEntries.add(Path.of(b).toAbsolutePath().toString());
+        }
+        if (!bootEntries.isEmpty()) {
+            cmd.add("-Xbootclasspath/a:" + String.join(java.io.File.pathSeparator, bootEntries));
         }
         cmd.addAll(cfg.jvmArgs());
         // Inject the archive output dir so SUT-side wiring (bridge shutdown hook) can write it.
         cmd.add("-Dgraphrag.archive.output.dir=" + Path.of(archiveDir).toAbsolutePath());
+        if (cfg.otel().enabled()) {
+            // User-supplied system-properties win over OTEL defaults (set after the loop),
+            // so emit OTEL defaults first.
+            for (var e : new OtelAgentResolver(cfg.otel()).systemProperties().entrySet()) {
+                cmd.add("-D" + e.getKey() + "=" + e.getValue());
+            }
+        }
         for (var e : cfg.systemProperties().entrySet()) {
             cmd.add("-D" + e.getKey() + "=" + e.getValue());
         }

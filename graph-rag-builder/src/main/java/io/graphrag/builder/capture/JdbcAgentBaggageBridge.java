@@ -42,25 +42,55 @@ public final class JdbcAgentBaggageBridge implements JdbcCaptureListener {
     /** System property the scout-launcher sets to ask SUT-side bridge to dump archives on shutdown. */
     public static final String ARCHIVE_DIR_PROP = "graphrag.archive.output.dir";
 
+    /** System property fallback path-id when neither correlation nor baggage resolves one. */
+    public static final String DEFAULT_PATH_ID_PROP = "graphrag.default.path-id";
+
+    private static final String DEFAULT_PATH_ID = System.getProperty(DEFAULT_PATH_ID_PROP);
+
     static {
         // Activated only when scout-launcher (or user) passes -Dgraphrag.archive.output.dir=…
         String dir = System.getProperty(ARCHIVE_DIR_PROP);
         if (dir != null && !dir.isBlank()) {
+            // Drop a marker file at registration time. Subsequently, the hook itself touches
+            // a second marker on entry. Together they distinguish "hook never registered"
+            // (no .hook-registered) from "hook never fired" (.hook-registered but no
+            // .hook-fired) from "hook fired but writer failed" (both markers + failure log).
+            try {
+                java.nio.file.Files.createDirectories(java.nio.file.Paths.get(dir));
+                java.nio.file.Files.writeString(java.nio.file.Paths.get(dir, ".hook-registered"),
+                        Long.toString(System.currentTimeMillis()));
+            } catch (Throwable ignored) {}
             Runtime.getRuntime().addShutdownHook(new Thread(
-                    () -> ArchiveShutdownWriter.dump(dir),
+                    () -> {
+                        try {
+                            java.nio.file.Files.writeString(java.nio.file.Paths.get(dir, ".hook-fired"),
+                                    Long.toString(System.currentTimeMillis()));
+                        } catch (Throwable ignored) {}
+                        ArchiveShutdownWriter.dump(dir);
+                    },
                     "graphrag-archive-dump"));
         }
     }
 
     public JdbcAgentBaggageBridge() {}
 
+    /** Diagnostic counters — written into the {@code .stats.json} file at shutdown. */
+    static final java.util.concurrent.atomic.AtomicLong CALLS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong RESOLVED_BY_CORR = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong RESOLVED_BY_BAGGAGE = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong DROPPED_NO_PATHID = new java.util.concurrent.atomic.AtomicLong();
+
     @Override
     public void afterQuery(CapturedQuery q) {
+        CALLS.incrementAndGet();
         String pathId = q.correlationId();
-        if (pathId == null || pathId.isEmpty() || "null".equals(pathId)) {
+        boolean fromCorr = pathId != null && !pathId.isEmpty() && !"null".equals(pathId);
+        if (!fromCorr) {
             pathId = readBaggageReflectively(BAGGAGE_KEY);
         }
-        if (pathId == null) return;
+        if (pathId == null) pathId = DEFAULT_PATH_ID;
+        if (pathId == null) { DROPPED_NO_PATHID.incrementAndGet(); return; }
+        (fromCorr ? RESOLVED_BY_CORR : RESOLVED_BY_BAGGAGE).incrementAndGet();
 
         // Auto-create context on first capture for this pathId. Out-of-process scout never
         // calls CaptureContextRegistry.register() — capture is the only signal of an active path.
@@ -125,16 +155,40 @@ public final class JdbcAgentBaggageBridge implements JdbcCaptureListener {
     /**
      * Reads OTEL Baggage current entry by key, via reflection so the bridge does not
      * hard-require {@code io.opentelemetry.api} on the classpath.
+     *
+     * <p>The bridge typically lives on {@code -Xbootclasspath/a:} (so the agent's listener
+     * SPI can load it), while the OTEL javaagent loads {@code io.opentelemetry.api.*} into
+     * the system / TCCL. {@link Class#forName(String)} from a bootstrap-loaded class would
+     * fail with {@code ClassNotFoundException} on those types, so we walk the classloader
+     * chain starting with the thread's context loader.
      */
+    static final java.util.concurrent.atomic.AtomicLong BAGGAGE_NO_CLASS = new java.util.concurrent.atomic.AtomicLong();
+    static final java.util.concurrent.atomic.AtomicLong BAGGAGE_NO_VALUE = new java.util.concurrent.atomic.AtomicLong();
+
     static String readBaggageReflectively(String key) {
+        Class<?> baggageCls = findClass("io.opentelemetry.api.baggage.Baggage");
+        if (baggageCls == null) { BAGGAGE_NO_CLASS.incrementAndGet(); return null; }
         try {
-            Class<?> baggageCls = Class.forName("io.opentelemetry.api.baggage.Baggage");
             Object current = baggageCls.getMethod("current").invoke(null);
-            // Resolve via interface so package-private impls dispatch correctly.
             Object value = baggageCls.getMethod("getEntryValue", String.class).invoke(current, key);
+            if (value == null) BAGGAGE_NO_VALUE.incrementAndGet();
             return value == null ? null : value.toString();
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private static Class<?> findClass(String name) {
+        ClassLoader[] loaders = new ClassLoader[] {
+                Thread.currentThread().getContextClassLoader(),
+                ClassLoader.getSystemClassLoader(),
+                JdbcAgentBaggageBridge.class.getClassLoader()
+        };
+        for (ClassLoader cl : loaders) {
+            if (cl == null) continue;
+            try { return Class.forName(name, false, cl); }
+            catch (ClassNotFoundException ignored) {}
+        }
+        return null;
     }
 }
