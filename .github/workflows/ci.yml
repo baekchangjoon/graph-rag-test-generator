@@ -29,6 +29,20 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      # graph-rag-builder depends on io.jdbcintercept:agent-api/agent-core via mavenLocal()
+      # (docs/19 — jdbc-intercept-agent bridge). Clone + publish before building graph-rag.
+      - name: Checkout jdbc-intercept-agent
+        uses: actions/checkout@v4
+        with:
+          repository: baekchangjoon/jdbc-intercept-agent
+          path: jdbc-intercept-agent
+          ref: main
+
+      - name: Publish jdbc-intercept-agent to Maven Local
+        run: |
+          cd jdbc-intercept-agent/jdbc-intercept-agent
+          ./gradlew publishToMavenLocal --no-daemon --stacktrace -x test
+
       - name: Build
         run: ./gradlew build --no-daemon --stacktrace
 
