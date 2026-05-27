@@ -1,0 +1,70 @@
+# scout-launcher sample — spring-petclinic + Postgres
+#
+# Prereqs (one-time):
+#   1) cd ~/github_jdbc-intercept-agent/jdbc-intercept-agent && ./gradlew publishToMavenLocal
+#   2) cd ~/graph-rag/graph-rag && ./gradlew -Pagent.enabled=true \
+#         :shared-model:publishToMavenLocal \
+#         :graph-rag-builder:publishToMavenLocal
+#   3) Build spring-petclinic SUT jar:
+#        cd ~/github_spring-petclinic/spring-petclinic && mvn -DskipTests package
+#
+# Run:
+#   ./gradlew :scout-launcher:installDist
+#   ./scout-launcher/build/install/scout-launcher/bin/scout-launcher \
+#       samples/scout/petclinic/config.yml
+
+sut:
+  jar: ${HOME}/github_spring-petclinic/spring-petclinic/target/spring-petclinic-4.0.0-SNAPSHOT.jar
+  args:
+    - --server.port=8084
+    - --spring.profiles.active=postgres
+    - --spring.datasource.url=jdbc:postgresql://localhost:55432/petclinic
+    - --spring.datasource.username=appuser
+    - --spring.datasource.password=apppass
+    - --spring.datasource.driver-class-name=org.postgresql.Driver
+
+  jvm-args:
+    - -Xmx512m
+
+  # jdbc-intercept-agent attaches via -javaagent and reads our bridge from boot classpath.
+  agents:
+    - ${HOME}/.m2/repository/io/jdbcintercept/agent-core/1.0.0-SNAPSHOT/agent-core-1.0.0-SNAPSHOT.jar
+
+  # graph-rag bridge + its deps go on the boot classpath so the agent's ServiceLoader can
+  # discover JdbcAgentBaggageBridge (which writes the archive on shutdown).
+  boot-classpath:
+    - ${HOME}/.m2/repository/io/graphrag/graph-rag-builder/0.1.0-SNAPSHOT/graph-rag-builder-0.1.0-SNAPSHOT.jar
+    - ${HOME}/.m2/repository/io/graphrag/shared-model/0.1.0-SNAPSHOT/shared-model-0.1.0-SNAPSHOT.jar
+    - ${HOME}/.m2/repository/io/jdbcintercept/agent-api/1.0.0-SNAPSHOT/agent-api-1.0.0-SNAPSHOT.jar
+    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-databind/2.18.2/jackson-databind-2.18.2.jar
+    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-core/2.18.2/jackson-core-2.18.2.jar
+    - ${HOME}/.m2/repository/com/fasterxml/jackson/core/jackson-annotations/2.18.2/jackson-annotations-2.18.2.jar
+
+  health-check:
+    url: http://localhost:8084/actuator/health
+    timeout-seconds: 60
+    interval-millis: 1000
+
+dependencies:
+  docker-compose:
+    file: ./samples/scout/petclinic/docker-compose.yml
+    wait-for-healthy: true
+    teardown-on-exit: true
+    health-timeout-seconds: 120
+
+scout:
+  base-url: http://localhost:8084
+  steps:
+    - path-id: list-owners
+      method: GET
+      path: /api/owners
+    - path-id: get-owner-1
+      method: GET
+      path: /api/owners/1
+    - path-id: list-vets
+      method: GET
+      path: /api/vets
+
+output:
+  archive-dir: /tmp/graph-rag-scout/petclinic-archive
+  clear-before-run: true

@@ -25,6 +25,7 @@ include(
     ":graph-rag-builder",
     ":test-generator",
     ":socket-capture-agent",
+    ":scout-launcher",
 )
 
 // Phase 0 PoC SUT (separate samples directory)

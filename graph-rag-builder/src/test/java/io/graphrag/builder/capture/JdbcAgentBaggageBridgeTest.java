@@ -95,11 +95,14 @@ class JdbcAgentBaggageBridgeTest {
     }
 
     @Test
-    void ignores_capture_when_no_matching_context() {
+    void auto_creates_context_on_first_capture_for_unregistered_path() {
+        // Out-of-process scout (no analysis-thread register) — bridge creates the
+        // CaptureContext lazily so the SUT-side shutdown hook can dump it.
         CapturedQuery q = new CapturedQuery(
-                "SELECT 1", List.of(), Optional.empty(), 0L, 0L, Optional.empty(), "no-such-path");
-        bridge.afterQuery(q);   // should not throw
-        assertThat(CaptureContextRegistry.size()).isZero();
+                "SELECT 1", List.of(), Optional.empty(), 0L, 0L, Optional.empty(), "auto-path");
+        bridge.afterQuery(q);
+        assertThat(CaptureContextRegistry.size()).isEqualTo(1);
+        assertThat(CaptureContextRegistry.forPathId("auto-path").capturedSql()).hasSize(1);
     }
 
     @Test
