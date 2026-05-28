@@ -201,4 +201,30 @@ class SampleInputGeneratorTest {
         assertThat(inputs.get(0).input().queryParams())
                 .containsExactly(java.util.Map.entry("page", "1"));
     }
+
+    @Test
+    void unboundUrlPlaceholdersAreDefaultedWhenMethodHasNoMatchingParameter() {
+        // initUpdateOwnerForm()-style: petclinic's handler method has NO @PathVariable
+        // parameters but the URL contains {ownerId} (bound via @ModelAttribute helper
+        // elsewhere in the controller). SampleInputGenerator must still produce a
+        // pathParams map that covers every URL placeholder so the orchestrator's
+        // defensive filter doesn't quarantine the endpoint.
+        MethodAnalysis ma = new MethodAnalysis(
+                "demo.Ctrl", "edit",
+                java.util.List.of(),
+                java.util.List.of(), java.util.List.of(),
+                io.graphrag.builder.staticanalysis.domain.ReturnType.of("void"));
+        Endpoint ep = new Endpoint(
+                "GET:/owners/{ownerId}/edit", io.graphrag.model.HttpMethod.GET,
+                "/owners/{ownerId}/edit", "demo", "demo.Ctrl", "edit",
+                false, java.util.List.of());
+
+        java.util.List<NamedSampleInput> inputs = SampleInputGenerator.generate(
+                ep, ma, BoundaryValueConfig.defaults(), item -> {});
+
+        assertThat(inputs.get(0).input().pathParams())
+                .as("URL placeholder {ownerId} should be filled with default \"1\" "
+                        + "when the handler has no matching @PathVariable")
+                .containsExactly(java.util.Map.entry("ownerId", "1"));
+    }
 }
