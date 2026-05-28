@@ -1,0 +1,11 @@
+sut:
+  jar: /tmp/fake.jar
+  health-check:
+    url: http://localhost:8080/actuator/health
+    timeout-seconds: 30
+    interval-millis: 1000
+
+output:
+  archive-dir: /tmp/orchestrator-test-archive
+  clear-before-run: false
+  project: petclinic

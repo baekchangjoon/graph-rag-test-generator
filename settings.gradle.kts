@@ -29,6 +29,7 @@ include(
     ":scout-step-translator",
     ":path-discovery-static",
     ":coverage-feedback",
+    ":orchestrator",
 )
 
 // Phase 0 PoC SUT (separate samples directory)
