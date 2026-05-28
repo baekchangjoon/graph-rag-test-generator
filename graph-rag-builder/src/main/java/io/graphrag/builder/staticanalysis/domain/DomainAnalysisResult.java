@@ -13,7 +13,7 @@ import java.util.Objects;
  *
  * <p>All collections are deterministic:
  * <ul>
- *   <li>{@code endpoints} sorted by {@code (path, method)}.</li>
+ *   <li>{@code endpoints} sorted by {@code (method, path)}.</li>
  *   <li>{@code classRoles}, {@code methodAnalyses} are insertion-ordered
  *       (insertion = path-sorted ParsedFile order).</li>
  * </ul>

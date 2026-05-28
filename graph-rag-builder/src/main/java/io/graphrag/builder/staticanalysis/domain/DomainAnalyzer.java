@@ -59,6 +59,7 @@ public final class DomainAnalyzer {
                 endpoints.addAll(EndpointExtractor.extract(cls, fqn, project));
             }
         });
+        // NB: sorted by (method, path) — primary by HTTP method name (alphabetical), secondary by path.
         endpoints.sort(Comparator
                 .<Endpoint, String>comparing(e -> e.method().name())
                 .thenComparing(Endpoint::path));
