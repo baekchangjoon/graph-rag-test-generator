@@ -96,25 +96,33 @@ one mvn test against petclinic plus scout-launcher's per-request capture.
 
 **Stage 3 quarantine summary** (iter-1; iters 2-3 are identical because the
 explorer is boundary-value-only and the same paths get re-emitted):
-- 11 paths discovered by Stage 1 but quarantined at Stage 2 for unbound
-  URL placeholders (Spring's `@PathVariable("ownerId") Owner owner`
-  pattern, where the Java param name diverges from the URL placeholder).
-- 26 of 53 captured steps quarantined by scout-launcher's strict-mode
+- 1 path discovered by Stage 1 but quarantined at Stage 2 — only the
+  `static_showResourcesVetList_happy` path, which has a malformed URL
+  template `{ "/vets" }` (a `@GetMapping(value = "/vets")` annotation
+  literal leaks into the path due to a `DomainAnalyzer` extraction bug).
+  Down from 11 in the prior round thanks to the URL-driven path-var
+  auto-fill (this PR's #3 fix).
+- 32 of 63 captured steps quarantined by scout-launcher's strict-mode
   (expected-status vs actual-status mismatch — the static analyzer
   predicts 404 for many invalid inputs that actually return 500 because
   petclinic doesn't have an `@ExceptionHandler` mapping for them yet).
+  The captured-step count rose from 53 to 63 — the auto-fill unlocked 10
+  more endpoints to flow through Stages 2-3.
 
-**Stage 4 output** (per iter): four RestAssured tests synthesized —
-`ResourceGetTest`, `TypesGetTest`, `FindGetTest`, `NewGetTest` (one per
-captured-but-non-quarantined GET endpoint with a happy-path archive).
+**Stage 4 output** (per iter): three RestAssured tests synthesized —
+`ResourceGetTest`, `TypesGetTest`, `FindGetTest`. (The previously-listed
+`NewGetTest` is gone because its underlying `static_initCreationForm_happy`
+path now flows through scout-launcher and gets strict-mode-quarantined due
+to expected-201 vs actual-200 from the form-render GET.)
 
 **Coverage attribution**: branch=0.561 reflects petclinic's own ~60 surefire
-tests. The 4 generated tests reach Surefire with the post-fix wiring (#1 closed:
-the wrapper now launches petclinic in background and exports `APP_BASE_URI`),
-but each one errors at runtime with a `NullPointerException` deep inside
-RestAssured 5.4.0's Groovy closure machinery — see "Known limitations" §1 for
-the residual ticket. The 60 petclinic-own tests still pass, so the loop has a
-real coverage signal to feed into Stage 6's termination decision.
+tests. The 3 generated tests reach Surefire with the post-fix wiring (SUT
+running, `APP_BASE_URI` exported), but each one still errors at runtime
+with a `NullPointerException` deep inside RestAssured's Groovy closure
+machinery — the version bump to 5.5.0 (and an experimental bump to 5.5.5)
+both reproduce the same NPE, so this is a fundamental RestAssured-on-JDK-17
+incompatibility, not a version-specific bug. See "Known limitations" §1
+for the deeper fix path (test-generator HTTP-client replacement).
 
 **Top missing branches** (29 total; full list in `final-report.md`):
 - security/JwtAuthenticationFilter:38, :48, :51 — auth filter paths (10 missed branches)
@@ -135,37 +143,39 @@ between runs.
 
 ## Known limitations (priority-ordered for follow-up work)
 
-1. **Generated RestAssured tests error at runtime.** PR #13's original
-   issue ("`baseURI` cannot be null, SUT not running") is now resolved:
-   the Stage 5 wrapper launches petclinic in background, waits for
-   `/actuator/health`, exports `APP_BASE_URI=http://localhost:$SUT_PORT`,
-   and stops the SUT on EXIT. But on JDK 17 + RestAssured 5.4.0, each
-   synthesized `given().when().get(...)` NPEs deep in Groovy's
-   `ClosureMetaClass.invokeOnDelegationObject` before the HTTP request
-   is sent. `--add-opens` on Surefire's `argLine` doesn't fix it — the
-   stack trace shows `java.lang.Class.isAssignableFrom(null)`, which is
-   a real null reference inside RestAssured's request-building closure,
-   not a module-access denial. Mitigations to try in a follow-up:
-   bump test-generator to RestAssured 5.5.x (drops some Groovy paths);
-   or have `TestSynthesizer` emit a `@SpringBootTest`-style template
-   that uses `TestRestTemplate` / `WebTestClient` instead of RestAssured.
+1. **RestAssured 5.x is fundamentally incompatible with JDK 17.** The PR #13
+   wiring (#1) is now fully closed: the Stage 5 wrapper launches petclinic
+   in background, waits for `/actuator/health`, exports `APP_BASE_URI`, and
+   stops the SUT on EXIT — the `--add-opens` argLine is passed through. But
+   *every* generated `given().when().get(...)` still NPEs at
+   `java.lang.Class.isAssignableFrom(null)` inside Groovy's
+   `ClosureMetaClass.invokeOnDelegationObject:367`. We tested versions
+   5.4.0, 5.5.0, and 5.5.5 — all reproduce identically. The closures live
+   in RestAssured's own `RequestSpecificationImpl.groovy` and the NPE
+   happens before any HTTP request is sent. **Fix path**: stop using
+   RestAssured. Have `TestSynthesizer` emit `@SpringBootTest`-based tests
+   that use `TestRestTemplate` or `WebTestClient` (Spring-coupled but
+   Groovy-free), or use the standard library `java.net.http.HttpClient`
+   (framework-neutral, no closure machinery). Both are bigger scope than
+   a version bump and were deferred from this PR. Tracking: residual #1.
 2. **Static path explorer is boundary-value-only.** Later iters regenerate
    the same paths unless Stage 6's `excludePaths` prunes them. The wrapper
    accumulates `iter-*/stage4-tests` so coverage is monotone, but with no
    new branches explored the loop hits `two_iterations_no_progress` quickly
    (as seen above — iters 2/3 produce identical coverage to iter-1).
-3. **petclinic's `@ModelAttribute`-resolved path-vars are unmodeled.** This
-   session's #3 fix landed (`Parameter.annotationValues`, `DomainAnalyzer`
-   extraction, `SampleInputGenerator.paramKey` — verified with unit tests
-   for `@PathVariable("name") Custom owner`, `@PathVariable(value=…)`,
-   `@PathVariable(name=…)`). But spring-petclinic 4.0 binds path vars at
-   the controller-class level via `@ModelAttribute findOwner(@PathVariable
-   Integer ownerId)` rather than on individual handler methods, so the
-   methods themselves have empty parameter lists and `SampleInputGenerator`
-   has nothing to key. The IterationRunner's defensive filter quarantines
-   those paths cleanly. Cross-method `@ModelAttribute` resolution is its
-   own analyzer feature, distinct from the `@PathVariable("x")` aliasing
-   case that #3 closes.
+3. **`DomainAnalyzer` leaks annotation literals into endpoint URLs.** The
+   `@PathVariable("name")` aliasing case (PR #13 + the runbook-fixes round)
+   stays closed via unit tests. The cross-method `@ModelAttribute`-bound
+   path-var case (where the handler method has no `@PathVariable` of its
+   own but the URL has `{ownerId}`) is now handled by the URL-driven
+   path-var auto-fill in `SampleInputGenerator` (this PR), which defaults
+   to `"1"`. One residual: at least one petclinic endpoint
+   (`static_showResourcesVetList_happy`) shows the analyzer extracted
+   `/{ "/vets" }` instead of `/vets` — the raw annotation-value pair
+   leaked into the URL. The orchestrator's defensive filter still
+   quarantines this (the placeholder name isn't a Java identifier so the
+   auto-fill regex correctly skips it). Fix lives in `EndpointExtractor`
+   / its `extractPrimaryAnnotationValue` helper.
 4. **`-Pagent.enabled=true` build flag still required.** Default-build
    `ArchiveShutdownWriter` references the source-excluded
    `JdbcAgentBaggageBridge`. Out of scope for this session; documented as
