@@ -109,8 +109,12 @@ explorer is boundary-value-only and the same paths get re-emitted):
 captured-but-non-quarantined GET endpoint with a happy-path archive).
 
 **Coverage attribution**: branch=0.561 reflects petclinic's own ~60 surefire
-tests; the 4 generated tests all error at runtime on `IllegalArgument: baseURI
-cannot be null` and contribute no coverage. See "Known limitations" §3.
+tests. The 4 generated tests reach Surefire with the post-fix wiring (#1 closed:
+the wrapper now launches petclinic in background and exports `APP_BASE_URI`),
+but each one errors at runtime with a `NullPointerException` deep inside
+RestAssured 5.4.0's Groovy closure machinery — see "Known limitations" §1 for
+the residual ticket. The 60 petclinic-own tests still pass, so the loop has a
+real coverage signal to feed into Stage 6's termination decision.
 
 **Top missing branches** (29 total; full list in `final-report.md`):
 - security/JwtAuthenticationFilter:38, :48, :51 — auth filter paths (10 missed branches)
@@ -131,25 +135,37 @@ between runs.
 
 ## Known limitations (priority-ordered for follow-up work)
 
-1. **Generated tests don't run against a live SUT.** `RestAssured.baseURI`
-   is never set in the synthesized tests, and scout-launcher has already
-   shut down petclinic by the time mvn test runs. The wrapper passes
-   `-Dmaven.test.failure.ignore=true` so mvn produces jacoco.xml anyway.
-   The right fix is either (a) emit `@BeforeAll RestAssured.baseURI =
-   "${scout.base-url}"` in the generated tests, or (b) use `@SpringBootTest`
-   with the test JVM owning the petclinic web context. (a) is smaller; it
-   lives in the test-generator's TestSynthesizer.
+1. **Generated RestAssured tests error at runtime.** PR #13's original
+   issue ("`baseURI` cannot be null, SUT not running") is now resolved:
+   the Stage 5 wrapper launches petclinic in background, waits for
+   `/actuator/health`, exports `APP_BASE_URI=http://localhost:$SUT_PORT`,
+   and stops the SUT on EXIT. But on JDK 17 + RestAssured 5.4.0, each
+   synthesized `given().when().get(...)` NPEs deep in Groovy's
+   `ClosureMetaClass.invokeOnDelegationObject` before the HTTP request
+   is sent. `--add-opens` on Surefire's `argLine` doesn't fix it — the
+   stack trace shows `java.lang.Class.isAssignableFrom(null)`, which is
+   a real null reference inside RestAssured's request-building closure,
+   not a module-access denial. Mitigations to try in a follow-up:
+   bump test-generator to RestAssured 5.5.x (drops some Groovy paths);
+   or have `TestSynthesizer` emit a `@SpringBootTest`-style template
+   that uses `TestRestTemplate` / `WebTestClient` instead of RestAssured.
 2. **Static path explorer is boundary-value-only.** Later iters regenerate
    the same paths unless Stage 6's `excludePaths` prunes them. The wrapper
    accumulates `iter-*/stage4-tests` so coverage is monotone, but with no
    new branches explored the loop hits `two_iterations_no_progress` quickly
    (as seen above — iters 2/3 produce identical coverage to iter-1).
-3. **`@PathVariable("name") Custom owner` pattern is unmodeled.** The static
-   analyzer's `SampleInputGenerator` keys pathParams by Java parameter name;
-   Spring's `@PathVariable.value()` annotation override isn't read.
-   IterationRunner's defensive filter quarantines such paths so the loop
-   doesn't abort, but they contribute no coverage. Fix lives in
-   `graph-rag-builder/staticanalysis/branch/SampleInputGenerator.java`.
+3. **petclinic's `@ModelAttribute`-resolved path-vars are unmodeled.** This
+   session's #3 fix landed (`Parameter.annotationValues`, `DomainAnalyzer`
+   extraction, `SampleInputGenerator.paramKey` — verified with unit tests
+   for `@PathVariable("name") Custom owner`, `@PathVariable(value=…)`,
+   `@PathVariable(name=…)`). But spring-petclinic 4.0 binds path vars at
+   the controller-class level via `@ModelAttribute findOwner(@PathVariable
+   Integer ownerId)` rather than on individual handler methods, so the
+   methods themselves have empty parameter lists and `SampleInputGenerator`
+   has nothing to key. The IterationRunner's defensive filter quarantines
+   those paths cleanly. Cross-method `@ModelAttribute` resolution is its
+   own analyzer feature, distinct from the `@PathVariable("x")` aliasing
+   case that #3 closes.
 4. **`-Pagent.enabled=true` build flag still required.** Default-build
    `ArchiveShutdownWriter` references the source-excluded
    `JdbcAgentBaggageBridge`. Out of scope for this session; documented as
