@@ -8,6 +8,7 @@ import io.graphrag.model.SampleInput;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,7 +58,9 @@ public final class SampleInputGenerator {
                 out.add(boundary(endpoint, params, p, variant, cfg));
             }
         }
-        return List.copyOf(out);
+        Set<String> phs = placeholdersOf(endpoint.path());
+        if (phs.isEmpty()) return List.copyOf(out);
+        return out.stream().map(ni -> fillUnboundPlaceholders(ni, phs)).toList();
     }
 
     private static List<Categorized> categorize(
@@ -157,6 +160,28 @@ public final class SampleInputGenerator {
     private static String paramKey(Parameter p, String annotationName) {
         String v = p.annotationValues().get(annotationName);
         return v != null && !v.isEmpty() ? v : p.name();
+    }
+
+    private static final java.util.regex.Pattern URL_PLACEHOLDER =
+            java.util.regex.Pattern.compile("\\{([^}]+)\\}");
+
+    private static Set<String> placeholdersOf(String urlTemplate) {
+        Set<String> out = new LinkedHashSet<>();
+        java.util.regex.Matcher m = URL_PLACEHOLDER.matcher(urlTemplate);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
+
+    private static NamedSampleInput fillUnboundPlaceholders(
+            NamedSampleInput named, Set<String> placeholders) {
+        Map<String, String> existing = named.input().pathParams();
+        if (existing.keySet().containsAll(placeholders)) return named;
+        LinkedHashMap<String, String> filled = new LinkedHashMap<>(existing);
+        for (String p : placeholders) filled.putIfAbsent(p, "1");
+        return new NamedSampleInput(
+                named.slug(), named.predictedStatus(),
+                new SampleInput(named.input().headers(), filled,
+                                named.input().queryParams(), named.input().body()));
     }
 
     private record Categorized(Parameter param, Source source) {}
