@@ -58,7 +58,13 @@ launch_sut() {
   fi
   mkdir -p "$(dirname "$SUT_LOG")"
   : > "$SUT_LOG"
-  java -jar "$SUT_JAR" \
+  # Prefer $JAVA_HOME/bin/java if set — petclinic targets Java 17 and the system
+  # `java` on PATH may be older (orchestrator's parent process exports JAVA_HOME).
+  local java_bin="java"
+  if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
+    java_bin="$JAVA_HOME/bin/java"
+  fi
+  "$java_bin" -jar "$SUT_JAR" \
     --server.port="$SUT_PORT" \
     --spring.profiles.active=postgres \
     --spring.datasource.url=jdbc:postgresql://localhost:55432/petclinic \
