@@ -161,8 +161,12 @@ launch_sut
   # Ignore test failures so jacoco.xml is still produced.
   # APP_BASE_URI is consumed by TestSynthesizer's @BeforeAll
   #   RestAssured.baseURI = System.getenv("APP_BASE_URI")
+  # argLine: RestAssured 5.x uses Groovy internals that need explicit module
+  # access under JDK 17+ — without these opens, `given().when().get(...)` NPEs
+  # inside Groovy's closure-meta-class machinery before the request even fires.
   APP_BASE_URI="http://localhost:$SUT_PORT" \
     mvn -q -DskipITs -Dspring-javaformat.skip=true -Dmaven.test.failure.ignore=true \
+        -DargLine="--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED" \
         test jacoco:report
 )
 
