@@ -41,6 +41,18 @@ class TerminationDecisionTest {
     }
 
     @Test
+    void two_empty_iterations_with_no_baseline_do_not_terminate() {
+        // History size 2 with both empty is the orchestrator's iter-2 state, where iter 1
+        // has a structurally-empty newly_covered (no previous-iteration baseline) and
+        // iter 2 also reported no progress. Iter 1's emptiness is vacuous, so iter 2
+        // deserves a chance before we declare convergence failure.
+        TerminationDecision d = TerminationDecision.decide(0.5, 0.85,
+                List.of(List.of(), List.of()));
+        assertThat(d.shouldTerminate()).isFalse();
+        assertThat(d.reason()).isNull();
+    }
+
+    @Test
     void non_consecutive_empties_do_not_terminate() {
         TerminationDecision d = TerminationDecision.decide(0.5, 0.85,
                 List.of(List.of(), List.of("y"), List.of()));

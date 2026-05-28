@@ -13,7 +13,10 @@ import java.util.List;
  *   <li>{@code two_iterations_no_progress} — the last two iterations both had
  *       an empty {@code newly_covered}. Catches the case where Stage 1 keeps
  *       re-finding the same paths but can't reach more branches (R6 — no
- *       convergence guarantee).</li>
+ *       convergence guarantee). Requires at least 3 iterations of history,
+ *       because iteration 1 has no previous baseline to compare against and
+ *       therefore reports a structurally-empty {@code newly_covered} that
+ *       must not count toward the no-progress rule.</li>
  *   <li>{@code zero_paths_discovered} — Stage 1 returned no paths at all
  *       (typically a configuration error). Surface and stop rather than loop.</li>
  * </ol>
@@ -33,7 +36,11 @@ public record TerminationDecision(
             return new TerminationDecision(true, "target_reached", true);
         }
         int n = historyOfNewlyCovered.size();
-        if (n >= 2
+        // Need at least 3 iterations: iter 1 has no previous-iteration baseline so
+        // CoverageDeltaCalculator returns an empty newly_covered for it regardless
+        // of progress. Counting that vacuous emptiness toward the rule would let it
+        // fire at iter 2 even when iter 2 itself genuinely covered new branches.
+        if (n >= 3
                 && historyOfNewlyCovered.get(n - 1).isEmpty()
                 && historyOfNewlyCovered.get(n - 2).isEmpty()) {
             return new TerminationDecision(true, "two_iterations_no_progress", false);
