@@ -17,8 +17,9 @@ class OrchestratorE2eTest {
 
     /**
      * Full orchestration loop with fake external stages. Stages 1, 2, 6 are real
-     * (in-process via PathDiscoveryStatic, ScoutStepTranslator, CoverageFeedback);
-     * stages 3, 4, 5 are simulated by a fake that drops the expected output files.
+     * (in-process via AstParser → DomainAnalyzer → BranchAnalyzer,
+     * ScoutStepTranslator, CoverageFeedback); stages 3, 4, 5 are simulated by a
+     * fake that drops the expected output files.
      */
     @Test
     void single_iteration_target_reached_terminates_and_writes_report(@TempDir Path tmp)

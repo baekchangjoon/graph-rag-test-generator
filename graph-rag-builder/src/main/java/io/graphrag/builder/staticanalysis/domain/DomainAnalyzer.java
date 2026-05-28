@@ -27,7 +27,7 @@ import java.util.Set;
  *   <li>Build the in-project {@link CallGraph} across all parsed compilation units.</li>
  * </ol>
  *
- * <p>{@link DomainAnalysisResult#endpoints()} is sorted by {@code (path, method)};
+ * <p>{@link DomainAnalysisResult#endpoints()} is sorted by {@code (method, path)};
  * {@link DomainAnalysisResult#classRoles()} and {@link DomainAnalysisResult#methodAnalyses()}
  * are insertion-ordered (insertion = path-sorted ParsedFile order).
  */

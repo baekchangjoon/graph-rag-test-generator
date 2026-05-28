@@ -83,6 +83,10 @@ public record StaticAnalysisReport(
                 .filter(p -> p.id().endsWith("_happy")).count();
         long boundary = branch.paths().size() - happy;
 
+        int endpointsAfterExclude = (int) domain.endpoints().stream()
+                .filter(e -> !opts.excludePaths().contains(e.id()))
+                .count();
+
         return new StaticAnalysisReport(
                 OffsetDateTime.now(ZoneOffset.UTC).toString(),
                 durationMs,
@@ -90,7 +94,7 @@ public record StaticAnalysisReport(
                 opts.project(),
                 new Parsing(filesScanned, ast.parsedFiles().size(),
                         ast.failures().size(), failureItems),
-                new Analysis(domain.endpoints().size(),
+                new Analysis(endpointsAfterExclude,
                         controllers, services, repositories, domains,
                         branchesIdentified),
                 new PathGeneration(branch.paths().size(),

@@ -27,8 +27,8 @@ public record StaticAnalysisOptions(
         Objects.requireNonNull(project, "project");
         Objects.requireNonNull(out, "out");
         Objects.requireNonNull(codeVersion, "codeVersion");
-        if (maxPathsPerEndpoint < 0)
-            throw new IllegalArgumentException("maxPathsPerEndpoint must be >= 0");
+        if (maxPathsPerEndpoint < 1)
+            throw new IllegalArgumentException("maxPathsPerEndpoint must be >= 1");
         excludePaths = Set.copyOf(Objects.requireNonNull(excludePaths, "excludePaths"));
     }
 }

@@ -55,7 +55,7 @@ dependencies {
     compileOnly("io.opentelemetry:opentelemetry-api:1.49.0")
 
     // JavaParser symbol-solver — Stage 1 static analysis (staticanalysis package).
-    // Version aligned with :path-discovery-static (javaparser-core 3.26.2).
+    // Keep version in sync with the AST parsing stack (javaparser-core 3.26.2).
     implementation("com.github.javaparser:javaparser-symbol-solver-core:3.26.2")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
