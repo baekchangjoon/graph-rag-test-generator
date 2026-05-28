@@ -64,6 +64,7 @@ class PetclinicStage5ScriptTest {
         env.put("PETCLINIC_DIR", petclinic.toString());
         env.put("TEST_PACKAGE", "com.example.petclinic.tests");
         env.put("PATH", stubBin + ":" + System.getenv("PATH"));
+        env.put("SKIP_SUT_LAUNCH", "1");
 
         ProcessBuilder pb = new ProcessBuilder(
                 "bash", script.toString(),
@@ -95,6 +96,7 @@ class PetclinicStage5ScriptTest {
         ProcessBuilder pb = new ProcessBuilder("bash", script.toString(),
                 testsDir.toString(), tmp.resolve("jacoco.xml").toString());
         pb.environment().put("PETCLINIC_DIR", emptyDir.toString());
+        pb.environment().put("SKIP_SUT_LAUNCH", "1");
         pb.redirectErrorStream(true);
         Process p = pb.start();
         String stdout = new String(p.getInputStream().readAllBytes());
@@ -115,6 +117,7 @@ class PetclinicStage5ScriptTest {
                 tmp.resolve("does-not-exist").toString(),
                 tmp.resolve("jacoco.xml").toString());
         pb.environment().put("PETCLINIC_DIR", petclinic.toString());
+        pb.environment().put("SKIP_SUT_LAUNCH", "1");
         pb.redirectErrorStream(true);
         Process p = pb.start();
         int rc = p.waitFor();
@@ -152,6 +155,7 @@ class PetclinicStage5ScriptTest {
         pb.environment().put("TEST_PACKAGE", "com.example.petclinic.tests");
         pb.environment().put("PATH",
                 stubBin + ":" + System.getenv("PATH"));
+        pb.environment().put("SKIP_SUT_LAUNCH", "1");
         pb.redirectErrorStream(true);
         Process p = pb.start();
         int rc = p.waitFor();
@@ -160,5 +164,58 @@ class PetclinicStage5ScriptTest {
         Path injected = petclinic.resolve("src/test/java/com/example/petclinic/tests");
         assertThat(injected).as("cleanup trap should fire even on failure")
                 .doesNotExist();
+    }
+
+    @Test
+    void exportsAppBaseUriIntoMvnEnv(@TempDir Path tmp) throws Exception {
+        Path projectRoot = Path.of(System.getProperty("user.dir")).getParent();
+        Path script = projectRoot.resolve("scripts/petclinic-stage5.sh");
+
+        Path stubBin = tmp.resolve("stub-bin");
+        Files.createDirectories(stubBin);
+        Path sentinel = tmp.resolve("app-base-uri.txt");
+        Path mvnStub = stubBin.resolve("mvn");
+        Files.writeString(mvnStub, """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                # Record APP_BASE_URI to a sentinel so the test can assert propagation.
+                printf '%%s' "${APP_BASE_URI:-<unset>}" > "%s"
+                # Honor the wrapper's contract: emit a usable jacoco.xml.
+                mkdir -p target/site/jacoco
+                cat > target/site/jacoco/jacoco.xml <<'XML'
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <report name="petclinic"></report>
+                XML
+                """.formatted(sentinel));
+        Files.setPosixFilePermissions(mvnStub,
+                PosixFilePermissions.fromString("rwxr-xr-x"));
+
+        Path petclinic = tmp.resolve("fake-petclinic");
+        Files.createDirectories(petclinic.resolve("src/test/java"));
+        Files.writeString(petclinic.resolve("pom.xml"), "<project/>");
+
+        Path iter1Tests = tmp.resolve("out/iter-1/stage4-tests");
+        Files.createDirectories(iter1Tests);
+
+        Path jacocoOut = tmp.resolve("out/iter-1/stage5-jacoco.xml");
+        Files.createDirectories(jacocoOut.getParent());
+
+        ProcessBuilder pb = new ProcessBuilder(
+                "bash", script.toString(),
+                iter1Tests.toString(), jacocoOut.toString());
+        pb.environment().put("PETCLINIC_DIR", petclinic.toString());
+        pb.environment().put("TEST_PACKAGE", "com.example.petclinic.tests");
+        pb.environment().put("PATH", stubBin + ":" + System.getenv("PATH"));
+        pb.environment().put("SKIP_SUT_LAUNCH", "1");
+        pb.environment().put("SUT_PORT", "9999");  // distinct from the default 8084
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String stdout = new String(p.getInputStream().readAllBytes());
+        int rc = p.waitFor();
+        assertThat(rc).as("stdout:\n%s", stdout).isZero();
+
+        assertThat(Files.readString(sentinel))
+                .as("APP_BASE_URI should reflect SUT_PORT=9999")
+                .isEqualTo("http://localhost:9999");
     }
 }
