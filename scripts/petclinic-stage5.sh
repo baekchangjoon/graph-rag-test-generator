@@ -123,7 +123,7 @@ with open(pom) as f: content = f.read()
 inject = '''    <dependency>
       <groupId>io.rest-assured</groupId>
       <artifactId>rest-assured</artifactId>
-      <version>5.4.0</version>
+      <version>5.5.0</version>
       <scope>test</scope>
     </dependency>
   </dependencies>'''
