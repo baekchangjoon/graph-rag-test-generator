@@ -104,9 +104,12 @@ public final class SampleInputGenerator {
         Object body = null;
         for (Categorized c : params) {
             switch (c.source) {
-                case PATH   -> pathParams.put(c.param.name(), BoundaryValueGenerator.happy(c.param.type(), cfg));
-                case QUERY  -> queryParams.put(c.param.name(), BoundaryValueGenerator.happy(c.param.type(), cfg));
-                case HEADER -> headers.put(c.param.name(), BoundaryValueGenerator.happy(c.param.type(), cfg));
+                case PATH   -> pathParams.put(paramKey(c.param, "PathVariable"),
+                                              BoundaryValueGenerator.happy(c.param.type(), cfg));
+                case QUERY  -> queryParams.put(paramKey(c.param, "RequestParam"),
+                                               BoundaryValueGenerator.happy(c.param.type(), cfg));
+                case HEADER -> headers.put(paramKey(c.param, "RequestHeader"),
+                                           BoundaryValueGenerator.happy(c.param.type(), cfg));
                 case BODY   -> body = new LinkedHashMap<>();
                 default -> { /* ignored */ }
             }
@@ -127,9 +130,10 @@ public final class SampleInputGenerator {
                     ? variantValue
                     : BoundaryValueGenerator.happy(c.param.type(), cfg);
             switch (c.source) {
-                case PATH   -> pathParams.put(c.param.name(), value);
-                case QUERY  -> queryParams.put(c.param.name(), value);
-                case HEADER -> headers.put(c.param.name(), BoundaryValueGenerator.happy(c.param.type(), cfg));
+                case PATH   -> pathParams.put(paramKey(c.param, "PathVariable"), value);
+                case QUERY  -> queryParams.put(paramKey(c.param, "RequestParam"), value);
+                case HEADER -> headers.put(paramKey(c.param, "RequestHeader"),
+                                           BoundaryValueGenerator.happy(c.param.type(), cfg));
                 case BODY   -> body = new LinkedHashMap<>();
                 default -> { /* ignored */ }
             }
@@ -148,6 +152,11 @@ public final class SampleInputGenerator {
 
     private static int happyStatus(HttpMethod m) {
         return m == HttpMethod.POST ? 201 : 200;
+    }
+
+    private static String paramKey(Parameter p, String annotationName) {
+        String v = p.annotationValues().get(annotationName);
+        return v != null && !v.isEmpty() ? v : p.name();
     }
 
     private record Categorized(Parameter param, Source source) {}

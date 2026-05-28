@@ -1,0 +1,53 @@
+# scout-launcher template — spring-petclinic + Postgres.
+# Used by the orchestrator's Stage 2: ScoutStepTranslator overwrites the entire
+# `scout:` block per-iteration with paths from Stage 1, and IterationRunner
+# overwrites `output.archive-dir` with the iter-specific stage3-archive path.
+
+sut:
+  jar: ${HOME}/github_spring-petclinic/spring-petclinic/target/spring-petclinic-4.0.0-SNAPSHOT.jar
+  args:
+    - --server.port=8084
+    - --spring.profiles.active=postgres
+    - --spring.datasource.url=jdbc:postgresql://localhost:55432/petclinic
+    - --spring.datasource.username=appuser
+    - --spring.datasource.password=apppass
+    - --spring.datasource.driver-class-name=org.postgresql.Driver
+
+  jvm-args:
+    - -Xmx512m
+
+  agents:
+    - ${HOME}/.m2/repository/io/jdbcintercept/agent-core/1.0.0-SNAPSHOT/agent-core-1.0.0-SNAPSHOT.jar
+
+  boot-classpath:
+    - ${HOME}/.m2/repository/io/graphrag/graph-rag-builder/0.1.0-SNAPSHOT/graph-rag-builder-0.1.0-SNAPSHOT.jar
+    - ${HOME}/.m2/repository/io/graphrag/shared-model/0.1.0-SNAPSHOT/shared-model-0.1.0-SNAPSHOT.jar
+    - ${HOME}/.m2/repository/io/jdbcintercept/agent-api/1.0.0-SNAPSHOT/agent-api-1.0.0-SNAPSHOT.jar
+
+  health-check:
+    url: http://localhost:8084/actuator/health
+    timeout-seconds: 60
+    interval-millis: 1000
+
+  otel:
+    enabled: true
+
+dependencies:
+  docker-compose:
+    file: ./samples/scout/petclinic/docker-compose.yml
+    wait-for-healthy: true
+    # Keep containers up across iterations — the orchestrator's 5-iter loop would
+    # otherwise pay a ~30 s cold-start tax per iter. The runbook tells the operator
+    # to tear them down with `docker compose down` at the end.
+    teardown-on-exit: false
+    health-timeout-seconds: 120
+
+output:
+  # Placeholder — IterationRunner overwrites this with iter-N/stage3-archive per iter.
+  archive-dir: /tmp/graph-rag-scout/petclinic-archive
+  clear-before-run: true
+  preserve-files:
+    - paths.json
+    - endpoints.json
+  strict-mode: true
+  project: petclinic

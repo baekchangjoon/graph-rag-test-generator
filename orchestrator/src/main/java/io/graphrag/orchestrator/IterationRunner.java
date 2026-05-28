@@ -2,6 +2,9 @@ package io.graphrag.orchestrator;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import io.graphrag.builder.staticanalysis.ast.AstParseResult;
 import io.graphrag.builder.staticanalysis.ast.AstParser;
 import io.graphrag.builder.staticanalysis.branch.BoundaryValueConfig;
@@ -16,6 +19,7 @@ import io.graphrag.feedback.FocusHintGenerator;
 import io.graphrag.feedback.JaCoCoXmlParser;
 import io.graphrag.feedback.TerminationDecision;
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.ExploredPath;
 import io.graphrag.model.JsonMappers;
 import io.graphrag.translator.ScoutStepTranslator;
 
@@ -24,9 +28,13 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Runs one iteration end-to-end. Owns the in-process stages 1, 2, 6 directly and
@@ -79,14 +87,46 @@ final class IterationRunner {
                 /* maxPathsPerEndpoint */ 10,
                 BoundaryValueConfig.defaults(),
                 excludePaths);
+        // Defensive filter: drop paths whose endpoint URL has un-substituted {name}
+        // placeholders that the static analyzer's SampleInputGenerator failed to fill.
+        // Petclinic-style @PathVariable("ownerId") Owner owner — where the Java
+        // parameter name (owner) diverges from the URL placeholder (ownerId) — is the
+        // canonical trigger. Without this filter the translator throws and the whole
+        // iteration aborts; with it, those endpoints are silently quarantined and the
+        // loop continues on the bindable subset.
+        Map<String, Endpoint> endpointById = new HashMap<>();
+        for (Endpoint e : domain.endpoints()) endpointById.put(e.id(), e);
+        List<ExploredPath> bindablePaths = new ArrayList<>();
+        List<String> unboundSkipped = new ArrayList<>();
+        for (ExploredPath p : branch.paths()) {
+            Endpoint ep = endpointById.get(p.endpointId());
+            if (ep == null) continue;
+            Set<String> placeholders = extractPlaceholders(ep.path());
+            if (placeholders.isEmpty()
+                    || p.sampleInput().pathParams().keySet().containsAll(placeholders)) {
+                bindablePaths.add(p);
+            } else {
+                Set<String> missing = new HashSet<>(placeholders);
+                missing.removeAll(p.sampleInput().pathParams().keySet());
+                unboundSkipped.add(p.id() + " (missing " + missing + ")");
+            }
+        }
+        if (!unboundSkipped.isEmpty()) {
+            log.println("[orchestrator] Stage 1 quarantined " + unboundSkipped.size()
+                    + " unbound-path-template paths: " + unboundSkipped);
+        }
+
+        Set<String> bindableEndpointIds = new HashSet<>();
+        for (ExploredPath p : bindablePaths) bindableEndpointIds.add(p.endpointId());
         List<Endpoint> endpointsToWrite = domain.endpoints().stream()
                 .filter(e -> !excludePaths.contains(e.id()))
+                .filter(e -> bindableEndpointIds.contains(e.id()))
                 .toList();
         Files.createDirectories(layout.stage1Discovery());
         M.writerWithDefaultPrettyPrinter()
                 .writeValue(layout.stage1Endpoints().toFile(), endpointsToWrite);
         M.writerWithDefaultPrettyPrinter()
-                .writeValue(layout.stage1Paths().toFile(), branch.paths());
+                .writeValue(layout.stage1Paths().toFile(), bindablePaths);
 
         if (endpointsToWrite.isEmpty()) {
             log.println("[orchestrator] Stage 1 produced zero endpoints — halting iteration");
@@ -100,11 +140,53 @@ final class IterationRunner {
                 cfg.scoutConfigTemplate(),
                 layout.stage2Config());
 
+        // Stage 2 step (b): repoint scout-launcher's archive output at this iter's slot.
+        // ExternalStageRunner.Shell.runScout ignores its archiveDir arg and just spawns
+        // scout-launcher on the YAML, so the YAML itself has to carry the per-iter path.
+        ObjectMapper iterYaml = new ObjectMapper(new YAMLFactory()
+                .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER));
+        ObjectNode iterRoot = (ObjectNode) iterYaml.readTree(layout.stage2Config().toFile());
+        iterRoot.with("output").put("archive-dir", layout.stage3Archive().toString());
+        // Resolve ${VAR} / $VAR shell-style env-var placeholders in every string scalar.
+        // The template uses ${HOME} for portability, but Jackson's YAML re-serializer
+        // quotes those strings on write-back, which scout-launcher's snakeyaml-time
+        // resolver no longer sees. Resolving them here makes the on-disk YAML carry
+        // absolute paths regardless of quoting.
+        resolveEnvVarsInTree(iterRoot);
+        Files.write(layout.stage2Config(),
+                iterYaml.writerWithDefaultPrettyPrinter().writeValueAsString(iterRoot).getBytes());
+
         log.println("=== iter " + iterIndex + " — Stage 3 (scout-launcher) ===");
         external.runScout(layout.stage2Config(), layout.stage3Archive());
 
+        // Bridge scout-launcher's per-path-id subdir layout to test-generator's flat
+        // archive layout. scout writes <archive>/<path-id>/{endpoints,paths,...}.json;
+        // test-generator's ArchiveReader.load reads endpoints.json and paths.json from
+        // the archive root. Aggregate up to root (dedup endpoints by id; concatenate
+        // paths). Quarantined paths (under <archive>/quarantine/...) are NOT aggregated
+        // — they're left out so test-generator naturally skips them.
+        // Returns true if at least one per-path-id subdir existed (real scout output);
+        // false in the fake/empty-archive case where downstream stages also no-op.
+        boolean aggregated = aggregatePerPathArchiveToRoot(layout.stage3Archive());
+
         log.println("=== iter " + iterIndex + " — Stage 4 (test-generator per endpoint) ===");
-        List<String> endpointIds = endpointsToWrite.stream().map(Endpoint::id).toList();
+        // Real-scout path: filter endpoints to those that survived strict-mode quarantine
+        // (i.e. have a captured subdir on disk). FakeExternal path: aggregator no-op'd,
+        // so we pass all bindable endpoints through unchanged.
+        List<String> endpointIds;
+        if (aggregated) {
+            Set<String> coveredEndpointIds = readEndpointIdsFromArchiveRoot(layout.stage3Archive());
+            endpointIds = endpointsToWrite.stream()
+                    .map(Endpoint::id)
+                    .filter(coveredEndpointIds::contains)
+                    .toList();
+            if (endpointIds.isEmpty()) {
+                log.println("[orchestrator] Stage 3 produced zero captured endpoints — halting iteration");
+                return Outcome.zeroPaths(layout);
+            }
+        } else {
+            endpointIds = endpointsToWrite.stream().map(Endpoint::id).toList();
+        }
         external.runTestGenerator(layout.stage3Archive(), endpointIds,
                 cfg.testPackage(), layout.stage4Tests());
 
@@ -144,6 +226,114 @@ final class IterationRunner {
         CoverageDelta d = M.readValue(Files.readAllBytes(layout.stage6Delta()),
                 new TypeReference<>() {});
         return d.stillMissing();
+    }
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^}]+)\\}");
+
+    static Set<String> extractPlaceholders(String pathTemplate) {
+        Set<String> out = new HashSet<>();
+        Matcher m = PLACEHOLDER.matcher(pathTemplate);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
+
+    private static final Pattern ENV_VAR = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)");
+
+    static String resolveEnvVars(String raw) {
+        Matcher m = ENV_VAR.matcher(raw);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String name = m.group(1) != null ? m.group(1) : m.group(2);
+            String value = System.getenv(name);
+            if (value == null && "HOME".equals(name)) value = System.getProperty("user.home");
+            m.appendReplacement(sb, Matcher.quoteReplacement(value != null ? value : m.group()));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /**
+     * Walk one level deep under archiveRoot, merging each per-path-id subdir's
+     * {@code endpoints.json} + {@code paths.json} into root-level files of the same
+     * names so {@link io.graphrag.generator.archive.ArchiveReader} (which expects a
+     * flat layout) can read them. Skips the {@code quarantine/} subtree.
+     *
+     * @return {@code true} if at least one captured per-path-id subdir was aggregated
+     *         (real scout output). {@code false} when the archive root is missing or
+     *         contains no per-path-id subdirs (fake-external / empty-archive case);
+     *         no root files are written in that case.
+     */
+    static boolean aggregatePerPathArchiveToRoot(Path archiveRoot) throws IOException {
+        if (!Files.exists(archiveRoot)) return false;
+        com.fasterxml.jackson.databind.node.ArrayNode endpoints = M.createArrayNode();
+        com.fasterxml.jackson.databind.node.ArrayNode paths = M.createArrayNode();
+        Set<String> seenEndpointIds = new HashSet<>();
+        int subdirsConsidered = 0;
+        try (var stream = Files.list(archiveRoot)) {
+            for (Path child : stream.filter(Files::isDirectory).toList()) {
+                if ("quarantine".equals(child.getFileName().toString())) continue;
+                subdirsConsidered++;
+                Path epFile = child.resolve("endpoints.json");
+                if (Files.exists(epFile)) {
+                    com.fasterxml.jackson.databind.JsonNode arr = M.readTree(epFile.toFile());
+                    if (arr.isArray()) {
+                        for (com.fasterxml.jackson.databind.JsonNode ep : arr) {
+                            String id = ep.path("id").asText();
+                            if (!id.isEmpty() && seenEndpointIds.add(id)) endpoints.add(ep);
+                        }
+                    }
+                }
+                Path pathsFile = child.resolve("paths.json");
+                if (Files.exists(pathsFile)) {
+                    com.fasterxml.jackson.databind.JsonNode arr = M.readTree(pathsFile.toFile());
+                    if (arr.isArray()) for (com.fasterxml.jackson.databind.JsonNode p : arr) paths.add(p);
+                }
+            }
+        }
+        if (subdirsConsidered == 0) return false;
+        M.writerWithDefaultPrettyPrinter()
+                .writeValue(archiveRoot.resolve("endpoints.json").toFile(), endpoints);
+        M.writerWithDefaultPrettyPrinter()
+                .writeValue(archiveRoot.resolve("paths.json").toFile(), paths);
+        return true;
+    }
+
+    static Set<String> readEndpointIdsFromArchiveRoot(Path archiveRoot) throws IOException {
+        Path file = archiveRoot.resolve("endpoints.json");
+        if (!Files.exists(file)) return Set.of();
+        com.fasterxml.jackson.databind.JsonNode arr = M.readTree(file.toFile());
+        Set<String> out = new HashSet<>();
+        if (arr.isArray()) for (com.fasterxml.jackson.databind.JsonNode ep : arr) {
+            String id = ep.path("id").asText();
+            if (!id.isEmpty()) out.add(id);
+        }
+        return out;
+    }
+
+    private static void resolveEnvVarsInTree(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            obj.fieldNames().forEachRemaining(field -> {
+                com.fasterxml.jackson.databind.JsonNode child = obj.get(field);
+                if (child.isTextual()) {
+                    obj.put(field, resolveEnvVars(child.asText()));
+                } else {
+                    resolveEnvVarsInTree(child);
+                }
+            });
+        } else if (node.isArray()) {
+            com.fasterxml.jackson.databind.node.ArrayNode arr =
+                    (com.fasterxml.jackson.databind.node.ArrayNode) node;
+            for (int i = 0; i < arr.size(); i++) {
+                com.fasterxml.jackson.databind.JsonNode child = arr.get(i);
+                if (child.isTextual()) {
+                    arr.set(i, com.fasterxml.jackson.databind.node.TextNode.valueOf(
+                            resolveEnvVars(child.asText())));
+                } else {
+                    resolveEnvVarsInTree(child);
+                }
+            }
+        }
     }
 
     /** Per-iteration outcome the outer loop reads. */

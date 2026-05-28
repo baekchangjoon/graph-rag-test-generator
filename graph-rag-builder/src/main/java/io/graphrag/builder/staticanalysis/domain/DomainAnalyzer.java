@@ -3,12 +3,15 @@ package io.graphrag.builder.staticanalysis.domain;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
+import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.MemberValuePair;
 import io.graphrag.builder.staticanalysis.ast.AstParseResult;
 import io.graphrag.builder.staticanalysis.ast.ParsedFile;
 import io.graphrag.model.Endpoint;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -87,11 +90,14 @@ public final class DomainAnalyzer {
         List<io.graphrag.builder.staticanalysis.domain.Parameter> params = new ArrayList<>();
         for (Parameter p : m.getParameters()) {
             List<String> annNames = p.getAnnotations().stream()
-                    .map(a -> a.getNameAsString()).toList();
+                    .map(AnnotationExpr::getNameAsString).toList();
+            Map<String, String> annValues = new HashMap<>();
+            for (AnnotationExpr a : p.getAnnotations()) {
+                String v = extractPrimaryAnnotationValue(a);
+                if (v != null) annValues.put(a.getNameAsString(), v);
+            }
             params.add(new io.graphrag.builder.staticanalysis.domain.Parameter(
-                    p.getNameAsString(),
-                    p.getTypeAsString(),
-                    annNames));
+                    p.getNameAsString(), p.getTypeAsString(), annNames, annValues));
         }
         List<Branch> branches = BranchExtractor.extract(m, classFqn);
         // outgoingCalls populated by CallGraphBuilder when the per-method view is needed;
@@ -105,6 +111,29 @@ public final class DomainAnalyzer {
                 branches,
                 /* outgoingCalls */ List.of(),
                 rt);
+    }
+
+    private static String extractPrimaryAnnotationValue(AnnotationExpr a) {
+        if (a.isSingleMemberAnnotationExpr()) {
+            return unquoteStringLiteral(
+                    a.asSingleMemberAnnotationExpr().getMemberValue().toString());
+        }
+        if (a.isNormalAnnotationExpr()) {
+            for (MemberValuePair pair : a.asNormalAnnotationExpr().getPairs()) {
+                String pname = pair.getNameAsString();
+                if ("value".equals(pname) || "name".equals(pname)) {
+                    return unquoteStringLiteral(pair.getValue().toString());
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String unquoteStringLiteral(String raw) {
+        if (raw.length() >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
+            return raw.substring(1, raw.length() - 1);
+        }
+        return raw;
     }
 
     /**

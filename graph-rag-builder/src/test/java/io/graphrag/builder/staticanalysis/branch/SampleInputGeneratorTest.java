@@ -149,4 +149,56 @@ class SampleInputGeneratorTest {
 
         assertThat(r1).isEqualTo(r2);
     }
+
+    @Test
+    void pathVariableWithExplicitNameUsesAnnotationValueAsKey() {
+        // @PathVariable("ownerId") Owner owner — the URL placeholder is "ownerId"
+        // but the Java parameter name is "owner". The pathParams key must be
+        // "ownerId", not "owner", or the orchestrator's placeholder filter
+        // will quarantine the path.
+        Parameter renamed = new Parameter(
+                "owner",
+                "int",
+                java.util.List.of("PathVariable"),
+                java.util.Map.of("PathVariable", "ownerId"));
+        MethodAnalysis ma = new MethodAnalysis(
+                "demo.Ctrl", "show",
+                java.util.List.of(renamed),
+                java.util.List.of(),
+                java.util.List.of(),
+                ReturnType.of("void"));
+        Endpoint ep = new Endpoint("GET:/owners/{ownerId}", io.graphrag.model.HttpMethod.GET,
+                "/owners/{ownerId}", "demo", "demo.Ctrl", "show", false, java.util.List.of());
+
+        java.util.List<NamedSampleInput> inputs = SampleInputGenerator.generate(
+                ep, ma, BoundaryValueConfig.defaults(), item -> {});
+
+        assertThat(inputs.get(0).input().pathParams())
+                .as("happy path key should be the annotation value, not Java param name")
+                .containsExactly(java.util.Map.entry("ownerId", "1"));
+    }
+
+    @Test
+    void requestParamWithExplicitNameUsesAnnotationValueAsKey() {
+        // @RequestParam("page") int pageNum — same rename pattern but for query params.
+        Parameter renamed = new Parameter(
+                "pageNum",
+                "Integer",
+                java.util.List.of("RequestParam"),
+                java.util.Map.of("RequestParam", "page"));
+        MethodAnalysis ma = new MethodAnalysis(
+                "demo.Ctrl", "list",
+                java.util.List.of(renamed),
+                java.util.List.of(),
+                java.util.List.of(),
+                ReturnType.of("void"));
+        Endpoint ep = new Endpoint("GET:/items", io.graphrag.model.HttpMethod.GET,
+                "/items", "demo", "demo.Ctrl", "list", false, java.util.List.of());
+
+        java.util.List<NamedSampleInput> inputs = SampleInputGenerator.generate(
+                ep, ma, BoundaryValueConfig.defaults(), item -> {});
+
+        assertThat(inputs.get(0).input().queryParams())
+                .containsExactly(java.util.Map.entry("page", "1"));
+    }
 }
