@@ -108,7 +108,9 @@ fi
 
 mkdir -p "$(dirname "$JACOCO_OUT")"
 # Strip the JaCoCo <!DOCTYPE ...> declaration so JaCoCoXmlParser (XXE-hardened,
-# rejects ALL DOCTYPE) can parse the report. The DOCTYPE is purely documentary
-# in JaCoCo's output and removing it doesn't affect the coverage data.
-sed -E '/<!DOCTYPE[[:space:]]+report[^>]*>/d' "$JACOCO_SRC" > "$JACOCO_OUT"
+# rejects ALL DOCTYPE) can parse the report. JaCoCo emits the whole XML on a
+# single line, so use substitution (in-line) instead of line deletion to avoid
+# nuking the report. The DOCTYPE is purely documentary in JaCoCo's output and
+# removing it doesn't affect the coverage data.
+sed -E 's@<!DOCTYPE[[:space:]]+report[^>]*>@@g' "$JACOCO_SRC" > "$JACOCO_OUT"
 echo "[stage5] wrote $JACOCO_OUT"
