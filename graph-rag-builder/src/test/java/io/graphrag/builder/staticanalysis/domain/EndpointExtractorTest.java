@@ -103,6 +103,108 @@ class EndpointExtractorTest {
         assertThat(eps.get(0).path()).isEqualTo("/vets");
     }
 
+    @Test
+    void pre_authorize_hasrole_extracts_role() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/admin")
+                @PreAuthorize("hasRole('ADMIN')")
+                Object a() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.authRequired()).isTrue();
+        assertThat(ep.requiredRoles()).containsExactly("ADMIN");
+    }
+
+    @Test
+    void pre_authorize_hasanyrole_extracts_all_roles() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/x")
+                @PreAuthorize("hasAnyRole('ADMIN', 'USER')")
+                Object x() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.requiredRoles()).containsExactly("ADMIN", "USER");
+    }
+
+    @Test
+    void pre_authorize_is_authenticated_marks_auth_required_with_no_roles() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/x")
+                @PreAuthorize("isAuthenticated()")
+                Object x() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.authRequired()).isTrue();
+        assertThat(ep.requiredRoles()).isEmpty();
+    }
+
+    @Test
+    void secured_strips_role_prefix() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/x")
+                @Secured({"ROLE_ADMIN", "ROLE_USER"})
+                Object x() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.requiredRoles()).containsExactly("ADMIN", "USER");
+    }
+
+    @Test
+    void roles_allowed_extracts_roles() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/x")
+                @RolesAllowed({"USER"})
+                Object x() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.requiredRoles()).containsExactly("USER");
+    }
+
+    @Test
+    void class_level_auth_propagates_to_all_methods() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            @PreAuthorize("hasRole('ADMIN')")
+            class C {
+                @GetMapping("/x") Object x() { return null; }
+                @GetMapping("/y") Object y() { return null; }
+            }
+            """);
+        List<Endpoint> eps = EndpointExtractor.extract(cls, "demo.C", "p");
+        assertThat(eps).allMatch(Endpoint::authRequired);
+        assertThat(eps).allMatch(e -> e.requiredRoles().equals(List.of("ADMIN")));
+    }
+
+    @Test
+    void unrecognized_spel_yields_no_roles_but_keeps_auth_required() {
+        ClassOrInterfaceDeclaration cls = parseClass("""
+            @RestController
+            class C {
+                @GetMapping("/x")
+                @PreAuthorize("@bean.check(#root)")
+                Object x() { return null; }
+            }
+            """);
+        Endpoint ep = EndpointExtractor.extract(cls, "demo.C", "p").get(0);
+        assertThat(ep.authRequired()).isTrue();
+        assertThat(ep.requiredRoles()).isEmpty();
+    }
+
     private static ClassOrInterfaceDeclaration parseClass(String src) {
         return StaticJavaParser.parse(src).findFirst(ClassOrInterfaceDeclaration.class).orElseThrow();
     }

@@ -1,5 +1,6 @@
 package io.graphrag.builder.staticanalysis.domain;
 
+import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.AnnotationExpr;
@@ -12,6 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Extracts {@link Endpoint}s from a Spring controller class.
@@ -34,6 +38,18 @@ public final class EndpointExtractor {
             "DeleteMapping", HttpMethod.DELETE,
             "PatchMapping",  HttpMethod.PATCH);
 
+    private static final Set<String> AUTH_ANNOTATIONS =
+            Set.of("PreAuthorize", "Secured", "RolesAllowed");
+
+    private static final Pattern HAS_ROLE      = Pattern.compile("hasRole\\(['\"]([^'\"]+)['\"]\\)");
+    private static final Pattern HAS_ANY_ROLE  = Pattern.compile("hasAnyRole\\(([^)]+)\\)");
+    private static final Pattern ROLE_LITERAL  = Pattern.compile("['\"]([^'\"]+)['\"]");
+    private static final String  IS_AUTHENTICATED = "isAuthenticated()";
+
+    private record AuthInfo(boolean authRequired, List<String> roles) {
+        static AuthInfo none() { return new AuthInfo(false, List.of()); }
+    }
+
     private EndpointExtractor() {}
 
     public static List<Endpoint> extract(ClassOrInterfaceDeclaration cls,
@@ -48,24 +64,108 @@ public final class EndpointExtractor {
     public static List<Endpoint> extractFromClass(ClassOrInterfaceDeclaration cls,
                                                   String classFqn, String project) {
         String basePath = classBasePath(cls);
+        AuthInfo classAuth = readAuth(cls.getAnnotations());
         List<Endpoint> out = new ArrayList<>();
         for (MethodDeclaration m : cls.getMethods()) {
             Optional<Mapping> mapping = findMapping(m);
             if (mapping.isEmpty()) continue;
             String fullPath = normalize(basePath + normalize(mapping.get().path));
             if (fullPath.isEmpty()) fullPath = "/";
-            String methodName = m.getNameAsString();
+            AuthInfo methodAuth = readAuth(m.getAnnotations());
+            AuthInfo merged = mergeAuth(classAuth, methodAuth);
             out.add(new Endpoint(
                     mapping.get().method + ":" + fullPath,
                     mapping.get().method,
                     fullPath,
                     project,
                     classFqn,
-                    methodName,
-                    /* authRequired */ false,
-                    /* requiredRoles */ List.of()));
+                    m.getNameAsString(),
+                    merged.authRequired(),
+                    merged.roles()));
         }
         return out;
+    }
+
+    private static AuthInfo mergeAuth(AuthInfo cls, AuthInfo method) {
+        if (!cls.authRequired() && !method.authRequired()) return AuthInfo.none();
+        // Method-level roles take precedence when present; class roles are the default.
+        if (!method.roles().isEmpty()) return new AuthInfo(true, method.roles());
+        if (!cls.roles().isEmpty())    return new AuthInfo(true, cls.roles());
+        return new AuthInfo(true, List.of());
+    }
+
+    private static AuthInfo readAuth(NodeList<AnnotationExpr> annotations) {
+        boolean required = false;
+        List<String> roles = List.of();
+        for (AnnotationExpr ann : annotations) {
+            String name = ann.getNameAsString();
+            if (!AUTH_ANNOTATIONS.contains(name)) continue;
+            required = true;
+            switch (name) {
+                case "PreAuthorize" -> roles = parsePreAuthorizeRoles(rawSpel(ann));
+                case "Secured"      -> roles = parseSecuredRoles(ann);
+                case "RolesAllowed" -> roles = parseRolesAllowed(ann);
+            }
+            if (!roles.isEmpty()) break;     // first auth annotation with roles wins
+        }
+        return new AuthInfo(required, roles);
+    }
+
+    private static String rawSpel(AnnotationExpr ann) {
+        if (ann instanceof com.github.javaparser.ast.expr.SingleMemberAnnotationExpr s) {
+            return unquote(s.getMemberValue().toString());
+        }
+        if (ann instanceof NormalAnnotationExpr n) {
+            for (MemberValuePair pair : n.getPairs()) {
+                if ("value".equals(pair.getNameAsString())) {
+                    return unquote(pair.getValue().toString());
+                }
+            }
+        }
+        return "";
+    }
+
+    private static List<String> parsePreAuthorizeRoles(String spel) {
+        if (spel.equals(IS_AUTHENTICATED)) return List.of();
+        Matcher hr = HAS_ROLE.matcher(spel);
+        if (hr.find()) return List.of(hr.group(1));
+        Matcher har = HAS_ANY_ROLE.matcher(spel);
+        if (har.find()) {
+            List<String> roles = new ArrayList<>();
+            Matcher lit = ROLE_LITERAL.matcher(har.group(1));
+            while (lit.find()) roles.add(lit.group(1));
+            return List.copyOf(roles);
+        }
+        return List.of();
+    }
+
+    private static List<String> parseSecuredRoles(AnnotationExpr ann) {
+        List<String> raw = readStringArray(ann);
+        List<String> stripped = new ArrayList<>(raw.size());
+        for (String r : raw) {
+            stripped.add(r.startsWith("ROLE_") ? r.substring("ROLE_".length()) : r);
+        }
+        return List.copyOf(stripped);
+    }
+
+    private static List<String> parseRolesAllowed(AnnotationExpr ann) {
+        return readStringArray(ann);
+    }
+
+    private static List<String> readStringArray(AnnotationExpr ann) {
+        String raw = "";
+        if (ann instanceof com.github.javaparser.ast.expr.SingleMemberAnnotationExpr s) {
+            raw = s.getMemberValue().toString();
+        } else if (ann instanceof NormalAnnotationExpr n) {
+            for (MemberValuePair pair : n.getPairs()) {
+                if ("value".equals(pair.getNameAsString())) raw = pair.getValue().toString();
+            }
+        }
+        if (raw.isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        Matcher m = ROLE_LITERAL.matcher(raw);
+        while (m.find()) out.add(m.group(1));
+        return List.copyOf(out);
     }
 
     private static String classBasePath(ClassOrInterfaceDeclaration cls) {
