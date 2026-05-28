@@ -40,7 +40,63 @@ INJECT_PARENT="$PETCLINIC_DIR/src/test/java"
 INJECTED_ROOT="$INJECT_PARENT/$TEST_PACKAGE_PATH"
 POM_BACKUP="$PETCLINIC_DIR/pom.xml.stage5-bak"
 
+SUT_JAR="${SUT_JAR:-$PETCLINIC_DIR/target/spring-petclinic-4.0.0-SNAPSHOT.jar}"
+SUT_PORT="${SUT_PORT:-8084}"
+SUT_HEALTH_URL="${SUT_HEALTH_URL:-http://localhost:$SUT_PORT/actuator/health}"
+SUT_HEALTH_TIMEOUT_SECS="${SUT_HEALTH_TIMEOUT_SECS:-60}"
+SUT_PID=""
+SUT_LOG="$PETCLINIC_DIR/target/stage5-sut.log"
+
+launch_sut() {
+  if [[ "${SKIP_SUT_LAUNCH:-}" == "1" ]]; then
+    echo "[stage5] SKIP_SUT_LAUNCH=1 — assuming a SUT is already running on $SUT_PORT (or that the caller doesn't need one)"
+    return 0
+  fi
+  if [[ ! -f "$SUT_JAR" ]]; then
+    echo "error: SUT jar not found at $SUT_JAR" >&2
+    return 6
+  fi
+  mkdir -p "$(dirname "$SUT_LOG")"
+  : > "$SUT_LOG"
+  java -jar "$SUT_JAR" \
+    --server.port="$SUT_PORT" \
+    --spring.profiles.active=postgres \
+    --spring.datasource.url=jdbc:postgresql://localhost:55432/petclinic \
+    --spring.datasource.username=appuser \
+    --spring.datasource.password=apppass \
+    --spring.datasource.driver-class-name=org.postgresql.Driver \
+    >> "$SUT_LOG" 2>&1 &
+  SUT_PID=$!
+  for _ in $(seq 1 "$SUT_HEALTH_TIMEOUT_SECS"); do
+    if curl -sf "$SUT_HEALTH_URL" >/dev/null 2>&1; then
+      echo "[stage5] SUT healthy at $SUT_HEALTH_URL (pid=$SUT_PID)"
+      return 0
+    fi
+    if ! kill -0 "$SUT_PID" 2>/dev/null; then
+      echo "error: SUT process died before becoming healthy; see $SUT_LOG" >&2
+      tail -20 "$SUT_LOG" >&2 || true
+      SUT_PID=""
+      return 7
+    fi
+    sleep 1
+  done
+  echo "error: SUT did not become healthy within ${SUT_HEALTH_TIMEOUT_SECS}s" >&2
+  tail -20 "$SUT_LOG" >&2 || true
+  kill "$SUT_PID" 2>/dev/null || true
+  SUT_PID=""
+  return 8
+}
+
+stop_sut() {
+  if [[ -n "$SUT_PID" ]]; then
+    kill "$SUT_PID" 2>/dev/null || true
+    wait "$SUT_PID" 2>/dev/null || true
+    SUT_PID=""
+  fi
+}
+
 cleanup() {
+  stop_sut
   rm -rf "$INJECTED_ROOT"
   if [[ -f "$POM_BACKUP" ]]; then
     mv "$POM_BACKUP" "$PETCLINIC_DIR/pom.xml"
@@ -88,16 +144,20 @@ done
 shopt -u nullglob
 
 echo "[stage5] cumulative tests copied to $INJECTED_ROOT"
+
+launch_sut
+
 (
   cd "$PETCLINIC_DIR"
   # Skip spring-javaformat's validate goal — generated tests don't follow
   # Spring's in-tree formatting conventions and that validate would abort
   # the build before reaching the test phase.
-  # Ignore test failures so jacoco.xml is still produced when the generated
-  # RestAssured tests error (currently expected: scout's SUT is down by the
-  # time mvn test runs, and the generated tests don't set baseURI — a
-  # known test-generator limitation tracked in the runbook).
-  mvn -q -DskipITs -Dspring-javaformat.skip=true -Dmaven.test.failure.ignore=true test jacoco:report
+  # Ignore test failures so jacoco.xml is still produced.
+  # APP_BASE_URI is consumed by TestSynthesizer's @BeforeAll
+  #   RestAssured.baseURI = System.getenv("APP_BASE_URI")
+  APP_BASE_URI="http://localhost:$SUT_PORT" \
+    mvn -q -DskipITs -Dspring-javaformat.skip=true -Dmaven.test.failure.ignore=true \
+        test jacoco:report
 )
 
 JACOCO_SRC="$PETCLINIC_DIR/target/site/jacoco/jacoco.xml"
