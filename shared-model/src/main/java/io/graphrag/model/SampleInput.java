@@ -1,5 +1,7 @@
 package io.graphrag.model;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -15,8 +17,11 @@ public record SampleInput(
         Object body) {
 
     public SampleInput {
-        headers = Map.copyOf(Objects.requireNonNullElse(headers, Map.of()));
-        pathParams = Map.copyOf(Objects.requireNonNullElse(pathParams, Map.of()));
-        queryParams = Map.copyOf(Objects.requireNonNullElse(queryParams, Map.of()));
+        headers = Collections.unmodifiableMap(
+                new LinkedHashMap<>(Objects.requireNonNullElse(headers, Map.of())));
+        pathParams = Collections.unmodifiableMap(
+                new LinkedHashMap<>(Objects.requireNonNullElse(pathParams, Map.of())));
+        queryParams = Collections.unmodifiableMap(
+                new LinkedHashMap<>(Objects.requireNonNullElse(queryParams, Map.of())));
     }
 }

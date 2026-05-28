@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<report name="perfect">
+  <package name="com/example/test">
+    <sourcefile name="PetController.java">
+      <line nr="10" mi="0" ci="3" mb="0" cb="2"/>
+    </sourcefile>
+    <counter type="BRANCH" missed="0" covered="2"/>
+    <counter type="LINE" missed="0" covered="1"/>
+  </package>
+  <counter type="BRANCH" missed="0" covered="2"/>
+  <counter type="LINE" missed="0" covered="1"/>
+</report>

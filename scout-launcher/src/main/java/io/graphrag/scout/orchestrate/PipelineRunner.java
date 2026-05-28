@@ -10,6 +10,15 @@ import java.nio.file.Paths;
 /**
  * End-to-end scout pipeline: deps → SUT → HTTP scout → SUT shutdown → deps down.
  * Each stage's failure short-circuits the rest; finally blocks always run for cleanup.
+ *
+ * <p>T3 additions:
+ * <ul>
+ *   <li>{@code output.preserve-files}: when {@code clear-before-run} would otherwise
+ *       wipe everything, named files survive (see {@link ArchiveWiper}).</li>
+ *   <li>{@code output.strict-mode}: after the scout run, any path-id whose live status
+ *       disagreed with its configured {@code expected-status} is moved into
+ *       {@code <archive-dir>/quarantine/<path-id>/} (see {@link Quarantine}).</li>
+ * </ul>
  */
 public final class PipelineRunner {
 
@@ -36,17 +45,19 @@ public final class PipelineRunner {
 
             Path archiveRoot = Paths.get(cfg.output().archiveDir());
             new ScoutMetadataWriter(archiveRoot, cfg.output().project()).write(results);
+
+            if (Boolean.TRUE.equals(cfg.output().strictMode())) {
+                Quarantine.apply(archiveRoot, results, System.out);
+            }
+
             System.out.println("[scout] archive written under " + archiveRoot.toAbsolutePath());
         } // docker compose down
     }
 
     private void prepareOutputDir() throws IOException {
         Path out = Paths.get(cfg.output().archiveDir());
-        if (Boolean.TRUE.equals(cfg.output().clearBeforeRun()) && Files.isDirectory(out)) {
-            try (var stream = Files.walk(out)) {
-                stream.sorted((a, b) -> -a.toString().compareTo(b.toString()))
-                      .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
-            }
+        if (Boolean.TRUE.equals(cfg.output().clearBeforeRun())) {
+            ArchiveWiper.wipe(out, cfg.output().preserveFiles());
         }
         Files.createDirectories(out);
     }

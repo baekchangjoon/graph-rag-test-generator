@@ -26,6 +26,9 @@ include(
     ":test-generator",
     ":socket-capture-agent",
     ":scout-launcher",
+    ":scout-step-translator",
+    ":coverage-feedback",
+    ":orchestrator",
 )
 
 // Phase 0 PoC SUT (separate samples directory)

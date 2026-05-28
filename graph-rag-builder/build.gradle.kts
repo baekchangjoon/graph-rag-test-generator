@@ -54,6 +54,10 @@ dependencies {
     // 없어도 compile/실행 모두 정상. 있으면 어댑터가 baggage 에서 path-id fallback 조회.
     compileOnly("io.opentelemetry:opentelemetry-api:1.49.0")
 
+    // JavaParser symbol-solver — Stage 1 static analysis (staticanalysis package).
+    // Keep version in sync with the AST parsing stack (javaparser-core 3.26.2).
+    implementation("com.github.javaparser:javaparser-symbol-solver-core:3.26.2")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.opentelemetry:opentelemetry-api:1.49.0")
     testImplementation("io.opentelemetry:opentelemetry-context:1.49.0")

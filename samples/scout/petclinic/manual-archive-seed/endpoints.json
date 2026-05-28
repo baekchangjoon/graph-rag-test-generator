@@ -1,0 +1,32 @@
+[
+  {
+    "id": "GET:/api/owners",
+    "method": "GET",
+    "path": "/api/owners",
+    "project": "petclinic",
+    "handler_class": "org.springframework.samples.petclinic.owner.OwnerRestController",
+    "handler_method": "listOwners",
+    "auth_required": false,
+    "required_roles": []
+  },
+  {
+    "id": "GET:/api/owners/{ownerId}",
+    "method": "GET",
+    "path": "/api/owners/{ownerId}",
+    "project": "petclinic",
+    "handler_class": "org.springframework.samples.petclinic.owner.OwnerRestController",
+    "handler_method": "findOwner",
+    "auth_required": false,
+    "required_roles": []
+  },
+  {
+    "id": "GET:/api/vets",
+    "method": "GET",
+    "path": "/api/vets",
+    "project": "petclinic",
+    "handler_class": "org.springframework.samples.petclinic.vet.VetRestController",
+    "handler_method": "listVets",
+    "auth_required": false,
+    "required_roles": []
+  }
+]

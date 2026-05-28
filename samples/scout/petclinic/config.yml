@@ -73,7 +73,17 @@ scout:
 
 output:
   archive-dir: /tmp/graph-rag-scout/petclinic-archive
+  # T3 enables surgical wipe: clear stale per-path subdirs from a previous run,
+  # but keep the named files that Stage 1 (static analyzer) wrote.
   clear-before-run: true
+  preserve-files:
+    - paths.json
+    - endpoints.json
+  # T3 strict-mode: a scout step whose live status differs from its configured
+  # `expected-status` has its per-path subdir relocated to `<archive>/quarantine/`
+  # so Stage 1 false positives can be reviewed instead of silently feeding test
+  # synthesis (R3).
+  strict-mode: true
   # project name is embedded into endpoints.json and used by test-generator
   # for package/class naming hints.
   project: petclinic
