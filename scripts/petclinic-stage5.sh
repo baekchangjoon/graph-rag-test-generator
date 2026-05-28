@@ -107,5 +107,8 @@ if [[ ! -f "$JACOCO_SRC" ]]; then
 fi
 
 mkdir -p "$(dirname "$JACOCO_OUT")"
-cp "$JACOCO_SRC" "$JACOCO_OUT"
+# Strip the JaCoCo <!DOCTYPE ...> declaration so JaCoCoXmlParser (XXE-hardened,
+# rejects ALL DOCTYPE) can parse the report. The DOCTYPE is purely documentary
+# in JaCoCo's output and removing it doesn't affect the coverage data.
+sed -E '/<!DOCTYPE[[:space:]]+report[^>]*>/d' "$JACOCO_SRC" > "$JACOCO_OUT"
 echo "[stage5] wrote $JACOCO_OUT"
