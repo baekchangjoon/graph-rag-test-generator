@@ -162,8 +162,12 @@ public final class SampleInputGenerator {
         return v != null && !v.isEmpty() ? v : p.name();
     }
 
+    // Identifier-only placeholder pattern — matches `{ownerId}` but NOT `{ "/vets" }`
+    // (which can leak in from buggy annotation-value extraction upstream). Filling a
+    // malformed placeholder would de-quarantine a path that scout-launcher then
+    // chokes on as an illegal URI.
     private static final java.util.regex.Pattern URL_PLACEHOLDER =
-            java.util.regex.Pattern.compile("\\{([^}]+)\\}");
+            java.util.regex.Pattern.compile("\\{([A-Za-z_][A-Za-z0-9_]*)\\}");
 
     private static Set<String> placeholdersOf(String urlTemplate) {
         Set<String> out = new LinkedHashSet<>();
