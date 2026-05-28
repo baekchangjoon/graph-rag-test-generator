@@ -1,6 +1,5 @@
 package io.graphrag.orchestrator;
 
-import io.graphrag.feedback.MissingBranch;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -82,12 +81,25 @@ class IterationRunnerArchiveDirTest {
         // Avoids a test-scoped jackson-dataformat-yaml dependency.
         String archiveDir = Files.readAllLines(stage2Config).stream()
                 .filter(line -> line.contains("archive-dir:"))
-                .map(line -> line.substring(line.indexOf("archive-dir:") + "archive-dir:".length()).trim())
+                .map(line -> stripYamlQuotes(line.substring(
+                        line.indexOf("archive-dir:") + "archive-dir:".length()).trim()))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("archive-dir key not found in " + stage2Config));
 
         assertThat(archiveDir)
                 .isEqualTo(outDir.resolve("iter-1/stage3-archive").toString());
+    }
+
+    /** Strips surrounding double- or single-quotes if present. Jackson YAML may quote
+     *  path strings depending on serializer heuristics; the test contract is on the
+     *  value, not its YAML representation. */
+    private static String stripYamlQuotes(String raw) {
+        if (raw.length() >= 2
+                && ((raw.startsWith("\"") && raw.endsWith("\""))
+                 || (raw.startsWith("'")  && raw.endsWith("'")))) {
+            return raw.substring(1, raw.length() - 1);
+        }
+        return raw;
     }
 
     /** Records nothing; just satisfies the Stage 3/4/5 contracts so runOne completes. */
