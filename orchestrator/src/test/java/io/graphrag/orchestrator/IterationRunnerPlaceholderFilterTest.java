@@ -32,4 +32,25 @@ class IterationRunnerPlaceholderFilterTest {
         assertThat(IterationRunner.extractPlaceholders("/{a}/{b}"))
                 .containsExactlyInAnyOrder("a", "b");
     }
+
+    @Test
+    void resolveEnvVars_expandsBracedAndBareNames() {
+        String home = System.getProperty("user.home");
+        assertThat(IterationRunner.resolveEnvVars("${HOME}/foo")).isEqualTo(home + "/foo");
+        assertThat(IterationRunner.resolveEnvVars("$HOME/bar")).isEqualTo(home + "/bar");
+        assertThat(IterationRunner.resolveEnvVars("prefix-${HOME}-suffix"))
+                .isEqualTo("prefix-" + home + "-suffix");
+    }
+
+    @Test
+    void resolveEnvVars_leavesUnknownVarsUntouched() {
+        assertThat(IterationRunner.resolveEnvVars("${THIS_VAR_DOES_NOT_EXIST_12345}/foo"))
+                .isEqualTo("${THIS_VAR_DOES_NOT_EXIST_12345}/foo");
+    }
+
+    @Test
+    void resolveEnvVars_passesThroughStringWithoutPlaceholders() {
+        assertThat(IterationRunner.resolveEnvVars("/absolute/path/with/no/vars"))
+                .isEqualTo("/absolute/path/with/no/vars");
+    }
 }

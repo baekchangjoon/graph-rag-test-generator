@@ -147,6 +147,12 @@ final class IterationRunner {
                 .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER));
         ObjectNode iterRoot = (ObjectNode) iterYaml.readTree(layout.stage2Config().toFile());
         iterRoot.with("output").put("archive-dir", layout.stage3Archive().toString());
+        // Resolve ${VAR} / $VAR shell-style env-var placeholders in every string scalar.
+        // The template uses ${HOME} for portability, but Jackson's YAML re-serializer
+        // quotes those strings on write-back, which scout-launcher's snakeyaml-time
+        // resolver no longer sees. Resolving them here makes the on-disk YAML carry
+        // absolute paths regardless of quoting.
+        resolveEnvVarsInTree(iterRoot);
         Files.write(layout.stage2Config(),
                 iterYaml.writerWithDefaultPrettyPrinter().writeValueAsString(iterRoot).getBytes());
 
@@ -203,6 +209,47 @@ final class IterationRunner {
         Matcher m = PLACEHOLDER.matcher(pathTemplate);
         while (m.find()) out.add(m.group(1));
         return out;
+    }
+
+    private static final Pattern ENV_VAR = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)");
+
+    static String resolveEnvVars(String raw) {
+        Matcher m = ENV_VAR.matcher(raw);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String name = m.group(1) != null ? m.group(1) : m.group(2);
+            String value = System.getenv(name);
+            if (value == null && "HOME".equals(name)) value = System.getProperty("user.home");
+            m.appendReplacement(sb, Matcher.quoteReplacement(value != null ? value : m.group()));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static void resolveEnvVarsInTree(com.fasterxml.jackson.databind.JsonNode node) {
+        if (node.isObject()) {
+            ObjectNode obj = (ObjectNode) node;
+            obj.fieldNames().forEachRemaining(field -> {
+                com.fasterxml.jackson.databind.JsonNode child = obj.get(field);
+                if (child.isTextual()) {
+                    obj.put(field, resolveEnvVars(child.asText()));
+                } else {
+                    resolveEnvVarsInTree(child);
+                }
+            });
+        } else if (node.isArray()) {
+            com.fasterxml.jackson.databind.node.ArrayNode arr =
+                    (com.fasterxml.jackson.databind.node.ArrayNode) node;
+            for (int i = 0; i < arr.size(); i++) {
+                com.fasterxml.jackson.databind.JsonNode child = arr.get(i);
+                if (child.isTextual()) {
+                    arr.set(i, com.fasterxml.jackson.databind.node.TextNode.valueOf(
+                            resolveEnvVars(child.asText())));
+                } else {
+                    resolveEnvVarsInTree(child);
+                }
+            }
+        }
     }
 
     /** Per-iteration outcome the outer loop reads. */
