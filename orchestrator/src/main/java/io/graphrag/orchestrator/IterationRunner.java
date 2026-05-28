@@ -19,6 +19,7 @@ import io.graphrag.feedback.FocusHintGenerator;
 import io.graphrag.feedback.JaCoCoXmlParser;
 import io.graphrag.feedback.TerminationDecision;
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.ExploredPath;
 import io.graphrag.model.JsonMappers;
 import io.graphrag.translator.ScoutStepTranslator;
 
@@ -27,9 +28,13 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Runs one iteration end-to-end. Owns the in-process stages 1, 2, 6 directly and
@@ -82,14 +87,46 @@ final class IterationRunner {
                 /* maxPathsPerEndpoint */ 10,
                 BoundaryValueConfig.defaults(),
                 excludePaths);
+        // Defensive filter: drop paths whose endpoint URL has un-substituted {name}
+        // placeholders that the static analyzer's SampleInputGenerator failed to fill.
+        // Petclinic-style @PathVariable("ownerId") Owner owner — where the Java
+        // parameter name (owner) diverges from the URL placeholder (ownerId) — is the
+        // canonical trigger. Without this filter the translator throws and the whole
+        // iteration aborts; with it, those endpoints are silently quarantined and the
+        // loop continues on the bindable subset.
+        Map<String, Endpoint> endpointById = new HashMap<>();
+        for (Endpoint e : domain.endpoints()) endpointById.put(e.id(), e);
+        List<ExploredPath> bindablePaths = new ArrayList<>();
+        List<String> unboundSkipped = new ArrayList<>();
+        for (ExploredPath p : branch.paths()) {
+            Endpoint ep = endpointById.get(p.endpointId());
+            if (ep == null) continue;
+            Set<String> placeholders = extractPlaceholders(ep.path());
+            if (placeholders.isEmpty()
+                    || p.sampleInput().pathParams().keySet().containsAll(placeholders)) {
+                bindablePaths.add(p);
+            } else {
+                Set<String> missing = new HashSet<>(placeholders);
+                missing.removeAll(p.sampleInput().pathParams().keySet());
+                unboundSkipped.add(p.id() + " (missing " + missing + ")");
+            }
+        }
+        if (!unboundSkipped.isEmpty()) {
+            log.println("[orchestrator] Stage 1 quarantined " + unboundSkipped.size()
+                    + " unbound-path-template paths: " + unboundSkipped);
+        }
+
+        Set<String> bindableEndpointIds = new HashSet<>();
+        for (ExploredPath p : bindablePaths) bindableEndpointIds.add(p.endpointId());
         List<Endpoint> endpointsToWrite = domain.endpoints().stream()
                 .filter(e -> !excludePaths.contains(e.id()))
+                .filter(e -> bindableEndpointIds.contains(e.id()))
                 .toList();
         Files.createDirectories(layout.stage1Discovery());
         M.writerWithDefaultPrettyPrinter()
                 .writeValue(layout.stage1Endpoints().toFile(), endpointsToWrite);
         M.writerWithDefaultPrettyPrinter()
-                .writeValue(layout.stage1Paths().toFile(), branch.paths());
+                .writeValue(layout.stage1Paths().toFile(), bindablePaths);
 
         if (endpointsToWrite.isEmpty()) {
             log.println("[orchestrator] Stage 1 produced zero endpoints — halting iteration");
@@ -157,6 +194,15 @@ final class IterationRunner {
         CoverageDelta d = M.readValue(Files.readAllBytes(layout.stage6Delta()),
                 new TypeReference<>() {});
         return d.stillMissing();
+    }
+
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^}]+)\\}");
+
+    static Set<String> extractPlaceholders(String pathTemplate) {
+        Set<String> out = new HashSet<>();
+        Matcher m = PLACEHOLDER.matcher(pathTemplate);
+        while (m.find()) out.add(m.group(1));
+        return out;
     }
 
     /** Per-iteration outcome the outer loop reads. */
