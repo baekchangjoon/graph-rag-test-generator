@@ -27,7 +27,6 @@ include(
     ":socket-capture-agent",
     ":scout-launcher",
     ":scout-step-translator",
-    ":path-discovery-static",
     ":coverage-feedback",
     ":orchestrator",
 )
