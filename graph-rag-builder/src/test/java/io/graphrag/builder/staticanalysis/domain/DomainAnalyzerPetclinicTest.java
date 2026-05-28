@@ -14,6 +14,17 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Integration test for T1+T2 against a minimal "petclinic-like" fixture.
+ *
+ * <p>The fixture deliberately contains only one of each {@link ClassRole}
+ * (CONTROLLER, SERVICE, REPOSITORY, DOMAIN) and five endpoints — enough to
+ * exercise every pipeline stage end-to-end while staying small and
+ * deterministic. The spec's "≥ 10 endpoints" acceptance criterion in §4.8
+ * targets the full Spring petclinic source tree; the wider assertion will
+ * be added when the orchestrator wires this analyzer against the real
+ * checkout in a follow-up session.
+ */
 class DomainAnalyzerPetclinicTest {
 
     private static final Pattern ID_FORMAT =
@@ -82,6 +93,11 @@ class DomainAnalyzerPetclinicTest {
                 "org.example.petclinic.OwnerRestController#createOwner");
         assertThat(createMa.branches()).extracting(Branch::kind)
                 .contains(BranchKind.SWITCH, BranchKind.THROW);
+
+        // CallGraph exposes per-method keys (even with no in-project edges resolved).
+        assertThat(r.callGraph().edges())
+                .containsKey("org.example.petclinic.OwnerRestController#getOwner")
+                .containsKey("org.example.petclinic.OwnerRestController#listOwners");
     }
 
     private static Endpoint endpointById(DomainAnalysisResult r, String id) {

@@ -6,5 +6,6 @@ public enum BranchKind {
     SWITCH,
     TERNARY,
     THROW,
+    /** Reserved for T3 — {@link BranchExtractor} does not currently emit RETURN branches. */
     RETURN
 }

@@ -41,6 +41,9 @@ public final class SymbolResolverFactory {
             try {
                 combined.add(new JarTypeSolver(jar));
             } catch (IOException ex) {
+                // Propagated as IllegalArgumentException — callers are responsible for providing
+                // readable jar paths. We do not skip silently because a missing classpath jar will
+                // cause downstream symbol-resolution failures that are harder to diagnose later.
                 throw new IllegalArgumentException("cannot read jar " + jar + ": " + ex.getMessage(), ex);
             }
         }

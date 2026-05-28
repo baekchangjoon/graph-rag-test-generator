@@ -331,7 +331,7 @@ Every public output from this package is deterministic:
 
 - `AstParser.parse` sorts file paths before processing.
 - `DomainAnalyzer.analyze` returns:
-  - `endpoints` sorted by `(path, method)`.
+  - `endpoints` sorted by `(method, path)`.
   - `classRoles`, `methodAnalyses` as `LinkedHashMap` populated in
     `parsedFiles` order.
   - `MethodAnalysis.branches`, `.outgoingCalls` ordered by line.
