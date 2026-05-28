@@ -38,11 +38,37 @@ OUT_DIR="$(cd "$(dirname "$TESTS_DIR")/.." && pwd)"
 TEST_PACKAGE_PATH="$(echo "$TEST_PACKAGE" | tr . /)"
 INJECT_PARENT="$PETCLINIC_DIR/src/test/java"
 INJECTED_ROOT="$INJECT_PARENT/$TEST_PACKAGE_PATH"
+POM_BACKUP="$PETCLINIC_DIR/pom.xml.stage5-bak"
 
 cleanup() {
   rm -rf "$INJECTED_ROOT"
+  if [[ -f "$POM_BACKUP" ]]; then
+    mv "$POM_BACKUP" "$PETCLINIC_DIR/pom.xml"
+  fi
 }
 trap cleanup EXIT
+
+# Inject rest-assured as a test-scoped dependency on a backed-up copy of pom.xml.
+# The generated tests use io.restassured.RestAssured.given() and ContentType, which
+# stock petclinic doesn't ship. The EXIT trap restores the original pom regardless
+# of mvn outcome, leaving the user's clone untouched between runs.
+if ! grep -q 'rest-assured' "$PETCLINIC_DIR/pom.xml"; then
+  cp "$PETCLINIC_DIR/pom.xml" "$POM_BACKUP"
+  python3 - "$PETCLINIC_DIR/pom.xml" <<'PY'
+import sys
+pom = sys.argv[1]
+with open(pom) as f: content = f.read()
+inject = '''    <dependency>
+      <groupId>io.rest-assured</groupId>
+      <artifactId>rest-assured</artifactId>
+      <version>5.4.0</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>'''
+content = content.replace('</dependencies>', inject, 1)
+with open(pom, 'w') as f: f.write(content)
+PY
+fi
 
 # iter-N/stage4-tests/ already contains the package directory tree
 # (e.g. com/example/petclinic/tests/*.java). Copy its CONTENTS into
