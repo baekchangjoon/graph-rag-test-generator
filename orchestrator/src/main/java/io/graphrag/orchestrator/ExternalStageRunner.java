@@ -83,11 +83,12 @@ public interface ExternalStageRunner {
         @Override
         public void runTestsAndJacoco(Path generatedTestsDir, Path jacocoOut)
                 throws IOException, InterruptedException {
-            // The caller's hook decides how to wire generated tests into their build. The
-            // orchestrator just invokes the configured command, then expects
-            // jacocoOut to exist when it returns. If it doesn't, the orchestrator surfaces
-            // a clear failure.
-            spawn(userTestCommand);
+            // The wrapper script needs to know which iter-N to read from and where to write
+            // jacoco.xml; both are per-iteration so they can't live in userTestCommand itself.
+            java.util.List<String> cmd = new java.util.ArrayList<>(userTestCommand);
+            cmd.add(generatedTestsDir.toString());
+            cmd.add(jacocoOut.toString());
+            spawn(cmd);
             if (!Files.exists(jacocoOut)) {
                 throw new IOException("expected JaCoCo XML at " + jacocoOut
                         + " but the user test command did not produce it");
