@@ -2,7 +2,13 @@ package io.graphrag.orchestrator;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.graphrag.discovery.PathDiscoveryStatic;
+import io.graphrag.builder.staticanalysis.ast.AstParseResult;
+import io.graphrag.builder.staticanalysis.ast.AstParser;
+import io.graphrag.builder.staticanalysis.branch.BoundaryValueConfig;
+import io.graphrag.builder.staticanalysis.branch.BranchAnalysisResult;
+import io.graphrag.builder.staticanalysis.branch.BranchAnalyzer;
+import io.graphrag.builder.staticanalysis.domain.DomainAnalysisResult;
+import io.graphrag.builder.staticanalysis.domain.DomainAnalyzer;
 import io.graphrag.feedback.CoverageDelta;
 import io.graphrag.feedback.CoverageDeltaCalculator;
 import io.graphrag.feedback.CoverageReport;
@@ -65,17 +71,24 @@ final class IterationRunner {
         Files.createDirectories(layout.iterRoot());
 
         log.println("\n=== iter " + iterIndex + " — Stage 1 (path discovery) ===");
-        PathDiscoveryStatic.Result discovery = PathDiscoveryStatic.discover(
-                cfg.sutSource(), cfg.project(),
+        AstParseResult ast = AstParser.parse(cfg.sutSource());
+        DomainAnalysisResult domain = DomainAnalyzer.analyze(ast, cfg.project());
+        BranchAnalysisResult branch = BranchAnalyzer.analyze(
+                domain,
                 "iter-" + iterIndex,
+                /* maxPathsPerEndpoint */ 10,
+                BoundaryValueConfig.defaults(),
                 excludePaths);
+        List<Endpoint> endpointsToWrite = domain.endpoints().stream()
+                .filter(e -> !excludePaths.contains(e.id()))
+                .toList();
         Files.createDirectories(layout.stage1Discovery());
         M.writerWithDefaultPrettyPrinter()
-                .writeValue(layout.stage1Endpoints().toFile(), discovery.endpoints());
+                .writeValue(layout.stage1Endpoints().toFile(), endpointsToWrite);
         M.writerWithDefaultPrettyPrinter()
-                .writeValue(layout.stage1Paths().toFile(), discovery.paths());
+                .writeValue(layout.stage1Paths().toFile(), branch.paths());
 
-        if (discovery.endpoints().isEmpty()) {
+        if (endpointsToWrite.isEmpty()) {
             log.println("[orchestrator] Stage 1 produced zero endpoints — halting iteration");
             return Outcome.zeroPaths(layout);
         }
@@ -91,7 +104,7 @@ final class IterationRunner {
         external.runScout(layout.stage2Config(), layout.stage3Archive());
 
         log.println("=== iter " + iterIndex + " — Stage 4 (test-generator per endpoint) ===");
-        List<String> endpointIds = discovery.endpoints().stream().map(Endpoint::id).toList();
+        List<String> endpointIds = endpointsToWrite.stream().map(Endpoint::id).toList();
         external.runTestGenerator(layout.stage3Archive(), endpointIds,
                 cfg.testPackage(), layout.stage4Tests());
 
