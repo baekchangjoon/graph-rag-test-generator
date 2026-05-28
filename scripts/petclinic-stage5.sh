@@ -36,30 +36,38 @@ fi
 
 OUT_DIR="$(cd "$(dirname "$TESTS_DIR")/.." && pwd)"
 TEST_PACKAGE_PATH="$(echo "$TEST_PACKAGE" | tr . /)"
-INJECTED_ROOT="$PETCLINIC_DIR/src/test/java/$TEST_PACKAGE_PATH"
+INJECT_PARENT="$PETCLINIC_DIR/src/test/java"
+INJECTED_ROOT="$INJECT_PARENT/$TEST_PACKAGE_PATH"
 
 cleanup() {
   rm -rf "$INJECTED_ROOT"
 }
 trap cleanup EXIT
 
-mkdir -p "$INJECTED_ROOT"
-
-# Copy ALL prior + current iters' generated tests. Sort lexicographically so
-# iter-2's outputs win over iter-1's for any same-named class (later iters
-# typically regenerate only fewer endpoints, so collisions are rare; when they
-# do happen, latest wins is the desired semantic).
+# iter-N/stage4-tests/ already contains the package directory tree
+# (e.g. com/example/petclinic/tests/*.java). Copy its CONTENTS into
+# src/test/java/ — not into the package-suffixed INJECTED_ROOT — to avoid
+# doubling the package path. Cleanup still targets INJECTED_ROOT, which is
+# exactly where the merged Java files end up.
+#
+# Sort lexicographically so iter-2's outputs win over iter-1's for any
+# same-named class (later iters typically regenerate only fewer endpoints,
+# so collisions are rare; when they do happen, latest wins is the desired
+# semantic).
 shopt -s nullglob
 for dir in $(printf '%s\n' "$OUT_DIR"/iter-*/stage4-tests | sort); do
   [[ -d "$dir" ]] || continue
-  cp -R "$dir"/. "$INJECTED_ROOT"/
+  cp -R "$dir"/. "$INJECT_PARENT"/
 done
 shopt -u nullglob
 
 echo "[stage5] cumulative tests copied to $INJECTED_ROOT"
 (
   cd "$PETCLINIC_DIR"
-  mvn -q -DskipITs test jacoco:report
+  # Skip spring-javaformat's validate goal — generated tests don't follow
+  # Spring's in-tree formatting conventions and that validate would abort
+  # the build before reaching the test phase.
+  mvn -q -DskipITs -Dspring-javaformat.skip=true test jacoco:report
 )
 
 JACOCO_SRC="$PETCLINIC_DIR/target/site/jacoco/jacoco.xml"
