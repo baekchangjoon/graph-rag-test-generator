@@ -158,7 +158,7 @@ class SampleInputGeneratorTest {
         // will quarantine the path.
         Parameter renamed = new Parameter(
                 "owner",
-                "Owner",
+                "int",
                 java.util.List.of("PathVariable"),
                 java.util.Map.of("PathVariable", "ownerId"));
         MethodAnalysis ma = new MethodAnalysis(
