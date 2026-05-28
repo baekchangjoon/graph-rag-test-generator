@@ -80,4 +80,85 @@ class PetclinicStage5ScriptTest {
         Path injected = petclinic.resolve("src/test/java/com/example/petclinic/tests");
         assertThat(injected).doesNotExist();
     }
+
+    @Test
+    void failsWhenPetclinicDirHasNoPom(@TempDir Path tmp) throws Exception {
+        Path projectRoot = Path.of(System.getProperty("user.dir")).getParent();
+        Path script = projectRoot.resolve("scripts/petclinic-stage5.sh");
+
+        Path emptyDir = tmp.resolve("no-pom-here");
+        Files.createDirectories(emptyDir);
+
+        Path testsDir = tmp.resolve("out/iter-1/stage4-tests");
+        Files.createDirectories(testsDir);
+
+        ProcessBuilder pb = new ProcessBuilder("bash", script.toString(),
+                testsDir.toString(), tmp.resolve("jacoco.xml").toString());
+        pb.environment().put("PETCLINIC_DIR", emptyDir.toString());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String stdout = new String(p.getInputStream().readAllBytes());
+        int rc = p.waitFor();
+        assertThat(rc).as("expected nonzero exit; stdout:\n%s", stdout).isEqualTo(3);
+    }
+
+    @Test
+    void failsWhenTestsDirMissing(@TempDir Path tmp) throws Exception {
+        Path projectRoot = Path.of(System.getProperty("user.dir")).getParent();
+        Path script = projectRoot.resolve("scripts/petclinic-stage5.sh");
+
+        Path petclinic = tmp.resolve("fake-petclinic");
+        Files.createDirectories(petclinic.resolve("src/test/java"));
+        Files.writeString(petclinic.resolve("pom.xml"), "<project/>");
+
+        ProcessBuilder pb = new ProcessBuilder("bash", script.toString(),
+                tmp.resolve("does-not-exist").toString(),
+                tmp.resolve("jacoco.xml").toString());
+        pb.environment().put("PETCLINIC_DIR", petclinic.toString());
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        int rc = p.waitFor();
+        assertThat(rc).isEqualTo(4);
+    }
+
+    @Test
+    void cleanupTrapFiresEvenWhenMvnFails(@TempDir Path tmp) throws Exception {
+        Path projectRoot = Path.of(System.getProperty("user.dir")).getParent();
+        Path script = projectRoot.resolve("scripts/petclinic-stage5.sh");
+
+        // mvn stub that exits nonzero — wrapper must still clean injected tests.
+        Path stubBin = tmp.resolve("stub-bin");
+        Files.createDirectories(stubBin);
+        Path mvnStub = stubBin.resolve("mvn");
+        Files.writeString(mvnStub, """
+                #!/usr/bin/env bash
+                exit 1
+                """);
+        Files.setPosixFilePermissions(mvnStub,
+                PosixFilePermissions.fromString("rwxr-xr-x"));
+
+        Path petclinic = tmp.resolve("fake-petclinic");
+        Files.createDirectories(petclinic.resolve("src/test/java"));
+        Files.writeString(petclinic.resolve("pom.xml"), "<project/>");
+
+        Path iter1Tests = tmp.resolve("out/iter-1/stage4-tests");
+        Files.createDirectories(iter1Tests);
+        Files.writeString(iter1Tests.resolve("A.java"), "class A {}");
+
+        ProcessBuilder pb = new ProcessBuilder("bash", script.toString(),
+                iter1Tests.toString(),
+                tmp.resolve("out/iter-1/stage5-jacoco.xml").toString());
+        pb.environment().put("PETCLINIC_DIR", petclinic.toString());
+        pb.environment().put("TEST_PACKAGE", "com.example.petclinic.tests");
+        pb.environment().put("PATH",
+                stubBin + ":" + System.getenv("PATH"));
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        int rc = p.waitFor();
+        assertThat(rc).as("mvn stub exits 1; wrapper should propagate").isNotZero();
+
+        Path injected = petclinic.resolve("src/test/java/com/example/petclinic/tests");
+        assertThat(injected).as("cleanup trap should fire even on failure")
+                .doesNotExist();
+    }
 }
