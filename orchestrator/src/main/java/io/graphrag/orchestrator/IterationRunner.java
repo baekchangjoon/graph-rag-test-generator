@@ -2,6 +2,9 @@ package io.graphrag.orchestrator;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import io.graphrag.builder.staticanalysis.ast.AstParseResult;
 import io.graphrag.builder.staticanalysis.ast.AstParser;
 import io.graphrag.builder.staticanalysis.branch.BoundaryValueConfig;
@@ -99,6 +102,16 @@ final class IterationRunner {
                 cfg.scoutBaseUrl(),
                 cfg.scoutConfigTemplate(),
                 layout.stage2Config());
+
+        // Stage 2 step (b): repoint scout-launcher's archive output at this iter's slot.
+        // ExternalStageRunner.Shell.runScout ignores its archiveDir arg and just spawns
+        // scout-launcher on the YAML, so the YAML itself has to carry the per-iter path.
+        ObjectMapper iterYaml = new ObjectMapper(new YAMLFactory()
+                .disable(YAMLGenerator.Feature.WRITE_DOC_START_MARKER));
+        ObjectNode iterRoot = (ObjectNode) iterYaml.readTree(layout.stage2Config().toFile());
+        iterRoot.with("output").put("archive-dir", layout.stage3Archive().toString());
+        Files.write(layout.stage2Config(),
+                iterYaml.writerWithDefaultPrettyPrinter().writeValueAsString(iterRoot).getBytes());
 
         log.println("=== iter " + iterIndex + " — Stage 3 (scout-launcher) ===");
         external.runScout(layout.stage2Config(), layout.stage3Archive());

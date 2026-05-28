@@ -40,6 +40,7 @@ dependencies {
     implementation(project(":scout-launcher"))
     implementation(project(":coverage-feedback"))
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.2")
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
     testImplementation("org.assertj:assertj-core:3.26.3")
