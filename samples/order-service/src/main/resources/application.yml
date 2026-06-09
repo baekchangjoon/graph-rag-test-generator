@@ -1,0 +1,10 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: ${DDL_AUTO:create}
+    open-in-view: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

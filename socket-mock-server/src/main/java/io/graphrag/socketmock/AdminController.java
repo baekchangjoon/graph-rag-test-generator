@@ -28,11 +28,22 @@ public class AdminController {
     @PostMapping("/__admin/expectations")
     @ResponseStatus(HttpStatus.CREATED)
     public Map<String, String> register(@RequestBody ExpectationRequest request) {
+        try {
+            listeners.ensureListening(request.listenPort());
+        } catch (IllegalArgumentException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, e.getMessage());
+        } catch (IllegalStateException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+        } catch (RuntimeException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.CONFLICT, "bind failed for port " + request.listenPort());
+        }
         String id = UUID.randomUUID().toString();
         registry.register(new Expectation(id, request.listenPort(), request.onReceiveHex(),
                 request.respondWithHex(),
                 request.matchMode() == null ? MatchMode.EXACT : request.matchMode()));
-        listeners.ensureListening(request.listenPort());
         return Map.of("id", id);
     }
 

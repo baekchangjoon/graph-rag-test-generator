@@ -34,7 +34,16 @@ public class TcpListenerManager {
         this.registry = registry;
     }
 
+    /** 동시 리스너 상한 (자원 고갈 방지). */
+    static final int MAX_LISTENERS = 64;
+
     public synchronized void ensureListening(int port) {
+        if (port < 1024 || port > 65535) {
+            throw new IllegalArgumentException("listenPort must be in 1024..65535: " + port);
+        }
+        if (!listeners.containsKey(port) && listeners.size() >= MAX_LISTENERS) {
+            throw new IllegalStateException("too many listeners (max " + MAX_LISTENERS + ")");
+        }
         listeners.computeIfAbsent(port, this::bind);
     }
 

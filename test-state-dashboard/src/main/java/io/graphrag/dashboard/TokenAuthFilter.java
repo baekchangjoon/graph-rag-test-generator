@@ -28,7 +28,10 @@ public class TokenAuthFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         if (!token.isBlank()) {
             String header = request.getHeader("Authorization");
-            if (header == null || !header.equals("Bearer " + token)) {
+            byte[] expected = ("Bearer " + token).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] actual = header == null
+                    ? new byte[0] : header.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            if (!java.security.MessageDigest.isEqual(expected, actual)) {
                 response.sendError(HttpServletResponse.SC_UNAUTHORIZED);
                 return;
             }
