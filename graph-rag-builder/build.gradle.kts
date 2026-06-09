@@ -18,3 +18,14 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
 }
+
+// 통합 테스트(BuilderE2eTest)는 샘플 SUT jar가 필요하다
+tasks.test {
+    dependsOn(":samples:order-service:bootJar")
+    systemProperty("sut.jar",
+        project(":samples:order-service").layout.buildDirectory
+            .file("libs/order-service.jar").get().asFile.absolutePath)
+    systemProperty("sut.src",
+        project(":samples:order-service").layout.projectDirectory
+            .dir("src/main/java").asFile.absolutePath)
+}
