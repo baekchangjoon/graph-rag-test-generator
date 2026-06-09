@@ -21,9 +21,17 @@ public class DashboardController {
         this.store = store;
     }
 
+    /** testId 형식 제한: 로그 인젝션 방지 + runs 키 카디널리티 제한. */
+    private static final java.util.regex.Pattern TEST_ID =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._-]{1,128}");
+
     @PostMapping("/events")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public void receive(@RequestBody TestEvent event) {
+        if (event.testId() == null || !TEST_ID.matcher(event.testId()).matches()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "invalid testId");
+        }
         store.apply(event);
     }
 

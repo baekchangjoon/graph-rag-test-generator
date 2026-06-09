@@ -12,9 +12,18 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class TestRunStore {
 
+    /** 메모리 상한: 초과 시 종료 상태(CLEANED/LEAKED) run부터 제거. */
+    static final int MAX_RUNS = 10_000;
+
     private final Map<String, TestRun> runs = new ConcurrentHashMap<>();
 
     public void apply(TestEvent event) {
+        if (runs.size() >= MAX_RUNS && !runs.containsKey(event.testId())) {
+            evictFinishedRuns();
+            if (runs.size() >= MAX_RUNS) {
+                return;   // 상한 도달 + 정리 불가 → 신규 이벤트 드랍 (모니터링 도구이므로 안전)
+            }
+        }
         TestRun run = runs.computeIfAbsent(event.testId(),
                 id -> new TestRun(id, event.runId(), event.at()));
         synchronized (run) {
@@ -49,6 +58,11 @@ public class TestRunStore {
                 }
             }
         }
+    }
+
+    private void evictFinishedRuns() {
+        runs.values().removeIf(run ->
+                run.getStatus() == RunStatus.CLEANED || run.getStatus() == RunStatus.LEAKED);
     }
 
     private static String text(JsonNode detail, String field) {
