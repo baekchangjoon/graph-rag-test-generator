@@ -1,0 +1,36 @@
+[versions]
+springBoot = "3.5.3"
+springDepMgmt = "1.1.7"
+jackson = "2.17.2"
+junit = "5.11.4"
+spoon = "11.1.0"
+testcontainers = "1.21.3"
+restassured = "5.5.5"
+netty = "4.1.121.Final"
+mustache = "0.9.14"
+postgresql = "42.7.7"
+slf4j = "2.0.16"
+assertj = "3.26.3"
+awaitility = "4.2.2"
+
+[libraries]
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+awaitility = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
+spoon = { module = "fr.inria.gforge.spoon:spoon-core", version.ref = "spoon" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassured" }
+netty-handler = { module = "io.netty:netty-handler", version.ref = "netty" }
+netty-codec-http = { module = "io.netty:netty-codec-http", version.ref = "netty" }
+mustache = { module = "com.github.spullara.mustache.java:compiler", version.ref = "mustache" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dep-mgmt = { id = "io.spring.dependency-management", version.ref = "springDepMgmt" }
