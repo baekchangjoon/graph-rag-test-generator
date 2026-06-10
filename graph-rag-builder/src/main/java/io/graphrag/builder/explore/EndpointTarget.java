@@ -11,5 +11,11 @@ public record EndpointTarget(
         Endpoint endpoint,
         BodyShape shape,
         List<TableSchema> tables,
-        EndpointInvoker invoker) {
+        EndpointInvoker invoker,
+        List<String> literalCandidates) {
+
+    public EndpointTarget(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
+                          EndpointInvoker invoker) {
+        this(endpoint, shape, tables, invoker, List.of());
+    }
 }

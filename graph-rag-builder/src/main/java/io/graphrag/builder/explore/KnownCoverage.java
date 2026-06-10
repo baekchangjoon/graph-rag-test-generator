@@ -12,8 +12,12 @@ import java.util.Set;
 /** 엔진 간에 공유·누적되는 커버리지 상태 (docs/05의 coverage merge). */
 public final class KnownCoverage {
 
+    /** 변이 시드 = 새 분기를 연 입력 + 그때의 응답 status. */
+    public record Seed(JsonNode body, int status) {
+    }
+
     private final Set<BranchRef> covered = new LinkedHashSet<>();
-    private final List<JsonNode> seeds = new ArrayList<>();
+    private final List<Seed> seeds = new ArrayList<>();
     private final Set<String> triedBodies = new HashSet<>();
 
     public Set<BranchRef> covered() {
@@ -29,11 +33,11 @@ public final class KnownCoverage {
     }
 
     /** 새 분기를 연 입력은 후속 엔진의 변이 시드가 된다. */
-    public void addSeed(JsonNode body) {
-        seeds.add(body);
+    public void addSeed(JsonNode body, int status) {
+        seeds.add(new Seed(body, status));
     }
 
-    public List<JsonNode> seeds() {
+    public List<Seed> seeds() {
         return List.copyOf(seeds);
     }
 

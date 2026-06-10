@@ -24,6 +24,10 @@ public final class InputMutator {
     }
 
     public static List<Mutation> firstOrder(BodyShape shape) {
+        return firstOrder(shape, List.of());
+    }
+
+    public static List<Mutation> firstOrder(BodyShape shape, List<String> literalCandidates) {
         List<Mutation> mutations = new ArrayList<>();
         for (BodyShape.BodyField field : shape.fields()) {
             String name = field.name();
@@ -38,11 +42,18 @@ public final class InputMutator {
             if (NUMERIC_TYPES.contains(field.javaType())) {
                 mutations.add(new Mutation("zero-" + name, body -> body.put(name, 0)));
                 mutations.add(new Mutation("negative-" + name, body -> body.put(name, -1)));
+                // 범위 상한 분기용 (예: 재고/한도 초과)
+                mutations.add(new Mutation("large-" + name, body -> body.put(name, 1_000_000)));
             } else if (field.javaType().equals("java.lang.String")) {
                 mutations.add(new Mutation("empty-" + name, body -> body.put(name, "")));
                 if (name.endsWith("Id") && name.length() > 2) {
                     mutations.add(new Mutation("missing-ref-" + name,
                             body -> body.put(name, "missing-" + name)));
+                }
+                // handler의 enum-스타일 리터럴을 도메인 값 후보로 (docs/22 보완)
+                for (String literal : literalCandidates) {
+                    mutations.add(new Mutation("literal-" + name + "-" + literal,
+                            body -> body.put(name, literal)));
                 }
             }
         }

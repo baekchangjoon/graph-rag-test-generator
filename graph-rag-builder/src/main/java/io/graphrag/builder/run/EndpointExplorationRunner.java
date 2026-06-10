@@ -51,7 +51,7 @@ import java.util.Set;
 public class EndpointExplorationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(EndpointExplorationRunner.class);
-    private static final int FUZZER_SATURATION = 16;
+    private static final int FUZZER_SATURATION = 2;   // 연속 dry 시드 패스 수
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  ExplorationReport.EndpointExploration report) {

@@ -28,6 +28,8 @@ class ExplorationOrchestratorTest {
     private static final BranchRef B = new BranchRef("C", "create", 35, 0);
     private static final BranchRef C = new BranchRef("C", "create", 33, 0);
     private static final BranchRef D = new BranchRef("C", "create", 31, 0);
+    private static final BranchRef E = new BranchRef("C", "create", 37, 0);   // EXPRESS 분기
+    private static final BranchRef F = new BranchRef("C", "create", 38, 0);   // 재고 부족
 
     private static final BodyShape SHAPE = new BodyShape("X", List.of(
             new BodyShape.BodyField("userId", "java.lang.String"),
@@ -58,29 +60,46 @@ class ExplorationOrchestratorTest {
         if (!userId.asText().startsWith("probe-")) {
             return new InvocationOutcome(404, Json.mapper().nullNode(), Set.of(A, C), 0, 0);
         }
+        if ("EXPRESS".equals(type.asText())) {
+            if (amount.asInt() > 50) {
+                return new InvocationOutcome(409, Json.mapper().nullNode(), Set.of(A, E, F), 0, 0);
+            }
+            return new InvocationOutcome(201,
+                    Json.mapper().createObjectNode().put("status", "PENDING"), Set.of(A, B, E), 0, 0);
+        }
         return new InvocationOutcome(201, Json.mapper().createObjectNode().put("status", "PENDING"),
                 Set.of(A, B), 0, 0);
     };
 
     private ExplorationOrchestrator orchestrator() {
         return new ExplorationOrchestrator(
-                List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(8)), 60);
+                List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(2)), 60);
     }
 
     private EndpointTarget target() {
         Endpoint endpoint = new Endpoint("post-api-orders", "POST", "/api/orders", "C", "create",
                 List.of(new EndpointParam("request", "X", ParamKind.BODY)), false);
-        return new EndpointTarget(endpoint, SHAPE, TABLES, fakeInvoker);
+        return new EndpointTarget(endpoint, SHAPE, TABLES, fakeInvoker, List.of("EXPRESS", "PENDING"));
     }
 
     @Test
-    void discoversAllThreeDistinctPaths() {
+    void discoversAllDistinctPaths() {
         List<PathCandidate> paths = orchestrator().explore(target()).paths();
 
-        assertThat(paths).extracting(PathCandidate::status)
-                .containsExactlyInAnyOrder(201, 404, 400);
-        // 분기 집합 기준 dedupe — 400을 만드는 입력은 다수지만 path는 1개
-        assertThat(paths).hasSize(3);
+        assertThat(paths).extracting(PathCandidate::status).contains(201, 404, 400);
+        // status + 분기 집합 dedupe — 같은 키의 다수 입력은 path 1개
+        assertThat(paths.stream().map(p -> p.status() + ":" + p.branches()).distinct())
+                .hasSize(paths.size());
+    }
+
+    @Test
+    void literalAndLargeMutations_reachDomainValueBranches() {
+        List<PathCandidate> paths = orchestrator().explore(target()).paths();
+
+        // EXPRESS(리터럴 변이) + 재고 초과(large 변이) — fuzzer의 2단 조합 필요
+        assertThat(paths).extracting(PathCandidate::status).contains(409);
+        assertThat(paths.stream().filter(p -> p.status() == 201).map(PathCandidate::branches))
+                .anyMatch(branches -> branches.contains(E));   // EXPRESS 201 변형
     }
 
     @Test
@@ -106,7 +125,7 @@ class ExplorationOrchestratorTest {
     void respectsTotalRequestBudget() {
         requests.set(0);
         new ExplorationOrchestrator(
-                List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(8)), 5)
+                List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(2)), 5)
                 .explore(target());
         assertThat(requests.get()).isLessThanOrEqualTo(5);
     }
@@ -114,6 +133,6 @@ class ExplorationOrchestratorTest {
     @Test
     void reportsCumulativeCoverage() {
         ExplorationOutcome outcome = orchestrator().explore(target());
-        assertThat(outcome.coveredBranches()).containsExactlyInAnyOrder(A, B, C, D);
+        assertThat(outcome.coveredBranches()).contains(A, B, C, D, E, F);
     }
 }

@@ -22,7 +22,7 @@ public class HeuristicExplorer implements PathExplorer {
                 .synthesize(target.shape(), target.tables()).body();
 
         tryInput(base, target, budget, known, inputs);
-        for (InputMutator.Mutation mutation : InputMutator.firstOrder(target.shape())) {
+        for (InputMutator.Mutation mutation : InputMutator.firstOrder(target.shape(), target.literalCandidates())) {
             tryInput(mutation.apply().apply(InputMutator.copy(base)), target, budget, known, inputs);
         }
         return new ExplorationResult(inputs);
@@ -37,7 +37,7 @@ public class HeuristicExplorer implements PathExplorer {
         inputs.add(new ExplorationResult.ExploredInput(body, outcome));
         if (known.isNovel(outcome.coveredBranches())) {
             known.merge(outcome.coveredBranches());
-            known.addSeed(body);
+            known.addSeed(body, outcome.status());
         }
     }
 }
