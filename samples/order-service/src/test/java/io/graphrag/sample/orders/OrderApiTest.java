@@ -42,7 +42,7 @@ class OrderApiTest {
         users.save(new User("u-1", "John"));
 
         ResponseEntity<String> response =
-                post("{\"userId\":\"u-1\",\"amount\":100,\"type\":\"EXPRESS\"}");
+                post("{\"userId\":\"u-1\",\"amount\":100,\"type\":\"NORMAL\"}");
 
         assertThat(response.getStatusCode().value()).isEqualTo(201);
         assertThat(response.getBody()).contains("\"status\":\"PENDING\"").contains("\"id\":");

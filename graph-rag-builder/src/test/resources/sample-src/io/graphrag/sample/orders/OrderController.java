@@ -19,10 +19,13 @@ public class OrderController {
 
     private final UserRepository users;
     private final OrderRepository orders;
+    private final InventoryClient inventory;
 
-    public OrderController(UserRepository users, OrderRepository orders) {
+    public OrderController(UserRepository users, OrderRepository orders,
+                           InventoryClient inventory) {
         this.users = users;
         this.orders = orders;
+        this.inventory = inventory;
     }
 
     @PostMapping
@@ -35,6 +38,12 @@ public class OrderController {
         }
         User user = users.findById(request.userId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
+        if ("EXPRESS".equals(request.type())) {
+            InventoryClient.InventoryResponse stock = inventory.check(request.type());
+            if (stock.available() < request.amount()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "insufficient stock");
+            }
+        }
         Order saved = orders.save(new Order(user, request.amount(), request.type(), "PENDING"));
         return new OrderResponse(saved.getId(), saved.getStatus());
     }
