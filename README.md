@@ -43,6 +43,10 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
 # 도구 1 단독
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir>"
 
+# 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
+git diff --name-only main > changed.txt
+./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
+
 # 도구 2 단독
 ./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
 ```
@@ -67,4 +71,10 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
 - **Phase 3 완료** (2026-06-10): WebSocket/STOMP. WsEndpoint 인덱싱, 자체 최소
   STOMP 클라이언트로 메시지 교환 캡처, testlib StompHelper, echo 마커 기반
   병렬 격리 합성. 16 테스트(HTTP 14 + STOMP 2) 16/16 통과
-- 다음: Phase 4 — Netty 소켓 (`docs/09-implementation-roadmap.md`)
+- **Phase 4·5 홀딩** (2026-06-11 사용자 결정): Netty/Raw Socket은 보류하고
+  Phase 6을 선행
+- **Phase 6.1·6.2 완료** (2026-06-11): 파티션 샤드 그래프 스토어
+  (`PartitionedGraphStore`, Neo4j 보류 — `docs/decisions/graph-store-phase6.md`) +
+  증분 빌드 (`--incremental-base`/`--changed-files`, 더티 파티션만 재탐색)
+- 다음: Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강 어노테이션
+  (`docs/09-implementation-roadmap.md`)

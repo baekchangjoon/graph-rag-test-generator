@@ -135,7 +135,10 @@ public class InventoryReserveMessage {
 ## 점진 이식 단계
 
 1. **Phase 6a (PoC)**: 단일 모듈, file-system archive 그대로
+   — 진행됨 (2026-06-11): 파티션 샤드 스토어(`PartitionedGraphStore`) + 증분 빌드
+   (`--incremental-base`/`--changed-files`). roadmap 6.1·6.2, `progress/6-1.md`·`6-2.md`
 2. **Phase 6b (Neo4j 도입)**: 단일 모듈, Neo4j로 마이그레이션
+   — 복귀 조건은 `decisions/graph-store-phase6.md`
 3. **Phase 6c (멀티 모듈)**: 2-3개 핵심 모듈 분산 인덱싱
 4. **Phase 6d (전체)**: 모든 모듈 + 야간 풀 + PR 증분
 5. **Phase 6e (운영)**: 모니터링 + alerting + DR

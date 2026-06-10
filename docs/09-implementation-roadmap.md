@@ -2,6 +2,16 @@
 
 TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 
+## 현황 (2026-06-11)
+
+| Phase | 상태 |
+|---|---|
+| 0 ~ 3 | 완료 (`progress/` 참조) |
+| 4 (Netty), 5 (Raw Socket) | **홀딩** (2026-06-11 사용자 결정, Phase 6 선행) |
+| 6.1 그래프 스토어 | 완료 — 파티션 샤드 파일 스토어, Neo4j 보류 (`docs/decisions/graph-store-phase6.md`) |
+| 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`progress/6-2.md`) |
+| 6.3, 6.4 | 미착수 |
+
 ## 권장 순서 원칙
 
 1. **의존성 역순**: 다른 모듈이 의존하는 것 먼저
