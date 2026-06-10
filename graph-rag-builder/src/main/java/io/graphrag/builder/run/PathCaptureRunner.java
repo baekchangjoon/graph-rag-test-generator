@@ -1,7 +1,7 @@
 package io.graphrag.builder.run;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import io.graphrag.builder.capture.HibernateSqlLogParser;
+import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.env.SutProcess;
 import io.graphrag.builder.index.BodyShape;
@@ -60,7 +60,7 @@ public class PathCaptureRunner {
 
         // 로그 flush 대기 후 새 구간만 파싱
         Thread.sleep(500);
-        List<ParsedSql> parsed = HibernateSqlLogParser.parse(sut.readLogFrom(offset));
+        List<ParsedSql> parsed = SqlLogParser.parse(sut.readLogFrom(offset));
 
         String pathId = endpoint.id() + "-happy";
         Set<String> apiValues = bodyValues(input.body());
