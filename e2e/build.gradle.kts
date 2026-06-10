@@ -2,13 +2,22 @@ plugins {
     java
 }
 
+// compose의 SUT 컨테이너에 부착할 OTEL javaagent (docs/06)
+val otelAgent: Configuration by configurations.creating
+
 dependencies {
     testImplementation(project(":testlib"))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.postgresql)
+    otelAgent(libs.otel.javaagent)
 }
 
-// run-phase0.sh가 생성된 테스트를 이 디렉터리로 복사한다
+val copyOtelAgent by tasks.registering(Copy::class) {
+    from(otelAgent) { rename { "otel-javaagent.jar" } }
+    into(layout.projectDirectory.dir("agents"))
+}
+
+// run-e2e.sh가 생성된 테스트를 이 디렉터리로 복사한다
 sourceSets.test {
     java.srcDir(layout.buildDirectory.dir("generated-tests"))
 }

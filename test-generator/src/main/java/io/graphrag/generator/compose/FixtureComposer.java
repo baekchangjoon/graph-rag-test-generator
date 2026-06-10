@@ -48,18 +48,19 @@ public class FixtureComposer {
             }
         });
 
-        // 2. 사전 INSERT: 2xx path만 (4xx는 사전 데이터 "부재"가 재현 조건 — 치환만 유지)
-        boolean success = path.expectedStatus() / 100 == 2;
+        // 2. 사전 INSERT: "조회가 성공했다"는 증거가 있는 SELECT만 seed한다.
+        //    404류는 데이터 부재가 재현 조건이고(seed 금지), 409류는 존재가 전제다(seed 필요).
         List<SeededRow> seeded = new ArrayList<>();   // FK 부모 → 자식 순서
         Set<String> seenSeeds = new HashSet<>();
         List<DeleteTarget> deleteTargets = new ArrayList<>();
-        for (CapturedSql sql : sqlList) {
+        for (int i = 0; i < sqlList.size(); i++) {
+            CapturedSql sql = sqlList.get(i);
             for (SqlBinding binding : sql.bindings()) {
                 ComposedFixture.Var var = varsByFieldValue.get(binding.value());
                 if (var == null) {
                     continue;
                 }
-                if (success && sql.sqlKind().equals("SELECT")) {
+                if (sql.sqlKind().equals("SELECT") && lookupSucceeded(path, sqlList, i)) {
                     seedWithParents(tablesByName.get(sql.tableName()), binding.column(),
                             var.name(), tablesByName, seeded, seenSeeds);
                 }
@@ -133,6 +134,23 @@ public class FixtureComposer {
     }
 
     private record SeededRow(TableSchema table, String keyColumn, String varName) {
+    }
+
+    /**
+     * 캡처 시점에 이 SELECT가 행을 찾았는지의 증거:
+     * (a) 이후 다른 SQL이 이어졌다 (실행이 계속됨)
+     * (b) path에 외부 HTTP 호출이 있다 (조회 통과 후 진행)
+     * (c) 둘 다 없으면 응답이 2xx일 때만 성공으로 본다 (마지막 문장이 SELECT인 happy)
+     */
+    private static boolean lookupSucceeded(ExploredPath path, List<CapturedSql> sqlList,
+                                           int selectIndex) {
+        if (selectIndex < sqlList.size() - 1) {
+            return true;
+        }
+        if (!path.capturedHttpCallIds().isEmpty()) {
+            return true;
+        }
+        return path.expectedStatus() / 100 == 2;
     }
 
     /** 자식 테이블 seed 전에 같은 var 값으로 FK 부모 행을 재귀적으로 seed한다. */

@@ -59,7 +59,9 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
 - **Phase 0 완료** (2026-06-10): 단일 JPA endpoint의 build → graph → generate →
   run → pass 사이클 통과 (메트릭 1/1)
 - **Phase 1 완료** (2026-06-10): 분기 탐색(휴리스틱 + fuzzer + JaCoCo) + MyBatis.
-  endpoint 2개에서 12 path 발견 → 12 테스트 합성 → 12/12 통과.
   still_missing 리포트 + `--manual-paths` 수동 보강 경로 포함
-- 다음: Phase 2 — WireMock 통합 (외부 HTTP, OTEL baggage 격리,
-  `docs/09-implementation-roadmap.md`)
+- **Phase 2 완료** (2026-06-10): WireMock 통합. 외부 HTTP 캡처(임베디드 WireMock +
+  `--external-stubs`/`--sut-env`), OTEL javaagent baggage 전파 실측, 생성 테스트의
+  스텁 합성(baggage 격리 + consumedFields 투영), 병렬 안전 보고.
+  14 path → 14 테스트 → 14/14 통과 (EXPRESS 201/재고부족 409 포함)
+- 다음: Phase 3 — WebSocket/STOMP (`docs/09-implementation-roadmap.md`)

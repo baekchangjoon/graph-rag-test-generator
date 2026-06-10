@@ -21,11 +21,24 @@ services:
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: app
       DDL_AUTO: create
+      # 외부 의존은 mock 컨테이너로 redirect (docs/06)
+      EXTERNAL_INVENTORY_URL: http://wiremock:8080
+      # OTEL javaagent: baggage propagation만 사용 (트레이스 저장 없음)
+      JAVA_TOOL_OPTIONS: "-javaagent:/agents/otel-javaagent.jar"
+      OTEL_TRACES_EXPORTER: none
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_PROPAGATORS: tracecontext,baggage
+      OTEL_SERVICE_NAME: order-service
+    volumes:
+      - ./agents:/agents:ro
     ports:
       - "58080:8080"
     depends_on:
       postgres:
         condition: service_healthy
+      wiremock:
+        condition: service_started
 
   wiremock:
     image: wiremock/wiremock:3.13.0

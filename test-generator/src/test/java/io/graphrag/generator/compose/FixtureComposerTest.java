@@ -4,6 +4,7 @@ import io.graphrag.generator.client.FileGraphRagClient;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -68,6 +69,29 @@ class FixtureComposerTest {
         assertThat(fixture.inserts()).isEmpty();
         assertThat(fixture.deletes()).isEmpty();
         assertThat(fixture.bodyArgExprs()).containsExactly("userId");
+    }
+
+    @Test
+    void conflictPathWithHttpCall_stillSeedsFixture() throws Exception {
+        // 409: 4xx지만 "행 존재"가 전제 — SELECT 이후 외부 HTTP 호출이 증거
+        var path = new io.graphrag.model.ExploredPath(
+                "p-409", "post-api-orders",
+                io.graphrag.model.Json.mapper().readTree(
+                        "{\"userId\":\"probe-userId\",\"amount\":1000000,\"type\":\"EXPRESS\"}"),
+                409, io.graphrag.model.Json.mapper().nullNode(),
+                List.of("sql-p-409-1"), List.of("http-p-409-1"),
+                List.of(), "fuzzer", List.of(), List.of());
+        var select = new io.graphrag.model.CapturedSql(
+                "sql-p-409-1", "p-409", "SELECT",
+                "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?", "users",
+                List.of(new io.graphrag.model.SqlBinding(1, "id", "probe-userId",
+                        io.graphrag.model.BindingOrigin.API_PARAM)));
+
+        ComposedFixture fixture = new FixtureComposer()
+                .compose(path, List.of(select), client.tables());
+
+        assertThat(fixture.inserts()).extracting(ComposedFixture.Stmt::sql)
+                .containsExactly("INSERT INTO users (id, name) VALUES (?, ?)");
     }
 
     @Test

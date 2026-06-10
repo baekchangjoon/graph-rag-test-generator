@@ -9,9 +9,10 @@ OUT="$E2E/out"
 GW="$ROOT/gradlew"
 
 echo "=== [1/5] SUT/서비스 jar 빌드 ==="
-"$GW" -q :samples:order-service:bootJar :test-state-dashboard:bootJar :socket-mock-server:bootJar
+"$GW" -q :samples:order-service:bootJar :test-state-dashboard:bootJar :socket-mock-server:bootJar \
+  :e2e:copyOtelAgent
 
-echo "=== [2/5] 도구 1: 분기 탐색 + graph 빌드 (분석 환경: Testcontainers + JaCoCo) ==="
+echo "=== [2/5] 도구 1: 분기 탐색 + graph 빌드 (분석 환경: Testcontainers + JaCoCo + WireMock) ==="
 rm -rf "$OUT"
 "$GW" -q :graph-rag-builder:run --args="build \
   --sut-src $ROOT/samples/order-service/src/main/java \
@@ -20,6 +21,8 @@ rm -rf "$OUT"
   --out $OUT/graph \
   --sut-id order-service \
   --budget-requests 60 \
+  --external-stubs $E2E/external-stubs \
+  --sut-env EXTERNAL_INVENTORY_URL={{wiremock}} \
   --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
@@ -54,6 +57,7 @@ APP_BASE_URI=http://localhost:58080 \
 JDBC_URL=jdbc:postgresql://localhost:56432/app \
 JDBC_USER=app \
 JDBC_PASS=app \
+HTTP_MOCK_ADMIN=http://localhost:59091/__admin \
 DASHBOARD_URL=http://localhost:58099 \
 "$GW" :e2e:test
 TEST_EXIT=$?
