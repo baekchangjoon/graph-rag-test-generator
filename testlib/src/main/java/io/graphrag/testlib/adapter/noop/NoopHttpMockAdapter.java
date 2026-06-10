@@ -13,7 +13,34 @@ public final class NoopHttpMockAdapter implements HttpMockAdapter {
 
     @Override
     public HttpMockClient create(Env env, String testId) {
-        return scopeTestId -> {
+        return new HttpMockClient() {
+            @Override
+            public io.graphrag.testlib.api.HttpStubBuilder stub(String method, String urlPath) {
+                return new io.graphrag.testlib.api.HttpStubBuilder() {
+                    @Override
+                    public io.graphrag.testlib.api.HttpStubBuilder withQueryParam(String name, String value) {
+                        return this;
+                    }
+
+                    @Override
+                    public io.graphrag.testlib.api.HttpStubBuilder withBaggageTestId(String id) {
+                        return this;
+                    }
+
+                    @Override
+                    public io.graphrag.testlib.api.HttpStubBuilder respondJson(int status, String body) {
+                        return this;
+                    }
+
+                    @Override
+                    public void register() {
+                    }
+                };
+            }
+
+            @Override
+            public void removeAllForScope(String scopeTestId) {
+            }
         };
     }
 }

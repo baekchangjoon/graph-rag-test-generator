@@ -60,7 +60,9 @@ public final class TestScope {
 
         DashboardReporter dashboard = DashboardReporters.fromEnv(env);
         JdbcAdapter jdbcAdapter = Adapters.select(JdbcAdapter.class, "JDBC_ADAPTER", "plain", env);
-        HttpMockAdapter httpAdapter = Adapters.select(HttpMockAdapter.class, "HTTP_MOCK_ADAPTER", "noop", env);
+        // 기본 어댑터는 WireMock (docs/07). admin URL이 없으면 noop으로 폴백
+        String defaultHttpMock = env.get("HTTP_MOCK_ADMIN") != null ? "wiremock" : "noop";
+        HttpMockAdapter httpAdapter = Adapters.select(HttpMockAdapter.class, "HTTP_MOCK_ADAPTER", defaultHttpMock, env);
         SocketMockAdapter socketAdapter = Adapters.select(SocketMockAdapter.class, "SOCKET_MOCK_ADAPTER", "noop", env);
         AuthAdapter authAdapter = Adapters.select(AuthAdapter.class, "AUTH_ADAPTER", "noop", env);
 

@@ -1,1 +1,2 @@
 io.graphrag.testlib.adapter.noop.NoopHttpMockAdapter
+io.graphrag.testlib.adapter.wiremock.WireMockHttpMockAdapter

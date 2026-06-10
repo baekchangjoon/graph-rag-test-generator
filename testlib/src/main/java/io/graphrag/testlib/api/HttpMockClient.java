@@ -1,6 +1,9 @@
 package io.graphrag.testlib.api;
 
-/** 외부 HTTP mock 제어. Phase 0은 noop, Phase 2에서 WireMock stub 등록 API 확장. */
+/** 외부 HTTP mock 제어. 기본 어댑터는 WireMock (docs/07). */
 public interface HttpMockClient {
+
+    HttpStubBuilder stub(String method, String urlPath);
+
     void removeAllForScope(String testId);
 }
