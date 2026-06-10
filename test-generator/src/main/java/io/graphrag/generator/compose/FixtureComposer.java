@@ -1,0 +1,216 @@
+package io.graphrag.generator.compose;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import io.graphrag.model.BindingOrigin;
+import io.graphrag.model.CapturedSql;
+import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.ExploredPath;
+import io.graphrag.model.SqlBinding;
+import io.graphrag.model.TableSchema;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 캡처 사실 + 스키마 → 픽스처/치환/검증 슬롯 합성 (docs/04 규칙 카탈로그).
+ *
+ * 규칙 요약:
+ * - API_PARAM 바인딩 값이 PK/FK 컬럼에 닿는 body 필드 → testId 기반 unique 치환
+ * - 캡처된 SELECT의 치환 대상 테이블 → 사전 INSERT (NOT NULL 채움)
+ * - cleanup은 FK 역순(자식 먼저), 자기 스코프(WHERE key=?)만
+ * - 응답 필드: LITERAL 바인딩과 값이 일치 → equalTo, 그 외 → notNullValue
+ */
+public class FixtureComposer {
+
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables) {
+        Map<String, TableSchema> tablesByName = new HashMap<>();
+        tables.forEach(t -> tablesByName.put(t.name(), t));
+
+        // 1. 치환 변수: body 필드 값이 PK/FK 컬럼의 API_PARAM 바인딩과 일치
+        Map<String, ComposedFixture.Var> varsByFieldValue = new LinkedHashMap<>();
+        path.sampleInput().fields().forEachRemaining(entry -> {
+            String field = entry.getKey();
+            if (!entry.getValue().isTextual()) {
+                return;
+            }
+            String value = entry.getValue().asText();
+            if (touchesKeyColumn(value, sqlList, tablesByName)) {
+                varsByFieldValue.put(value, new ComposedFixture.Var(field,
+                        "scope.testId() + \"-" + varSuffix(field) + "\""));
+            }
+        });
+
+        // 2. 사전 INSERT: SELECT가 조회한 테이블 중 치환 값이 키로 쓰인 곳
+        List<ComposedFixture.Stmt> inserts = new ArrayList<>();
+        List<DeleteTarget> deleteTargets = new ArrayList<>();
+        Set<String> seededTables = new HashSet<>();
+        for (CapturedSql sql : sqlList) {
+            for (SqlBinding binding : sql.bindings()) {
+                ComposedFixture.Var var = varsByFieldValue.get(binding.value());
+                if (var == null) {
+                    continue;
+                }
+                if (sql.sqlKind().equals("SELECT") && seededTables.add(sql.tableName())) {
+                    inserts.add(seedInsert(tablesByName.get(sql.tableName()),
+                            binding.column(), var.name()));
+                    deleteTargets.add(new DeleteTarget(sql.tableName(), binding.column(), var.name()));
+                }
+                if (sql.sqlKind().equals("INSERT")) {
+                    deleteTargets.add(new DeleteTarget(sql.tableName(), binding.column(), var.name()));
+                }
+            }
+        }
+
+        // 3. cleanup: FK 깊이 내림차순 (자식 먼저)
+        Map<String, Integer> depth = fkDepths(tables);
+        List<ComposedFixture.Stmt> deletes = deleteTargets.stream()
+                .distinct()
+                .sorted(Comparator.comparing((DeleteTarget t) -> depth.getOrDefault(t.table(), 0))
+                        .reversed()
+                        .thenComparing(DeleteTarget::table))
+                .map(t -> new ComposedFixture.Stmt(
+                        "DELETE FROM " + t.table() + " WHERE " + t.column() + " = ?",
+                        List.of(t.varName())))
+                .toList();
+
+        // 4. body 포맷: 치환 필드는 %s, 나머지는 sample 값 보존
+        StringBuilder bodyFormat = new StringBuilder("{");
+        List<String> bodyArgs = new ArrayList<>();
+        var fields = path.sampleInput().fields();
+        boolean first = true;
+        while (fields.hasNext()) {
+            var entry = fields.next();
+            if (!first) {
+                bodyFormat.append(",");
+            }
+            first = false;
+            bodyFormat.append("\"").append(entry.getKey()).append("\":");
+            ComposedFixture.Var var = entry.getValue().isTextual()
+                    ? varsByFieldValue.get(entry.getValue().asText()) : null;
+            if (var != null) {
+                bodyFormat.append("\"%s\"");
+                bodyArgs.add(var.name());
+            } else if (entry.getValue().isTextual()) {
+                bodyFormat.append("\"").append(entry.getValue().asText()).append("\"");
+            } else {
+                bodyFormat.append(entry.getValue().toString());
+            }
+        }
+        bodyFormat.append("}");
+
+        // 5. 응답 검증
+        Set<String> literalValues = new HashSet<>();
+        sqlList.forEach(sql -> sql.bindings().stream()
+                .filter(b -> b.origin() == BindingOrigin.LITERAL)
+                .forEach(b -> literalValues.add(b.value())));
+        List<ComposedFixture.Assertion> assertions = new ArrayList<>();
+        path.sampleResponse().fields().forEachRemaining(entry -> {
+            String value = entry.getValue().asText();
+            assertions.add(literalValues.contains(value)
+                    ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")
+                    : new ComposedFixture.Assertion(entry.getKey(), "notNullValue()"));
+        });
+
+        return new ComposedFixture(
+                new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
+                inserts, deletes, bodyFormat.toString(), bodyArgs, assertions);
+    }
+
+    private record DeleteTarget(String table, String column, String varName) {
+    }
+
+    private static boolean touchesKeyColumn(String value, List<CapturedSql> sqlList,
+                                            Map<String, TableSchema> tables) {
+        for (CapturedSql sql : sqlList) {
+            for (SqlBinding binding : sql.bindings()) {
+                if (binding.origin() != BindingOrigin.API_PARAM
+                        || !binding.value().equals(value)) {
+                    continue;
+                }
+                TableSchema table = tables.get(sql.tableName());
+                if (table == null) {
+                    continue;
+                }
+                boolean isPk = table.columns().stream()
+                        .anyMatch(c -> c.name().equals(binding.column()) && c.primaryKey());
+                boolean isFk = table.foreignKeys().stream()
+                        .anyMatch(fk -> fk.column().equals(binding.column()));
+                if (isPk || isFk) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static ComposedFixture.Stmt seedInsert(TableSchema table, String keyColumn,
+                                                   String varName) {
+        List<String> columns = new ArrayList<>();
+        List<String> args = new ArrayList<>();
+        for (ColumnSchema column : table.columns()) {
+            if (column.name().equals(keyColumn)) {
+                columns.add(column.name());
+                args.add(varName);
+            } else if (!column.nullable()) {
+                columns.add(column.name());
+                args.add(defaultExprFor(column));
+            }
+        }
+        String sql = "INSERT INTO " + table.name() + " (" + String.join(", ", columns)
+                + ") VALUES (" + String.join(", ", columns.stream().map(c -> "?").toList()) + ")";
+        return new ComposedFixture.Stmt(sql, args);
+    }
+
+    private static String defaultExprFor(ColumnSchema column) {
+        String type = column.jdbcType();
+        if (type.contains("CHAR") || type.contains("TEXT")) {
+            return "\"probe\"";
+        }
+        if (type.contains("BOOL")) {
+            return "true";
+        }
+        return "1";
+    }
+
+    /** 테이블별 FK 깊이 (부모 0, 자식 = max(부모)+1). 순환은 보수적으로 0. */
+    private static Map<String, Integer> fkDepths(List<TableSchema> tables) {
+        Map<String, Integer> depth = new HashMap<>();
+        for (TableSchema table : tables) {
+            computeDepth(table.name(), tables, depth, new HashSet<>());
+        }
+        return depth;
+    }
+
+    private static int computeDepth(String name, List<TableSchema> tables,
+                                    Map<String, Integer> depth, Set<String> visiting) {
+        if (depth.containsKey(name)) {
+            return depth.get(name);
+        }
+        if (!visiting.add(name)) {
+            return 0;
+        }
+        int result = tables.stream()
+                .filter(t -> t.name().equals(name))
+                .flatMap(t -> t.foreignKeys().stream())
+                .filter(fk -> !fk.referencedTable().equals(name))
+                .mapToInt(fk -> computeDepth(fk.referencedTable(), tables, depth, visiting) + 1)
+                .max().orElse(0);
+        depth.put(name, result);
+        return result;
+    }
+
+    private static String varSuffix(String fieldName) {
+        String base = fieldName.endsWith("Id") && fieldName.length() > 2
+                ? fieldName.substring(0, fieldName.length() - 2)
+                : fieldName;
+        return base.replaceAll("([a-z0-9])([A-Z])", "$1-$2").toLowerCase();
+    }
+}
