@@ -14,6 +14,8 @@ public interface GraphRagClient {
 
     ExploredPath path(String id);
 
+    List<ExploredPath> pathsForEndpoint(String endpointId);
+
     List<CapturedSql> sqlForPath(String pathId);
 
     List<TableSchema> tables();

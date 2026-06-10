@@ -16,6 +16,7 @@ import io.graphrag.model.ParallelSafetyReport;
 
 import java.io.StringWriter;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,16 +39,44 @@ public class Generator {
         this.template = new DefaultMustacheFactory().compile("templates/test-class.mustache");
     }
 
+    /** pathId 미지정 시 endpoint의 전 path에 대해 path당 테스트 클래스 1개씩 생성 (1.5). */
     public GenerationResult generate(GenerationRequest request) {
+        if (request.pathId() != null) {
+            return generateSingle(request, request.testClassName(), request.pathId());
+        }
         Endpoint endpoint = client.endpoint(request.endpointId());
-        ExploredPath path = client.path(request.pathId());
-        List<CapturedSql> sql = client.sqlForPath(request.pathId());
+        List<GeneratedFile> files = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        List<String> classNames = new ArrayList<>();
+        for (ExploredPath path : client.pathsForEndpoint(request.endpointId())) {
+            String className = request.testClassName() + classSuffix(endpoint.id(), path.id());
+            GenerationResult single = generateSingle(request, className, path.id());
+            files.addAll(single.files());
+            warnings.addAll(single.warnings());
+            classNames.add(className);
+        }
+        return new GenerationResult(files, warnings,
+                new ParallelSafetyReport(classNames, List.of()));
+    }
+
+    private static String classSuffix(String endpointId, String pathId) {
+        String rest = pathId.startsWith(endpointId + "-")
+                ? pathId.substring(endpointId.length() + 1)
+                : pathId;
+        return "_" + rest.toUpperCase().replaceAll("[^A-Z0-9]", "_");
+    }
+
+    private GenerationResult generateSingle(GenerationRequest request, String className,
+                                            String pathId) {
+        Endpoint endpoint = client.endpoint(request.endpointId());
+        ExploredPath path = client.path(pathId);
+        List<CapturedSql> sql = client.sqlForPath(pathId);
 
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables());
 
         Map<String, Object> scope = new HashMap<>();
         scope.put("packageName", request.packageName());
-        scope.put("className", request.testClassName());
+        scope.put("className", className);
         scope.put("httpMethod", endpoint.httpMethod());
         scope.put("httpMethodLower", endpoint.httpMethod().toLowerCase());
         scope.put("endpointPath", endpoint.path());
@@ -67,12 +96,12 @@ public class Generator {
         template.execute(writer, scope);
 
         String relativePath = request.packageName().replace('.', '/')
-                + "/" + request.testClassName() + ".java";
+                + "/" + className + ".java";
         return new GenerationResult(
                 List.of(new GeneratedFile(relativePath, writer.toString())),
-                List.of(),
-                // Phase 0: DB는 testId 격리, HTTP/socket mock 미사용 → 완전 병렬 안전
-                new ParallelSafetyReport(List.of(request.testClassName()), List.of()));
+                path.validationWarnings(),
+                // DB는 testId 격리, HTTP/socket mock 미사용 → 완전 병렬 안전 (Phase 2에서 재평가)
+                new ParallelSafetyReport(List.of(className), List.of()));
     }
 
     private static String bodyExpr(ComposedFixture fixture) {

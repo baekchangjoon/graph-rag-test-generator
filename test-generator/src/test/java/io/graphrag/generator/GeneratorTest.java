@@ -38,6 +38,41 @@ class GeneratorTest {
     }
 
     @Test
+    void generate_withoutPathId_emitsOneClassPerPath() {
+        GenerationRequest all = new GenerationRequest(
+                "post-api-orders", null, "OrdersPostTest", "io.graphrag.generated", AuthMode.DISABLED);
+        GenerationResult result = new Generator(GRAPH).generate(all);
+
+        // fixture 그래프의 post-api-orders path 2개 (happy + 404)
+        assertThat(result.files()).extracting(f -> f.relativePath()).containsExactly(
+                "io/graphrag/generated/OrdersPostTest_HAPPY.java",
+                "io/graphrag/generated/OrdersPostTest_S404_1.java");
+
+        String notFoundTest = result.files().get(1).content();
+        // 404 path: 사전 INSERT 없음 + 치환 변수는 사용 + 404 단언
+        assertThat(notFoundTest).doesNotContain("INSERT INTO");
+        assertThat(notFoundTest).contains("userId = scope.testId() + \"-user\";");
+        assertThat(notFoundTest).contains(".statusCode(404)");
+
+        assertThat(result.parallelSafety().fullyParallel())
+                .containsExactly("OrdersPostTest_HAPPY", "OrdersPostTest_S404_1");
+    }
+
+    @Test
+    void generate_mybatisSearchPath_compilesFixtureWithFkParent() {
+        GenerationRequest search = new GenerationRequest(
+                "post-api-orders-search", null, "OrdersSearchTest", "io.graphrag.generated",
+                AuthMode.DISABLED);
+        GenerationResult result = new Generator(GRAPH).generate(search);
+
+        assertThat(result.files()).hasSize(1);
+        String content = result.files().get(0).content();
+        assertThat(content).contains("INSERT INTO users (id, name) VALUES (?, ?)");
+        assertThat(content).contains("INSERT INTO orders (user_id, amount, type, status)");
+        assertThat(content).contains(".post(\"/api/orders/search\")");
+    }
+
+    @Test
     void generate_reportsParallelSafety() {
         GenerationResult result = new Generator(GRAPH).generate(REQUEST);
         assertThat(result.parallelSafety().fullyParallel()).containsExactly("OrdersPostTest");

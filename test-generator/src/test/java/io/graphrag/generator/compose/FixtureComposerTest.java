@@ -57,6 +57,39 @@ class FixtureComposerTest {
     }
 
     @Test
+    void notFoundPath_substitutesVarButSkipsFixture() {
+        // 404 = 사전 데이터가 "없어야" 재현되는 path → INSERT 합성 금지, 치환은 유지
+        ComposedFixture fixture = new FixtureComposer().compose(
+                client.path("post-api-orders-s404-1"),
+                client.sqlForPath("post-api-orders-s404-1"),
+                client.tables());
+
+        assertThat(fixture.vars()).extracting(ComposedFixture.Var::name).containsExactly("userId");
+        assertThat(fixture.inserts()).isEmpty();
+        assertThat(fixture.deletes()).isEmpty();
+        assertThat(fixture.bodyArgExprs()).containsExactly("userId");
+    }
+
+    @Test
+    void searchPath_seedsChildWithFkParentAndSkipsSerialPk() {
+        ComposedFixture fixture = new FixtureComposer().compose(
+                client.path("post-api-orders-search-s200-1"),
+                client.sqlForPath("post-api-orders-search-s200-1"),
+                client.tables());
+
+        // 부모(users) 먼저, 자식(orders)은 BIGSERIAL PK 제외 + NOT NULL 채움
+        assertThat(fixture.inserts()).extracting(ComposedFixture.Stmt::sql).containsExactly(
+                "INSERT INTO users (id, name) VALUES (?, ?)",
+                "INSERT INTO orders (user_id, amount, type, status) VALUES (?, ?, ?, ?)");
+        assertThat(fixture.inserts().get(1).argExprs())
+                .containsExactly("userId", "1", "\"probe\"", "\"probe\"");
+        // cleanup은 자식 먼저
+        assertThat(fixture.deletes()).extracting(ComposedFixture.Stmt::sql).containsExactly(
+                "DELETE FROM orders WHERE user_id = ?",
+                "DELETE FROM users WHERE id = ?");
+    }
+
+    @Test
     void assertions_literalEquals_othersNotNull() {
         ComposedFixture fixture = compose();
 

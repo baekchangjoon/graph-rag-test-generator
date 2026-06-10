@@ -1,122 +1,259 @@
 {
-  "sutId" : "order-service",
-  "commitSha" : "test",
-  "endpoints" : [ {
-    "id" : "post-api-orders",
-    "httpMethod" : "POST",
-    "path" : "/api/orders",
-    "handlerClass" : "io.graphrag.sample.orders.OrderController",
-    "handlerMethod" : "create",
-    "params" : [ {
-      "name" : "request",
-      "javaType" : "io.graphrag.sample.orders.OrderController$CreateOrderRequest",
-      "kind" : "BODY"
-    } ],
-    "authRequired" : false
-  } ],
-  "paths" : [ {
-    "id" : "post-api-orders-happy",
-    "endpointId" : "post-api-orders",
-    "sampleInput" : {
-      "userId" : "probe-userId",
-      "amount" : 1,
-      "type" : "sample-type"
+  "sutId": "order-service",
+  "commitSha": "test",
+  "endpoints": [
+    {
+      "id": "post-api-orders",
+      "httpMethod": "POST",
+      "path": "/api/orders",
+      "handlerClass": "io.graphrag.sample.orders.OrderController",
+      "handlerMethod": "create",
+      "params": [
+        {
+          "name": "request",
+          "javaType": "io.graphrag.sample.orders.OrderController$CreateOrderRequest",
+          "kind": "BODY"
+        }
+      ],
+      "authRequired": false
     },
-    "expectedStatus" : 201,
-    "sampleResponse" : {
-      "id" : 1,
-      "status" : "PENDING"
+    {
+      "id": "post-api-orders-search",
+      "httpMethod": "POST",
+      "path": "/api/orders/search",
+      "handlerClass": "io.graphrag.sample.orders.OrderSearchController",
+      "handlerMethod": "search",
+      "params": [
+        {
+          "name": "request",
+          "javaType": "io.graphrag.sample.orders.OrderSearchController$SearchRequest",
+          "kind": "BODY"
+        }
+      ],
+      "authRequired": false
+    }
+  ],
+  "paths": [
+    {
+      "id": "post-api-orders-happy",
+      "endpointId": "post-api-orders",
+      "sampleInput": {
+        "userId": "probe-userId",
+        "amount": 1,
+        "type": "sample-type"
+      },
+      "expectedStatus": 201,
+      "sampleResponse": {
+        "id": 1,
+        "status": "PENDING"
+      },
+      "capturedSqlIds": [
+        "sql-post-api-orders-happy-1",
+        "sql-post-api-orders-happy-2"
+      ]
     },
-    "capturedSqlIds" : [ "sql-post-api-orders-happy-1", "sql-post-api-orders-happy-2" ]
-  } ],
-  "sql" : [ {
-    "id" : "sql-post-api-orders-happy-1",
-    "pathId" : "post-api-orders-happy",
-    "sqlKind" : "SELECT",
-    "normalizedSql" : "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
-    "tableName" : "users",
-    "bindings" : [ {
-      "position" : 1,
-      "column" : "id",
-      "value" : "probe-userId",
-      "origin" : "API_PARAM"
-    } ]
-  }, {
-    "id" : "sql-post-api-orders-happy-2",
-    "pathId" : "post-api-orders-happy",
-    "sqlKind" : "INSERT",
-    "normalizedSql" : "insert into orders (amount,status,type,user_id) values (?,?,?,?)",
-    "tableName" : "orders",
-    "bindings" : [ {
-      "position" : 1,
-      "column" : "amount",
-      "value" : "1",
-      "origin" : "API_PARAM"
-    }, {
-      "position" : 2,
-      "column" : "status",
-      "value" : "PENDING",
-      "origin" : "LITERAL"
-    }, {
-      "position" : 3,
-      "column" : "type",
-      "value" : "sample-type",
-      "origin" : "API_PARAM"
-    }, {
-      "position" : 4,
-      "column" : "user_id",
-      "value" : "probe-userId",
-      "origin" : "API_PARAM"
-    } ]
-  } ],
-  "tables" : [ {
-    "name" : "orders",
-    "columns" : [ {
-      "name" : "id",
-      "jdbcType" : "BIGSERIAL",
-      "nullable" : false,
-      "primaryKey" : true
-    }, {
-      "name" : "user_id",
-      "jdbcType" : "VARCHAR",
-      "nullable" : false,
-      "primaryKey" : false
-    }, {
-      "name" : "amount",
-      "jdbcType" : "INT4",
-      "nullable" : false,
-      "primaryKey" : false
-    }, {
-      "name" : "type",
-      "jdbcType" : "VARCHAR",
-      "nullable" : false,
-      "primaryKey" : false
-    }, {
-      "name" : "status",
-      "jdbcType" : "VARCHAR",
-      "nullable" : false,
-      "primaryKey" : false
-    } ],
-    "foreignKeys" : [ {
-      "column" : "user_id",
-      "referencedTable" : "users",
-      "referencedColumn" : "id"
-    } ],
-    "uniqueKeys" : [ [ "id" ] ]
-  }, {
-    "name" : "users",
-    "columns" : [ {
-      "name" : "id",
-      "jdbcType" : "VARCHAR",
-      "nullable" : false,
-      "primaryKey" : true
-    }, {
-      "name" : "name",
-      "jdbcType" : "VARCHAR",
-      "nullable" : false,
-      "primaryKey" : false
-    } ],
-    "foreignKeys" : [ ],
-    "uniqueKeys" : [ [ "id" ] ]
-  } ]
+    {
+      "id": "post-api-orders-s404-1",
+      "endpointId": "post-api-orders",
+      "sampleInput": {
+        "userId": "missing-userId",
+        "amount": 1,
+        "type": "sample-type"
+      },
+      "expectedStatus": 404,
+      "sampleResponse": null,
+      "capturedSqlIds": [
+        "sql-post-api-orders-s404-1-1"
+      ],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": []
+    },
+    {
+      "id": "post-api-orders-search-s200-1",
+      "endpointId": "post-api-orders-search",
+      "sampleInput": {
+        "userId": "probe-userId",
+        "type": "sample-type",
+        "minAmount": 1
+      },
+      "expectedStatus": 200,
+      "sampleResponse": {
+        "count": 0,
+        "results": []
+      },
+      "capturedSqlIds": [
+        "sql-post-api-orders-search-s200-1-1"
+      ],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": []
+    }
+  ],
+  "sql": [
+    {
+      "id": "sql-post-api-orders-happy-1",
+      "pathId": "post-api-orders-happy",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "id",
+          "value": "probe-userId",
+          "origin": "API_PARAM"
+        }
+      ]
+    },
+    {
+      "id": "sql-post-api-orders-happy-2",
+      "pathId": "post-api-orders-happy",
+      "sqlKind": "INSERT",
+      "normalizedSql": "insert into orders (amount,status,type,user_id) values (?,?,?,?)",
+      "tableName": "orders",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "amount",
+          "value": "1",
+          "origin": "API_PARAM"
+        },
+        {
+          "position": 2,
+          "column": "status",
+          "value": "PENDING",
+          "origin": "LITERAL"
+        },
+        {
+          "position": 3,
+          "column": "type",
+          "value": "sample-type",
+          "origin": "API_PARAM"
+        },
+        {
+          "position": 4,
+          "column": "user_id",
+          "value": "probe-userId",
+          "origin": "API_PARAM"
+        }
+      ]
+    },
+    {
+      "id": "sql-post-api-orders-s404-1-1",
+      "pathId": "post-api-orders-s404-1",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "id",
+          "value": "missing-userId",
+          "origin": "API_PARAM"
+        }
+      ]
+    },
+    {
+      "id": "sql-post-api-orders-search-s200-1-1",
+      "pathId": "post-api-orders-search-s200-1",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select id, user_id, amount, type, status from orders WHERE user_id = ? and type = ? and amount >= ? order by id",
+      "tableName": "orders",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "user_id",
+          "value": "probe-userId",
+          "origin": "API_PARAM"
+        },
+        {
+          "position": 2,
+          "column": "type",
+          "value": "sample-type",
+          "origin": "API_PARAM"
+        },
+        {
+          "position": 3,
+          "column": "amount",
+          "value": "1",
+          "origin": "API_PARAM"
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "orders",
+      "columns": [
+        {
+          "name": "id",
+          "jdbcType": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true
+        },
+        {
+          "name": "user_id",
+          "jdbcType": "VARCHAR",
+          "nullable": false,
+          "primaryKey": false
+        },
+        {
+          "name": "amount",
+          "jdbcType": "INT4",
+          "nullable": false,
+          "primaryKey": false
+        },
+        {
+          "name": "type",
+          "jdbcType": "VARCHAR",
+          "nullable": false,
+          "primaryKey": false
+        },
+        {
+          "name": "status",
+          "jdbcType": "VARCHAR",
+          "nullable": false,
+          "primaryKey": false
+        }
+      ],
+      "foreignKeys": [
+        {
+          "column": "user_id",
+          "referencedTable": "users",
+          "referencedColumn": "id"
+        }
+      ],
+      "uniqueKeys": [
+        [
+          "id"
+        ]
+      ]
+    },
+    {
+      "name": "users",
+      "columns": [
+        {
+          "name": "id",
+          "jdbcType": "VARCHAR",
+          "nullable": false,
+          "primaryKey": true
+        },
+        {
+          "name": "name",
+          "jdbcType": "VARCHAR",
+          "nullable": false,
+          "primaryKey": false
+        }
+      ],
+      "foreignKeys": [],
+      "uniqueKeys": [
+        [
+          "id"
+        ]
+      ]
+    }
+  ]
 }

@@ -40,6 +40,11 @@ public class FileGraphRagClient implements GraphRagClient {
     }
 
     @Override
+    public List<ExploredPath> pathsForEndpoint(String endpointId) {
+        return asset.paths().stream().filter(p -> p.endpointId().equals(endpointId)).toList();
+    }
+
+    @Override
     public List<CapturedSql> sqlForPath(String pathId) {
         return asset.sql().stream().filter(s -> s.pathId().equals(pathId)).toList();
     }
