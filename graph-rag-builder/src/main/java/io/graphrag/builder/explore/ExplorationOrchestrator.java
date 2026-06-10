@@ -54,7 +54,10 @@ public class ExplorationOrchestrator {
             for (ExplorationResult.ExploredInput input : result.inputs()) {
                 List<BranchRef> sorted = input.outcome().coveredBranches().stream()
                         .sorted(BRANCH_ORDER).toList();
-                candidates.putIfAbsent(sorted.toString(), new Proto(input, sorted, engine.name()));
+                // path 식별 = 응답 status + 분기 집합. 분기가 같아도 status가 다르면
+                // 관측 가능한 별개 동작이다 (예: Optional 내부 분기는 분석 범위 밖)
+                String key = input.outcome().status() + ":" + sorted;
+                candidates.putIfAbsent(key, new Proto(input, sorted, engine.name()));
             }
             if (remaining <= 0) {
                 break;

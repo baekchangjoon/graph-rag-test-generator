@@ -124,6 +124,14 @@ public final class SutProcess {
         return offset >= all.length() ? "" : all.substring((int) offset);
     }
 
+    /** [start, end) 바이트 구간의 로그. 입력별 캡처 구간 분리용. */
+    public String readLogRange(long start, long end) {
+        String all = readLog();
+        int from = (int) Math.min(start, all.length());
+        int to = (int) Math.min(end, all.length());
+        return from >= to ? "" : all.substring(from, to);
+    }
+
     public void stop() {
         process.destroy();
         try {
