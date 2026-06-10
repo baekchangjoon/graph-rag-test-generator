@@ -11,5 +11,15 @@ public record InvocationOutcome(
         JsonNode response,
         Set<BranchRef> coveredBranches,
         long logStart,
-        long logEnd) {
+        long logEnd,
+        java.util.List<RawHttpExchange> httpExchanges) {
+
+    public InvocationOutcome {
+        httpExchanges = httpExchanges == null ? java.util.List.of() : httpExchanges;
+    }
+
+    public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
+                             long logStart, long logEnd) {
+        this(status, response, coveredBranches, logStart, logEnd, java.util.List.of());
+    }
 }

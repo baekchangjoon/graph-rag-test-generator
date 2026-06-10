@@ -62,6 +62,7 @@ public final class SutProcess {
             if (!options.javaToolOptions().isBlank()) {
                 builder.environment().put("JAVA_TOOL_OPTIONS", options.javaToolOptions());
             }
+            builder.environment().putAll(options.extraEnv());
 
             Process process = builder.start();
             SutProcess sut = new SutProcess(process, logFile, port);

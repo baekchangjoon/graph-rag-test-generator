@@ -88,7 +88,8 @@ public class ExplorationOrchestrator {
                     proto.branches(),
                     proto.engine(),
                     proto.input().outcome().logStart(),
-                    proto.input().outcome().logEnd()));
+                    proto.input().outcome().logEnd(),
+                    proto.input().outcome().httpExchanges()));
         }
         return new ExplorationOutcome(paths, known.covered(), pathsByEngine);
     }

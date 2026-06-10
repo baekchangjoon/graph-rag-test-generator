@@ -30,8 +30,11 @@ class BuilderE2eTest {
         Path sutJar = Path.of(System.getProperty("sut.jar"));
         Path sutResources = sutSrc.resolveSibling("resources");
 
-        GraphAsset asset = BuilderCli.build(sutSrc, sutResources, sutJar, out,
-                "order-service", "test", "postgres:15", 60, null);
+        GraphAsset asset = BuilderCli.build(new BuildConfig(
+                sutSrc, sutResources, sutJar, out,
+                "order-service", "test", "postgres:15", 60, null,
+                Path.of(System.getProperty("external.stubs")),
+                java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}")));
 
         assertThat(asset.endpoints()).extracting(e -> e.id())
                 .containsExactly("post-api-orders", "post-api-orders-search");
@@ -69,6 +72,22 @@ class BuilderE2eTest {
         assertThat(orderPaths.stream().filter(p -> p.expectedStatus() == 400).findFirst()
                 .orElseThrow().constraints())
                 .anyMatch(c -> c.contains("userId() == null"));
+
+        // Phase 2: EXPRESS 분기 → 외부 HTTP 캡처 (literal 변이로 도달)
+        List<ExploredPath> expressPaths = orderPaths.stream()
+                .filter(p -> !p.capturedHttpCallIds().isEmpty()).toList();
+        assertThat(expressPaths).isNotEmpty();
+        assertThat(orderPaths.stream().map(ExploredPath::expectedStatus)).contains(409);
+        var httpCall = asset.httpCalls().stream()
+                .filter(c -> c.pathId().equals(expressPaths.get(0).id()))
+                .findFirst().orElseThrow();
+        assertThat(httpCall.method()).isEqualTo("GET");
+        assertThat(httpCall.urlPath()).isEqualTo("/inventory/stock");
+        assertThat(httpCall.query()).containsEntry("type", "EXPRESS");
+        assertThat(httpCall.responseBody()).contains("available");
+        assertThat(httpCall.consumedFields()).containsExactly("available");
+        // OTEL javaagent가 inbound baggage를 outbound로 전파했다 (docs/06 격리 기반)
+        assertThat(httpCall.baggagePropagated()).isTrue();
 
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");

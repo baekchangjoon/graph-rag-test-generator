@@ -14,5 +14,6 @@ public record PathCandidate(
         List<BranchRef> branches,
         String discoveredBy,
         long logStart,
-        long logEnd) {
+        long logEnd,
+        List<RawHttpExchange> httpExchanges) {
 }

@@ -14,6 +14,8 @@ assertj = "3.26.3"
 awaitility = "4.2.2"
 mybatisStarter = "3.0.5"
 jacoco = "0.8.13"
+wiremock = "3.13.0"
+otelAgent = "2.14.0"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -32,6 +34,8 @@ mustache = { module = "com.github.spullara.mustache.java:compiler", version.ref 
 mybatis-spring-boot-starter = { module = "org.mybatis.spring.boot:mybatis-spring-boot-starter", version.ref = "mybatisStarter" }
 jacoco-core = { module = "org.jacoco:org.jacoco.core", version.ref = "jacoco" }
 jacoco-agent = { module = "org.jacoco:org.jacoco.agent", version.ref = "jacoco" }
+wiremock = { module = "org.wiremock:wiremock", version.ref = "wiremock" }
+otel-javaagent = { module = "io.opentelemetry.javaagent:opentelemetry-javaagent", version.ref = "otelAgent" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }

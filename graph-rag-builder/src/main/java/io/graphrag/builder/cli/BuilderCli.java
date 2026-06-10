@@ -3,15 +3,19 @@ package io.graphrag.builder.cli;
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.JacocoAgent;
+import io.graphrag.builder.coverage.OtelAgent;
 import io.graphrag.builder.env.AnalysisEnvironment;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
 import io.graphrag.builder.index.IndexResult;
+import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
+import io.graphrag.builder.index.ResponseDtoIndexer;
 import io.graphrag.builder.run.EndpointExplorationRunner;
 import io.graphrag.builder.store.JsonFileGraphStore;
+import io.graphrag.model.CapturedHttpCall;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExplorationReport;
@@ -31,13 +35,15 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
- * 도구 1 진입점 (Phase 1: 분기 탐색 + MyBatis).
+ * 도구 1 진입점 (Phase 2: 분기 탐색 + MyBatis + 외부 HTTP 캡처).
  * build --sut-src <dir> --sut-jar <jar> --out <graph-dir>
  *       [--sut-resources <dir>] [--sut-id id] [--commit-sha sha]
  *       [--postgres-image postgres:15] [--budget-requests 60] [--manual-paths <dir>]
+ *       [--external-stubs <dir>] [--sut-env KEY={{wiremock}}[,KEY2=V2]]
  */
 public final class BuilderCli {
 
@@ -46,57 +52,69 @@ public final class BuilderCli {
     public static void main(String[] args) throws Exception {
         Map<String, String> options = parseArgs(args);
         Path sutSrc = Path.of(required(options, "--sut-src"));
-        Path sutJar = Path.of(required(options, "--sut-jar"));
-        Path out = Path.of(required(options, "--out"));
-        Path sutResources = Path.of(options.getOrDefault("--sut-resources",
-                sutSrc.resolveSibling("resources").toString()));
         String manualPaths = options.get("--manual-paths");
+        String externalStubs = options.get("--external-stubs");
 
-        GraphAsset asset = build(sutSrc, sutResources, sutJar, out,
+        BuildConfig config = new BuildConfig(
+                sutSrc,
+                Path.of(options.getOrDefault("--sut-resources",
+                        sutSrc.resolveSibling("resources").toString())),
+                Path.of(required(options, "--sut-jar")),
+                Path.of(required(options, "--out")),
                 options.getOrDefault("--sut-id", "sut"),
                 options.getOrDefault("--commit-sha", "unknown"),
                 options.getOrDefault("--postgres-image", "postgres:15"),
                 Integer.parseInt(options.getOrDefault("--budget-requests", "60")),
-                manualPaths == null ? null : Path.of(manualPaths));
-        log.info("graph saved: {} endpoints, {} paths, {} sql, {} tables, {} mappers -> {}",
+                manualPaths == null ? null : Path.of(manualPaths),
+                externalStubs == null ? null : Path.of(externalStubs),
+                parseEnvPairs(options.get("--sut-env")));
+
+        GraphAsset asset = build(config);
+        log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
                 asset.endpoints().size(), asset.paths().size(), asset.sql().size(),
-                asset.tables().size(), asset.mappers().size(), out.resolve("graph.json"));
+                asset.httpCalls().size(), asset.tables().size(), asset.mappers().size(),
+                config.out().resolve("graph.json"));
     }
 
-    public static GraphAsset build(Path sutSrc, Path sutResources, Path sutJar, Path out,
-                                   String sutId, String commitSha, String postgresImage,
-                                   int budgetRequests, Path manualPathsDir) throws Exception {
-        log.info("indexing endpoints from {}", sutSrc);
-        IndexResult index = new EndpointIndexer().index(sutSrc);
-        List<MapperStatement> mappers = Files.isDirectory(sutResources)
-                ? new MapperXmlIndexer().index(sutResources)
+    public static GraphAsset build(BuildConfig config) throws Exception {
+        log.info("indexing endpoints from {}", config.sutSrc());
+        IndexResult index = new EndpointIndexer().index(config.sutSrc());
+        List<MapperStatement> mappers = Files.isDirectory(config.sutResources())
+                ? new MapperXmlIndexer().index(config.sutResources())
                 : List.<MapperStatement>of();
-        log.info("found {} endpoint(s), {} mapper statement(s)",
-                index.endpoints().size(), mappers.size());
+        List<Set<String>> responseDtoFieldSets = new ResponseDtoIndexer().extract(config.sutSrc());
+        log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s)",
+                index.endpoints().size(), mappers.size(), responseDtoFieldSets.size());
 
         Map<String, String> mybatisLogLevels = new LinkedHashMap<>();
         mappers.forEach(m -> mybatisLogLevels.put(m.namespace(), "TRACE"));
 
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> sql = new ArrayList<>();
+        List<CapturedHttpCall> httpCalls = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         List<TableSchema> tables;
 
-        Path workDir = Files.createDirectories(out.resolve("work"));
-        JacocoAgent agent = JacocoAgent.prepare(workDir);
+        Path workDir = Files.createDirectories(config.out().resolve("work"));
+        JacocoAgent jacoco = JacocoAgent.prepare(workDir);
+        OtelAgent otel = OtelAgent.prepare(workDir);
+        SutOptions sutOptions = new SutOptions(
+                jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
+                mybatisLogLevels,
+                otel.env(config.sutId()));
 
-        try (AnalysisEnvironment env = new AnalysisEnvironment(postgresImage)) {
-            env.start(sutJar, workDir, new SutOptions(agent.javaToolOptions(), mybatisLogLevels));
+        try (AnalysisEnvironment env = new AnalysisEnvironment(config.postgresImage())) {
+            env.start(config.sutJar(), workDir, sutOptions,
+                    config.externalStubsDir(), config.sutEnv());
 
             try (Connection connection = env.openConnection()) {
                 tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
                 log.info("extracted schema: {} table(s)", tables.size());
 
-                CoverageClient coverageClient = new CoverageClient("localhost", agent.tcpPort());
-                BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(sutJar);
-                EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                        env.sut(), connection, coverageClient, analyzer, budgetRequests);
+                CoverageClient coverageClient = new CoverageClient("localhost", jacoco.tcpPort());
+                BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
                 ConstraintExtractor constraintExtractor = new ConstraintExtractor();
+                LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
 
                 for (Endpoint endpoint : index.endpoints()) {
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
@@ -105,25 +123,31 @@ public final class BuilderCli {
                         continue;
                     }
                     var conditions = constraintExtractor.extract(
-                            sutSrc, endpoint.handlerClass(), endpoint.handlerMethod());
+                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
+                    var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
+                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                            env.sut(), connection, coverageClient, analyzer,
+                            config.budgetRequests(), env.httpCapture(),
+                            responseDtoFieldSets, literals);
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
+                    httpCalls.addAll(result.httpCalls());
                     reportEntries.add(result.report());
                 }
             }
         }
 
-        mergeManualPaths(manualPathsDir, paths);
+        mergeManualPaths(config.manualPathsDir(), paths);
 
-        Files.writeString(out.resolve("exploration-report.json"),
+        Files.writeString(config.out().resolve("exploration-report.json"),
                 Json.mapper().writerWithDefaultPrettyPrinter()
                         .writeValueAsString(new ExplorationReport(reportEntries)));
 
-        GraphAsset asset = new GraphAsset(sutId, commitSha, index.endpoints(), paths, sql,
-                tables, mappers, List.of());
-        new JsonFileGraphStore(out).save(asset);
+        GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
+                index.endpoints(), paths, sql, tables, mappers, httpCalls);
+        new JsonFileGraphStore(config.out()).save(asset);
         return asset;
     }
 
@@ -149,6 +173,22 @@ public final class BuilderCli {
                 .map(p -> shapes.get(p.javaType()))
                 .filter(java.util.Objects::nonNull)
                 .findFirst().orElse(null);
+    }
+
+    /** "K=V[,K2=V2]" 형식 파싱. */
+    private static Map<String, String> parseEnvPairs(String spec) {
+        Map<String, String> env = new LinkedHashMap<>();
+        if (spec == null || spec.isBlank()) {
+            return env;
+        }
+        for (String pair : spec.split(",")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0) {
+                throw new IllegalArgumentException("invalid --sut-env entry: " + pair);
+            }
+            env.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+        }
+        return env;
     }
 
     private static Map<String, String> parseArgs(String[] args) {

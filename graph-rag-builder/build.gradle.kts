@@ -7,6 +7,9 @@ application {
     mainClass = "io.graphrag.builder.cli.BuilderCli"
 }
 
+// OTEL javaagent jar를 리소스로 번들 (분석 환경에서 SUT에 부착, 런타임 다운로드 없음)
+val otelAgent: Configuration by configurations.creating
+
 dependencies {
     implementation(project(":shared-model"))
     implementation(libs.spoon)
@@ -14,14 +17,23 @@ dependencies {
     implementation(libs.postgresql)
     implementation(libs.jacoco.core)
     implementation(libs.jacoco.agent)
+    implementation(libs.wiremock)
     implementation(libs.slf4j.api)
     runtimeOnly(libs.slf4j.simple)
+    otelAgent(libs.otel.javaagent)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
 }
 
-// 통합 테스트(BuilderE2eTest)는 샘플 SUT jar가 필요하다
+tasks.processResources {
+    from(otelAgent) {
+        rename { "otel-javaagent.jar" }
+        into("agents")
+    }
+}
+
+// 통합 테스트는 샘플 SUT jar + 외부 스텁이 필요하다
 tasks.test {
     dependsOn(":samples:order-service:bootJar")
     systemProperty("sut.jar",
@@ -30,4 +42,6 @@ tasks.test {
     systemProperty("sut.src",
         project(":samples:order-service").layout.projectDirectory
             .dir("src/main/java").asFile.absolutePath)
+    systemProperty("external.stubs",
+        rootProject.layout.projectDirectory.dir("e2e/external-stubs").asFile.absolutePath)
 }

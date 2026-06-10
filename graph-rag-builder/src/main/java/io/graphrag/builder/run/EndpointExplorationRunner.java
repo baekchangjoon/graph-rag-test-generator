@@ -54,6 +54,7 @@ public class EndpointExplorationRunner {
     private static final int FUZZER_SATURATION = 2;   // 연속 dry 시드 패스 수
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
+                                 List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  ExplorationReport.EndpointExploration report) {
     }
 
@@ -62,15 +63,24 @@ public class EndpointExplorationRunner {
     private final CoverageClient coverage;
     private final BranchCoverageAnalyzer analyzer;
     private final int budgetRequests;
+    private final io.graphrag.builder.env.HttpCaptureServer httpCapture;
+    private final List<Set<String>> responseDtoFieldSets;
+    private final List<String> literalCandidates;
 
     public EndpointExplorationRunner(SutProcess sut, Connection connection,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
-                                     int budgetRequests) {
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates) {
         this.sut = sut;
         this.connection = connection;
         this.coverage = coverage;
         this.analyzer = analyzer;
         this.budgetRequests = budgetRequests;
+        this.httpCapture = httpCapture;
+        this.responseDtoFieldSets = responseDtoFieldSets;
+        this.literalCandidates = literalCandidates;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -86,15 +96,18 @@ public class EndpointExplorationRunner {
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
         ExplorationOutcome outcome = orchestrator.explore(
-                new EndpointTarget(endpoint, shape, tables, httpInvoker(endpoint)));
+                new EndpointTarget(endpoint, shape, tables, httpInvoker(endpoint), literalCandidates));
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
+        List<io.graphrag.model.CapturedHttpCall> allHttpCalls = new ArrayList<>();
         for (PathCandidate candidate : outcome.paths()) {
             List<CapturedSql> sql = captureSql(candidate);
             allSql.addAll(sql);
+            List<io.graphrag.model.CapturedHttpCall> httpCalls = captureHttpCalls(candidate);
+            allHttpCalls.addAll(httpCalls);
             paths.add(new ExploredPath(
                     candidate.pathId(),
                     endpoint.id(),
@@ -102,13 +115,55 @@ public class EndpointExplorationRunner {
                     candidate.status(),
                     candidate.response(),
                     sql.stream().map(CapturedSql::id).toList(),
-                    List.of(),   // capturedHttpCallIds — P2-D에서 채움
+                    httpCalls.stream().map(io.graphrag.model.CapturedHttpCall::id).toList(),
                     candidate.branches(),
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql)));
         }
-        return new EndpointResult(paths, allSql, report(endpoint, outcome));
+        return new EndpointResult(paths, allSql, allHttpCalls, report(endpoint, outcome));
+    }
+
+    /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
+    private List<io.graphrag.model.CapturedHttpCall> captureHttpCalls(PathCandidate candidate) {
+        List<io.graphrag.model.CapturedHttpCall> calls = new ArrayList<>();
+        int sequence = 0;
+        for (io.graphrag.builder.explore.RawHttpExchange exchange : candidate.httpExchanges()) {
+            sequence++;
+            calls.add(new io.graphrag.model.CapturedHttpCall(
+                    "http-" + candidate.pathId() + "-" + sequence,
+                    candidate.pathId(),
+                    exchange.method(),
+                    exchange.urlPath(),
+                    exchange.query(),
+                    exchange.requestBody() == null || exchange.requestBody().isBlank()
+                            ? null : exchange.requestBody(),
+                    exchange.status(),
+                    exchange.responseBody(),
+                    consumedFields(exchange.responseBody()),
+                    exchange.baggagePresent()));
+        }
+        return calls;
+    }
+
+    private List<String> consumedFields(String responseBody) {
+        Set<String> responseFields = new LinkedHashSet<>();
+        try {
+            Json.mapper().readTree(responseBody).fieldNames()
+                    .forEachRemaining(responseFields::add);
+        } catch (Exception e) {
+            return List.of();
+        }
+        // 응답 필드와 가장 많이 겹치는 DTO 필드 집합과의 교집합
+        List<String> best = List.of();
+        for (Set<String> dtoFields : responseDtoFieldSets) {
+            List<String> overlap = responseFields.stream()
+                    .filter(dtoFields::contains).sorted().toList();
+            if (overlap.size() > best.size()) {
+                best = overlap;
+            }
+        }
+        return best;
     }
 
     /** 입력 1회 = HTTP 호출 + 로그 구간 마킹 + 요청 단위 분기 dump. */
@@ -121,6 +176,8 @@ public class EndpointExplorationRunner {
                         HttpRequest.newBuilder(URI.create(sut.baseUri() + endpoint.path()))
                                 .timeout(Duration.ofSeconds(30))
                                 .header("Content-Type", "application/json")
+                                // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
+                                .header("baggage", "test-id=explore")
                                 .POST(HttpRequest.BodyPublishers.ofString(
                                         Json.mapper().writeValueAsString(body)))
                                 .build(),
@@ -130,7 +187,8 @@ public class EndpointExplorationRunner {
                 long logEnd = sut.logOffset();
                 return new InvocationOutcome(response.statusCode(),
                         parseJsonOrNull(response.body()),
-                        requestCoverage.covered(), logStart, logEnd);
+                        requestCoverage.covered(), logStart, logEnd,
+                        httpCapture == null ? List.of() : httpCapture.drainNewExchanges());
             } catch (Exception e) {
                 throw new IllegalStateException("invocation failed: " + endpoint.path(), e);
             }
