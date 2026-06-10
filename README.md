@@ -22,15 +22,17 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 - JDK 17 (`gradle.properties`의 `org.gradle.java.home` 또는 `JAVA_HOME`)
 - Docker (Testcontainers + docker-compose)
 
-## Phase 0 전 사이클 실행
+## 전 사이클 실행
 
 ```bash
-./e2e/run-phase0.sh
+./e2e/run-e2e.sh
 ```
 
-흐름: SUT jar 빌드 → 도구 1이 Testcontainers 분석 환경에서 graph.json 생성 →
-도구 2가 `e2e/request.json`으로 테스트 생성 → docker-compose 기동 →
-생성 테스트 실행(`:e2e:test`) → 정리. 성공 시 `✅ Phase 0 E2E PASS`.
+흐름: SUT jar 빌드 → 도구 1이 Testcontainers + JaCoCo 분석 환경에서 분기 탐색
+(휴리스틱 + coverage-guided fuzzer, endpoint당 요청 예산 60) 후 graph.json +
+exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 생성
+(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
+성공 시 `✅ E2E PASS — tests=N failures=0`.
 
 개별 실행:
 
@@ -56,4 +58,8 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 
 - **Phase 0 완료** (2026-06-10): 단일 JPA endpoint의 build → graph → generate →
   run → pass 사이클 통과 (메트릭 1/1)
-- 다음: Phase 1 — 분기 탐색(coverage-guided) + MyBatis (`docs/09-implementation-roadmap.md`)
+- **Phase 1 완료** (2026-06-10): 분기 탐색(휴리스틱 + fuzzer + JaCoCo) + MyBatis.
+  endpoint 2개에서 12 path 발견 → 12 테스트 합성 → 12/12 통과.
+  still_missing 리포트 + `--manual-paths` 수동 보강 경로 포함
+- 다음: Phase 2 — WireMock 통합 (외부 HTTP, OTEL baggage 격리,
+  `docs/09-implementation-roadmap.md`)

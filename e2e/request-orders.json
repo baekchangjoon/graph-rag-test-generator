@@ -1,6 +1,5 @@
 {
   "endpointId": "post-api-orders",
-  "pathId": "post-api-orders-happy",
   "testClassName": "OrdersPostTest",
   "packageName": "io.graphrag.generated",
   "authMode": "DISABLED"
