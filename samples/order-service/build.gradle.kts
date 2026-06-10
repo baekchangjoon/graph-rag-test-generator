@@ -9,6 +9,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation(libs.mybatis.spring.boot.starter)
+    implementation("org.springframework.boot:spring-boot-starter-websocket")
     runtimeOnly(libs.postgresql)
 
     testImplementation(libs.junit.jupiter)

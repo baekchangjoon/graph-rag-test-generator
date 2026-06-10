@@ -3,4 +3,6 @@ package io.graphrag.sample.orders;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
+
+    long countByUser_Id(String userId);
 }
