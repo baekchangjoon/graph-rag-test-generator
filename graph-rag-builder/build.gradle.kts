@@ -12,6 +12,7 @@ val otelAgent: Configuration by configurations.creating
 
 dependencies {
     implementation(project(":shared-model"))
+    implementation(project(":testlib"))   // 최소 STOMP 클라이언트 재사용 (캡처 경로 = 테스트 경로)
     implementation(libs.spoon)
     implementation(libs.testcontainers.postgresql)
     implementation(libs.postgresql)

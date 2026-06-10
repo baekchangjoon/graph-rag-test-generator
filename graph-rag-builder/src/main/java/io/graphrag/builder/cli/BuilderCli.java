@@ -79,6 +79,8 @@ public final class BuilderCli {
     public static GraphAsset build(BuildConfig config) throws Exception {
         log.info("indexing endpoints from {}", config.sutSrc());
         IndexResult index = new EndpointIndexer().index(config.sutSrc());
+        io.graphrag.builder.index.WsIndexResult wsIndex =
+                new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
         List<MapperStatement> mappers = Files.isDirectory(config.sutResources())
                 ? new MapperXmlIndexer().index(config.sutResources())
                 : List.<MapperStatement>of();
@@ -92,6 +94,7 @@ public final class BuilderCli {
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> sql = new ArrayList<>();
         List<CapturedHttpCall> httpCalls = new ArrayList<>();
+        List<io.graphrag.model.WsExchange> wsExchanges = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         List<TableSchema> tables;
 
@@ -136,6 +139,20 @@ public final class BuilderCli {
                     httpCalls.addAll(result.httpCalls());
                     reportEntries.add(result.report());
                 }
+
+                io.graphrag.builder.run.WsCaptureRunner wsRunner =
+                        new io.graphrag.builder.run.WsCaptureRunner(env.sut(), connection);
+                for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
+                    BodyShape shape = wsIndex.payloadShapes().get(wsEndpoint.payloadType());
+                    if (shape == null) {
+                        log.warn("skip {} (no payload shape)", wsEndpoint.id());
+                        continue;
+                    }
+                    io.graphrag.builder.run.WsCaptureRunner.WsResult result =
+                            wsRunner.run(wsEndpoint, shape, tables);
+                    wsExchanges.addAll(result.exchanges());
+                    sql.addAll(result.sql());
+                }
             }
         }
 
@@ -146,7 +163,8 @@ public final class BuilderCli {
                         .writeValueAsString(new ExplorationReport(reportEntries)));
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
-                index.endpoints(), paths, sql, tables, mappers, httpCalls, List.of(), List.of());
+                index.endpoints(), paths, sql, tables, mappers, httpCalls,
+                wsIndex.endpoints(), wsExchanges);
         new JsonFileGraphStore(config.out()).save(asset);
         return asset;
     }

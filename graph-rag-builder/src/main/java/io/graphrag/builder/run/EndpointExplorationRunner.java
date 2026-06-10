@@ -87,7 +87,7 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.ConditionSpan> conditions) throws Exception {
         SynthesizedInput happy = new SampleInputSynthesizer().synthesize(shape, tables);
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
-            insertSeed(connection, seed);
+            Seeds.insert(connection, seed);
         }
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
@@ -271,21 +271,6 @@ public class EndpointExplorationRunner {
         int coveredCount = (int) handlerAll.stream().filter(covered::contains).count();
         return new ExplorationReport.EndpointExploration(
                 endpoint.id(), handlerAll.size(), coveredCount, missed, outcome.pathsByEngine());
-    }
-
-    private static void insertSeed(Connection connection, SynthesizedInput.SeedRow seed)
-            throws Exception {
-        String placeholders = String.join(", ", seed.columns().stream().map(c -> "?").toList());
-        // 여러 endpoint가 같은 probe row를 공유할 수 있다 → 멱등 INSERT
-        String sql = "INSERT INTO " + seed.table() + " (" + String.join(", ", seed.columns())
-                + ") VALUES (" + placeholders + ") ON CONFLICT DO NOTHING";
-        try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (int i = 0; i < seed.values().size(); i++) {
-                statement.setObject(i + 1, seed.values().get(i));
-            }
-            statement.executeUpdate();
-        }
-        log.info("seeded: {} {}", seed.table(), seed.values());
     }
 
     private static Set<String> bodyValues(JsonNode body) {

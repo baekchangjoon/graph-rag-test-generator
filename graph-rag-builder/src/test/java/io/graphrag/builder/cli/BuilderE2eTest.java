@@ -89,6 +89,21 @@ class BuilderE2eTest {
         // OTEL javaagent가 inbound baggage를 outbound로 전파했다 (docs/06 격리 기반)
         assertThat(httpCall.baggagePropagated()).isTrue();
 
+        // Phase 3: STOMP endpoint + 메시지 교환 캡처 (happy/missing-ref)
+        assertThat(asset.wsEndpoints()).extracting(w -> w.id()).containsExactly("ws-orders-count");
+        var wsExchanges = asset.wsExchanges();
+        assertThat(wsExchanges).hasSize(2);
+        var wsHappy = wsExchanges.get(0);
+        assertThat(wsHappy.payload().get("userId").asText()).isEqualTo("probe-userId");
+        assertThat(wsHappy.response().get("userId").asText()).isEqualTo("probe-userId");
+        assertThat(wsHappy.response().has("count")).isTrue();
+        // WS 핸들러의 파생 쿼리 SQL도 캡처된다
+        assertThat(asset.sql().stream().filter(s -> s.pathId().equals(wsHappy.id())))
+                .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("orders")
+                        && s.bindings().stream().anyMatch(b ->
+                                b.origin() == BindingOrigin.API_PARAM
+                                        && b.value().equals("probe-userId")));
+
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
         assertThat(Files.exists(out.resolve("exploration-report.json"))).isTrue();
