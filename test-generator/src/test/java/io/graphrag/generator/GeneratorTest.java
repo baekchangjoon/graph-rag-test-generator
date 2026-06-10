@@ -115,6 +115,31 @@ class GeneratorTest {
     }
 
     @Test
+    void wsEndpoint_synthesizesStompTestPerExchange() {
+        GenerationRequest ws = new GenerationRequest(
+                "ws-orders-count", null, "OrdersCountWsTest", "io.graphrag.generated",
+                AuthMode.DISABLED);
+        GenerationResult result = new Generator(GRAPH).generate(ws);
+
+        assertThat(result.files()).extracting(f -> f.relativePath()).containsExactly(
+                "io/graphrag/generated/OrdersCountWsTest_X1.java",
+                "io/graphrag/generated/OrdersCountWsTest_X2.java");
+
+        String happy = result.files().get(0).content();
+        assertThat(happy)
+                .contains("scope.stomp(\"/ws\")")
+                .contains("stomp.subscribe(\"/topic/orders\")")
+                .contains("stomp.send(\"/app/orders/count\", "
+                        + "String.format(\"{\\\"userId\\\":\\\"%s\\\"}\", userId))")
+                // 응답이 치환 값을 echo → 마커 기반 병렬 격리
+                .contains("stomp.awaitMessageContaining(userId,")
+                .contains("INSERT INTO users (id, name) VALUES (?, ?)")
+                .contains("assertTrue(response.has(\"count\"))");
+        assertThat(result.parallelSafety().fullyParallel())
+                .containsExactly("OrdersCountWsTest_X1", "OrdersCountWsTest_X2");
+    }
+
+    @Test
     void generate_reportsParallelSafety() {
         GenerationResult result = new Generator(GRAPH).generate(REQUEST);
         assertThat(result.parallelSafety().fullyParallel()).containsExactly("OrdersPostTest");

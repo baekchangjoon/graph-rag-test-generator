@@ -55,6 +55,29 @@ public class FileGraphRagClient implements GraphRagClient {
     }
 
     @Override
+    public boolean hasWsEndpoint(String id) {
+        return asset.wsEndpoints().stream().anyMatch(w -> w.id().equals(id));
+    }
+
+    @Override
+    public io.graphrag.model.WsEndpoint wsEndpoint(String id) {
+        return asset.wsEndpoints().stream().filter(w -> w.id().equals(id)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown ws endpoint: " + id));
+    }
+
+    @Override
+    public List<io.graphrag.model.WsExchange> wsExchangesFor(String wsEndpointId) {
+        return asset.wsExchanges().stream()
+                .filter(x -> x.wsEndpointId().equals(wsEndpointId)).toList();
+    }
+
+    @Override
+    public io.graphrag.model.WsExchange wsExchange(String exchangeId) {
+        return asset.wsExchanges().stream().filter(x -> x.id().equals(exchangeId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown ws exchange: " + exchangeId));
+    }
+
+    @Override
     public List<TableSchema> tables() {
         return asset.tables();
     }

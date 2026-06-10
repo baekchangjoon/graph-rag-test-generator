@@ -243,6 +243,21 @@
           "origin": "API_PARAM"
         }
       ]
+    },
+    {
+      "id": "sql-ws-orders-count-x1-1",
+      "pathId": "ws-orders-count-x1",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select count(o1_0.id) from orders o1_0 left join users u1_0 on u1_0.id=o1_0.user_id where u1_0.id=?",
+      "tableName": "orders",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "id",
+          "value": "probe-userId",
+          "origin": "API_PARAM"
+        }
+      ]
     }
   ],
   "tables": [
@@ -347,6 +362,48 @@
       "responseBody": "{\"available\":50}",
       "consumedFields": [],
       "baggagePropagated": false
+    }
+  ],
+  "wsEndpoints": [
+    {
+      "id": "ws-orders-count",
+      "wsPath": "/ws",
+      "appPrefix": "/app",
+      "destination": "/orders/count",
+      "sendTo": "/topic/orders",
+      "handlerClass": "io.graphrag.sample.orders.OrderCountWsController",
+      "handlerMethod": "count",
+      "payloadType": "io.graphrag.sample.orders.OrderCountWsController$OrderCountRequest"
+    }
+  ],
+  "wsExchanges": [
+    {
+      "id": "ws-orders-count-x1",
+      "wsEndpointId": "ws-orders-count",
+      "payload": {
+        "userId": "probe-userId"
+      },
+      "responseDestination": "/topic/orders",
+      "response": {
+        "userId": "probe-userId",
+        "count": 0
+      },
+      "capturedSqlIds": [
+        "sql-ws-orders-count-x1-1"
+      ]
+    },
+    {
+      "id": "ws-orders-count-x2",
+      "wsEndpointId": "ws-orders-count",
+      "payload": {
+        "userId": "missing-userId"
+      },
+      "responseDestination": "/topic/orders",
+      "response": {
+        "userId": "missing-userId",
+        "count": 0
+      },
+      "capturedSqlIds": []
     }
   ]
 }

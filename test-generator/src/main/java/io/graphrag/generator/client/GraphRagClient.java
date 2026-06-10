@@ -20,5 +20,13 @@ public interface GraphRagClient {
 
     List<io.graphrag.model.CapturedHttpCall> httpCallsForPath(String pathId);
 
+    boolean hasWsEndpoint(String id);
+
+    io.graphrag.model.WsEndpoint wsEndpoint(String id);
+
+    List<io.graphrag.model.WsExchange> wsExchangesFor(String wsEndpointId);
+
+    io.graphrag.model.WsExchange wsExchange(String exchangeId);
+
     List<TableSchema> tables();
 }

@@ -30,6 +30,7 @@ public class Generator {
 
     private final GraphRagClient client;
     private final Mustache template;
+    private final Mustache wsTemplate;
 
     public Generator(Path graphDir) {
         this(new FileGraphRagClient(graphDir));
@@ -37,11 +38,16 @@ public class Generator {
 
     public Generator(GraphRagClient client) {
         this.client = client;
-        this.template = new DefaultMustacheFactory().compile("templates/test-class.mustache");
+        DefaultMustacheFactory factory = new DefaultMustacheFactory();
+        this.template = factory.compile("templates/test-class.mustache");
+        this.wsTemplate = factory.compile("templates/ws-test-class.mustache");
     }
 
     /** pathId 미지정 시 endpoint의 전 path에 대해 path당 테스트 클래스 1개씩 생성 (1.5). */
     public GenerationResult generate(GenerationRequest request) {
+        if (client.hasWsEndpoint(request.endpointId())) {
+            return generateWs(request);
+        }
         if (request.pathId() != null) {
             return generateSingle(request, request.testClassName(), request.pathId());
         }
@@ -59,6 +65,86 @@ public class Generator {
             serialRequired.addAll(single.parallelSafety().serialRequired());
         }
         return new GenerationResult(files, warnings,
+                new ParallelSafetyReport(fullyParallel, serialRequired));
+    }
+
+    /** STOMP exchange → 테스트 클래스 합성 (3.3). */
+    private GenerationResult generateWs(GenerationRequest request) {
+        io.graphrag.model.WsEndpoint endpoint = client.wsEndpoint(request.endpointId());
+        List<io.graphrag.model.WsExchange> exchanges = request.pathId() != null
+                ? List.of(client.wsExchange(request.pathId()))
+                : client.wsExchangesFor(endpoint.id());
+
+        List<GeneratedFile> files = new ArrayList<>();
+        List<String> fullyParallel = new ArrayList<>();
+        List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
+        for (io.graphrag.model.WsExchange exchange : exchanges) {
+            String className = request.pathId() != null
+                    ? request.testClassName()
+                    : request.testClassName() + classSuffix(endpoint.id(), exchange.id());
+            List<CapturedSql> sql = client.sqlForPath(exchange.id());
+            // 픽스처/치환 규칙 재사용을 위한 pseudo-path (응답 수신=200으로 간주)
+            ExploredPath pseudo = new ExploredPath(
+                    exchange.id(), endpoint.id(), exchange.payload(),
+                    exchange.response() != null && !exchange.response().isNull() ? 200 : 0,
+                    exchange.response(), exchange.capturedSqlIds(),
+                    List.of(), List.of(), "ws-capture", List.of(), List.of());
+            ComposedFixture fixture = new FixtureComposer().compose(pseudo, sql, client.tables());
+
+            // 상관관계 마커: 응답이 치환 필드의 캡처 값을 echo하면 그 변수로 자기 메시지 식별
+            String markerExpr = "\"\"";
+            boolean correlated = false;
+            String responseText = exchange.response() == null ? "" : exchange.response().toString();
+            for (ComposedFixture.Var var : fixture.vars()) {
+                var sampleValue = exchange.payload().get(var.name());
+                if (sampleValue != null && sampleValue.isTextual()
+                        && responseText.contains(sampleValue.asText())) {
+                    markerExpr = var.name();
+                    correlated = true;
+                    break;
+                }
+            }
+
+            StringBuilder wsAssertions = new StringBuilder();
+            if (exchange.response() != null && !exchange.response().isNull()) {
+                exchange.response().fieldNames().forEachRemaining(field ->
+                        wsAssertions.append("\n        assertTrue(response.has(\"")
+                                .append(field).append("\"));"));
+            }
+
+            Map<String, Object> scope = new HashMap<>();
+            scope.put("packageName", request.packageName());
+            scope.put("className", className);
+            scope.put("wsEndpointId", endpoint.id());
+            scope.put("exchangeId", exchange.id());
+            scope.put("wsPath", endpoint.wsPath());
+            scope.put("sendDestination", endpoint.appPrefix() + endpoint.destination());
+            scope.put("subscribeDestination", endpoint.sendTo());
+            scope.put("testMethodName", exchange.id().replace('-', '_'));
+            scope.put("vars", fixture.vars());
+            scope.put("inserts", fixture.inserts());
+            scope.put("deletes", fixture.deletes());
+            scope.put("bodyExpr", bodyExpr(fixture));
+            scope.put("markerExpr", markerExpr);
+            scope.put("wsAssertionsBlock", wsAssertions.toString());
+            scope.put("serialMark", correlated ? "" : "@Execution(ExecutionMode.SAME_THREAD)\n");
+            scope.put("serialImports", correlated ? ""
+                    : "import org.junit.jupiter.api.parallel.Execution;\n"
+                    + "import org.junit.jupiter.api.parallel.ExecutionMode;\n");
+
+            StringWriter writer = new StringWriter();
+            wsTemplate.execute(writer, scope);
+            files.add(new GeneratedFile(
+                    request.packageName().replace('.', '/') + "/" + className + ".java",
+                    writer.toString()));
+            if (correlated) {
+                fullyParallel.add(className);
+            } else {
+                serialRequired.add(new io.graphrag.model.SerialRequired(className,
+                        "WS_NO_CORRELATION", "응답이 치환 값을 echo하지 않아 broadcast 메시지를 구분할 수 없음"));
+            }
+        }
+        return new GenerationResult(files, List.of(),
                 new ParallelSafetyReport(fullyParallel, serialRequired));
     }
 
