@@ -29,3 +29,17 @@
   compose 밖으로 포트를 노출하지 않는 운용을 전제로 한다.
 - 노출이 필요한 환경에서는 dashboard는 `DASHBOARD_TOKEN`으로 보호 가능.
   socket-mock admin 인증은 그런 요구가 실제로 생길 때 추가한다.
+
+## 샘플 SUT(order-service)의 의도적 무인증 (2026-06-10 추가)
+
+`samples/order-service`는 운영 서비스가 아니라 **도구 검증용 픽스처**다.
+자동 보안 리뷰가 지적한 WS IDOR / broadcast 토픽 / origin 미제한은 모두
+의도된 시나리오다:
+
+- 무인증: docs/04의 `auth_mode=DISABLED` 경로를 검증하는 전제
+- `/topic` broadcast + body의 userId: broadcast 환경에서 마커(testId-unique 값)
+  기반 메시지 상관관계로 병렬 격리하는 것이 Phase 3의 검증 대상 그 자체
+- 임시(ephemeral) 분석/compose 환경에서만 구동되며 배포되지 않는다
+
+인증 있는 SUT 시나리오(`auth_mode=REAL`, `@SendToUser`)는 testlib AuthClient
+어댑터가 실구현되는 시점에 별도 샘플로 추가한다.
