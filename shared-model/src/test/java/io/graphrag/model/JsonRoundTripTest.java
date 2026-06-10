@@ -31,10 +31,16 @@ class JsonRoundTripTest {
         ExploredPath path = new ExploredPath(
                 "path-1", "ep-orders-post", sampleInput, 201, sampleResponse,
                 List.of("sql-1", "sql-2"),
+                List.of("http-1"),
                 List.of(new BranchRef("com.example.OrderController", "create", 30, 1)),
                 "fuzzer",
                 List.of("request.amount() > 0"),
                 List.of());
+
+        CapturedHttpCall httpCall = new CapturedHttpCall(
+                "http-1", "path-1", "GET", "/inventory/stock",
+                java.util.Map.of("type", "EXPRESS"), null, 200,
+                "{\"available\":50}", List.of("available"), true);
 
         CapturedSql sql = new CapturedSql(
                 "sql-1", "path-1", "INSERT",
@@ -61,7 +67,7 @@ class JsonRoundTripTest {
         GraphAsset asset = new GraphAsset(
                 "order-service", "abc123",
                 List.of(endpoint), List.of(path), List.of(sql), List.of(table),
-                List.of(mapper));
+                List.of(mapper), List.of(httpCall));
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);
     }
@@ -75,10 +81,13 @@ class JsonRoundTripTest {
         assertThat(path.branchesTaken()).isEmpty();
         assertThat(path.discoveredBy()).isEqualTo("unknown");
         assertThat(path.constraints()).isEmpty();
+        assertThat(path.capturedHttpCallIds()).isEmpty();
 
         String assetJson = """
                 {"sutId":"s","commitSha":"c","endpoints":[],"paths":[],"sql":[],"tables":[]}""";
-        assertThat(mapper.readValue(assetJson, GraphAsset.class).mappers()).isEmpty();
+        GraphAsset legacyAsset = mapper.readValue(assetJson, GraphAsset.class);
+        assertThat(legacyAsset.mappers()).isEmpty();
+        assertThat(legacyAsset.httpCalls()).isEmpty();
     }
 
     @Test

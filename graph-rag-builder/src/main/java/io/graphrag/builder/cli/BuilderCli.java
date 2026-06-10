@@ -122,7 +122,7 @@ public final class BuilderCli {
                         .writeValueAsString(new ExplorationReport(reportEntries)));
 
         GraphAsset asset = new GraphAsset(sutId, commitSha, index.endpoints(), paths, sql,
-                tables, mappers);
+                tables, mappers, List.of());
         new JsonFileGraphStore(out).save(asset);
         return asset;
     }

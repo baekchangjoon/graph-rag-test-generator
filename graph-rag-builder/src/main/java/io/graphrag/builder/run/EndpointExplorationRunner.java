@@ -102,6 +102,7 @@ public class EndpointExplorationRunner {
                     candidate.status(),
                     candidate.response(),
                     sql.stream().map(CapturedSql::id).toList(),
+                    List.of(),   // capturedHttpCallIds — P2-D에서 채움
                     candidate.branches(),
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),

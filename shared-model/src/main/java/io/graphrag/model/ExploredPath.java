@@ -12,13 +12,15 @@ public record ExploredPath(
         int expectedStatus,
         JsonNode sampleResponse,
         List<String> capturedSqlIds,
+        List<String> capturedHttpCallIds,
         List<BranchRef> branchesTaken,
         String discoveredBy,
         List<String> constraints,
         List<String> validationWarnings) {
 
-    /** 구버전 그래프(Phase 0)와의 후방 호환: 누락 필드를 빈 값으로 정규화. */
+    /** 구버전 그래프(Phase 0/1)와의 후방 호환: 누락 필드를 빈 값으로 정규화. */
     public ExploredPath {
+        capturedHttpCallIds = capturedHttpCallIds == null ? List.of() : capturedHttpCallIds;
         branchesTaken = branchesTaken == null ? List.of() : branchesTaken;
         discoveredBy = discoveredBy == null ? "unknown" : discoveredBy;
         constraints = constraints == null ? List.of() : constraints;

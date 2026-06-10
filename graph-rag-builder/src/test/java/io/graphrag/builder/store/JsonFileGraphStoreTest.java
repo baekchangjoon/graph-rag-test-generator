@@ -21,7 +21,7 @@ class JsonFileGraphStoreTest {
         GraphAsset asset = new GraphAsset("order-service", "sha-1",
                 List.of(new Endpoint("post-api-orders", "POST", "/api/orders",
                         "C", "m", List.of(), false)),
-                List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of());
 
         JsonFileGraphStore store = new JsonFileGraphStore(dir);
         store.save(asset);

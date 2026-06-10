@@ -10,10 +10,12 @@ public record GraphAsset(
         List<ExploredPath> paths,
         List<CapturedSql> sql,
         List<TableSchema> tables,
-        List<MapperStatement> mappers) {
+        List<MapperStatement> mappers,
+        List<CapturedHttpCall> httpCalls) {
 
-    /** Phase 0 그래프(mappers 없음)와의 후방 호환. */
+    /** 이전 Phase 그래프(누락 필드)와의 후방 호환. */
     public GraphAsset {
         mappers = mappers == null ? List.of() : mappers;
+        httpCalls = httpCalls == null ? List.of() : httpCalls;
     }
 }
