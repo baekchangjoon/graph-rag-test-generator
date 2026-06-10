@@ -1,6 +1,6 @@
-# 의사결정: Phase 0 test-generator 합성 규칙
+# 의사결정: test-generator 합성 규칙
 
-날짜: 2026-06-10 / 단계: 0.7
+날짜: 2026-06-10 / 단계: 0.7 (Phase 1 개정: 1.5 — 아래 "Phase 1 개정" 절)
 
 ## 구조 (docs/04 방식 C 준수)
 
@@ -29,6 +29,16 @@
   미구현. 빌더와 함께 Phase 1에서 도입.
 - 숫자형 API_PARAM은 치환하지 않음 (path constraint 부재 상태에서 unique 숫자
   치환은 검증 실패 위험 — docs/04의 "constraint 충족 범위 안에서" 원칙의 보수적 해석).
+
+## Phase 1 개정 (1.5 — 다중 path 합성)
+
+| 규칙 | 결정 | 근거 |
+|---|---|---|
+| 다중 path 출력 단위 | **path당 테스트 클래스 1개** (`<base>_<S{status}_{n}>`) | path마다 fixture/cleanup이 달라 클래스 분리가 단순·견고. `pathId` 생략 시 endpoint 전 path |
+| status-aware 픽스처 | **2xx path만 사전 INSERT 합성**. 4xx path는 치환 변수만 유지 | 404는 "사전 데이터 부재"가 재현 조건 — 픽스처를 넣으면 404가 201로 바뀌는 자기모순. 치환된 testId-unique 값은 DB에 없음이 보장되어 404가 결정적 |
+| SERIAL/IDENTITY PK | 픽스처 INSERT에서 제외 | 고정값 INSERT는 시퀀스 충돌·병렬 불안전 |
+| FK 부모 행 | 자식 seed 전에 같은 변수 값으로 재귀 seed (부모 먼저 INSERT, 자식 먼저 DELETE) | FK 제약 위반 방지. orders 픽스처가 users 행을 전제 |
+| 응답 단언의 보수성 | 2xx 픽스처 삽입으로 응답 값이 캡처 시점과 달라질 수 있음(예: count) → LITERAL 일치만 equalTo, 그 외 notNullValue 유지 | 픽스처-응답 상호작용에 안전 |
 
 ## GraphRagClient
 
