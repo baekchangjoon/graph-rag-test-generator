@@ -44,6 +44,7 @@ import java.util.stream.Stream;
  *       [--sut-resources <dir>] [--sut-id id] [--commit-sha sha]
  *       [--postgres-image postgres:15] [--budget-requests 60] [--manual-paths <dir>]
  *       [--external-stubs <dir>] [--sut-env KEY={{wiremock}}[,KEY2=V2]]
+ *       [--incremental-base <prev-graph-dir> --changed-files <list-file>]
  */
 public final class BuilderCli {
 
@@ -54,6 +55,8 @@ public final class BuilderCli {
         Path sutSrc = Path.of(required(options, "--sut-src"));
         String manualPaths = options.get("--manual-paths");
         String externalStubs = options.get("--external-stubs");
+        String incrementalBase = options.get("--incremental-base");
+        String changedFilesList = options.get("--changed-files");
 
         BuildConfig config = new BuildConfig(
                 sutSrc,
@@ -67,7 +70,11 @@ public final class BuilderCli {
                 Integer.parseInt(options.getOrDefault("--budget-requests", "60")),
                 manualPaths == null ? null : Path.of(manualPaths),
                 externalStubs == null ? null : Path.of(externalStubs),
-                parseEnvPairs(options.get("--sut-env")));
+                parseEnvPairs(options.get("--sut-env")),
+                incrementalBase == null ? null : Path.of(incrementalBase),
+                changedFilesList == null ? null
+                        : Files.readAllLines(Path.of(changedFilesList)).stream()
+                                .filter(line -> !line.isBlank()).toList());
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -87,6 +94,15 @@ public final class BuilderCli {
         List<Set<String>> responseDtoFieldSets = new ResponseDtoIndexer().extract(config.sutSrc());
         log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s)",
                 index.endpoints().size(), mappers.size(), responseDtoFieldSets.size());
+
+        IncrementalPlan plan = IncrementalPlan.exploreAll();
+        if (config.incrementalBase() != null) {
+            GraphAsset previous = new JsonFileGraphStore(config.incrementalBase()).load();
+            plan = new IncrementalBuildPlanner().plan(previous, config.changedFiles(),
+                    index.endpoints(), wsIndex.endpoints());
+            log.info("incremental build: re-explore {}, carry over {} path(s)",
+                    plan.exploreIds(), plan.carriedPaths().size());
+        }
 
         Map<String, String> mybatisLogLevels = new LinkedHashMap<>();
         mappers.forEach(m -> mybatisLogLevels.put(m.namespace(), "TRACE"));
@@ -120,6 +136,10 @@ public final class BuilderCli {
                 LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
 
                 for (Endpoint endpoint : index.endpoints()) {
+                    if (!plan.shouldExplore(endpoint.id())) {
+                        log.info("skip {} (partition clean; carrying over)", endpoint.id());
+                        continue;
+                    }
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
                     if (shape == null) {
                         log.warn("skip {} (no @RequestBody shape; not yet supported)", endpoint.id());
@@ -143,6 +163,10 @@ public final class BuilderCli {
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
                         new io.graphrag.builder.run.WsCaptureRunner(env.sut(), connection);
                 for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
+                    if (!plan.shouldExplore(wsEndpoint.id())) {
+                        log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
+                        continue;
+                    }
                     BodyShape shape = wsIndex.payloadShapes().get(wsEndpoint.payloadType());
                     if (shape == null) {
                         log.warn("skip {} (no payload shape)", wsEndpoint.id());
@@ -156,6 +180,11 @@ public final class BuilderCli {
             }
         }
 
+        paths.addAll(plan.carriedPaths());
+        sql.addAll(plan.carriedSql());
+        httpCalls.addAll(plan.carriedHttpCalls());
+        wsExchanges.addAll(plan.carriedWsExchanges());
+
         mergeManualPaths(config.manualPathsDir(), paths);
 
         Files.writeString(config.out().resolve("exploration-report.json"),
@@ -166,6 +195,7 @@ public final class BuilderCli {
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
                 wsIndex.endpoints(), wsExchanges);
         new JsonFileGraphStore(config.out()).save(asset);
+        new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
     }
 
