@@ -61,7 +61,7 @@ public class FixtureComposer {
                     continue;
                 }
                 if (sql.sqlKind().equals("SELECT") && lookupSucceeded(path, sqlList, i)) {
-                    seedWithParents(tablesByName.get(sql.tableName()), binding.column(),
+                    seedWithParents(tablesByName.get(bindingTable(sql, binding)), binding.column(),
                             var.name(), tablesByName, seeded, seenSeeds);
                 }
                 if (sql.sqlKind().equals("INSERT")) {
@@ -169,6 +169,11 @@ public class FixtureComposer {
         seeded.add(new SeededRow(table, keyColumn, varName));
     }
 
+    /** 조인 별칭 해석된 바인딩 테이블 (없으면 statement의 주 테이블). */
+    private static String bindingTable(CapturedSql sql, SqlBinding binding) {
+        return binding.table().isEmpty() ? sql.tableName() : binding.table();
+    }
+
     private static boolean touchesKeyColumn(String value, List<CapturedSql> sqlList,
                                             Map<String, TableSchema> tables) {
         for (CapturedSql sql : sqlList) {
@@ -177,7 +182,7 @@ public class FixtureComposer {
                         || !binding.value().equals(value)) {
                     continue;
                 }
-                TableSchema table = tables.get(sql.tableName());
+                TableSchema table = tables.get(bindingTable(sql, binding));
                 if (table == null) {
                     continue;
                 }

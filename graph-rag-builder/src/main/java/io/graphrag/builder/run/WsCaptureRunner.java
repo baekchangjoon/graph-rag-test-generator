@@ -113,7 +113,8 @@ public class WsCaptureRunner {
                         binding.value(),
                         payloadValues.contains(binding.value())
                                 ? BindingOrigin.API_PARAM
-                                : BindingOrigin.LITERAL));
+                                : BindingOrigin.LITERAL,
+                        statement.bindingTableForPosition(binding.position())));
             }
             captured.add(new CapturedSql("sql-" + exchangeId + "-" + sequence, exchangeId,
                     statement.kind(), statement.sql(), statement.tableName(), bindings));

@@ -255,7 +255,24 @@
           "position": 1,
           "column": "id",
           "value": "probe-userId",
-          "origin": "API_PARAM"
+          "origin": "API_PARAM",
+          "table": "users"
+        }
+      ]
+    },
+    {
+      "id": "sql-ws-orders-count-x2-1",
+      "pathId": "ws-orders-count-x2",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select count(o1_0.id) from orders o1_0 left join users u1_0 on u1_0.id=o1_0.user_id where u1_0.id=?",
+      "tableName": "orders",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "id",
+          "value": "missing-userId",
+          "origin": "API_PARAM",
+          "table": "users"
         }
       ]
     }
@@ -403,7 +420,9 @@
         "userId": "missing-userId",
         "count": 0
       },
-      "capturedSqlIds": []
+      "capturedSqlIds": [
+        "sql-ws-orders-count-x2-1"
+      ]
     }
   ]
 }

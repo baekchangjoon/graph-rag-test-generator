@@ -64,4 +64,7 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
   `--external-stubs`/`--sut-env`), OTEL javaagent baggage 전파 실측, 생성 테스트의
   스텁 합성(baggage 격리 + consumedFields 투영), 병렬 안전 보고.
   14 path → 14 테스트 → 14/14 통과 (EXPRESS 201/재고부족 409 포함)
-- 다음: Phase 3 — WebSocket/STOMP (`docs/09-implementation-roadmap.md`)
+- **Phase 3 완료** (2026-06-10): WebSocket/STOMP. WsEndpoint 인덱싱, 자체 최소
+  STOMP 클라이언트로 메시지 교환 캡처, testlib StompHelper, echo 마커 기반
+  병렬 격리 합성. 16 테스트(HTTP 14 + STOMP 2) 16/16 통과
+- 다음: Phase 4 — Netty 소켓 (`docs/09-implementation-roadmap.md`)

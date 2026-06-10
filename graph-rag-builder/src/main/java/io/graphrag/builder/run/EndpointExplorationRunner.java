@@ -211,7 +211,8 @@ public class EndpointExplorationRunner {
                         binding.value(),
                         apiValues.contains(binding.value())
                                 ? BindingOrigin.API_PARAM
-                                : BindingOrigin.LITERAL));
+                                : BindingOrigin.LITERAL,
+                        statement.bindingTableForPosition(binding.position())));
             }
             captured.add(new CapturedSql(
                     "sql-" + candidate.pathId() + "-" + sequence,

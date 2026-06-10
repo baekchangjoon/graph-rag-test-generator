@@ -64,6 +64,19 @@ class SqlLogParserTest {
     }
 
     @Test
+    void joinAlias_resolvesBindingTable() {
+        String log = """
+                x DEBUG 1 --- [t] org.hibernate.SQL : select count(o1_0.id) from orders o1_0 left join users u1_0 on u1_0.id=o1_0.user_id where u1_0.id=?
+                x TRACE 1 --- [t] org.hibernate.orm.jdbc.bind : binding parameter (1:VARCHAR) <- [probe-userId]
+                """;
+        ParsedSql parsed = SqlLogParser.parse(log).get(0);
+        assertThat(parsed.tableName()).isEqualTo("orders");
+        assertThat(parsed.columnForPosition(1)).isEqualTo("id");
+        // 바인딩이 실제로 속한 테이블은 별칭 u1_0 → users
+        assertThat(parsed.bindingTableForPosition(1)).isEqualTo("users");
+    }
+
+    @Test
     void emptyLog_returnsNothing() {
         assertThat(SqlLogParser.parse("")).isEmpty();
     }

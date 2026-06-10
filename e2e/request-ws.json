@@ -1,0 +1,6 @@
+{
+  "endpointId": "ws-orders-count",
+  "testClassName": "OrdersCountWsTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "DISABLED"
+}

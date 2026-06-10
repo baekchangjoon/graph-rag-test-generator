@@ -26,7 +26,7 @@ rm -rf "$OUT"
   --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
-for req in request-orders request-search; do
+for req in request-orders request-search request-ws; do
   "$GW" -q :test-generator:run --args="generate \
     --request $E2E/$req.json \
     --graph $OUT/graph \
