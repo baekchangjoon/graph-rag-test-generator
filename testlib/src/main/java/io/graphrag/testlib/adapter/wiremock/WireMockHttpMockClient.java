@@ -20,10 +20,12 @@ public final class WireMockHttpMockClient implements HttpMockClient {
     private static final Duration TIMEOUT = Duration.ofSeconds(5);
 
     private final String adminBaseUrl;
+    private final String scopeTestId;
     private final HttpClient http = HttpClient.newHttpClient();
 
-    WireMockHttpMockClient(String adminBaseUrl) {
+    WireMockHttpMockClient(String adminBaseUrl, String scopeTestId) {
         this.adminBaseUrl = adminBaseUrl.replaceAll("/$", "");
+        this.scopeTestId = scopeTestId;
     }
 
     @Override
@@ -67,6 +69,8 @@ public final class WireMockHttpMockClient implements HttpMockClient {
             this.request = mapping.putObject("request");
             request.put("method", method);
             request.put("urlPath", urlPath);
+            // scope 단위 제거용 — baggage 매칭 여부와 무관하게 항상 기록
+            mapping.putObject("metadata").put("graphragTestId", scopeTestId);
         }
 
         @Override
@@ -79,7 +83,6 @@ public final class WireMockHttpMockClient implements HttpMockClient {
         public HttpStubBuilder withBaggageTestId(String testId) {
             request.withObjectProperty("headers").putObject("baggage")
                     .put("contains", "test-id=" + testId);
-            mapping.withObjectProperty("metadata").put("graphragTestId", testId);
             return this;
         }
 

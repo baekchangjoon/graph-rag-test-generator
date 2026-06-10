@@ -90,6 +90,52 @@
       "discoveredBy": "heuristic",
       "constraints": [],
       "validationWarnings": []
+    },
+    {
+      "id": "post-api-orders-s201-2",
+      "endpointId": "post-api-orders",
+      "sampleInput": {
+        "userId": "probe-userId",
+        "amount": 1,
+        "type": "EXPRESS"
+      },
+      "expectedStatus": 201,
+      "sampleResponse": {
+        "id": 2,
+        "status": "PENDING"
+      },
+      "capturedSqlIds": [
+        "sql-post-api-orders-s201-2-1"
+      ],
+      "capturedHttpCallIds": [
+        "http-post-api-orders-s201-2-1"
+      ],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": []
+    },
+    {
+      "id": "post-api-orders-s201-3",
+      "endpointId": "post-api-orders",
+      "sampleInput": {
+        "userId": "probe-userId",
+        "amount": 1,
+        "type": "EXPRESS"
+      },
+      "expectedStatus": 201,
+      "sampleResponse": {
+        "id": 3,
+        "status": "PENDING"
+      },
+      "capturedSqlIds": [],
+      "capturedHttpCallIds": [
+        "http-post-api-orders-s201-3-1"
+      ],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": []
     }
   ],
   "sql": [
@@ -182,6 +228,21 @@
           "origin": "API_PARAM"
         }
       ]
+    },
+    {
+      "id": "sql-post-api-orders-s201-2-1",
+      "pathId": "post-api-orders-s201-2",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        {
+          "position": 1,
+          "column": "id",
+          "value": "probe-userId",
+          "origin": "API_PARAM"
+        }
+      ]
     }
   ],
   "tables": [
@@ -254,6 +315,38 @@
           "id"
         ]
       ]
+    }
+  ],
+  "httpCalls": [
+    {
+      "id": "http-post-api-orders-s201-2-1",
+      "pathId": "post-api-orders-s201-2",
+      "method": "GET",
+      "urlPath": "/inventory/stock",
+      "query": {
+        "type": "EXPRESS"
+      },
+      "requestBody": null,
+      "responseStatus": 200,
+      "responseBody": "{\"available\":50,\"warehouse\":\"W1\"}",
+      "consumedFields": [
+        "available"
+      ],
+      "baggagePropagated": true
+    },
+    {
+      "id": "http-post-api-orders-s201-3-1",
+      "pathId": "post-api-orders-s201-3",
+      "method": "GET",
+      "urlPath": "/inventory/stock",
+      "query": {
+        "type": "EXPRESS"
+      },
+      "requestBody": null,
+      "responseStatus": 200,
+      "responseBody": "{\"available\":50}",
+      "consumedFields": [],
+      "baggagePropagated": false
     }
   ]
 }

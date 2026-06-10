@@ -13,6 +13,6 @@ public final class WireMockHttpMockAdapter implements HttpMockAdapter {
 
     @Override
     public HttpMockClient create(Env env, String testId) {
-        return new WireMockHttpMockClient(env.require("HTTP_MOCK_ADMIN"));
+        return new WireMockHttpMockClient(env.require("HTTP_MOCK_ADMIN"), testId);
     }
 }

@@ -50,6 +50,11 @@ public class FileGraphRagClient implements GraphRagClient {
     }
 
     @Override
+    public List<io.graphrag.model.CapturedHttpCall> httpCallsForPath(String pathId) {
+        return asset.httpCalls().stream().filter(c -> c.pathId().equals(pathId)).toList();
+    }
+
+    @Override
     public List<TableSchema> tables() {
         return asset.tables();
     }

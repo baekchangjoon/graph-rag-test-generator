@@ -18,5 +18,7 @@ public interface GraphRagClient {
 
     List<CapturedSql> sqlForPath(String pathId);
 
+    List<io.graphrag.model.CapturedHttpCall> httpCallsForPath(String pathId);
+
     List<TableSchema> tables();
 }

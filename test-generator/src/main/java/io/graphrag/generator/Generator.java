@@ -6,6 +6,7 @@ import io.graphrag.generator.client.FileGraphRagClient;
 import io.graphrag.generator.client.GraphRagClient;
 import io.graphrag.generator.compose.ComposedFixture;
 import io.graphrag.generator.compose.FixtureComposer;
+import io.graphrag.generator.compose.HttpMockComposer;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExploredPath;
@@ -47,16 +48,18 @@ public class Generator {
         Endpoint endpoint = client.endpoint(request.endpointId());
         List<GeneratedFile> files = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-        List<String> classNames = new ArrayList<>();
+        List<String> fullyParallel = new ArrayList<>();
+        List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
         for (ExploredPath path : client.pathsForEndpoint(request.endpointId())) {
             String className = request.testClassName() + classSuffix(endpoint.id(), path.id());
             GenerationResult single = generateSingle(request, className, path.id());
             files.addAll(single.files());
             warnings.addAll(single.warnings());
-            classNames.add(className);
+            fullyParallel.addAll(single.parallelSafety().fullyParallel());
+            serialRequired.addAll(single.parallelSafety().serialRequired());
         }
         return new GenerationResult(files, warnings,
-                new ParallelSafetyReport(classNames, List.of()));
+                new ParallelSafetyReport(fullyParallel, serialRequired));
     }
 
     private static String classSuffix(String endpointId, String pathId) {
@@ -73,6 +76,8 @@ public class Generator {
         List<CapturedSql> sql = client.sqlForPath(pathId);
 
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables());
+        HttpMockComposer.ComposedMocks mocks =
+                new HttpMockComposer().compose(client.httpCallsForPath(pathId));
 
         Map<String, Object> scope = new HashMap<>();
         scope.put("packageName", request.packageName());
@@ -91,17 +96,28 @@ public class Generator {
                 .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
                 .reduce("", String::concat));
         scope.put("bodyExpr", bodyExpr(fixture));
+        scope.put("mocksBlock", mocks.block());
+        // 격리 불가(SUT propagation 부재) → 직렬 실행 마크 (docs/04)
+        scope.put("serialMark", mocks.propagationMissing()
+                ? "@Execution(ExecutionMode.SAME_THREAD)\n" : "");
+        scope.put("serialImports", mocks.propagationMissing()
+                ? "import org.junit.jupiter.api.parallel.Execution;\n"
+                + "import org.junit.jupiter.api.parallel.ExecutionMode;\n" : "");
 
         StringWriter writer = new StringWriter();
         template.execute(writer, scope);
 
         String relativePath = request.packageName().replace('.', '/')
                 + "/" + className + ".java";
+        ParallelSafetyReport safety = mocks.propagationMissing()
+                ? new ParallelSafetyReport(List.of(), List.of(new io.graphrag.model.SerialRequired(
+                        className, "SUT_PROPAGATION_MISSING",
+                        "외부 HTTP 호출에 baggage가 전파되지 않음 — OTEL agent 부착 또는 직렬 실행 필요")))
+                : new ParallelSafetyReport(List.of(className), List.of());
         return new GenerationResult(
                 List.of(new GeneratedFile(relativePath, writer.toString())),
                 path.validationWarnings(),
-                // DB는 testId 격리, HTTP/socket mock 미사용 → 완전 병렬 안전 (Phase 2에서 재평가)
-                new ParallelSafetyReport(List.of(className), List.of()));
+                safety);
     }
 
     private static String bodyExpr(ComposedFixture fixture) {
