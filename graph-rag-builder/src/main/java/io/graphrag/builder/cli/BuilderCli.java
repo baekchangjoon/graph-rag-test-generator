@@ -146,7 +146,7 @@ public final class BuilderCli {
                         .writeValueAsString(new ExplorationReport(reportEntries)));
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
-                index.endpoints(), paths, sql, tables, mappers, httpCalls);
+                index.endpoints(), paths, sql, tables, mappers, httpCalls, List.of(), List.of());
         new JsonFileGraphStore(config.out()).save(asset);
         return asset;
     }

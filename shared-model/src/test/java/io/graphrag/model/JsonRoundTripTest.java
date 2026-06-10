@@ -60,14 +60,22 @@ class JsonRoundTripTest {
                 List.of(new ForeignKey("user_id", "users", "id")),
                 List.of(List.of("id")));
 
-        MapperStatement mapper = new MapperStatement(
+        MapperStatement mapperStatement = new MapperStatement(
                 "mapper-search", "com.example.OrderSearchMapper", "search",
                 "SELECT", true, "<select id=\"search\">...</select>");
+
+        WsEndpoint wsEndpoint = new WsEndpoint("ws-orders-count", "/ws", "/app",
+                "/orders/count", "/topic/orders",
+                "com.example.WsController", "count", "com.example.CountRequest");
+        WsExchange wsExchange = new WsExchange("ws-orders-count-x1", "ws-orders-count",
+                mapper.readTree("{\"userId\":\"probe-userId\"}"), "/topic/orders",
+                mapper.readTree("{\"userId\":\"probe-userId\",\"count\":0}"),
+                List.of("sql-ws-1"));
 
         GraphAsset asset = new GraphAsset(
                 "order-service", "abc123",
                 List.of(endpoint), List.of(path), List.of(sql), List.of(table),
-                List.of(mapper), List.of(httpCall));
+                List.of(mapperStatement), List.of(httpCall), List.of(wsEndpoint), List.of(wsExchange));
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);
     }
