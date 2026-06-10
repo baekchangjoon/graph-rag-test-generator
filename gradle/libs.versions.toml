@@ -12,6 +12,8 @@ postgresql = "42.7.7"
 slf4j = "2.0.16"
 assertj = "3.26.3"
 awaitility = "4.2.2"
+mybatisStarter = "3.0.5"
+jacoco = "0.8.13"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -27,6 +29,9 @@ restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassu
 netty-handler = { module = "io.netty:netty-handler", version.ref = "netty" }
 netty-codec-http = { module = "io.netty:netty-codec-http", version.ref = "netty" }
 mustache = { module = "com.github.spullara.mustache.java:compiler", version.ref = "mustache" }
+mybatis-spring-boot-starter = { module = "org.mybatis.spring.boot:mybatis-spring-boot-starter", version.ref = "mybatisStarter" }
+jacoco-core = { module = "org.jacoco:org.jacoco.core", version.ref = "jacoco" }
+jacoco-agent = { module = "org.jacoco:org.jacoco.agent", version.ref = "jacoco" }
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }

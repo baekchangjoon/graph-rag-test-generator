@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.graphrag.sample.orders.OrderSearchMapper">
+
+    <select id="search" resultType="map">
+        select id, user_id, amount, type, status
+        from orders
+        <where>
+            <if test="userId != null">and user_id = #{userId}</if>
+            <if test="type != null">and type = #{type}</if>
+            <if test="minAmount != null">and amount &gt;= #{minAmount}</if>
+        </where>
+        order by id
+    </select>
+
+</mapper>
