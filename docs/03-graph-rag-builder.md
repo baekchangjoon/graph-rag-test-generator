@@ -58,8 +58,8 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 | L4 | WireMock | 분석용 임베디드 HTTP mock, recorder 활성 |
 | L4 | Netty LoggingHandler | 바이트 hex dump |
 | L4 | 자체 javaagent | InputStream/OutputStream 후킹 (raw socket) |
-| L5 | Graph store | Neo4j 등 (의사결정 필요) |
-| L5 | Vector store | pgvector 등 (의사결정 필요) |
+| L5 | Graph store | `GraphStore` 인터페이스 + JSON 파일(`graph.json`) + 파티션 샤드(`PartitionedGraphStore`, Phase 6.1). Neo4j는 보류 (`decisions/graph-store-phase6.md`) |
+| L5 | Vector store | 보류 — 임베딩 질의 등장 전까지 불필요 (`decisions/graph-store-phase1.md`) |
 
 ## 캡처되는 핵심 사실
 
@@ -86,6 +86,9 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 | 신규 endpoint | 해당 파일 + endpoint 인덱스 |
 
 **500만 라인 레거시**: PR 단위 증분 + 야간 풀 재빌드로 표류 보정.
+증분 빌드 PoC는 구현됨 (Phase 6.2): `--incremental-base <prev-graph-dir>
+--changed-files <list-file>` — 더티 파티션(패키지)만 재탐색, 클린 파티션의
+탐색 사실은 이전 그래프에서 이월. 정적 인덱싱은 항상 풀로 수행.
 
 ## 분석 환경
 
