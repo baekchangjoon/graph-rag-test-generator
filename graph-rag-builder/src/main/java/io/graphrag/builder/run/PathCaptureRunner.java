@@ -87,7 +87,8 @@ public class PathCaptureRunner {
 
         JsonNode responseJson = parseJsonOrNull(response.body());
         ExploredPath path = new ExploredPath(pathId, endpoint.id(), input.body(),
-                response.statusCode(), responseJson, sqlIds);
+                response.statusCode(), responseJson, sqlIds,
+                List.of(), "phase0-happy", List.of(), List.of());
         return new CaptureResult(path, captured);
     }
 

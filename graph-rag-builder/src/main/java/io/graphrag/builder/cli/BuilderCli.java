@@ -80,7 +80,8 @@ public final class BuilderCli {
             }
         }
 
-        GraphAsset asset = new GraphAsset(sutId, commitSha, index.endpoints(), paths, sql, tables);
+        GraphAsset asset = new GraphAsset(sutId, commitSha, index.endpoints(), paths, sql, tables,
+                List.of());
         new JsonFileGraphStore(out).save(asset);
         return asset;
     }

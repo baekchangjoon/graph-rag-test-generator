@@ -30,7 +30,11 @@ class JsonRoundTripTest {
         JsonNode sampleResponse = mapper.readTree("{\"id\":1,\"status\":\"PENDING\"}");
         ExploredPath path = new ExploredPath(
                 "path-1", "ep-orders-post", sampleInput, 201, sampleResponse,
-                List.of("sql-1", "sql-2"));
+                List.of("sql-1", "sql-2"),
+                List.of(new BranchRef("com.example.OrderController", "create", 30, 1)),
+                "fuzzer",
+                List.of("request.amount() > 0"),
+                List.of());
 
         CapturedSql sql = new CapturedSql(
                 "sql-1", "path-1", "INSERT",
@@ -50,11 +54,41 @@ class JsonRoundTripTest {
                 List.of(new ForeignKey("user_id", "users", "id")),
                 List.of(List.of("id")));
 
+        MapperStatement mapper = new MapperStatement(
+                "mapper-search", "com.example.OrderSearchMapper", "search",
+                "SELECT", true, "<select id=\"search\">...</select>");
+
         GraphAsset asset = new GraphAsset(
                 "order-service", "abc123",
-                List.of(endpoint), List.of(path), List.of(sql), List.of(table));
+                List.of(endpoint), List.of(path), List.of(sql), List.of(table),
+                List.of(mapper));
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);
+    }
+
+    @Test
+    void phase0Graph_withoutNewFields_normalizesToEmpty() throws Exception {
+        String json = """
+                {"id":"p","endpointId":"e","sampleInput":null,"expectedStatus":201,
+                 "sampleResponse":null,"capturedSqlIds":[]}""";
+        ExploredPath path = mapper.readValue(json, ExploredPath.class);
+        assertThat(path.branchesTaken()).isEmpty();
+        assertThat(path.discoveredBy()).isEqualTo("unknown");
+        assertThat(path.constraints()).isEmpty();
+
+        String assetJson = """
+                {"sutId":"s","commitSha":"c","endpoints":[],"paths":[],"sql":[],"tables":[]}""";
+        assertThat(mapper.readValue(assetJson, GraphAsset.class).mappers()).isEmpty();
+    }
+
+    @Test
+    void explorationReport_roundTrips() throws Exception {
+        ExplorationReport report = new ExplorationReport(List.of(
+                new ExplorationReport.EndpointExploration(
+                        "post-api-orders", 10, 7,
+                        List.of(new BranchRef("C", "m", 12, 0)),
+                        java.util.Map.of("heuristic", 2, "fuzzer", 1))));
+        assertThat(roundTrip(report, ExplorationReport.class)).isEqualTo(report);
     }
 
     @Test
