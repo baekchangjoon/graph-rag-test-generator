@@ -30,10 +30,14 @@ public class AnalysisEnvironment implements AutoCloseable {
     }
 
     public void start(Path sutJar, Path workDir) {
+        start(sutJar, workDir, SutOptions.none());
+    }
+
+    public void start(Path sutJar, Path workDir, SutOptions options) {
         log.info("starting analysis postgres...");
         postgres.start();
         log.info("starting SUT process: {}", sutJar);
-        sut = SutProcess.start(sutJar, workDir, jdbcUrl(), "app", "app");
+        sut = SutProcess.start(sutJar, workDir, jdbcUrl(), "app", "app", options);
     }
 
     public String jdbcUrl() {

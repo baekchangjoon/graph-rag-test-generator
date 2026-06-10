@@ -36,6 +36,11 @@ public final class SutProcess {
 
     public static SutProcess start(Path sutJar, Path workDir, String jdbcUrl,
                                    String dbUser, String dbPass) {
+        return start(sutJar, workDir, jdbcUrl, dbUser, dbPass, SutOptions.none());
+    }
+
+    public static SutProcess start(Path sutJar, Path workDir, String jdbcUrl,
+                                   String dbUser, String dbPass, SutOptions options) {
         try {
             Files.createDirectories(workDir);
             Path logFile = workDir.resolve("sut.log");
@@ -53,9 +58,10 @@ public final class SutProcess {
                     "DDL_AUTO", "create",
                     // LOGGING_LEVEL_* env는 로거 이름의 대소문자를 잃는다
                     // (org.hibernate.SQL은 case-sensitive) → JSON으로 주입
-                    "SPRING_APPLICATION_JSON", """
-                            {"logging.level.org.hibernate.SQL":"DEBUG",\
-                            "logging.level.org.hibernate.orm.jdbc.bind":"TRACE"}"""));
+                    "SPRING_APPLICATION_JSON", loggingJson(options.extraLogLevels())));
+            if (!options.javaToolOptions().isBlank()) {
+                builder.environment().put("JAVA_TOOL_OPTIONS", options.javaToolOptions());
+            }
 
             Process process = builder.start();
             SutProcess sut = new SutProcess(process, logFile, port);
@@ -128,6 +134,16 @@ public final class SutProcess {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
         }
+    }
+
+    private static String loggingJson(java.util.Map<String, String> extraLevels) {
+        StringBuilder json = new StringBuilder("{\"logging.level.org.hibernate.SQL\":\"DEBUG\",")
+                .append("\"logging.level.org.hibernate.orm.jdbc.bind\":\"TRACE\"");
+        extraLevels.entrySet().stream()
+                .sorted(java.util.Map.Entry.comparingByKey())
+                .forEach(e -> json.append(",\"logging.level.").append(e.getKey())
+                        .append("\":\"").append(e.getValue()).append("\""));
+        return json.append("}").toString();
     }
 
     private static int freePort() throws IOException {

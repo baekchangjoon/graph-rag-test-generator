@@ -12,6 +12,8 @@ dependencies {
     implementation(libs.spoon)
     implementation(libs.testcontainers.postgresql)
     implementation(libs.postgresql)
+    implementation(libs.jacoco.core)
+    implementation(libs.jacoco.agent)
     implementation(libs.slf4j.api)
     runtimeOnly(libs.slf4j.simple)
 
