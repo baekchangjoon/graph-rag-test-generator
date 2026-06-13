@@ -164,7 +164,8 @@ public final class BuilderCli {
                             env.sut(), connection, env.dbType(),
                             coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
-                            responseDtoFieldSets, literals);
+                            responseDtoFieldSets, literals,
+                            null, null);  // authProvider, authConfig — D5에서 배선
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions);
                     paths.addAll(result.paths());
