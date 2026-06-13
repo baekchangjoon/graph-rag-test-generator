@@ -1,1 +1,2 @@
 io.graphrag.testlib.adapter.noop.NoopAuthAdapter
+io.graphrag.testlib.adapter.real.RealAuthAdapter
