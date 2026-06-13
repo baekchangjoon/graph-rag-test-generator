@@ -9,6 +9,7 @@ restassured = "5.5.5"
 netty = "4.1.121.Final"
 mustache = "0.9.14"
 postgresql = "42.7.7"
+mysqlConnector = "9.3.0"
 slf4j = "2.0.16"
 assertj = "3.26.3"
 awaitility = "4.2.2"
@@ -27,7 +28,10 @@ assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
 awaitility = { module = "org.awaitility:awaitility", version.ref = "awaitility" }
 spoon = { module = "fr.inria.gforge.spoon:spoon-core", version.ref = "spoon" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+testcontainers-mysql = { module = "org.testcontainers:mysql", version.ref = "testcontainers" }
+testcontainers-mariadb = { module = "org.testcontainers:mariadb", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
+mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysqlConnector" }
 restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassured" }
 netty-handler = { module = "io.netty:netty-handler", version.ref = "netty" }
 netty-codec-http = { module = "io.netty:netty-codec-http", version.ref = "netty" }

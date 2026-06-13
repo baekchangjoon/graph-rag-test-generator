@@ -6,6 +6,7 @@ import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.coverage.BranchCoverage;
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
+import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutProcess;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
 import io.graphrag.builder.explore.EndpointInvoker;
@@ -35,7 +36,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -60,6 +60,7 @@ public class EndpointExplorationRunner {
 
     private final SutProcess sut;
     private final Connection connection;
+    private final DbConfig.Type dbType;
     private final CoverageClient coverage;
     private final BranchCoverageAnalyzer analyzer;
     private final int budgetRequests;
@@ -68,6 +69,7 @@ public class EndpointExplorationRunner {
     private final List<String> literalCandidates;
 
     public EndpointExplorationRunner(SutProcess sut, Connection connection,
+                                     DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
@@ -75,6 +77,7 @@ public class EndpointExplorationRunner {
                                      List<String> literalCandidates) {
         this.sut = sut;
         this.connection = connection;
+        this.dbType = dbType;
         this.coverage = coverage;
         this.analyzer = analyzer;
         this.budgetRequests = budgetRequests;
@@ -87,7 +90,7 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.ConditionSpan> conditions) throws Exception {
         SynthesizedInput happy = new SampleInputSynthesizer().synthesize(shape, tables);
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
-            Seeds.insert(connection, seed);
+            Seeds.insert(connection, dbType, seed);
         }
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보

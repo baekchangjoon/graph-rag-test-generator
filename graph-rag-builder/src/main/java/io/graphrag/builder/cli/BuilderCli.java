@@ -5,6 +5,7 @@ import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.JacocoAgent;
 import io.graphrag.builder.coverage.OtelAgent;
 import io.graphrag.builder.env.AnalysisEnvironment;
+import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
@@ -122,7 +123,9 @@ public final class BuilderCli {
                 mybatisLogLevels,
                 otel.env(config.sutId()));
 
-        try (AnalysisEnvironment env = new AnalysisEnvironment(config.postgresImage())) {
+        // TODO(B4): config.postgresImage() → ComposeInspector에서 얻은 DbConfig로 교체
+        try (AnalysisEnvironment env = new AnalysisEnvironment(
+                new DbConfig(DbConfig.Type.POSTGRES, config.postgresImage(), "app", "app", "app"))) {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
 
@@ -149,7 +152,8 @@ public final class BuilderCli {
                             config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
                     var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
                     EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                            env.sut(), connection, coverageClient, analyzer,
+                            env.sut(), connection, DbConfig.Type.POSTGRES,
+                            coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals);
                     EndpointExplorationRunner.EndpointResult result =
@@ -161,7 +165,8 @@ public final class BuilderCli {
                 }
 
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
-                        new io.graphrag.builder.run.WsCaptureRunner(env.sut(), connection);
+                        new io.graphrag.builder.run.WsCaptureRunner(
+                                env.sut(), connection, DbConfig.Type.POSTGRES);
                 for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
                     if (!plan.shouldExplore(wsEndpoint.id())) {
                         log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
