@@ -10,8 +10,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -64,15 +62,17 @@ class OrderExpressApiTest {
     @Autowired
     UserRepository users;
 
+    private String token;
+
     @BeforeEach
-    void seed() {
+    void setup() {
+        token = AuthHelper.obtainToken(rest);
         users.save(new User("u-express", "Express"));
     }
 
     private ResponseEntity<String> post(String json) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        return rest.postForEntity("/api/orders", new HttpEntity<>(json, headers), String.class);
+        return rest.postForEntity("/api/orders",
+                new HttpEntity<>(json, AuthHelper.jsonWithAuth(token)), String.class);
     }
 
     @Test
