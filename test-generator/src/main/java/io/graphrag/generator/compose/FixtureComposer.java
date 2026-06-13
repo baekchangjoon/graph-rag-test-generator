@@ -42,12 +42,13 @@ public class FixtureComposer {
                     .map(s -> new ComposedFixture.Stmt(
                             "INSERT INTO " + s.table() + " (" + String.join(", ", s.columns())
                                     + ") VALUES (" + String.join(", ", s.columns().stream().map(c -> "?").toList()) + ")",
-                            s.values().stream().map(v -> "\"" + v + "\"").toList()))
+                            s.values().stream().map(FixtureComposer::javaStringLiteral).toList()))
                     .toList();
             List<ComposedFixture.Stmt> seedDeletes = seeds.stream()
                     .map(s -> new ComposedFixture.Stmt(
+                            // columns[0] is the seed's key column (PK) — see EndpointExplorationRunner read-path convention
                             "DELETE FROM " + s.table() + " WHERE " + s.columns().get(0) + " = ?",
-                            List.of("\"" + s.values().get(0) + "\"")))
+                            List.of(javaStringLiteral(s.values().get(0)))))
                     .toList();
             return new ComposedFixture(List.of(), seedInserts, seedDeletes, "", List.of(),
                     assertionsFromResponse(path, sqlList));
@@ -289,6 +290,10 @@ public class FixtureComposer {
                 .max().orElse(0);
         depth.put(name, result);
         return result;
+    }
+
+    private static String javaStringLiteral(String value) {
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private static String varSuffix(String fieldName) {

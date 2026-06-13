@@ -121,4 +121,28 @@ class FixtureComposerTest {
                 new ComposedFixture.Assertion("id", "notNullValue()"),
                 new ComposedFixture.Assertion("status", "equalTo(\"PENDING\")"));
     }
+
+    @Test
+    void readPathSeedValues_withSpecialChars_areEscapedAsJavaStringLiterals() throws Exception {
+        var path = new io.graphrag.model.ExploredPath(
+                "p-read", "get-api-items",
+                io.graphrag.model.Json.mapper().readTree("{}"),
+                200, io.graphrag.model.Json.mapper().readTree("{}"),
+                List.of(), List.of(),
+                List.of(), "fuzzer", List.of(), List.of(), List.of());
+        var seed = new io.graphrag.model.RequiredSeed(
+                "s1", "p-read", "items",
+                List.of("id", "name"),
+                List.of("ab\"cd", "x\\y"));
+
+        ComposedFixture fixture = new FixtureComposer()
+                .compose(path, List.of(), List.of(), List.of(seed));
+
+        assertThat(fixture.inserts()).hasSize(1);
+        assertThat(fixture.inserts().get(0).argExprs())
+                .containsExactly("\"ab\\\"cd\"", "\"x\\\\y\"");
+        assertThat(fixture.deletes()).hasSize(1);
+        assertThat(fixture.deletes().get(0).argExprs())
+                .containsExactly("\"ab\\\"cd\"");
+    }
 }
