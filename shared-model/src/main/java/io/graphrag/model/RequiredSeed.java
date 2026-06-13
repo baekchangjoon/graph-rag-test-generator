@@ -9,4 +9,9 @@ public record RequiredSeed(
         String table,
         List<String> columns,
         List<String> values) {
+
+    public RequiredSeed {
+        columns = columns == null ? List.of() : columns;
+        values = values == null ? List.of() : values;
+    }
 }
