@@ -15,6 +15,8 @@ import io.graphrag.builder.index.IndexResult;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
+import io.graphrag.builder.run.AuthConfig;
+import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
 import io.graphrag.builder.store.JsonFileGraphStore;
 import io.graphrag.model.CapturedHttpCall;
@@ -47,6 +49,8 @@ import java.util.stream.Stream;
  *       [--db-image <image>] [--budget-requests 60] [--manual-paths <dir>]
  *       [--external-stubs <dir>] [--sut-env KEY={{wiremock}}[,KEY2=V2]]
  *       [--incremental-base <prev-graph-dir> --changed-files <list-file>]
+ *       [--auth-login-path /api/auth/login --auth-user admin --auth-pass password]
+ *       [--auth-token-field token --auth-header Authorization --auth-scheme Bearer]
  */
 public final class BuilderCli {
 
@@ -70,6 +74,16 @@ public final class BuilderCli {
                     dbConfig.dbName(), dbConfig.user(), dbConfig.password());
         }
 
+        AuthConfig authConfig = options.containsKey("--auth-login-path")
+                ? new AuthConfig(options.get("--auth-login-path"),
+                        options.getOrDefault("--auth-user", "admin"),
+                        options.getOrDefault("--auth-pass", "password"),
+                        options.getOrDefault("--auth-token-field", "token"),
+                        options.getOrDefault("--auth-header", "Authorization"),
+                        options.getOrDefault("--auth-scheme", "Bearer"),
+                        java.util.List.of())
+                : null;
+
         BuildConfig config = new BuildConfig(
                 sutSrc,
                 Path.of(options.getOrDefault("--sut-resources",
@@ -86,7 +100,8 @@ public final class BuilderCli {
                 incrementalBase == null ? null : Path.of(incrementalBase),
                 changedFilesList == null ? null
                         : Files.readAllLines(Path.of(changedFilesList)).stream()
-                                .filter(line -> !line.isBlank()).toList());
+                                .filter(line -> !line.isBlank()).toList(),
+                authConfig);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -97,7 +112,7 @@ public final class BuilderCli {
 
     public static GraphAsset build(BuildConfig config) throws Exception {
         log.info("indexing endpoints from {}", config.sutSrc());
-        IndexResult index = new EndpointIndexer().index(config.sutSrc());
+        IndexResult index = new EndpointIndexer().index(config.sutSrc(), config.authConfig());
         io.graphrag.builder.index.WsIndexResult wsIndex =
                 new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
         List<MapperStatement> mappers = Files.isDirectory(config.sutResources())
@@ -138,6 +153,9 @@ public final class BuilderCli {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
 
+            AuthTokenProvider authProvider = config.authConfig() == null ? null
+                    : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
+
             try (Connection connection = env.openConnection()) {
                 tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
                 log.info("extracted schema: {} table(s)", tables.size());
@@ -165,7 +183,7 @@ public final class BuilderCli {
                             coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals,
-                            null, null);  // authProvider, authConfig — D5에서 배선
+                            authProvider, config.authConfig());
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions);
                     paths.addAll(result.paths());
