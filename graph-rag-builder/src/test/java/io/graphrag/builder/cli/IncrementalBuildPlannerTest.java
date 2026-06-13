@@ -39,12 +39,13 @@ class IncrementalBuildPlannerTest {
                         Map.of(), null, 200, "{}", List.of(), true)),
                 List.of(WS_ORDERS),
                 List.of(new WsExchange("wsx-1", "ws-orders-count", null, "/topic/orders",
-                        null, List.of("sql-ws-1"))));
+                        null, List.of("sql-ws-1"))),
+                List.of());
     }
 
     private static ExploredPath path(String id, String endpointId) {
         return new ExploredPath(id, endpointId, null, 200, null, List.of(), List.of(),
-                List.of(), "heuristic", List.of(), List.of());
+                List.of(), "heuristic", List.of(), List.of(), List.of());
     }
 
     private static CapturedSql sql(String id, String pathId) {

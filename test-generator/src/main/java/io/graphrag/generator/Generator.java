@@ -88,7 +88,7 @@ public class Generator {
                     exchange.id(), endpoint.id(), exchange.payload(),
                     exchange.response() != null && !exchange.response().isNull() ? 200 : 0,
                     exchange.response(), exchange.capturedSqlIds(),
-                    List.of(), List.of(), "ws-capture", List.of(), List.of());
+                    List.of(), List.of(), "ws-capture", List.of(), List.of(), List.of());
             ComposedFixture fixture = new FixtureComposer().compose(pseudo, sql, client.tables());
 
             // 상관관계 마커: 응답이 치환 필드의 캡처 값을 echo하면 그 변수로 자기 메시지 식별

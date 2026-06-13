@@ -34,10 +34,10 @@ class PartitionedGraphStoreTest {
         JsonNode body = Json.mapper().createObjectNode().put("userId", "u1");
         ExploredPath orderPath = new ExploredPath("p-orders-1", "post-api-orders",
                 body, 201, body, List.of("sql-1"), List.of("http-1"),
-                List.of(), "heuristic", List.of(), List.of());
+                List.of(), "heuristic", List.of(), List.of(), List.of());
         ExploredPath userPath = new ExploredPath("p-users-1", "post-api-users",
                 body, 200, body, List.of("sql-2"), List.of(),
-                List.of(), "heuristic", List.of(), List.of());
+                List.of(), "heuristic", List.of(), List.of(), List.of());
         CapturedSql ordersSql = new CapturedSql("sql-1", "p-orders-1", "INSERT",
                 "INSERT INTO orders", "orders", List.of());
         CapturedSql usersSql = new CapturedSql("sql-2", "p-users-1", "SELECT",
@@ -60,7 +60,8 @@ class PartitionedGraphStoreTest {
                         "search", "SELECT", true, "<select/>")),
                 List.of(http),
                 List.of(wsEndpoint),
-                List.of(wsExchange));
+                List.of(wsExchange),
+                List.of());
     }
 
     @Test
@@ -101,7 +102,8 @@ class PartitionedGraphStoreTest {
                 List.of(new Endpoint("post-api-orders", "POST", "/api/orders",
                         "io.graphrag.sample.orders.OrderController", "create",
                         List.of(), false)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of());
         store.save(ordersOnly);
 
         GraphAsset loaded = store.load();
