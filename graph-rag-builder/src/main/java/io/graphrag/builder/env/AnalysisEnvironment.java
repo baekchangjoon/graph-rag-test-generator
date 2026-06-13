@@ -85,10 +85,13 @@ public class AnalysisEnvironment implements AutoCloseable {
 
     @Override
     public void close() {
-        if (sut != null) {
-            sut.stop();
+        try {
+            if (sut != null) {
+                sut.stop();
+            }
+            httpCapture.close();
+        } finally {
+            db.stop();
         }
-        httpCapture.close();
-        db.stop();
     }
 }

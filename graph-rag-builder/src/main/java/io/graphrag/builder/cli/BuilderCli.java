@@ -5,6 +5,7 @@ import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.JacocoAgent;
 import io.graphrag.builder.coverage.OtelAgent;
 import io.graphrag.builder.env.AnalysisEnvironment;
+import io.graphrag.builder.env.ComposeInspector;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
@@ -41,9 +42,9 @@ import java.util.stream.Stream;
 
 /**
  * 도구 1 진입점 (Phase 2: 분기 탐색 + MyBatis + 외부 HTTP 캡처).
- * build --sut-src <dir> --sut-jar <jar> --out <graph-dir>
+ * build --sut-src <dir> --sut-jar <jar> --out <graph-dir> --sut-compose <docker-compose.yml>
  *       [--sut-resources <dir>] [--sut-id id] [--commit-sha sha]
- *       [--postgres-image postgres:15] [--budget-requests 60] [--manual-paths <dir>]
+ *       [--db-image <image>] [--budget-requests 60] [--manual-paths <dir>]
  *       [--external-stubs <dir>] [--sut-env KEY={{wiremock}}[,KEY2=V2]]
  *       [--incremental-base <prev-graph-dir> --changed-files <list-file>]
  */
@@ -59,6 +60,16 @@ public final class BuilderCli {
         String incrementalBase = options.get("--incremental-base");
         String changedFilesList = options.get("--changed-files");
 
+        String sutComposeStr = options.get("--sut-compose");
+        if (sutComposeStr == null) {
+            throw new IllegalArgumentException("--sut-compose <docker-compose.yml> is required");
+        }
+        DbConfig dbConfig = ComposeInspector.detectDb(Path.of(sutComposeStr));
+        if (options.containsKey("--db-image")) {
+            dbConfig = new DbConfig(dbConfig.type(), options.get("--db-image"),
+                    dbConfig.dbName(), dbConfig.user(), dbConfig.password());
+        }
+
         BuildConfig config = new BuildConfig(
                 sutSrc,
                 Path.of(options.getOrDefault("--sut-resources",
@@ -67,7 +78,7 @@ public final class BuilderCli {
                 Path.of(required(options, "--out")),
                 options.getOrDefault("--sut-id", "sut"),
                 options.getOrDefault("--commit-sha", "unknown"),
-                options.getOrDefault("--postgres-image", "postgres:15"),
+                dbConfig,
                 Integer.parseInt(options.getOrDefault("--budget-requests", "60")),
                 manualPaths == null ? null : Path.of(manualPaths),
                 externalStubs == null ? null : Path.of(externalStubs),
@@ -123,9 +134,7 @@ public final class BuilderCli {
                 mybatisLogLevels,
                 otel.env(config.sutId()));
 
-        // TODO(B4): config.postgresImage() → ComposeInspector에서 얻은 DbConfig로 교체
-        try (AnalysisEnvironment env = new AnalysisEnvironment(
-                new DbConfig(DbConfig.Type.POSTGRES, config.postgresImage(), "app", "app", "app"))) {
+        try (AnalysisEnvironment env = new AnalysisEnvironment(config.dbConfig())) {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
 
@@ -152,7 +161,7 @@ public final class BuilderCli {
                             config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
                     var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
                     EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                            env.sut(), connection, DbConfig.Type.POSTGRES,
+                            env.sut(), connection, env.dbType(),
                             coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals);
@@ -166,7 +175,7 @@ public final class BuilderCli {
 
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
                         new io.graphrag.builder.run.WsCaptureRunner(
-                                env.sut(), connection, DbConfig.Type.POSTGRES);
+                                env.sut(), connection, env.dbType());
                 for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
                     if (!plan.shouldExplore(wsEndpoint.id())) {
                         log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
