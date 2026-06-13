@@ -1,11 +1,17 @@
 package io.graphrag.sample.orders;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -15,6 +21,9 @@ public class OrderController {
     }
 
     public record OrderResponse(Long id, String status) {
+    }
+
+    public record OrderDetailResponse(Long id, String userId, Integer amount, String type, String status) {
     }
 
     private final UserRepository users;
@@ -46,5 +55,21 @@ public class OrderController {
         }
         Order saved = orders.save(new Order(user, request.amount(), request.type(), "PENDING"));
         return new OrderResponse(saved.getId(), saved.getStatus());
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<OrderDetailResponse> getById(@PathVariable Long id) {
+        return orders.findById(id)
+                .map(o -> ResponseEntity.ok(toDetail(o)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping
+    public List<OrderDetailResponse> getByUserId(@RequestParam String userId) {
+        return orders.findByUser_Id(userId).stream().map(this::toDetail).toList();
+    }
+
+    private OrderDetailResponse toDetail(Order o) {
+        return new OrderDetailResponse(o.getId(), o.getUser().getId(), o.getAmount(), o.getType(), o.getStatus());
     }
 }
