@@ -23,10 +23,14 @@ rm -rf "$OUT"
   --budget-requests 60 \
   --external-stubs $E2E/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}} \
+  --sut-compose $E2E/docker-compose.yml \
+  --auth-login-path /api/auth/login \
+  --auth-user admin \
+  --auth-pass password \
   --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
-for req in request-orders request-search request-ws; do
+for req in request-orders request-search request-ws request-orders-get-id request-orders-get-user; do
   "$GW" -q :test-generator:run --args="generate \
     --request $E2E/$req.json \
     --graph $OUT/graph \
@@ -59,6 +63,10 @@ JDBC_USER=app \
 JDBC_PASS=app \
 HTTP_MOCK_ADMIN=http://localhost:59091/__admin \
 DASHBOARD_URL=http://localhost:58099 \
+AUTH_ADAPTER=real \
+AUTH_LOGIN_PATH=/api/auth/login \
+AUTH_USER=admin \
+AUTH_PASS=password \
 "$GW" :e2e:test
 TEST_EXIT=$?
 set -e
