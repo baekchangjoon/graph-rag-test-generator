@@ -182,6 +182,7 @@ public class Generator {
                 .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
                 .reduce("", String::concat));
         scope.put("bodyExpr", bodyExpr(fixture));
+        scope.put("authRequired", endpoint.authRequired());
         scope.put("mocksBlock", mocks.block());
         // 격리 불가(SUT propagation 부재) → 직렬 실행 마크 (docs/04)
         scope.put("serialMark", mocks.propagationMissing()
