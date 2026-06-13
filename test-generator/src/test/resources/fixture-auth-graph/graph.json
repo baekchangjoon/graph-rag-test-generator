@@ -1,0 +1,35 @@
+{
+  "sutId": "order-service",
+  "commitSha": "test",
+  "endpoints": [
+    {
+      "id": "post-api-secure",
+      "httpMethod": "POST",
+      "path": "/api/secure",
+      "handlerClass": "io.graphrag.sample.SecureController",
+      "handlerMethod": "create",
+      "params": [],
+      "authRequired": true
+    }
+  ],
+  "paths": [
+    {
+      "id": "post-api-secure-happy",
+      "endpointId": "post-api-secure",
+      "sampleInput": {},
+      "expectedStatus": 200,
+      "sampleResponse": {"ok": true},
+      "capturedSqlIds": [],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": []
+    }
+  ],
+  "sql": [],
+  "tables": [],
+  "httpCalls": [],
+  "wsEndpoints": [],
+  "wsExchanges": []
+}

@@ -145,4 +145,26 @@ class GeneratorTest {
         assertThat(result.parallelSafety().fullyParallel()).containsExactly("OrdersPostTest");
         assertThat(result.parallelSafety().serialRequired()).isEmpty();
     }
+
+    @Test
+    void generate_authRequiredEndpoint_usesAuthenticated() {
+        Path authGraph = Path.of("src/test/resources/fixture-auth-graph");
+        GenerationRequest authRequest = new GenerationRequest(
+                "post-api-secure", "post-api-secure-happy",
+                "SecurePostTest", "io.graphrag.generated", AuthMode.DISABLED);
+        GenerationResult result = new Generator(authGraph).generate(authRequest);
+
+        assertThat(result.files()).hasSize(1);
+        String code = result.files().get(0).content();
+        assertThat(code).contains("scope.rest().authenticated()");
+        assertThat(code).doesNotContain("scope.rest().given()");
+    }
+
+    @Test
+    void generate_nonAuthEndpoint_usesGiven() {
+        GenerationResult result = new Generator(GRAPH).generate(REQUEST);
+        String code = result.files().get(0).content();
+        assertThat(code).contains("scope.rest().given()");
+        assertThat(code).doesNotContain("scope.rest().authenticated()");
+    }
 }
