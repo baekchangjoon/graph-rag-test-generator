@@ -1,6 +1,7 @@
 package io.graphrag.builder.cli;
 
 import io.graphrag.builder.env.DbConfig;
+import io.graphrag.builder.run.AuthConfig;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -20,7 +21,8 @@ public record BuildConfig(
         Path externalStubsDir,
         Map<String, String> sutEnv,
         Path incrementalBase,
-        List<String> changedFiles) {
+        List<String> changedFiles,
+        AuthConfig authConfig) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -33,6 +35,6 @@ public record BuildConfig(
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
-                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null);
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null);
     }
 }
