@@ -1,5 +1,6 @@
 package io.graphrag.builder.index;
 
+import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ParamKind;
@@ -18,21 +19,37 @@ import spoon.reflect.declaration.CtType;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * Spoon(noClasspath) 기반 L1 구조 인덱싱.
- * Phase 0 범위: @RestController + @PostMapping + @RequestBody.
  */
 public class EndpointIndexer {
 
     private static final String REST_CONTROLLER = "org.springframework.web.bind.annotation.RestController";
-    private static final String REQUEST_MAPPING = "org.springframework.web.bind.annotation.RequestMapping";
-    private static final String POST_MAPPING = "org.springframework.web.bind.annotation.PostMapping";
-    private static final String REQUEST_BODY = "org.springframework.web.bind.annotation.RequestBody";
+    private static final String REQUEST_MAPPING  = "org.springframework.web.bind.annotation.RequestMapping";
+    private static final String REQUEST_BODY     = "org.springframework.web.bind.annotation.RequestBody";
+    private static final String PATH_VARIABLE    = "org.springframework.web.bind.annotation.PathVariable";
+    private static final String REQUEST_PARAM    = "org.springframework.web.bind.annotation.RequestParam";
 
+    /** Spring mapping annotation FQN → HTTP method name. */
+    private static final Map<String, String> MAPPING_TO_METHOD = new LinkedHashMap<>();
+    static {
+        MAPPING_TO_METHOD.put("org.springframework.web.bind.annotation.GetMapping",    "GET");
+        MAPPING_TO_METHOD.put("org.springframework.web.bind.annotation.PostMapping",   "POST");
+        MAPPING_TO_METHOD.put("org.springframework.web.bind.annotation.PutMapping",    "PUT");
+        MAPPING_TO_METHOD.put("org.springframework.web.bind.annotation.DeleteMapping", "DELETE");
+        MAPPING_TO_METHOD.put("org.springframework.web.bind.annotation.PatchMapping",  "PATCH");
+    }
+
+    /** 기존 단일 인자 오버로드 — 기존 호출 사이트와 호환 유지. */
     public IndexResult index(Path sutSrcDir) {
+        return index(sutSrcDir, null);
+    }
+
+    public IndexResult index(Path sutSrcDir, AuthConfig authConfig) {
         Launcher launcher = new Launcher();
         launcher.addInputResource(sutSrcDir.toString());
         launcher.getEnvironment().setNoClasspath(true);
@@ -49,24 +66,38 @@ public class EndpointIndexer {
             }
             String basePath = annotationPath(findAnnotation(type, REQUEST_MAPPING));
             for (CtMethod<?> method : type.getMethods()) {
-                CtAnnotation<?> postMapping = findAnnotation(method, POST_MAPPING);
-                if (postMapping == null) {
-                    continue;
+                String httpMethod = null;
+                CtAnnotation<?> mapping = null;
+                for (Map.Entry<String, String> entry : MAPPING_TO_METHOD.entrySet()) {
+                    CtAnnotation<?> a = findAnnotation(method, entry.getKey());
+                    if (a != null) {
+                        httpMethod = entry.getValue();
+                        mapping = a;
+                        break;
+                    }
                 }
-                String fullPath = joinPaths(basePath, annotationPath(postMapping));
+                if (httpMethod == null) continue;
+
+                String fullPath = joinPaths(basePath, annotationPath(mapping));
                 List<EndpointParam> params = extractParams(method, model, bodyShapes);
                 endpoints.add(new Endpoint(
-                        endpointId("POST", fullPath),
-                        "POST",
+                        endpointId(httpMethod, fullPath),
+                        httpMethod,
                         fullPath,
                         type.getQualifiedName().replace('$', '.'),
                         method.getSimpleName(),
                         params,
-                        false));
+                        authRequired(fullPath, authConfig)));
             }
         }
         endpoints.sort((a, b) -> a.id().compareTo(b.id()));
         return new IndexResult(endpoints, bodyShapes);
+    }
+
+    private static boolean authRequired(String path, AuthConfig authConfig) {
+        return authConfig != null
+                && !path.equals(authConfig.loginPath())
+                && !authConfig.publicPaths().contains(path);
     }
 
     private List<EndpointParam> extractParams(CtMethod<?> method, CtModel model,
@@ -77,6 +108,16 @@ public class EndpointIndexer {
                 String bodyType = parameter.getType().getQualifiedName();
                 params.add(new EndpointParam(parameter.getSimpleName(), bodyType, ParamKind.BODY));
                 extractBodyShape(model, bodyType).ifPresent(s -> bodyShapes.put(bodyType, s));
+            } else if (findAnnotation(parameter, PATH_VARIABLE) != null) {
+                params.add(new EndpointParam(
+                        parameter.getSimpleName(),
+                        parameter.getType().getQualifiedName(),
+                        ParamKind.PATH));
+            } else if (findAnnotation(parameter, REQUEST_PARAM) != null) {
+                params.add(new EndpointParam(
+                        parameter.getSimpleName(),
+                        parameter.getType().getQualifiedName(),
+                        ParamKind.QUERY));
             }
         }
         return params;
@@ -118,8 +159,13 @@ public class EndpointIndexer {
     }
 
     private static CtAnnotation<?> findAnnotation(CtElement element, String qualifiedName) {
+        // Spoon in noClasspath mode may resolve wildcard-imported annotations with a wrong
+        // package (e.g. "x.GetMapping" instead of the Spring FQN). Fall back to simple-name
+        // comparison so both individual imports and wildcard imports work.
+        String simpleName = qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
         for (CtAnnotation<?> annotation : element.getAnnotations()) {
-            if (qualifiedName.equals(annotation.getAnnotationType().getQualifiedName())) {
+            String fqn = annotation.getAnnotationType().getQualifiedName();
+            if (qualifiedName.equals(fqn) || simpleName.equals(annotation.getAnnotationType().getSimpleName())) {
                 return annotation;
             }
         }
