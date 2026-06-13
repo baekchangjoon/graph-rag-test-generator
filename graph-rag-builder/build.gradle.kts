@@ -20,6 +20,7 @@ dependencies {
     implementation(libs.jacoco.agent)
     implementation(libs.wiremock)
     implementation(libs.slf4j.api)
+    implementation(libs.jackson.dataformat.yaml)
     runtimeOnly(libs.slf4j.simple)
     otelAgent(libs.otel.javaagent)
 
