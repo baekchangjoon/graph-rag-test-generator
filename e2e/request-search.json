@@ -2,5 +2,5 @@
   "endpointId": "post-api-orders-search",
   "testClassName": "OrdersSearchTest",
   "packageName": "io.graphrag.generated",
-  "authMode": "DISABLED"
+  "authMode": "REAL"
 }

@@ -1,0 +1,6 @@
+{
+  "endpointId": "get-api-orders",
+  "testClassName": "OrdersGetByUserTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}
