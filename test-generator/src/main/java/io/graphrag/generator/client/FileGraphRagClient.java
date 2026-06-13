@@ -5,6 +5,7 @@ import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.GraphAsset;
 import io.graphrag.model.Json;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.TableSchema;
 
 import java.io.IOException;
@@ -80,5 +81,10 @@ public class FileGraphRagClient implements GraphRagClient {
     @Override
     public List<TableSchema> tables() {
         return asset.tables();
+    }
+
+    @Override
+    public List<RequiredSeed> seedsForPath(String pathId) {
+        return asset.seeds().stream().filter(s -> s.pathId().equals(pathId)).toList();
     }
 }

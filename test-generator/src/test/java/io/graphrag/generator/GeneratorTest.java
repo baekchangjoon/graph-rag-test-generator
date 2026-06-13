@@ -167,4 +167,21 @@ class GeneratorTest {
         assertThat(code).contains("scope.rest().given()");
         assertThat(code).doesNotContain("scope.rest().authenticated()");
     }
+
+    @Test
+    void generate_readPathGet_seedInsertLiteralUrlNoBody() {
+        Path readGraph = Path.of("src/test/resources/fixture-read-path-graph");
+        GenerationRequest readRequest = new GenerationRequest(
+                "get-api-orders-id", "get-api-orders-id-happy",
+                "OrdersGetTest", "io.graphrag.generated", AuthMode.DISABLED);
+        GenerationResult result = new Generator(readGraph).generate(readRequest);
+
+        assertThat(result.files()).hasSize(1);
+        String code = result.files().get(0).content();
+        assertThat(code).contains("scope.jdbc().update(\"INSERT INTO orders");
+        assertThat(code).contains(".get(\"/api/orders/1\")");
+        assertThat(code).doesNotContain(".body({{{bodyExpr}}})");
+        assertThat(code).doesNotContain(".contentType(\"application/json\")\n            .body(");
+        assertThat(code).contains(".statusCode(200)");
+    }
 }

@@ -1,0 +1,51 @@
+{
+  "sutId": "order-service",
+  "commitSha": "test",
+  "endpoints": [
+    {
+      "id": "get-api-orders-id",
+      "httpMethod": "GET",
+      "path": "/api/orders/{id}",
+      "handlerClass": "io.graphrag.sample.orders.OrderController",
+      "handlerMethod": "getById",
+      "params": [
+        {
+          "name": "id",
+          "javaType": "java.lang.String",
+          "kind": "PATH"
+        }
+      ],
+      "authRequired": false
+    }
+  ],
+  "paths": [
+    {
+      "id": "get-api-orders-id-happy",
+      "endpointId": "get-api-orders-id",
+      "sampleInput": {"id": "1"},
+      "expectedStatus": 200,
+      "sampleResponse": {"id": 1, "status": "PENDING"},
+      "capturedSqlIds": [],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "heuristic",
+      "constraints": [],
+      "validationWarnings": [],
+      "requiredSeedIds": ["seed-x-1"]
+    }
+  ],
+  "sql": [],
+  "tables": [],
+  "httpCalls": [],
+  "wsEndpoints": [],
+  "wsExchanges": [],
+  "seeds": [
+    {
+      "id": "seed-x-1",
+      "pathId": "get-api-orders-id-happy",
+      "table": "orders",
+      "columns": ["id", "status"],
+      "values": ["1", "PENDING"]
+    }
+  ]
+}
