@@ -1,6 +1,7 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ParamKind;
 import org.junit.jupiter.api.Test;
 
@@ -49,5 +50,64 @@ class EndpointIndexerTest {
         IndexResult result = new EndpointIndexer().index(Path.of("src/test/resources"));
         // sample-src 외 컨트롤러가 없는 위치를 줘도 동작해야 한다 (하위 폴더 포함 스캔이므로 1개)
         assertThat(result.endpoints()).hasSizeLessThanOrEqualTo(1);
+    }
+
+    @Test
+    void indexesGetWithPathVariableAndRequestParam(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        java.nio.file.Path src = dir.resolve("C.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                @RequestMapping("/api/orders")
+                class C {
+                    @GetMapping("/{id}")
+                    String get(@PathVariable Long id) { return null; }
+                    @GetMapping
+                    String list(@RequestParam Long userId) { return null; }
+                    @DeleteMapping("/{id}")
+                    void del(@PathVariable Long id) {}
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint get = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("GET") && e.path().equals("/api/orders/{id}"))
+                .findFirst().orElseThrow();
+        assertThat(get.params()).extracting(EndpointParam::kind).containsExactly(ParamKind.PATH);
+        assertThat(get.authRequired()).isFalse();
+
+        Endpoint list = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("GET") && e.path().equals("/api/orders"))
+                .findFirst().orElseThrow();
+        assertThat(list.params()).extracting(EndpointParam::kind).containsExactly(ParamKind.QUERY);
+
+        assertThat(result.endpoints()).anyMatch(e -> e.httpMethod().equals("DELETE"));
+    }
+
+    @Test
+    void authRequiredTrueForNonLoginPathsWhenAuthConfigured(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        java.nio.file.Path src = dir.resolve("C.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                class C {
+                    @PostMapping("/api/auth/login") String login(@RequestBody String b){return null;}
+                    @GetMapping("/api/orders/{id}") String get(@PathVariable Long id){return null;}
+                }
+                """);
+        io.graphrag.builder.run.AuthConfig auth = new io.graphrag.builder.run.AuthConfig(
+                "/api/auth/login", "admin", "password", "token", "Authorization", "Bearer", java.util.List.of());
+        IndexResult result = new EndpointIndexer().index(dir, auth);
+
+        assertThat(result.endpoints().stream()
+                .filter(e -> e.path().equals("/api/auth/login")).findFirst().orElseThrow()
+                .authRequired()).isFalse();
+        assertThat(result.endpoints().stream()
+                .filter(e -> e.path().equals("/api/orders/{id}")).findFirst().orElseThrow()
+                .authRequired()).isTrue();
     }
 }
