@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlLogParser;
+import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutProcess;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.BindingOrigin;
@@ -39,17 +40,19 @@ public class WsCaptureRunner {
 
     private final SutProcess sut;
     private final Connection connection;
+    private final DbConfig.Type dbType;
 
-    public WsCaptureRunner(SutProcess sut, Connection connection) {
+    public WsCaptureRunner(SutProcess sut, Connection connection, DbConfig.Type dbType) {
         this.sut = sut;
         this.connection = connection;
+        this.dbType = dbType;
     }
 
     public WsResult run(WsEndpoint endpoint, BodyShape shape, List<TableSchema> tables)
             throws Exception {
         SynthesizedInput happy = new SampleInputSynthesizer().synthesize(shape, tables);
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
-            Seeds.insert(connection, seed);
+            Seeds.insert(connection, dbType, seed);
         }
 
         List<ObjectNode> payloads = new ArrayList<>();

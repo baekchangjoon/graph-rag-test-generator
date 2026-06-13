@@ -1,6 +1,7 @@
 package io.graphrag.builder.coverage;
 
 import io.graphrag.builder.env.AnalysisEnvironment;
+import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutOptions;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,8 @@ class JacocoIntegrationTest {
         Path sutJar = Path.of(System.getProperty("sut.jar"));
         JacocoAgent agent = JacocoAgent.prepare(workDir);
 
-        try (AnalysisEnvironment env = new AnalysisEnvironment("postgres:15")) {
+        try (AnalysisEnvironment env = new AnalysisEnvironment(
+                new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app"))) {
             env.start(sutJar, workDir, new SutOptions(agent.javaToolOptions(), java.util.Map.of()));
 
             CoverageClient client = new CoverageClient("localhost", agent.tcpPort());
