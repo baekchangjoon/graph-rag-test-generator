@@ -7,8 +7,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -33,8 +31,11 @@ class OrderSearchApiTest {
     @Autowired
     OrderRepository orders;
 
+    private String token;
+
     @BeforeEach
     void seed() {
+        token = AuthHelper.obtainToken(rest);
         orders.deleteAll();
         users.deleteAll();
         User user = users.save(new User("u-search", "Searcher"));
@@ -43,9 +44,8 @@ class OrderSearchApiTest {
     }
 
     private ResponseEntity<String> search(String json) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        return rest.postForEntity("/api/orders/search", new HttpEntity<>(json, headers), String.class);
+        return rest.postForEntity("/api/orders/search",
+                new HttpEntity<>(json, AuthHelper.jsonWithAuth(token)), String.class);
     }
 
     @Test
