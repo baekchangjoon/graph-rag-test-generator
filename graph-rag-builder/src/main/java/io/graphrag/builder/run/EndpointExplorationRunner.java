@@ -67,6 +67,8 @@ public class EndpointExplorationRunner {
     private final io.graphrag.builder.env.HttpCaptureServer httpCapture;
     private final List<Set<String>> responseDtoFieldSets;
     private final List<String> literalCandidates;
+    private final AuthTokenProvider authProvider;  // nullable — D5에서 배선
+    private final AuthConfig authConfig;           // nullable — authProvider와 쌍
 
     public EndpointExplorationRunner(SutProcess sut, Connection connection,
                                      DbConfig.Type dbType,
@@ -74,7 +76,9 @@ public class EndpointExplorationRunner {
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
-                                     List<String> literalCandidates) {
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig) {
         this.sut = sut;
         this.connection = connection;
         this.dbType = dbType;
@@ -84,6 +88,8 @@ public class EndpointExplorationRunner {
         this.httpCapture = httpCapture;
         this.responseDtoFieldSets = responseDtoFieldSets;
         this.literalCandidates = literalCandidates;
+        this.authProvider = authProvider;
+        this.authConfig = authConfig;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -176,13 +182,18 @@ public class EndpointExplorationRunner {
         return body -> {
             try {
                 long logStart = sut.logOffset();
+                HttpRequest.Builder builder = HttpRequest.newBuilder(
+                                URI.create(sut.baseUri() + endpoint.path()))
+                        .timeout(Duration.ofSeconds(30))
+                        .header("Content-Type", "application/json")
+                        // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
+                        .header("baggage", "test-id=explore");
+                if (authProvider != null && endpoint.authRequired()) {
+                    builder.header(authConfig.headerName(),
+                            authConfig.headerValue(authProvider.token()));
+                }
                 HttpResponse<String> response = http.send(
-                        HttpRequest.newBuilder(URI.create(sut.baseUri() + endpoint.path()))
-                                .timeout(Duration.ofSeconds(30))
-                                .header("Content-Type", "application/json")
-                                // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
-                                .header("baggage", "test-id=explore")
-                                .POST(HttpRequest.BodyPublishers.ofString(
+                        builder.POST(HttpRequest.BodyPublishers.ofString(
                                         Json.mapper().writeValueAsString(body)))
                                 .build(),
                         HttpResponse.BodyHandlers.ofString());
