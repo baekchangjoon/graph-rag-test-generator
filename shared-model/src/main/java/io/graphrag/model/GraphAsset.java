@@ -13,7 +13,8 @@ public record GraphAsset(
         List<MapperStatement> mappers,
         List<CapturedHttpCall> httpCalls,
         List<WsEndpoint> wsEndpoints,
-        List<WsExchange> wsExchanges) {
+        List<WsExchange> wsExchanges,
+        List<RequiredSeed> seeds) {
 
     /** 이전 Phase 그래프(누락 필드)와의 후방 호환. */
     public GraphAsset {
@@ -21,5 +22,6 @@ public record GraphAsset(
         httpCalls = httpCalls == null ? List.of() : httpCalls;
         wsEndpoints = wsEndpoints == null ? List.of() : wsEndpoints;
         wsExchanges = wsExchanges == null ? List.of() : wsExchanges;
+        seeds = seeds == null ? List.of() : seeds;
     }
 }

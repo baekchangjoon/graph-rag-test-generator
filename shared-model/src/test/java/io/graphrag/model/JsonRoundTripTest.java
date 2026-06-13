@@ -35,6 +35,7 @@ class JsonRoundTripTest {
                 List.of(new BranchRef("com.example.OrderController", "create", 30, 1)),
                 "fuzzer",
                 List.of("request.amount() > 0"),
+                List.of(),
                 List.of());
 
         CapturedHttpCall httpCall = new CapturedHttpCall(
@@ -75,7 +76,8 @@ class JsonRoundTripTest {
         GraphAsset asset = new GraphAsset(
                 "order-service", "abc123",
                 List.of(endpoint), List.of(path), List.of(sql), List.of(table),
-                List.of(mapperStatement), List.of(httpCall), List.of(wsEndpoint), List.of(wsExchange));
+                List.of(mapperStatement), List.of(httpCall), List.of(wsEndpoint), List.of(wsExchange),
+                List.of());
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);
     }
@@ -141,5 +143,29 @@ class JsonRoundTripTest {
                 + "\"packageName\":\"x\",\"authMode\":\"DISABLED\",\"futureField\":1}";
         GenerationRequest request = mapper.readValue(json, GenerationRequest.class);
         assertThat(request.endpointId()).isEqualTo("ep");
+    }
+
+    @Test
+    void requiredSeed_roundTrips() throws Exception {
+        RequiredSeed seed = new RequiredSeed("seed-p1-1", "p1", "orders",
+                List.of("id", "user_id"), List.of("1", "probe-userId"));
+        RequiredSeed back = Json.mapper().readValue(
+                Json.mapper().writeValueAsString(seed), RequiredSeed.class);
+        assertThat(back).isEqualTo(seed);
+    }
+
+    @Test
+    void exploredPath_requiredSeedIds_roundTripsAndDefaultsEmpty() throws Exception {
+        ExploredPath path = new ExploredPath("p1", "e1", Json.mapper().createObjectNode(),
+                200, Json.mapper().createObjectNode(), List.of(), List.of(), List.of(),
+                "heuristic", List.of(), List.of(), List.of("seed-p1-1"));
+        ExploredPath back = Json.mapper().readValue(
+                Json.mapper().writeValueAsString(path), ExploredPath.class);
+        assertThat(back.requiredSeedIds()).containsExactly("seed-p1-1");
+
+        String legacy = "{\"id\":\"p\",\"endpointId\":\"e\",\"sampleInput\":{},"
+                + "\"expectedStatus\":200,\"sampleResponse\":{}}";
+        assertThat(Json.mapper().readValue(legacy, ExploredPath.class).requiredSeedIds())
+                .isEmpty();
     }
 }

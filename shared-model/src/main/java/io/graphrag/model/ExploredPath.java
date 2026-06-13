@@ -16,7 +16,8 @@ public record ExploredPath(
         List<BranchRef> branchesTaken,
         String discoveredBy,
         List<String> constraints,
-        List<String> validationWarnings) {
+        List<String> validationWarnings,
+        List<String> requiredSeedIds) {
 
     /** 구버전 그래프(Phase 0/1)와의 후방 호환: 누락 필드를 빈 값으로 정규화. */
     public ExploredPath {
@@ -25,5 +26,6 @@ public record ExploredPath(
         discoveredBy = discoveredBy == null ? "unknown" : discoveredBy;
         constraints = constraints == null ? List.of() : constraints;
         validationWarnings = validationWarnings == null ? List.of() : validationWarnings;
+        requiredSeedIds = requiredSeedIds == null ? List.of() : requiredSeedIds;
     }
 }

@@ -193,7 +193,7 @@ public final class BuilderCli {
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
-                wsIndex.endpoints(), wsExchanges);
+                wsIndex.endpoints(), wsExchanges, List.of());
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;

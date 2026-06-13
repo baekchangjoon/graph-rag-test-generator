@@ -69,11 +69,12 @@ public class PartitionedGraphStore implements GraphStore {
                         List.of(), List.of(),
                         httpCalls.getOrDefault(key, List.of()),
                         wsEndpoints.getOrDefault(key, List.of()),
-                        wsExchanges.getOrDefault(key, List.of()))));
+                        wsExchanges.getOrDefault(key, List.of()),
+                        List.of())));
 
         GraphAsset global = new GraphAsset(asset.sutId(), asset.commitSha(),
                 List.of(), List.of(), List.of(), asset.tables(), asset.mappers(),
-                List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), asset.seeds());
 
         try {
             Files.createDirectories(partitionsDir());
@@ -115,7 +116,7 @@ public class PartitionedGraphStore implements GraphStore {
             }
             return new GraphAsset(global.sutId(), global.commitSha(), endpoints, paths,
                     sql, global.tables(), global.mappers(), httpCalls,
-                    wsEndpoints, wsExchanges);
+                    wsEndpoints, wsExchanges, global.seeds());
         } catch (IOException e) {
             throw new UncheckedIOException("failed to load partitioned graph from " + dir, e);
         }

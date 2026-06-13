@@ -80,7 +80,7 @@ class FixtureComposerTest {
                         "{\"userId\":\"probe-userId\",\"amount\":1000000,\"type\":\"EXPRESS\"}"),
                 409, io.graphrag.model.Json.mapper().nullNode(),
                 List.of("sql-p-409-1"), List.of("http-p-409-1"),
-                List.of(), "fuzzer", List.of(), List.of());
+                List.of(), "fuzzer", List.of(), List.of(), List.of());
         var select = new io.graphrag.model.CapturedSql(
                 "sql-p-409-1", "p-409", "SELECT",
                 "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?", "users",

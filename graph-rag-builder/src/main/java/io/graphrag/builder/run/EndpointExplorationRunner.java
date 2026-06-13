@@ -119,7 +119,8 @@ public class EndpointExplorationRunner {
                     candidate.branches(),
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),
-                    validate(sql)));
+                    validate(sql),
+                    List.of()));
         }
         return new EndpointResult(paths, allSql, allHttpCalls, report(endpoint, outcome));
     }
