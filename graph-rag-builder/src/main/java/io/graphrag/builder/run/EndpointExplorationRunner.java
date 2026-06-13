@@ -79,6 +79,9 @@ public class EndpointExplorationRunner {
                                      List<String> literalCandidates,
                                      AuthTokenProvider authProvider,
                                      AuthConfig authConfig) {
+        if ((authProvider == null) != (authConfig == null)) {
+            throw new IllegalArgumentException("authProvider and authConfig must be set together");
+        }
         this.sut = sut;
         this.connection = connection;
         this.dbType = dbType;
