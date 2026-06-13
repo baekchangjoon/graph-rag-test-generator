@@ -25,6 +25,7 @@ import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.GraphAsset;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.Json;
 import io.graphrag.model.MapperStatement;
 import io.graphrag.model.TableSchema;
@@ -138,6 +139,7 @@ public final class BuilderCli {
         List<CapturedSql> sql = new ArrayList<>();
         List<CapturedHttpCall> httpCalls = new ArrayList<>();
         List<io.graphrag.model.WsExchange> wsExchanges = new ArrayList<>();
+        List<RequiredSeed> allSeeds = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         List<TableSchema> tables;
 
@@ -189,6 +191,7 @@ public final class BuilderCli {
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());
+                    allSeeds.addAll(result.seeds());
                     reportEntries.add(result.report());
                 }
 
@@ -226,7 +229,7 @@ public final class BuilderCli {
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
-                wsIndex.endpoints(), wsExchanges, List.of());
+                wsIndex.endpoints(), wsExchanges, allSeeds);
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
