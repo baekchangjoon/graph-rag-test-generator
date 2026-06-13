@@ -44,9 +44,9 @@ import static org.hamcrest.Matchers.notNullValue;
     void {{testMethodName}}() {
         {{#authRequired}}scope.rest().authenticated(){{/authRequired}}{{^authRequired}}scope.rest().given(){{/authRequired}}
             .contentType("application/json")
-            .body({{{bodyExpr}}})
-        .when()
-            .{{httpMethodLower}}("{{endpointPath}}")
+{{^readPath}}            .body({{{bodyExpr}}})
+{{/readPath}}        .when()
+            .{{httpMethodLower}}("{{requestPath}}")
         .then()
             .statusCode({{expectedStatus}}){{{assertionsBlock}}};
     }

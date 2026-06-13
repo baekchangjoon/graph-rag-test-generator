@@ -3,6 +3,7 @@ package io.graphrag.generator.client;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExploredPath;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.TableSchema;
 
 import java.util.List;
@@ -29,4 +30,6 @@ public interface GraphRagClient {
     io.graphrag.model.WsExchange wsExchange(String exchangeId);
 
     List<TableSchema> tables();
+
+    List<RequiredSeed> seedsForPath(String pathId);
 }

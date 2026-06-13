@@ -7,13 +7,16 @@ import io.graphrag.generator.client.GraphRagClient;
 import io.graphrag.generator.compose.ComposedFixture;
 import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.HttpMockComposer;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.GeneratedFile;
 import io.graphrag.model.GenerationRequest;
 import io.graphrag.model.GenerationResult;
 import io.graphrag.model.ParallelSafetyReport;
+import io.graphrag.model.ParamKind;
 
 import java.io.StringWriter;
 import java.nio.file.Path;
@@ -161,7 +164,9 @@ public class Generator {
         ExploredPath path = client.path(pathId);
         List<CapturedSql> sql = client.sqlForPath(pathId);
 
-        ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables());
+        boolean readPath = endpoint.httpMethod().equals("GET");
+        ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
+                client.seedsForPath(pathId));
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(pathId));
 
@@ -171,6 +176,8 @@ public class Generator {
         scope.put("httpMethod", endpoint.httpMethod());
         scope.put("httpMethodLower", endpoint.httpMethod().toLowerCase());
         scope.put("endpointPath", endpoint.path());
+        scope.put("requestPath", readPath ? resolveLiteralPath(endpoint, path.sampleInput()) : endpoint.path());
+        scope.put("readPath", readPath);
         scope.put("endpointId", endpoint.id());
         scope.put("pathId", path.id());
         scope.put("testMethodName", path.id().replace('-', '_'));
@@ -213,5 +220,20 @@ public class Generator {
             return literal;
         }
         return "String.format(" + literal + ", " + String.join(", ", fixture.bodyArgExprs()) + ")";
+    }
+
+    private static String resolveLiteralPath(Endpoint endpoint, JsonNode input) {
+        String path = endpoint.path();
+        StringBuilder query = new StringBuilder();
+        for (EndpointParam p : endpoint.params()) {
+            if (!input.has(p.name())) continue;
+            String v = input.get(p.name()).asText();
+            if (p.kind() == ParamKind.PATH) {
+                path = path.replace("{" + p.name() + "}", v);
+            } else if (p.kind() == ParamKind.QUERY) {
+                query.append(query.isEmpty() ? "?" : "&").append(p.name()).append("=").append(v);
+            }
+        }
+        return path + query;
     }
 }

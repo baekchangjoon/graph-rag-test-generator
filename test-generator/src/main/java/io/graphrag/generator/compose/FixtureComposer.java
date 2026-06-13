@@ -5,6 +5,7 @@ import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ExploredPath;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.SqlBinding;
 import io.graphrag.model.TableSchema;
 
@@ -31,6 +32,27 @@ public class FixtureComposer {
 
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables) {
+        return compose(path, sqlList, tables, List.of());
+    }
+
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables, List<RequiredSeed> seeds) {
+        if (!seeds.isEmpty()) {
+            List<ComposedFixture.Stmt> seedInserts = seeds.stream()
+                    .map(s -> new ComposedFixture.Stmt(
+                            "INSERT INTO " + s.table() + " (" + String.join(", ", s.columns())
+                                    + ") VALUES (" + String.join(", ", s.columns().stream().map(c -> "?").toList()) + ")",
+                            s.values().stream().map(v -> "\"" + v + "\"").toList()))
+                    .toList();
+            List<ComposedFixture.Stmt> seedDeletes = seeds.stream()
+                    .map(s -> new ComposedFixture.Stmt(
+                            "DELETE FROM " + s.table() + " WHERE " + s.columns().get(0) + " = ?",
+                            List.of("\"" + s.values().get(0) + "\"")))
+                    .toList();
+            return new ComposedFixture(List.of(), seedInserts, seedDeletes, "", List.of(),
+                    assertionsFromResponse(path, sqlList));
+        }
+
         Map<String, TableSchema> tablesByName = new HashMap<>();
         tables.forEach(t -> tablesByName.put(t.name(), t));
 
@@ -112,22 +134,29 @@ public class FixtureComposer {
         }
         bodyFormat.append("}");
 
-        // 5. 응답 검증
+        return new ComposedFixture(
+                new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
+                inserts, deletes, bodyFormat.toString(), bodyArgs,
+                assertionsFromResponse(path, sqlList));
+    }
+
+    private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
+                                                                           List<CapturedSql> sqlList) {
         Set<String> literalValues = new HashSet<>();
         sqlList.forEach(sql -> sql.bindings().stream()
                 .filter(b -> b.origin() == BindingOrigin.LITERAL)
                 .forEach(b -> literalValues.add(b.value())));
         List<ComposedFixture.Assertion> assertions = new ArrayList<>();
+        if (path.sampleResponse() == null || path.sampleResponse().isNull()) {
+            return assertions;
+        }
         path.sampleResponse().fields().forEachRemaining(entry -> {
             String value = entry.getValue().asText();
             assertions.add(literalValues.contains(value)
                     ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")
                     : new ComposedFixture.Assertion(entry.getKey(), "notNullValue()"));
         });
-
-        return new ComposedFixture(
-                new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
-                inserts, deletes, bodyFormat.toString(), bodyArgs, assertions);
+        return assertions;
     }
 
     private record DeleteTarget(String table, String column, String varName) {
