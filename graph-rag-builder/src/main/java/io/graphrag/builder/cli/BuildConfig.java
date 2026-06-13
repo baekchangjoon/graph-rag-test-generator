@@ -1,5 +1,7 @@
 package io.graphrag.builder.cli;
 
+import io.graphrag.builder.env.DbConfig;
+
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -12,7 +14,7 @@ public record BuildConfig(
         Path out,
         String sutId,
         String commitSha,
-        String postgresImage,
+        DbConfig dbConfig,
         int budgetRequests,
         Path manualPathsDir,
         Path externalStubsDir,
@@ -27,10 +29,10 @@ public record BuildConfig(
 
     /** 풀빌드 설정 (증분 옵션 없음). */
     public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
-                       String sutId, String commitSha, String postgresImage,
+                       String sutId, String commitSha, DbConfig dbConfig,
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
                        Map<String, String> sutEnv) {
-        this(sutSrc, sutResources, sutJar, out, sutId, commitSha, postgresImage,
+        this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null);
     }
 }

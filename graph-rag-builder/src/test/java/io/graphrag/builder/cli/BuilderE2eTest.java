@@ -1,5 +1,6 @@
 package io.graphrag.builder.cli;
 
+import io.graphrag.builder.env.DbConfig;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.ExploredPath;
@@ -32,7 +33,9 @@ class BuilderE2eTest {
 
         GraphAsset asset = BuilderCli.build(new BuildConfig(
                 sutSrc, sutResources, sutJar, out,
-                "order-service", "test", "postgres:15", 60, null,
+                "order-service", "test",
+                new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app"),
+                60, null,
                 Path.of(System.getProperty("external.stubs")),
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}")));
 
