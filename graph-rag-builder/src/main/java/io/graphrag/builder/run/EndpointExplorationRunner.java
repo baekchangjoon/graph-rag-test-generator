@@ -1,6 +1,7 @@
 package io.graphrag.builder.run;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.coverage.BranchCoverage;
@@ -22,9 +23,12 @@ import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.Json;
+import io.graphrag.model.ParamKind;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.SqlBinding;
 import io.graphrag.model.TableSchema;
 import org.slf4j.Logger;
@@ -55,6 +59,7 @@ public class EndpointExplorationRunner {
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
+                                 List<RequiredSeed> seeds,
                                  ExplorationReport.EndpointExploration report) {
     }
 
@@ -97,9 +102,21 @@ public class EndpointExplorationRunner {
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                               List<ConstraintExtractor.ConditionSpan> conditions) throws Exception {
-        SynthesizedInput happy = new SampleInputSynthesizer().synthesize(shape, tables);
+        boolean readPath = endpoint.httpMethod().equals("GET");
+        SynthesizedInput happy = readPath
+                ? new ReadInputSynthesizer().synthesize(endpoint, tables)
+                : new SampleInputSynthesizer().synthesize(shape, tables);
+
+        List<RequiredSeed> requiredSeeds = new ArrayList<>();
+        int seedSeq = 0;
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
             Seeds.insert(connection, dbType, seed);
+            if (readPath) {
+                seedSeq++;
+                requiredSeeds.add(new RequiredSeed(
+                        "seed-" + endpoint.id() + "-" + seedSeq, null, seed.table(),
+                        seed.columns(), seed.values().stream().map(String::valueOf).toList()));
+            }
         }
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
@@ -111,6 +128,10 @@ public class EndpointExplorationRunner {
                 new EndpointTarget(endpoint, shape, tables, httpInvoker(endpoint), literalCandidates));
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
+
+        List<String> seedIdsForPath = readPath
+                ? requiredSeeds.stream().map(RequiredSeed::id).toList()
+                : List.of();
 
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
@@ -132,9 +153,18 @@ public class EndpointExplorationRunner {
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql),
-                    List.of()));
+                    seedIdsForPath));
         }
-        return new EndpointResult(paths, allSql, allHttpCalls, report(endpoint, outcome));
+
+        // read-path: requiredSeed에 첫 번째 path의 id를 연결한다
+        if (readPath && !paths.isEmpty()) {
+            String pid = paths.get(0).id();
+            requiredSeeds = requiredSeeds.stream()
+                    .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
+                    .toList();
+        }
+
+        return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds, report(endpoint, outcome));
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -182,11 +212,11 @@ public class EndpointExplorationRunner {
     /** 입력 1회 = HTTP 호출 + 로그 구간 마킹 + 요청 단위 분기 dump. */
     private EndpointInvoker httpInvoker(Endpoint endpoint) {
         HttpClient http = HttpClient.newHttpClient();
-        return body -> {
+        return input -> {
             try {
                 long logStart = sut.logOffset();
-                HttpRequest.Builder builder = HttpRequest.newBuilder(
-                                URI.create(sut.baseUri() + endpoint.path()))
+                String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
+                HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                         .timeout(Duration.ofSeconds(30))
                         .header("Content-Type", "application/json")
                         // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
@@ -195,10 +225,14 @@ public class EndpointExplorationRunner {
                     builder.header(authConfig.headerName(),
                             authConfig.headerValue(authProvider.token()));
                 }
-                HttpResponse<String> response = http.send(
-                        builder.POST(HttpRequest.BodyPublishers.ofString(
-                                        Json.mapper().writeValueAsString(body)))
-                                .build(),
+                String method = endpoint.httpMethod();
+                if (method.equals("GET") || method.equals("DELETE")) {
+                    builder.method(method, HttpRequest.BodyPublishers.noBody());
+                } else {
+                    builder.method(method, HttpRequest.BodyPublishers.ofString(
+                            Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
+                }
+                HttpResponse<String> response = http.send(builder.build(),
                         HttpResponse.BodyHandlers.ofString());
                 Thread.sleep(150);   // 콘솔 로그 flush 여유
                 BranchCoverage requestCoverage = analyzer.analyze(coverage.dump(true));
@@ -211,6 +245,39 @@ public class EndpointExplorationRunner {
                 throw new IllegalStateException("invocation failed: " + endpoint.path(), e);
             }
         };
+    }
+
+    /** PATH param은 {name} 치환, QUERY param은 쿼리스트링으로. */
+    static String buildPathAndQuery(Endpoint endpoint, JsonNode input) {
+        String path = endpoint.path();
+        StringBuilder query = new StringBuilder();
+        for (EndpointParam param : endpoint.params()) {
+            if (!input.has(param.name())) continue;
+            String value = input.get(param.name()).asText();
+            if (param.kind() == ParamKind.PATH) {
+                path = path.replace("{" + param.name() + "}", value);
+            } else if (param.kind() == ParamKind.QUERY) {
+                query.append(query.isEmpty() ? "?" : "&")
+                        .append(param.name()).append("=").append(value);
+            }
+        }
+        return path + query;
+    }
+
+    /** BODY param 필드만 남긴 ObjectNode (path/query 필드 제거). */
+    static JsonNode bodyOnly(Endpoint endpoint, JsonNode input) {
+        if (!(input instanceof ObjectNode objectNode)) {
+            return input;
+        }
+        Set<String> nonBody = new HashSet<>();
+        for (EndpointParam param : endpoint.params()) {
+            if (param.kind() != ParamKind.BODY) {
+                nonBody.add(param.name());
+            }
+        }
+        ObjectNode body = objectNode.deepCopy();
+        nonBody.forEach(body::remove);
+        return body;
     }
 
     private List<CapturedSql> captureSql(PathCandidate candidate) {
