@@ -69,13 +69,18 @@ public final class TestScope {
         SocketMockAdapter socketAdapter = Adapters.select(SocketMockAdapter.class, "SOCKET_MOCK_ADAPTER", "noop", env);
         AuthAdapter authAdapter = Adapters.select(AuthAdapter.class, "AUTH_ADAPTER", "noop", env);
 
+        AuthClient authClient = authAdapter.create(env);
         TestScope scope = new TestScope(
                 testId,
                 new JdbcHelper(jdbcAdapter, env, testId, runId, dashboard),
-                new RestAssuredHelper(appBaseUri, testId),
+                new RestAssuredHelper(appBaseUri, testId, authClient,
+                        env.getOrDefault("AUTH_HEADER", "Authorization"),
+                        env.getOrDefault("AUTH_SCHEME", "Bearer"),
+                        env.getOrDefault("AUTH_USER", "admin"),
+                        env.getOrDefault("AUTH_PASS", "password")),
                 httpAdapter.create(env, testId),
                 socketAdapter.create(env, testId),
-                authAdapter.create(env),
+                authClient,
                 dashboard,
                 appBaseUri);
         dashboard.report(new TestEvent(EventType.SCOPE_CREATED, testId, runId,
