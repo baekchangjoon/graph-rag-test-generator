@@ -129,10 +129,6 @@ public class EndpointExplorationRunner {
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 
-        List<String> seedIdsForPath = readPath
-                ? requiredSeeds.stream().map(RequiredSeed::id).toList()
-                : List.of();
-
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
         List<io.graphrag.model.CapturedHttpCall> allHttpCalls = new ArrayList<>();
@@ -141,6 +137,7 @@ public class EndpointExplorationRunner {
             allSql.addAll(sql);
             List<io.graphrag.model.CapturedHttpCall> httpCalls = captureHttpCalls(candidate);
             allHttpCalls.addAll(httpCalls);
+            // seed는 성공(2xx) path에만 연결 — 아래 후처리 블록에서 채운다
             paths.add(new ExploredPath(
                     candidate.pathId(),
                     endpoint.id(),
@@ -153,15 +150,29 @@ public class EndpointExplorationRunner {
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql),
-                    seedIdsForPath));
+                    List.of()));
         }
 
-        // read-path: requiredSeed에 첫 번째 path의 id를 연결한다
-        if (readPath && !paths.isEmpty()) {
-            String pid = paths.get(0).id();
-            requiredSeeds = requiredSeeds.stream()
-                    .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
-                    .toList();
+        // read-path: seed는 첫 번째 2xx path의 사전 조건이다.
+        // 비-2xx path(404/400 등)는 seed와 무관하므로 requiredSeedIds를 비워 둔다.
+        if (readPath && !requiredSeeds.isEmpty()) {
+            int successIdx = -1;
+            for (int i = 0; i < paths.size(); i++) {
+                if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
+            }
+            if (successIdx >= 0) {
+                ExploredPath p = paths.get(successIdx);
+                List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
+                paths.set(successIdx, new ExploredPath(p.id(), p.endpointId(), p.sampleInput(),
+                        p.expectedStatus(), p.sampleResponse(), p.capturedSqlIds(),
+                        p.capturedHttpCallIds(), p.branchesTaken(), p.discoveredBy(),
+                        p.constraints(), p.validationWarnings(), seedIds));
+                String pid = p.id();
+                requiredSeeds = requiredSeeds.stream()
+                        .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
+                        .toList();
+            }
+            // 2xx path가 없으면(degenerate) seed는 어떤 path에도 연결하지 않는다
         }
 
         return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds, report(endpoint, outcome));
