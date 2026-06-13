@@ -47,7 +47,16 @@ public final class JwtAuthClient implements AuthClient {
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                     HttpResponse.BodyHandlers.ofString());
-            return Json.mapper().readTree(response.body()).path(tokenField).asText();
+            if (response.statusCode() / 100 != 2) {
+                throw new IllegalStateException("login failed: HTTP " + response.statusCode());
+            }
+            String token = Json.mapper().readTree(response.body())
+                    .path(tokenField).asText(null);
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException("token field '" + tokenField
+                        + "' missing in login response");
+            }
+            return token;
         } catch (Exception e) {
             throw new IllegalStateException("login failed", e);
         }
