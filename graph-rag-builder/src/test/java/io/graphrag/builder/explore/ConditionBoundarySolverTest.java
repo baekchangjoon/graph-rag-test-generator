@@ -14,9 +14,9 @@ class ConditionBoundarySolverTest {
     @Test
     void solve_eachLiteralBecomesLMinus1_L_LPlus1_perField() {
         List<Comparison> comparisons = List.of(
-                new Comparison("amount", ">", 100, 10),
-                new Comparison("score", "<=", 50, 11),
-                new Comparison("amount", "==", 7, 12));
+                new Comparison("C", "m", "amount", ">", 100, 10),
+                new Comparison("C", "m", "score", "<=", 50, 11),
+                new Comparison("C", "m", "amount", "==", 7, 12));
 
         Map<String, Set<Long>> bounds = new ConditionBoundarySolver().solve(comparisons);
 

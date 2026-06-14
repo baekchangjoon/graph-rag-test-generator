@@ -18,8 +18,16 @@ empty/literal)만 한다. `ConstraintExtractor`가 뽑은 handler 조건식은 *
 
 - 심볼릭 실행/SMT(JDart/SPF) 없음.
 - @Pattern 정규식 역산(만족/위반 문자열 자동 생성) 없음 — 인식만 하고 값 생성은 보류.
-- 서비스 계층(컨트롤러 외) 조건식 추출 없음 — 이번 범위는 handler 메서드 조건 + body DTO 제약.
 - 다중 제약 조합(2nd-order) 없음 — 1차 제약별 단일 변이.
+
+> **2026-06-14 개정:** 조건식(비교식) 추출 범위를 **handler 메서드 → SUT 소스 전 계층
+> (컨트롤러/서비스/공통/도메인 등 모든 클래스·메서드)** 으로 확장했다. thin-controller/
+> fat-service 아키텍처에서 의미 있는 분기 조건은 서비스·공통 계층에 있으므로 handler
+> 한정은 본질적 한계였다(실측: 8개 MSA 서비스 컨트롤러에 `field op literal` 0건).
+> 필드 매칭은 simple-name 기준이며, 엔드포인트의 `mutableFields`에 없는 필드명은
+> `constraintDirected`에서 자동 무시되므로 전역 추출이어도 안전하다(거짓 입력 없음).
+> body DTO Bean Validation(소스 A)은 본래대로 요청 바디 타입 한정(조건식이 아니라
+> 입력 타입의 선언적 제약이므로).
 
 ## 두 가지 신규 값 소스 (둘 다 기존 `InputMutator`로 환류)
 
@@ -49,16 +57,27 @@ empty/literal)만 한다. `ConstraintExtractor`가 뽑은 handler 조건식은 *
 `record FieldConstraint(String field, Kind kind, long numArg, String strArg)`,
 `enum Kind { MIN, MAX, SIZE, POSITIVE, NEGATIVE, EMAIL, PATTERN, … }`.
 
-### 소스 B: handler 조건식 경계 (이미 추출된 텍스트 파싱)
+### 소스 B: 비교식 경계 (전 계층 AST 추출 — 2026-06-14 개정)
 
-새 `ConditionBoundarySolver`. `ConstraintExtractor`의 `ConditionSpan.text()`를 받아
-단순 비교식 `<fieldRef> <op> <literal>` 또는 `<literal> <op> <fieldRef>` 을 정규식으로
-파싱. (op ∈ `> >= < <= == !=`). fieldRef는 `req.amount()`/`request.getAmount()`/
-`amount` 형태에서 필드명 추출(접근자 → 프로퍼티명). 숫자 리터럴만 1차 지원.
+`ConstraintExtractor.extractComparisons(srcDir)`가 **SUT 소스 모델 전체**의
+`CtBinaryOperator`를 1회 순회(정규식 아님, AST 직접)하여 비교식
+`<fieldRef> <op> <literal>` / `<literal> <op> <fieldRef>`를 수집한다.
+(op ∈ `> >= < <= == !=`, 정수 리터럴만 1차.) 각 비교는 발생한
+`(classFqn, method, line)`로 태깅된다. fieldRef는 `req.amount()`/
+`request.getAmount()`/`amount`(접근자→프로퍼티명, 또는 변수·필드명)에서 추출.
 
-→ `Map<String fieldName, Set<Long> boundaryValues>`: 각 리터럴 L에 대해 {L-1, L, L+1}.
+`ConditionBoundarySolver.solve(List<Comparison>)` → `Map<String fieldName,
+Set<Long> boundaryValues>`: 각 리터럴 L → {L-1, L, L+1} (TreeMap/TreeSet, 결정적).
 
-파싱 실패한 조건은 무시(best-effort). 결정적.
+- **전역 1회 추출**: BuilderCli가 엔드포인트 루프 전 `extractComparisons(srcDir)`를
+  1회 호출, 모든 엔드포인트가 공유. (per-endpoint 재빌드 제거 → 성능 개선)
+- **필드 투영**: `constraintDirected`가 엔드포인트의 `mutableFields` ∩ 숫자 필드에만
+  bound를 적용 → 전역 비교식이라도 해당 엔드포인트와 무관한 필드명은 자동 무시.
+- **rec-1(solverRelevantMissed)**: handler-method 미커버 분기와 겹치는 비교식만
+  세야 의미가 있으므로, 리포트 단계에서 `(classFqn==handlerClass &&
+  method==handlerMethod)`로 필터 후 라인 매칭한다(태깅된 메타 활용).
+
+파싱 실패/메서드 밖(필드 초기화자 등) 비교식은 무시(best-effort). 결정적.
 
 ## `InputMutator` 확장
 

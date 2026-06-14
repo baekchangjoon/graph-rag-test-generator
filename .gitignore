@@ -28,3 +28,7 @@ out/
 # END Ruler Generated Files
 e2e/agents/
 /.work/
+
+# builder run artifacts (reg-coverage writes here when run from module dir)
+.work/
+**/.work/
