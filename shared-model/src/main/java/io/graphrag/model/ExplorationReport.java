@@ -16,11 +16,16 @@ public record ExplorationReport(
         int coveredAppBranches,
         int totalAppBranches) {
 
+    /**
+     * solverRelevantMissed: 미커버 분기 중 handler 비교식(field op literal) 라인과
+     * 겹치는 개수. 콘콜릭 복귀 트리거의 실증 데이터 (docs/decisions/explorer-engines.md).
+     */
     public record EndpointExploration(
             String endpointId,
             int totalBranches,
             int coveredBranches,
             List<BranchRef> missedBranches,
-            Map<String, Integer> pathsByEngine) {
+            Map<String, Integer> pathsByEngine,
+            int solverRelevantMissed) {
     }
 }
