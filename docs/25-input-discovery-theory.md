@@ -137,9 +137,11 @@ SUT를 운영 boot jar 그대로 외부 프로세스로 기동(HTTP 경계)
 
 | 장점 | 단점/한계 |
 |---|---|
-| 운영 jar 그대로 → **충실도 높음**(실제 Spring/JPA/MyBatis 동작 관측) | 깊은 다중제약 검증 경로엔 약함(아래 §9 한계) |
-| 결정적, JVM 버전 비종속 | per-field 오라클은 **다변수 동시충족** body를 못 만듦 |
-| 실제 SQL/외부HTTP/시드까지 캡처 → 통합테스트 생성 가능 | enum 값·날짜 등 "유효 값 합성" 미흡 |
+| 운영 jar 그대로 → **충실도 높음**(실제 Spring/JPA/MyBatis 동작 관측) | **결합** 다변수·상태 의존 가드엔 여전히 약함(아래 §9) |
+| 결정적, JVM 버전 비종속 | (Stage 1/2로 개선) **독립** 원자 conjunction은 joint 변이로 동시충족하나, 한 식에서 상호작용하는 결합 다변수는 미해결 |
+| 실제 SQL/외부HTTP/시드까지 캡처 → 통합테스트 생성 가능 | (Stage 0으로 해결) enum/날짜/이메일 유효 값 합성은 이제 됨 |
+
+> **갱신(2026-06-15)**: 아래 §9가 이 표의 "한계"를 단계별로 어떻게 좁혔는지(Stage 0–3b) 정리한다.
 
 ---
 
@@ -162,16 +164,31 @@ SUT를 운영 boot jar 그대로 외부 프로세스로 기동(HTTP 경계)
 
 ---
 
-## 9. 정리 — 언제 무엇을 쓰나 + 우리의 현재 한계
+## 9. 정리 — 언제 무엇을 쓰나 + 단계별로 좁힌 한계
 
+기법별 사용처:
 - **소스에 리터럴로 박힌 조건** → 정적 리터럴 추출(StaticLiteralOracle)로 충분.
 - **계산/파생된 단일 변수 조건**(`x*2==84`) → ASM+Z3 concolic이 유도.
-- **다변수 동시충족·enum 값·날짜·정규식·불투명 값** → **현재 미해결**. 진짜 심볼릭/콘콜릭(환경모델 포함)
-  또는 LLM 보조가 필요한 영역.
+- **enum 값·날짜·이메일 유효 입력** → 합성(Stage 0): enum 첫 상수, ISO 날짜, 유효 이메일.
+- **메서드 내 `&&` 다필드 가드(독립 원자)**(`tier==VIP && loyalty<500`) → conjunction 추출 + joint 변이
+  (Stage 1/2). SMT 불요 — 원자별 만족값을 동시 세팅.
+- **by-id 상태(읽기/수정/삭제가 사전 데이터 의존)** → path-id+리소스 시드 + 요청별 시드 리셋(Stage 3/3b).
 
-실측 사례: spring-petclinic의 `ReservationService.create`는 ~8개 제약(`nights∈[1,30]`,
-`roomNumber∈[100,499]`, 유효 enum `priceTier`, 미래 `checkInDate`, 다변수 `deposit*1.1 < nights*rate` …)을
-**동시에** 만족해야 깊은 경로가 열린다. per-field 오라클(static·concolic)은 각 값은 알지만 *하나의 유효 body로
-조합*하지 못해 그 경로를 못 뚫는다 → 다음 과제는 **다변수 joint-solving + 유효 body 합성**(`docs/24` 참조).
+**단계별로 좁힌 한계 (petclinic `ReservationService` 벤치마크, coveredAppBranches)**:
 
-관련 문서: `docs/22`(정적 한계), `docs/23`(입력 생성 흐름), `docs/24`(탐색 백엔드 전략).
+| 단계 | 무엇을 풀었나 | 측정 |
+|---|---|---|
+| Stage 0 | 유효 enum/날짜/이메일로 역직렬화 통과 → service 검증 진입 | 33→47/253 |
+| Stage 1/2 | `tier==VIP && loyalty<500` 등 독립 다필드 가드 true-arm | 47→69/253 |
+| Stage 3 | by-id(GET/PUT/DELETE /{id}) 진입 + 시드 읽기(enum 컬럼) | 69→113/253 |
+| Stage 3b | mutating by-id 생성 테스트가 빈 DB에서 재현(시드 리셋) | by-id 16/16 통과 |
+
+**여전히 미해결(다음 = Stage 4)**:
+- **결합 다변수**(`deposit*1.1 < nights*priceTier.getNightlyRate()`): 비선형(곱셈)+interprocedural
+  (enum 메서드)+3변수. (단, large-deposit 변이로 양 arm은 이미 우연히 커버됨 — 일반 해법은 미구현.)
+- **상태 의존 가드 양 arm**: stale(과거 checkInDate), status 전이, capacity(다중 CONFIRMED 행) —
+  "어떤 데이터를 미리 넣어야 그 분기가 열리나"를 역산하는 **in-process concolic 시드 변종**이 필요
+  (PoC 검증됨, `.work/concolic-poc/`). 아키텍처: ASM+Z3 1차 + in-process concolic 2차 병렬.
+- **정규식 일반 생성·불투명 값**(`hashCode`): solver로도 어려움 / 영구 비목표.
+
+관련 문서: `docs/22`(정적 한계), `docs/23`(입력 생성 흐름), `docs/24`(탐색 백엔드·단계별 진행).
