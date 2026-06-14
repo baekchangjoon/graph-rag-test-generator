@@ -9,6 +9,7 @@ import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.HttpMockComposer;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.model.CapturedSql;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ExploredPath;
@@ -165,8 +166,23 @@ public class Generator {
         List<CapturedSql> sql = client.sqlForPath(pathId);
 
         boolean readPath = endpoint.httpMethod().equals("GET");
+        // 응답 필드명 → 결정적 기대값(요청 입력 필드 + 시드 컬럼 camelCase). 응답 필드가 같은 이름의
+        // 입력/시드 값과 일치하면 equalTo, 서버 생성(시퀀스 id/count/timestamp)은 여기 없어 notNull.
+        java.util.Map<String, String> knownByField = new java.util.HashMap<>();
+        if (path.sampleInput() instanceof com.fasterxml.jackson.databind.node.ObjectNode in) {
+            in.fields().forEachRemaining(e -> {
+                if (!e.getValue().isNull()) {
+                    knownByField.put(e.getKey(), e.getValue().asText());
+                }
+            });
+        }
+        for (RequiredSeed s : client.seedsForPath(pathId)) {
+            for (int i = 0; i < s.columns().size() && i < s.values().size(); i++) {
+                knownByField.putIfAbsent(snakeToCamel(s.columns().get(i)), s.values().get(i));
+            }
+        }
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
-                client.seedsForPath(pathId), readPath);
+                client.seedsForPath(pathId), readPath, knownByField);
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(pathId));
 
@@ -238,6 +254,21 @@ public class Generator {
             }
         }
         return body.toString();
+    }
+
+    /** check_in_date → checkInDate (시드 컬럼 → 응답 필드명 매칭용). */
+    private static String snakeToCamel(String s) {
+        StringBuilder out = new StringBuilder();
+        boolean up = false;
+        for (char c : s.toCharArray()) {
+            if (c == '_') {
+                up = true;
+            } else {
+                out.append(up ? Character.toUpperCase(c) : c);
+                up = false;
+            }
+        }
+        return out.toString();
     }
 
     private static String bodyExpr(ComposedFixture fixture) {

@@ -123,6 +123,26 @@ class FixtureComposerTest {
     }
 
     @Test
+    void assertions_knownByField_concreteEqualTo_serverGeneratedNotNull() throws Exception {
+        // 응답: nights=2(입력 일치), status="VIP"(시드 일치), id=2(서버 시퀀스, 입력/시드에 없음).
+        var path = new io.graphrag.model.ExploredPath(
+                "p-put", "put-api-x",
+                io.graphrag.model.Json.mapper().readTree("{\"id\":7,\"nights\":2}"),
+                200,
+                io.graphrag.model.Json.mapper().readTree("{\"id\":2,\"nights\":2,\"status\":\"VIP\"}"),
+                List.of(), List.of(), List.of(), "fuzzer", List.of(), List.of(), List.of());
+        java.util.Map<String, String> knownByField = java.util.Map.of("id", "7", "nights", "2", "status", "VIP");
+
+        ComposedFixture fixture = new FixtureComposer()
+                .compose(path, List.of(), List.of(), List.of(), false, knownByField);
+
+        assertThat(fixture.assertions()).containsExactlyInAnyOrder(
+                new ComposedFixture.Assertion("nights", "equalTo(2)"),      // 정수, 입력 일치
+                new ComposedFixture.Assertion("status", "equalTo(\"VIP\")"), // 문자열, 시드 일치
+                new ComposedFixture.Assertion("id", "notNullValue()"));      // 서버생성(응답 2 ≠ known 7)
+    }
+
+    @Test
     void readPathSeedValues_withSpecialChars_areEscapedAsJavaStringLiterals() throws Exception {
         var path = new io.graphrag.model.ExploredPath(
                 "p-read", "get-api-items",

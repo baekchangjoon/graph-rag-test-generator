@@ -47,6 +47,17 @@ public class FixtureComposer {
      */
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath) {
+        return compose(path, sqlList, tables, seeds, readPath, java.util.Map.of());
+    }
+
+    /**
+     * knownByField = 응답 필드명 → 결정적 기대값(요청/시드 유래). 응답 필드 X의 값이 knownByField[X]와
+     * 같으면 그 필드는 입력/시드로 결정된 것 → equalTo. (flat value-set이 아니라 필드명 매칭 — 서버 생성
+     * id가 우연히 입력 값과 같아도 오탐 안 함.)
+     */
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath,
+                                   Map<String, String> knownByField) {
         if (readPath || !seeds.isEmpty()) {
             Map<String, TableSchema> seedTables = new HashMap<>();
             tables.forEach(t -> seedTables.put(t.name(), t));
@@ -67,7 +78,7 @@ public class FixtureComposer {
                     .toList());
             java.util.Collections.reverse(seedDeletes);
             return new ComposedFixture(List.of(), seedInserts, seedDeletes, "", List.of(),
-                    assertionsFromResponse(path, sqlList));
+                    assertionsFromResponse(path, sqlList, knownByField));
         }
 
         Map<String, TableSchema> tablesByName = new HashMap<>();
@@ -154,11 +165,13 @@ public class FixtureComposer {
         return new ComposedFixture(
                 new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
                 inserts, deletes, bodyFormat.toString(), bodyArgs,
-                assertionsFromResponse(path, sqlList));
+                assertionsFromResponse(path, sqlList, knownByField));
     }
 
     private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
-                                                                           List<CapturedSql> sqlList) {
+                                                                           List<CapturedSql> sqlList,
+                                                                           Map<String, String> knownByField) {
+        // 서버가 SQL에 literal로 쓴 값(예: status='PENDING')은 필드 무관하게 결정적.
         Set<String> literalValues = new HashSet<>();
         sqlList.forEach(sql -> sql.bindings().stream()
                 .filter(b -> b.origin() == BindingOrigin.LITERAL)
@@ -168,17 +181,27 @@ public class FixtureComposer {
             return assertions;
         }
         path.sampleResponse().fields().forEachRemaining(entry -> {
-            if (entry.getValue().isNull()) {
+            JsonNode v = entry.getValue();
+            if (v.isNull()) {
                 return;
             }
-            String value = entry.getValue().asText();
-            // equalTo는 결정적으로 재현되는 값에만(요청/시드 유래 = SQL LITERAL 바인딩). 서버 생성 값
-            // (시퀀스 id/count/UUID/타임스탬프)은 매 실행 달라지므로 notNullValue.
-            // (필드별 결정성 정밀 분류 = 향후 spec.)
-            boolean deterministic = literalValues.contains(value) && !looksServerGenerated(value);
-            assertions.add(deterministic
-                    ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")
-                    : new ComposedFixture.Assertion(entry.getKey(), "notNullValue()"));
+            String value = v.asText();
+            // 응답 필드 X의 값이 (a)같은 이름 입력/시드 필드 값과 일치하거나 (b)SQL literal이면 결정적 →
+            // equalTo. 서버 생성(시퀀스 id/count/timestamp)은 둘 다 아님 → notNull. 필드명 매칭이라
+            // 우연히 같은 값(id=1 vs amount=1)으로 인한 오탐 없음.
+            boolean concrete = (value.equals(knownByField.get(entry.getKey())) || literalValues.contains(value))
+                    && !looksServerGenerated(value);
+            String matcher;
+            if (!concrete) {
+                matcher = "notNullValue()";
+            } else if (v.isIntegralNumber() || v.isBoolean()) {
+                matcher = "equalTo(" + value + ")";   // 숫자/불리언: 따옴표 없이(Integer/Boolean 매칭)
+            } else if (v.isTextual()) {
+                matcher = "equalTo(\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\")";
+            } else {
+                matcher = "notNullValue()";   // 실수/객체/배열: RestAssured 수치 매칭 불안정 → 보수적
+            }
+            assertions.add(new ComposedFixture.Assertion(entry.getKey(), matcher));
         });
         return assertions;
     }
