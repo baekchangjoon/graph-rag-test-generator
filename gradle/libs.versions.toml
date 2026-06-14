@@ -17,6 +17,8 @@ mybatisStarter = "3.0.5"
 jacoco = "0.8.13"
 wiremock = "3.13.0"
 otelAgent = "2.14.0"
+asm = "9.7"
+z3turnkey = "4.13.0.1"
 
 [libraries]
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
@@ -37,6 +39,10 @@ netty-handler = { module = "io.netty:netty-handler", version.ref = "netty" }
 netty-codec-http = { module = "io.netty:netty-codec-http", version.ref = "netty" }
 mustache = { module = "com.github.spullara.mustache.java:compiler", version.ref = "mustache" }
 mybatis-spring-boot-starter = { module = "org.mybatis.spring.boot:mybatis-spring-boot-starter", version.ref = "mybatisStarter" }
+asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
+asm-tree = { module = "org.ow2.asm:asm-tree", version.ref = "asm" }
+asm-analysis = { module = "org.ow2.asm:asm-analysis", version.ref = "asm" }
+z3-turnkey = { module = "tools.aqua:z3-turnkey", version.ref = "z3turnkey" }
 jacoco-core = { module = "org.jacoco:org.jacoco.core", version.ref = "jacoco" }
 jacoco-agent = { module = "org.jacoco:org.jacoco.agent", version.ref = "jacoco" }
 wiremock = { module = "org.wiremock:wiremock", version.ref = "wiremock" }
