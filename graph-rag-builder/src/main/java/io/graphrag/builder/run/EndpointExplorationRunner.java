@@ -33,6 +33,8 @@ import io.graphrag.model.ParamKind;
 import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.SqlBinding;
 import io.graphrag.model.TableSchema;
+import org.jacoco.core.data.ExecutionData;
+import org.jacoco.core.data.ExecutionDataStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,6 +81,9 @@ public class EndpointExplorationRunner {
     private final List<String> literalCandidates;
     private final AuthTokenProvider authProvider;  // nullable — D5에서 배선
     private final AuthConfig authConfig;           // nullable — authProvider와 쌍
+    // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
+    // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
+    private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
 
     public EndpointExplorationRunner(SutProcess sut, Connection connection,
                                      DbConfig.Type dbType,
@@ -110,6 +115,7 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.Comparison> comparisons,
                               List<ConstraintExtractor.StringEquality> stringEqualities,
                               Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
+        cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         boolean readPath = endpoint.httpMethod().equals("GET");
         SynthesizedInput happy = readPath
                 ? new ReadInputSynthesizer().synthesize(endpoint, tables)
@@ -151,10 +157,10 @@ public class EndpointExplorationRunner {
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
-        ExplorationOutcome outcome = orchestrator.explore(
-                new EndpointTarget(endpoint, baseInput, mutableFields, tables,
-                        httpInvoker(endpoint), literalCandidates,
-                        fieldConstraints, conditionBounds, stringCandidates));
+        EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
+                httpInvoker(endpoint), literalCandidates,
+                fieldConstraints, conditionBounds, stringCandidates);
+        ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 
@@ -204,8 +210,10 @@ public class EndpointExplorationRunner {
             // 2xx path가 없으면(degenerate) seed는 어떤 path에도 연결하지 않는다
         }
 
+        // app 집계도 누적 exec data 기준(arm-level) — 전 엔드포인트 합집합이 정확해진다.
+        Set<BranchRef> appCovered = analyzer.analyze(cumulativeCoverage).covered();
         return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
-                report(endpoint, outcome, comparisons), outcome.coveredBranches());
+                report(endpoint, outcome, comparisons), appCovered);
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -276,7 +284,11 @@ public class EndpointExplorationRunner {
                 HttpResponse<String> response = http.send(builder.build(),
                         HttpResponse.BodyHandlers.ofString());
                 Thread.sleep(150);   // 콘솔 로그 flush 여유
-                BranchCoverage requestCoverage = analyzer.analyze(coverage.dump(true));
+                ExecutionDataStore delta = coverage.dump(true);
+                for (ExecutionData ed : delta.getContents()) {
+                    cumulativeCoverage.put(ed);   // probe OR 병합 (arm-level 누적)
+                }
+                BranchCoverage requestCoverage = analyzer.analyze(delta);
                 long logEnd = sut.logOffset();
                 return new InvocationOutcome(response.statusCode(),
                         parseJsonOrNull(response.body()),
@@ -432,18 +444,18 @@ public class EndpointExplorationRunner {
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
                                                          ExplorationOutcome outcome,
                                                          List<ConstraintExtractor.Comparison> comparisons) {
+        // 누적 exec data 분석 → arm-level 정확 커버리지 (양쪽 arm 합산).
         // 리포트 범위는 handler 메서드의 분기 (형제 메서드 분기 희석 방지).
-        // SUT 전체 도달 분기는 BuilderCli가 app 집계로 별도 산출한다.
-        BranchCoverage all = analyzer.analyze(new org.jacoco.core.data.ExecutionDataStore());
-        List<BranchRef> handlerAll = all.missed().stream()
+        BranchCoverage all = analyzer.analyze(cumulativeCoverage);
+        List<BranchRef> covered = all.covered().stream()
                 .filter(b -> b.classFqn().equals(endpoint.handlerClass())
                         && b.method().equals(endpoint.handlerMethod()))
                 .toList();
-        Set<BranchRef> covered = outcome.coveredBranches();
-        List<BranchRef> missed = handlerAll.stream()
-                .filter(b -> !covered.contains(b))
+        List<BranchRef> missed = all.missed().stream()
+                .filter(b -> b.classFqn().equals(endpoint.handlerClass())
+                        && b.method().equals(endpoint.handlerMethod()))
                 .toList();
-        int coveredCount = (int) handlerAll.stream().filter(covered::contains).count();
+        int total = covered.size() + missed.size();
         // 권고 1: 미커버 분기 중 비교식(field op literal) 라인과 겹치는 것 = 솔버가 필요할 잔여.
         // 비교식은 전 계층 전역 추출이므로, handler-method 분기와 라인 매칭하려면 같은
         // 클래스·메서드의 비교식만 본다(다른 파일의 동일 라인 번호 오탐 방지).
@@ -454,7 +466,7 @@ public class EndpointExplorationRunner {
         int solverRelevantMissed = (int) missed.stream()
                 .filter(b -> comparisonLines.contains(b.line())).count();
         return new ExplorationReport.EndpointExploration(
-                endpoint.id(), handlerAll.size(), coveredCount, missed,
+                endpoint.id(), total, covered.size(), missed,
                 outcome.pathsByEngine(), solverRelevantMissed);
     }
 
