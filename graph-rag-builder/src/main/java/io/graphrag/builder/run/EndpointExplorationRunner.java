@@ -9,6 +9,7 @@ import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutProcess;
+import io.graphrag.builder.explore.ConditionBoundarySolver;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
 import io.graphrag.builder.explore.EndpointInvoker;
 import io.graphrag.builder.explore.EndpointTarget;
@@ -19,6 +20,7 @@ import io.graphrag.builder.explore.InvocationOutcome;
 import io.graphrag.builder.explore.PathCandidate;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
+import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
@@ -45,7 +47,9 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * endpoint 1개에 대한 분기 탐색 + sink 캡처 (Phase 1, docs/05).
@@ -102,7 +106,9 @@ public class EndpointExplorationRunner {
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
-                              List<ConstraintExtractor.ConditionSpan> conditions) throws Exception {
+                              List<ConstraintExtractor.ConditionSpan> conditions,
+                              List<ConstraintExtractor.Comparison> comparisons,
+                              Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
         boolean readPath = endpoint.httpMethod().equals("GET");
         SynthesizedInput happy = readPath
                 ? new ReadInputSynthesizer().synthesize(endpoint, tables)
@@ -134,12 +140,15 @@ public class EndpointExplorationRunner {
                       .toList()
                 : (shape == null ? List.of() : shape.fields());
 
+        Map<String, Set<Long>> conditionBounds =
+                new ConditionBoundarySolver().solve(comparisons);
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
         ExplorationOutcome outcome = orchestrator.explore(
                 new EndpointTarget(endpoint, baseInput, mutableFields, tables,
-                        httpInvoker(endpoint), literalCandidates));
+                        httpInvoker(endpoint), literalCandidates,
+                        fieldConstraints, conditionBounds));
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 
@@ -190,7 +199,7 @@ public class EndpointExplorationRunner {
         }
 
         return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
-                report(endpoint, outcome), outcome.coveredBranches());
+                report(endpoint, outcome, comparisons), outcome.coveredBranches());
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -415,7 +424,8 @@ public class EndpointExplorationRunner {
     }
 
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
-                                                         ExplorationOutcome outcome) {
+                                                         ExplorationOutcome outcome,
+                                                         List<ConstraintExtractor.Comparison> comparisons) {
         // 리포트 범위는 handler 메서드의 분기 (형제 메서드 분기 희석 방지).
         // SUT 전체 도달 분기는 BuilderCli가 app 집계로 별도 산출한다.
         BranchCoverage all = analyzer.analyze(new org.jacoco.core.data.ExecutionDataStore());
@@ -428,8 +438,14 @@ public class EndpointExplorationRunner {
                 .filter(b -> !covered.contains(b))
                 .toList();
         int coveredCount = (int) handlerAll.stream().filter(covered::contains).count();
+        // 권고 1: 미커버 분기 중 비교식(field op literal) 라인과 겹치는 것 = 솔버가 필요할 잔여.
+        Set<Integer> comparisonLines = comparisons.stream()
+                .map(ConstraintExtractor.Comparison::line).collect(Collectors.toSet());
+        int solverRelevantMissed = (int) missed.stream()
+                .filter(b -> comparisonLines.contains(b.line())).count();
         return new ExplorationReport.EndpointExploration(
-                endpoint.id(), handlerAll.size(), coveredCount, missed, outcome.pathsByEngine());
+                endpoint.id(), handlerAll.size(), coveredCount, missed,
+                outcome.pathsByEngine(), solverRelevantMissed);
     }
 
     private static Set<String> bodyValues(JsonNode body) {

@@ -15,6 +15,7 @@ import io.graphrag.builder.index.IndexResult;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
+import io.graphrag.builder.index.ValidationConstraintExtractor;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
@@ -191,6 +192,12 @@ public final class BuilderCli {
                     var conditions = constraintExtractor.extract(
                             config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
                     var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
+                    var comparisons = constraintExtractor.extractComparisons(
+                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
+                    Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
+                            shape == null ? Map.of()
+                                    : new ValidationConstraintExtractor()
+                                            .extract(config.sutSrc(), shape.javaType());
                     EndpointExplorationRunner runner = new EndpointExplorationRunner(
                             env.sut(), connection, env.dbType(),
                             coverageClient, analyzer,
@@ -198,7 +205,8 @@ public final class BuilderCli {
                             responseDtoFieldSets, literals,
                             authProvider, config.authConfig());
                     EndpointExplorationRunner.EndpointResult result =
-                            runner.run(endpoint, shape, tables, conditions);
+                            runner.run(endpoint, shape, tables, conditions,
+                                    comparisons, fieldConstraints);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());
@@ -235,6 +243,10 @@ public final class BuilderCli {
 
         mergeManualPaths(config.manualPathsDir(), paths);
 
+        int solverRelevantMissedTotal = reportEntries.stream()
+                .mapToInt(ExplorationReport.EndpointExploration::solverRelevantMissed).sum();
+        log.info("solver-relevant still-missing branches (concolic-return trigger): {}",
+                solverRelevantMissedTotal);
         Files.writeString(config.out().resolve("exploration-report.json"),
                 Json.mapper().writerWithDefaultPrettyPrinter()
                         .writeValueAsString(new ExplorationReport(
