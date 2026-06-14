@@ -174,11 +174,24 @@ public class FixtureComposer {
                 return;
             }
             String value = entry.getValue().asText();
-            assertions.add(literalValues.contains(value)
+            // equalTo는 결정적으로 재현되는 값에만. 서버 생성 값(UUID/타임스탬프)은 LITERAL 바인딩으로
+            // 잡혀도 매 요청 달라지므로 equalTo로 걸면 실패한다 → notNullValue로.
+            boolean deterministic = literalValues.contains(value) && !looksServerGenerated(value);
+            assertions.add(deterministic
                     ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")
                     : new ComposedFixture.Assertion(entry.getKey(), "notNullValue()"));
         });
         return assertions;
+    }
+
+    private static final java.util.regex.Pattern UUID_RE = java.util.regex.Pattern.compile(
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    private static final java.util.regex.Pattern TIMESTAMP_RE = java.util.regex.Pattern.compile(
+            "\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}.*");
+
+    /** UUID/ISO-타임스탬프처럼 매 요청 달라지는 서버 생성 값인지. */
+    private static boolean looksServerGenerated(String value) {
+        return UUID_RE.matcher(value).matches() || TIMESTAMP_RE.matcher(value).matches();
     }
 
     private record DeleteTarget(String table, String column, String varName) {

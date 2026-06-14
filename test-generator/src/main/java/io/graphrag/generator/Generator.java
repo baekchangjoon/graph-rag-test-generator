@@ -176,7 +176,9 @@ public class Generator {
         scope.put("httpMethod", endpoint.httpMethod());
         scope.put("httpMethodLower", endpoint.httpMethod().toLowerCase());
         scope.put("endpointPath", endpoint.path());
-        scope.put("requestPath", readPath ? resolveLiteralPath(endpoint, path.sampleInput()) : endpoint.path());
+        // 모든 method에서 PATH/QUERY param을 치환한다. write-path(PUT/DELETE /x/{id})도
+        // {id}를 빌더 탐색과 동일한 센티널/입력값으로 바인딩해야 RestAssured 미바인딩 오류를 막는다.
+        scope.put("requestPath", resolveLiteralPath(endpoint, path.sampleInput()));
         scope.put("readPath", readPath);
         scope.put("endpointId", endpoint.id());
         scope.put("pathId", path.id());
