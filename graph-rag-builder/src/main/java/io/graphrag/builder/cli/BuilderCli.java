@@ -69,7 +69,8 @@ public final class BuilderCli {
         if (sutComposeStr == null) {
             throw new IllegalArgumentException("--sut-compose <docker-compose.yml> is required");
         }
-        DbConfig dbConfig = ComposeInspector.detectDb(Path.of(sutComposeStr));
+        DbConfig dbConfig = ComposeInspector.detectDb(
+                Path.of(sutComposeStr), options.get("--db-service"));
         if (options.containsKey("--db-image")) {
             dbConfig = new DbConfig(dbConfig.type(), options.get("--db-image"),
                     dbConfig.dbName(), dbConfig.user(), dbConfig.password());

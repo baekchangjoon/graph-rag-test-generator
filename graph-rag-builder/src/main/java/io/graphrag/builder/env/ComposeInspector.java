@@ -17,26 +17,47 @@ public final class ComposeInspector {
     }
 
     public static DbConfig detectDb(Path composePath) {
+        return detectDb(composePath, null);
+    }
+
+    /**
+     * compose에서 DB 서비스를 찾아 DbConfig로 추출한다.
+     * preferredService가 주어지면 그 서비스를 사용한다(multi-DB compose 대응).
+     * 없으면 services 순서상 첫 DB 서비스를 사용한다.
+     */
+    public static DbConfig detectDb(Path composePath, String preferredService) {
         try {
             JsonNode root = YAML.readTree(composePath.toFile());
             JsonNode services = root.path("services");
+            if (preferredService != null) {
+                JsonNode service = services.path(preferredService);
+                DbConfig.Type type = typeForImage(service.path("image").asText(""));
+                if (type == null) {
+                    throw new IllegalStateException("compose service '" + preferredService
+                            + "' is not a DB (postgres/mysql/mariadb) in " + composePath);
+                }
+                return toConfig(type, service);
+            }
             Iterator<Map.Entry<String, JsonNode>> it = services.fields();
             while (it.hasNext()) {
                 JsonNode service = it.next().getValue();
-                String image = service.path("image").asText("");
-                DbConfig.Type type = typeForImage(image);
+                DbConfig.Type type = typeForImage(service.path("image").asText(""));
                 if (type != null) {
-                    JsonNode env = service.path("environment");
-                    return new DbConfig(type, image,
-                            envValue(env, type, "DB"),
-                            envValue(env, type, "USER"),
-                            envValue(env, type, "PASSWORD"));
+                    return toConfig(type, service);
                 }
             }
             throw new IllegalStateException("no DB service (postgres/mysql/mariadb) in " + composePath);
         } catch (java.io.IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    private static DbConfig toConfig(DbConfig.Type type, JsonNode service) {
+        JsonNode env = service.path("environment");
+        return new DbConfig(type, service.path("image").asText(""),
+                envValue(env, type, "DB"),
+                envValue(env, type, "USER"),
+                envValue(env, type, "PASSWORD"));
     }
 
     private static DbConfig.Type typeForImage(String image) {
