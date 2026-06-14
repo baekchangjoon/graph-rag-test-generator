@@ -105,3 +105,18 @@ SUT 자체 클래스 한정으로 프레임워크 노이즈 제거)으로 강화
 
 전 과정 검증 완료: **in-process 발견(static+concolic) → out-of-process HTTP 확정·관측 →
 arm-aware 보존 → 각 발견 입력이 distinct 테스트.**
+
+## ConcolicOracle 지원 범위 (확장 중)
+
+ASM 심볼릭 스캔(intra-method, 단일 필드)으로 입력 파생식을 추적, Z3로 경계를 푼다. 각 증분마다
+order-service에 해당 분기를 추가해 distinct 테스트로 보존됨을 실증:
+
+| 분기 형태 | 도출 값 (소스 리터럴 아님) | 실증 (order-service promo) |
+|---|---|---|
+| 정수 선형 등치/비교 `score*2==84` | score=42 | `score=42 → answer` |
+| long 산술 `bonus*2==10000000000` | bonus=5000000000 (int 범위 밖) | `bonus=5e9 → -whale` |
+| 문자열 길이 `code.length()==5` | "xxxxx" (길이5 문자열) | `code=xxxxx → -c5` |
+
+구현 노트: `INVOKEDYNAMIC`(문자열 concat) 처리, `LCMP`→a-b, 미처리 opcode는 깔끔히 bail(앞선
+기록 보존). 미지원(향후): 문자열 동치/접두사(Z3 string theory), 다변수 동시해(전체 입력 배정),
+enum ordinal, 분기 간(interprocedural) 전파.
