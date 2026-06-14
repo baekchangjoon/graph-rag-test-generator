@@ -45,7 +45,16 @@ rm -rf "$E2E/build/generated-tests"/*
 cp -R "$OUT/generated/io" "$E2E/build/generated-tests/"
 
 docker compose -f "$E2E/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true
-docker compose -f "$E2E/docker-compose.yml" up -d --build
+# 고정 호스트 포트가 직전 down 직후 해제되기 전(race)이거나 잔류 컨테이너로
+# "address already in use"가 날 수 있다 → down 후 재시도.
+up_ok=false
+for attempt in 1 2 3; do
+  if docker compose -f "$E2E/docker-compose.yml" up -d --build; then up_ok=true; break; fi
+  echo "compose up 실패 (attempt $attempt/3) — 정리 후 재시도"
+  docker compose -f "$E2E/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true
+  sleep 5
+done
+[ "$up_ok" = true ] || { echo "compose up 최종 실패"; exit 1; }
 
 echo "SUT 기동 대기..."
 for i in $(seq 1 60); do
