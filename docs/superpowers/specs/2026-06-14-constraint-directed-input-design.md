@@ -79,6 +79,16 @@ Set<Long> boundaryValues>`: 각 리터럴 L → {L-1, L, L+1} (TreeMap/TreeSet, 
 
 파싱 실패/메서드 밖(필드 초기화자 등) 비교식은 무시(best-effort). 결정적.
 
+#### 소스 B-문자열: 문자열 동치 (2026-06-14 추가)
+
+숫자 비교식과 대칭으로, `ConstraintExtractor.extractStringEqualities(srcDir)`가 전 계층에서
+`field.equals("LIT")` / `"LIT".equals(field)`(CtInvocation `equals`, 인자 1개)를 추출해
+`StringEquality(classFqn, method, fieldRef, value, line)`로 태깅. 필드별 문자열 후보값으로
+모아 `constraintDirected`가 `streq-<field>-<value>` 변이를 생성(해당 String mutableField 한정).
+자바 문자열 비교는 `.equals` 메서드콜이라 `CtBinaryOperator`(숫자 경로)에 안 잡히므로 별도 추출.
+enum-style 대문자 리터럴은 기존 `LiteralCandidateExtractor`도 후보로 제공하지만, 그쪽은 handler
+클래스 한정·필드 무관이고, 이 경로는 전 계층·필드 특정이며 소문자/혼합 리터럴도 잡는다.
+
 ## `InputMutator` 확장
 
 새 정적 메서드:
