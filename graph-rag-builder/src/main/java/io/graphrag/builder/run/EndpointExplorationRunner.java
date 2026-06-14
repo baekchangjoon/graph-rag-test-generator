@@ -60,7 +60,8 @@ public class EndpointExplorationRunner {
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  List<RequiredSeed> seeds,
-                                 ExplorationReport.EndpointExploration report) {
+                                 ExplorationReport.EndpointExploration report,
+                                 Set<BranchRef> coveredAppBranches) {
     }
 
     private final SutProcess sut;
@@ -188,7 +189,8 @@ public class EndpointExplorationRunner {
             // 2xx path가 없으면(degenerate) seed는 어떤 path에도 연결하지 않는다
         }
 
-        return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds, report(endpoint, outcome));
+        return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
+                report(endpoint, outcome), outcome.coveredBranches());
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -414,10 +416,12 @@ public class EndpointExplorationRunner {
 
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
                                                          ExplorationOutcome outcome) {
-        // 리포트 범위는 handler 클래스의 분기 (docs/22의 endpoint 귀속 기준)
+        // 리포트 범위는 handler 메서드의 분기 (형제 메서드 분기 희석 방지).
+        // SUT 전체 도달 분기는 BuilderCli가 app 집계로 별도 산출한다.
         BranchCoverage all = analyzer.analyze(new org.jacoco.core.data.ExecutionDataStore());
         List<BranchRef> handlerAll = all.missed().stream()
-                .filter(b -> b.classFqn().equals(endpoint.handlerClass()))
+                .filter(b -> b.classFqn().equals(endpoint.handlerClass())
+                        && b.method().equals(endpoint.handlerMethod()))
                 .toList();
         Set<BranchRef> covered = outcome.coveredBranches();
         List<BranchRef> missed = handlerAll.stream()
