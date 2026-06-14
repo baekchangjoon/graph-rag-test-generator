@@ -1,5 +1,6 @@
 package io.graphrag.builder.run;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ForeignKey;
@@ -7,6 +8,7 @@ import io.graphrag.model.TableSchema;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -57,5 +59,33 @@ class SampleInputSynthesizerTest {
         SynthesizedInput b = new SampleInputSynthesizer().synthesize(SHAPE, SCHEMA);
         assertThat(a.body()).isEqualTo(b.body());
         assertThat(a.seeds()).isEqualTo(b.seeds());
+    }
+
+    private static BodyShape shape(BodyShape.BodyField... f) {
+        return new BodyShape("T", List.of(f));
+    }
+
+    @Test
+    void synthesize_enum_date_email_validValues() {
+        Map<String, List<String>> enums = Map.of("io.x.PriceTier", List.of("BASIC", "VIP"));
+        ObjectNode body = new SampleInputSynthesizer(enums).synthesize(shape(
+                new BodyShape.BodyField("priceTier", "io.x.PriceTier"),
+                new BodyShape.BodyField("checkInDate", "java.time.LocalDate"),
+                new BodyShape.BodyField("ownerEmail", "java.lang.String"),
+                new BodyShape.BodyField("nights", "int"),
+                new BodyShape.BodyField("note", "java.lang.String")
+        ), List.of()).body();
+        assertThat(body.get("priceTier").asText()).isEqualTo("BASIC");
+        assertThat(body.get("checkInDate").asText()).isEqualTo("2999-01-01");
+        assertThat(body.get("ownerEmail").asText()).isEqualTo("probe@example.com");
+        assertThat(body.get("nights").asInt()).isEqualTo(1);              // 정수 우선
+        assertThat(body.get("note").asText()).isEqualTo("sample-note");   // 일반 String default
+    }
+
+    @Test
+    void synthesize_noArgCtor_defaultsForEnum() {   // 빈 맵 호환
+        ObjectNode body = new SampleInputSynthesizer().synthesize(shape(
+                new BodyShape.BodyField("priceTier", "io.x.PriceTier")), List.of()).body();
+        assertThat(body.get("priceTier").asText()).isEqualTo("sample-priceTier");
     }
 }
