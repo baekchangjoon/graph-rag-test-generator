@@ -36,15 +36,30 @@ class JacocoIntegrationTest {
             CoverageClient client = new CoverageClient("localhost", agent.tcpPort());
             BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(sutJar);
 
-            // 부팅까지의 커버리지를 리셋 후 기준점 확보
+            // SUT가 JWT 인증을 요구하므로 먼저 토큰을 발급받는다.
+            // 인증해야 요청이 핸들러에 도달해 OrderController의 검증 분기를 실측할 수 있다.
+            HttpClient http = HttpClient.newHttpClient();
+            HttpResponse<String> login = http.send(
+                    HttpRequest.newBuilder(URI.create(env.sut().baseUri() + "/api/auth/login"))
+                            .header("Content-Type", "application/json")
+                            .POST(HttpRequest.BodyPublishers.ofString(
+                                    "{\"username\":\"admin\",\"password\":\"password\"}"))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(login.statusCode()).isEqualTo(200);
+            String token = io.graphrag.model.Json.mapper().readTree(login.body())
+                    .path("token").asText();
+            assertThat(token).isNotBlank();
+
+            // 부팅+로그인까지의 커버리지를 리셋 후 기준점 확보
             client.dump(true);
             BranchCoverage before = analyzer.analyze(client.dump(true));
 
-            // 요청 1회 (400 분기: 빈 body)
-            HttpClient http = HttpClient.newHttpClient();
+            // 인증된 요청 1회 (400 분기: 빈 body → OrderController 검증 실패)
             HttpResponse<String> response = http.send(
                     HttpRequest.newBuilder(URI.create(env.sut().baseUri() + "/api/orders"))
                             .header("Content-Type", "application/json")
+                            .header("Authorization", "Bearer " + token)
                             .POST(HttpRequest.BodyPublishers.ofString("{}"))
                             .build(),
                     HttpResponse.BodyHandlers.ofString());

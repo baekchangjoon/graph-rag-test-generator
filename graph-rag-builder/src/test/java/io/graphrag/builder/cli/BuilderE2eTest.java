@@ -1,10 +1,12 @@
 package io.graphrag.builder.cli;
 
 import io.graphrag.builder.env.DbConfig;
+import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.GraphAsset;
+import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.SqlBinding;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -31,16 +33,23 @@ class BuilderE2eTest {
         Path sutJar = Path.of(System.getProperty("sut.jar"));
         Path sutResources = sutSrc.resolveSibling("resources");
 
+        AuthConfig authConfig = new AuthConfig(
+                "/api/auth/login", "admin", "password",
+                "token", "Authorization", "Bearer", java.util.List.of());
+
         GraphAsset asset = BuilderCli.build(new BuildConfig(
                 sutSrc, sutResources, sutJar, out,
                 "order-service", "test",
                 new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app"),
                 60, null,
                 Path.of(System.getProperty("external.stubs")),
-                java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}")));
+                java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
+                null, null, authConfig));
 
+        // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())
-                .containsExactly("post-api-orders", "post-api-orders-search");
+                .containsExactly("get-api-orders", "get-api-orders-id",
+                        "post-api-auth-login", "post-api-orders", "post-api-orders-search");
 
         // JPA endpoint: 201/404/400 path가 모두 발견된다 (Phase 1 메트릭의 핵심)
         List<ExploredPath> orderPaths = pathsOf(asset, "post-api-orders");
@@ -106,6 +115,21 @@ class BuilderE2eTest {
                         && s.bindings().stream().anyMatch(b ->
                                 b.origin() == BindingOrigin.API_PARAM
                                         && b.value().equals("probe-userId")));
+
+        // read-path: GET /api/orders/{id} 가 탐색되어 2xx path + FK 부모 시드를 남긴다 (C#3)
+        List<ExploredPath> getByIdPaths = pathsOf(asset, "get-api-orders-id");
+        assertThat(getByIdPaths).isNotEmpty();
+        ExploredPath getByIdHappy = getByIdPaths.stream()
+                .filter(p -> p.expectedStatus() / 100 == 2).findFirst().orElseThrow();
+        // 2xx로 도달하려면 대상 order + 그 FK 부모 user가 시드되어 있어야 한다
+        List<RequiredSeed> getByIdSeeds = asset.seeds().stream()
+                .filter(s -> s.pathId().equals(getByIdHappy.id())).toList();
+        assertThat(getByIdSeeds).isNotEmpty();
+        assertThat(getByIdSeeds).extracting(RequiredSeed::table)
+                .contains("orders", "users");
+        // GET path는 read이므로 INSERT가 아닌 SELECT SQL을 캡처한다
+        assertThat(asset.sql().stream().filter(s -> s.pathId().equals(getByIdHappy.id())))
+                .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("orders"));
 
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");

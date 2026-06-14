@@ -38,18 +38,24 @@ public class FixtureComposer {
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds) {
         if (!seeds.isEmpty()) {
+            Map<String, TableSchema> seedTables = new HashMap<>();
+            tables.forEach(t -> seedTables.put(t.name(), t));
             List<ComposedFixture.Stmt> seedInserts = seeds.stream()
                     .map(s -> new ComposedFixture.Stmt(
                             "INSERT INTO " + s.table() + " (" + String.join(", ", s.columns())
                                     + ") VALUES (" + String.join(", ", s.columns().stream().map(c -> "?").toList()) + ")",
-                            s.values().stream().map(FixtureComposer::javaStringLiteral).toList()))
+                            renderSeedValues(s, seedTables)))
                     .toList();
-            List<ComposedFixture.Stmt> seedDeletes = seeds.stream()
+            // seed는 부모→자식 순서로 INSERT되므로 cleanup DELETE는 역순(자식→부모)이어야
+            // FK 제약을 위반하지 않는다.
+            List<ComposedFixture.Stmt> seedDeletes = new ArrayList<>(seeds.stream()
                     .map(s -> new ComposedFixture.Stmt(
                             // columns[0] is the seed's key column (PK) — see EndpointExplorationRunner read-path convention
                             "DELETE FROM " + s.table() + " WHERE " + s.columns().get(0) + " = ?",
-                            List.of(javaStringLiteral(s.values().get(0)))))
-                    .toList();
+                            List.of(seedValueLiteral(s.values().get(0), s.table(),
+                                    s.columns().get(0), seedTables))))
+                    .toList());
+            java.util.Collections.reverse(seedDeletes);
             return new ComposedFixture(List.of(), seedInserts, seedDeletes, "", List.of(),
                     assertionsFromResponse(path, sqlList));
         }
@@ -294,6 +300,44 @@ public class FixtureComposer {
 
     private static String javaStringLiteral(String value) {
         return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static List<String> renderSeedValues(RequiredSeed seed,
+                                                 Map<String, TableSchema> tablesByName) {
+        List<String> args = new ArrayList<>();
+        for (int i = 0; i < seed.values().size(); i++) {
+            args.add(seedValueLiteral(seed.values().get(i), seed.table(),
+                    seed.columns().get(i), tablesByName));
+        }
+        return args;
+    }
+
+    /**
+     * seed 값을 컬럼 JDBC 타입에 맞는 Java 리터럴로 렌더링한다. 숫자/불리언 컬럼에
+     * 따옴표 친 문자열을 넣으면 setObject가 varchar로 바인딩해 INSERT가 깨지므로
+     * 정수/불리언은 따옴표 없이 emit한다.
+     */
+    private static String seedValueLiteral(String value, String table, String column,
+                                           Map<String, TableSchema> tablesByName) {
+        TableSchema schema = tablesByName.get(table);
+        String jdbcType = schema == null ? "" : schema.columns().stream()
+                .filter(c -> c.name().equals(column))
+                .map(ColumnSchema::jdbcType)
+                .findFirst().orElse("");
+        String upper = jdbcType.toUpperCase();
+        try {
+            if (upper.contains("INT")) {
+                return upper.contains("BIGINT")
+                        ? Long.toString(Long.parseLong(value)) + "L"
+                        : Integer.toString(Integer.parseInt(value));
+            }
+            if (upper.contains("BOOL")) {
+                return Boolean.toString(Boolean.parseBoolean(value));
+            }
+        } catch (NumberFormatException e) {
+            return javaStringLiteral(value);
+        }
+        return javaStringLiteral(value);
     }
 
     private static String varSuffix(String fieldName) {

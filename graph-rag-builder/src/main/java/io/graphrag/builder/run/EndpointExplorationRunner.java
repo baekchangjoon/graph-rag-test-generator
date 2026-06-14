@@ -112,6 +112,10 @@ public class EndpointExplorationRunner {
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
             Seeds.insert(connection, dbType, seed);
             if (readPath) {
+                // read-path seed는 IDENTITY PK에 명시 id를 넣는다. 이러면 시퀀스가
+                // 전진하지 않아 이후 POST 탐색의 auto-INSERT가 같은 id로 충돌(500)한다.
+                // 같은 공유 탐색 DB이므로 seed 직후 시퀀스를 재동기화한다.
+                resyncIdentitySequence(seed.table(), tables);
                 seedSeq++;
                 requiredSeeds.add(new RequiredSeed(
                         "seed-" + endpoint.id() + "-" + seedSeq, null, seed.table(),
@@ -272,16 +276,61 @@ public class EndpointExplorationRunner {
         String path = endpoint.path();
         StringBuilder query = new StringBuilder();
         for (EndpointParam param : endpoint.params()) {
-            if (!input.has(param.name())) continue;
-            String value = input.get(param.name()).asText();
             if (param.kind() == ParamKind.PATH) {
+                // 변이가 path param을 지웠어도 URL은 항상 유효해야 한다.
+                // 누락 시 라우트 모양을 유지하는 센티널을 넣어 SUT가 404/400을
+                // 반환하게 한다 ({id}를 남기면 URI.create가 깨진다).
+                String value = input.has(param.name())
+                        ? input.get(param.name()).asText()
+                        : pathSentinel(param);
                 path = path.replace("{" + param.name() + "}", value);
             } else if (param.kind() == ParamKind.QUERY) {
+                if (!input.has(param.name())) {
+                    continue;
+                }
                 query.append(query.isEmpty() ? "?" : "&")
-                        .append(param.name()).append("=").append(value);
+                        .append(param.name()).append("=").append(input.get(param.name()).asText());
             }
         }
         return path + query;
+    }
+
+    private static String pathSentinel(EndpointParam param) {
+        return switch (param.javaType()) {
+            case "java.lang.Integer", "int", "java.lang.Long", "long" -> "0";
+            default -> "missing";
+        };
+    }
+
+    /**
+     * IDENTITY/SERIAL PK 테이블에 명시 id를 seed한 뒤 시퀀스를 MAX(id)로 재동기화한다.
+     * 시퀀스가 없는 테이블(문자열 PK 등)은 pg_get_serial_sequence가 NULL을 반환해 no-op.
+     */
+    private void resyncIdentitySequence(String table, List<TableSchema> tables) {
+        if (dbType != DbConfig.Type.POSTGRES) {
+            return;
+        }
+        String pk = tables.stream()
+                .filter(t -> t.name().equals(table))
+                .flatMap(t -> t.columns().stream())
+                .filter(io.graphrag.model.ColumnSchema::primaryKey)
+                .map(io.graphrag.model.ColumnSchema::name)
+                .findFirst().orElse(null);
+        if (pk == null) {
+            return;
+        }
+        String sql = "SELECT setval(pg_get_serial_sequence(?, ?), "
+                + "GREATEST((SELECT COALESCE(MAX(" + pk + "), 0) FROM " + table + "), 1)) "
+                + "WHERE pg_get_serial_sequence(?, ?) IS NOT NULL";
+        try (java.sql.PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, table);
+            statement.setString(2, pk);
+            statement.setString(3, table);
+            statement.setString(4, pk);
+            statement.execute();
+        } catch (Exception e) {
+            log.warn("identity resync skipped for {}.{}: {}", table, pk, e.getMessage());
+        }
     }
 
     /** BODY param 필드만 남긴 ObjectNode (path/query 필드 제거). */

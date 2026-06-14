@@ -54,6 +54,7 @@ class ReadInputSynthesizerTest {
         SynthesizedInput.SeedRow seed = out.seeds().get(0);
         assertThat(seed.table()).isEqualTo("orders");
         assertThat(seed.columns()).contains("id");
-        assertThat(seed.values()).contains("1");
+        // bigint PK 컬럼이므로 seed 값은 문자열이 아니라 Long으로 강제된다 (varchar→bigint INSERT 방지)
+        assertThat(seed.values()).contains(1L);
     }
 }

@@ -45,12 +45,16 @@ public class ReadInputSynthesizer {
             input.put(param.name(), value);
             String column = mapParamToColumn(param.name(), target);
             if (column != null) {
+                // seed 값은 컬럼 JDBC 타입에 맞춰야 한다. 입력 JSON엔 문자열로 두되
+                // (path/query는 어차피 텍스트), seed row에는 타입 일치 값을 넣는다
+                // — bigint 컬럼에 varchar "1"을 넣으면 INSERT가 깨진다.
+                Object seedValue = coerceForColumn(value, column, target);
                 int idx = columns.indexOf(column);
                 if (idx >= 0) {
-                    values.set(idx, value);
+                    values.set(idx, seedValue);
                 } else {
                     columns.add(column);
-                    values.add(value);
+                    values.add(seedValue);
                 }
             }
         }
@@ -128,18 +132,39 @@ public class ReadInputSynthesizer {
         return null;
     }
 
-    /** "id"/"xxxId" → PK 컬럼, 그 외 → snake_case 동일 컬럼이 있으면 그 컬럼. */
+    /**
+     * param → target 컬럼 매핑. 정확히 "id"인 param만 PK로 본다.
+     * "userId" 같은 xxxId는 PK가 아니라 snake_case FK 컬럼(user_id)에 매핑해야 한다
+     * (xxxId를 무조건 PK로 보면 varchar param을 bigint PK에 넣어 INSERT가 깨진다).
+     */
     private String mapParamToColumn(String paramName, TableSchema target) {
         if (target == null) {
             return null;
         }
-        if (paramName.equals("id") || paramName.endsWith("Id")) {
+        if (paramName.equals("id")) {
             return target.columns().stream().filter(ColumnSchema::primaryKey)
                     .map(ColumnSchema::name).findFirst().orElse(null);
         }
         String snake = camelToSnake(paramName);
         return target.columns().stream().map(ColumnSchema::name)
                 .filter(snake::equals).findFirst().orElse(null);
+    }
+
+    /** param의 문자열 값을 target 컬럼의 JDBC 타입에 맞는 seed 값으로 변환. */
+    private static Object coerceForColumn(String value, String columnName, TableSchema target) {
+        String jdbcType = target.columns().stream()
+                .filter(c -> c.name().equals(columnName))
+                .map(ColumnSchema::jdbcType)
+                .findFirst().orElse("");
+        String upper = jdbcType.toUpperCase();
+        try {
+            if (upper.contains("BIGINT")) return Long.parseLong(value);
+            if (upper.contains("INT")) return Integer.parseInt(value);
+            if (upper.contains("BOOL")) return Boolean.parseBoolean(value);
+        } catch (NumberFormatException e) {
+            return value;
+        }
+        return value;
     }
 
     private static String scalarFor(EndpointParam param) {
