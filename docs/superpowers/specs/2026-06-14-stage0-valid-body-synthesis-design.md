@@ -104,6 +104,28 @@ enum 선언 순서 고정, 날짜/이메일 상수. Random/시간 금지(docs/04
    (VIP·deposit)는 미달성 허용(Stage 2).
 3. 신규 추출기/합성 규칙 단위 테스트로 결정성 보장.
 
+## 실측 결과 (구현 후, 동일 jar A/B)
+
+같은 petclinic jar(소스/바이트코드 정합 재빌드)에 pre-Stage0 코드(`a72d5aa`)와 Stage0 코드를 각각 적용.
+
+| | coveredAppBranches | % |
+|---|---|---|
+| BEFORE (pre-Stage0) | 33/253 | 13.0% |
+| AFTER (GRB_ORACLE=static) | 47/253 | 18.6% |
+| AFTER (GRB_ORACLE=both) | 47/253 | 18.6% |
+
+**Δ = +14 분기 (+5.6pp).** 400의 성격이 바뀐 직접 증거:
+
+- `post-api-reservations`: BEFORE = 일반 400 `Bad Request`(역직렬화 실패, service 미도달) →
+  AFTER = **422 `roomNumber must be between 100 and 499`/`nights must be between 1 and 30`**
+  (`ReservationService` 단변수 가드 진입). 숫자 오라클이 가드를 flip하며 서로 다른 경로 산출.
+- `get-api-reservations`: enum query param `tier`가 유효 상수로 바인딩 성공 → handler 0/4 → 4/4,
+  422 `minNights must be non-negative`(service 검증 메시지) 관측.
+
+static == both(47): petclinic 가드는 소스 리터럴 기반이라 StaticLiteralOracle이 이미 추출 →
+Stage0 이득(유효 역직렬화)은 오라클과 직교(이전 실측 결론과 일관). 다변수 가드(VIP·deposit)는
+미달성(Stage 2). order-service e2e 22/22 GREEN(무회귀).
+
 ## 위험과 완화
 - noClasspath에서 `BodyField.javaType`이 simple name으로 떨어질 가능성 → §2.3의 simple-name 폴백으로 보완.
 - 날짜 포맷이 SUT 커스텀 패턴이면 실패 → ISO-8601 표준(Spring 기본 수용). 커스텀 패턴 SUT는 범위 밖.
