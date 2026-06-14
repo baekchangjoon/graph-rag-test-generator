@@ -23,13 +23,13 @@ public final class InputMutator {
     private InputMutator() {
     }
 
-    public static List<Mutation> firstOrder(BodyShape shape) {
-        return firstOrder(shape, List.of());
+    public static List<Mutation> firstOrder(List<BodyShape.BodyField> fields) {
+        return firstOrder(fields, List.of());
     }
 
-    public static List<Mutation> firstOrder(BodyShape shape, List<String> literalCandidates) {
+    public static List<Mutation> firstOrder(List<BodyShape.BodyField> fields, List<String> literalCandidates) {
         List<Mutation> mutations = new ArrayList<>();
-        for (BodyShape.BodyField field : shape.fields()) {
+        for (BodyShape.BodyField field : fields) {
             String name = field.name();
             mutations.add(new Mutation("remove-" + name, body -> {
                 body.remove(name);

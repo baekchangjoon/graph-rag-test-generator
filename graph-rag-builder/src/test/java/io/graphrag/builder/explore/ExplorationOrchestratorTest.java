@@ -79,7 +79,10 @@ class ExplorationOrchestratorTest {
     private EndpointTarget target() {
         Endpoint endpoint = new Endpoint("post-api-orders", "POST", "/api/orders", "C", "create",
                 List.of(new EndpointParam("request", "X", ParamKind.BODY)), false);
-        return new EndpointTarget(endpoint, SHAPE, TABLES, fakeInvoker, List.of("EXPRESS", "PENDING"));
+        com.fasterxml.jackson.databind.node.ObjectNode baseInput =
+                new io.graphrag.builder.run.SampleInputSynthesizer().synthesize(SHAPE, TABLES).body();
+        return new EndpointTarget(endpoint, baseInput, SHAPE.fields(), TABLES, fakeInvoker,
+                List.of("EXPRESS", "PENDING"));
     }
 
     @Test
