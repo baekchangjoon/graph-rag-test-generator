@@ -105,6 +105,24 @@ SUT 자체 클래스 한정으로 프레임워크 노이즈 제거)으로 강화
 전 과정 검증 완료: **in-process 발견(static+concolic) → out-of-process HTTP 확정·관측 →
 arm-aware 보존 → 각 발견 입력이 distinct 테스트.**
 
+## 단계별 입력 발견 진행 (Stage 0–3b, 2026-06-15)
+
+InputOracle(ASM+Z3) 위에, 더 흔한 분기 종류를 여는 단계들을 쌓았다. 각 단계는 동일 jar A/B로 실측.
+
+- **Stage 0 — 유효 happy 합성**: `SampleInputSynthesizer`/`ReadInputSynthesizer`가 enum→첫 상수
+  (`EnumConstantExtractor`), `LocalDate`→ISO, `*email`→유효값 합성. 역직렬화 실패(400)를 검증 진입으로
+  전환. petclinic 33→47/253.
+- **Stage 1/2 — conjunction + joint/enum 변이**: `ConstraintExtractor.extractConjunctions`(메서드 내
+  `&&` 다필드 가드) + `InputMutator.enumValues`(enum 상수별)·`joint`(원자 동시 만족). 변이 우선순위를
+  firstOrder 앞으로. petclinic 47→69/253, `tier==VIP && loyalty<500` true-arm 도달. (temporal/enum은
+  Z3 불요 — 직접 값; ConcolicOracle은 요청 파생 산술에 계속 사용, 불변.)
+- **Stage 3 — by-id 진입**: 비-GET by-id의 path-id + 리소스 시드(`happyInput` 병합), boolean 파라미터
+  유효 합성, `extractEnumColumns`(가드 유래 enum 컬럼 시드, 읽기 500 방지). petclinic 69→113/253.
+- **Stage 3b — mutating by-id 정합성**: 요청별 시드 리셋(`resetSeeds`)으로 상태 누적 제거 + 결정성 인지
+  구체 어설션. **생성 by-id 테스트가 빈 DB에서 재현**(petclinic 16/16).
+- **회귀 보호**: order-service에 **Booking 리소스**를 추가해 위 전 단계를 CI(e2e)가 라이브로 검증
+  (e2e 22→45 tests). 비목표: 상태 의존 가드 양 arm concolic 변종(stale 과거날짜, capacity) = 향후.
+
 ## ConcolicOracle 지원 범위 (확장 중)
 
 ASM 심볼릭 스캔(intra-method, 단일 필드)으로 입력 파생식을 추적, Z3로 경계를 푼다. 각 증분마다

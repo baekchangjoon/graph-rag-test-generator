@@ -128,7 +128,20 @@ DB 상태 검증은 없다. 응답 검증만.
 | FK 정렬 | 부모 → 자식 순으로 INSERT |
 | UNIQUE 충돌 회피 | testId 기반 unique 키 사용 |
 | NOT NULL 채움 | 스키마 default 또는 안전한 dummy |
+| 타입 렌더링 (`seedValueLiteral`) | 컬럼 JDBC 타입별: INT→정수, BIGINT→`L`, BOOL→bool, NUMERIC/DECIMAL/DOUBLE→`new BigDecimal(..)`, DATE→`LocalDate.parse(..)`, TIMESTAMP→`LocalDateTime.parse(..)`, TIME→`LocalTime.parse(..)`, UUID→`UUID.fromString(..)`, 그 외→문자열. (따옴표 문자열을 numeric/date 컬럼에 넣으면 INSERT가 깨지므로) |
+| by-id 리소스 시드 | 비-GET by-id(PUT/DELETE)도 대상 리소스를 fixture로 INSERT(+cleanup DELETE) → 빈 DB 재현. path마다 고유 PK |
 | Cleanup 합성 | FK 역순 DELETE, 자기 스코프(`WHERE <unique-key>=?`)만 |
+
+### Assertion 합성 규칙 (`assertionsFromResponse`)
+
+| 규칙 | 동작 |
+|---|---|
+| 결정적 필드 → `equalTo` | 응답 필드 X의 값이 같은 이름의 입력/시드 필드 값(`knownByField`)과 일치하거나 SQL LITERAL 바인딩이면 구체값 단언. 타입맞춤: 정수/불리언 `equalTo(n)`, 문자열 `equalTo("s")`, 실수 보수적 notNull |
+| 서버 생성 필드 → `notNullValue` | 시퀀스 id·count·timestamp·UUID 등(입력/시드에 없음, 또는 `looksServerGenerated`) |
+| 필드명 매칭 | `knownByField`는 필드명-keyed라 우연한 값 충돌(id=1 vs amount=1)로 인한 오탐 없음 |
+
+요청 경로 치환은 mustache `{{{requestPath}}}`(unescaped)로 — 쿼리 `=`가 HTML escape(`&#61;`)되면
+boolean 파라미터 바인딩이 깨진다.
 
 ### Mock 격리 규칙
 

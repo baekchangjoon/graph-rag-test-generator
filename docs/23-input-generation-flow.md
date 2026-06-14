@@ -25,7 +25,8 @@
                   │                               │         novel일 때만 │
                   ▼                               │                     ▼
         InputMutator.forTarget(target)            │      merge(분기 누적) + addSeed(이 입력)
-   = firstOrder(generic) ++ constraintDirected    │                     │
+   = constraintDirected ++ enumValues ++ joint    │                     │
+     ++ firstOrder(generic)                        │
                   │ 변이 목록                      │     CoverageGuidedFuzzer가 시드에
                   ▼                               │     다시 변이 적용 → 다음 조합
         엔진이 입력 생성 ──────────────────────────┘     (2nd-order 이상)
@@ -37,11 +38,19 @@
 
 ## 1. 입력의 출발점 — happy 합성 + 시드
 
-엔드포인트마다 `EndpointExplorationRunner.run(...)`이:
-- POST/PUT: `SampleInputSynthesizer`, GET(read-path): `ReadInputSynthesizer`로 **happy 입력
-  (`baseInput`)** 과 사전 시드 행(`SeedRow`)을 합성.
+엔드포인트마다 `EndpointExplorationRunner.run(...)` → `happyInput(...)`이:
+- GET 또는 **비-GET by-id**(PATH 파라미터 보유): `ReadInputSynthesizer`로 path/query + 리소스 시드
+  (유효 PK) 합성. 비-GET by-id면 body(`SampleInputSynthesizer`)와 병합 → PUT/DELETE `{id}`가
+  유효 id로 service에 진입(Stage 3).
+- 그 외(POST 등): `SampleInputSynthesizer`로 body만.
+- **합성 유효값(Stage 0)**: enum 필드 → enum 첫 상수(`EnumConstantExtractor` 유래), `LocalDate` → ISO,
+  `*email` → 유효 이메일, boolean 파라미터 → `"true"`. 시드 행의 enum 컬럼은 가드 유래 유효 상수
+  (`extractEnumColumns`)로 채워 읽기 500을 막음(Stage 3).
 - 시드 행을 DB에 INSERT한 뒤 `coverage.dump(true)`로 부팅·시드 구간 분기를 잘라내고 baseline 확보.
 - 변이 대상 필드 `mutableFields`: 바디 필드(POST/PUT) 또는 PATH/QUERY 파라미터(GET).
+- **mutating by-id(PUT/DELETE /{id})**: 탐색이 공유 시드 행을 변이·누적하지 않도록, 래핑된 invoker가
+  **각 요청 전에 리소스를 fresh 시드로 리셋**(`resetSeeds` = reverse-DELETE 후 재-INSERT). 각 path 응답이
+  (fresh 시드, 그 요청)의 순수 함수가 되어 생성 테스트가 빈 DB에서 재현된다(Stage 3b).
 
 ## 2. 정적 분석 결과를 입력 생성에 환류 (BuilderCli, 1회 빌드)
 
@@ -52,6 +61,9 @@
 | `LiteralCandidateExtractor` | enum-스타일 문자열 리터럴(`"EXPRESS"`) | handler 클래스 |
 | `ValidationConstraintExtractor` | `@Min/@Max/@Size/@Email/@Positive…` → `FieldConstraint` | `@RequestBody` DTO 타입 |
 | `ConstraintExtractor.extractComparisons(srcDir)` | `field op literal` 비교식 → `Comparison(classFqn,method,fieldRef,op,literal,line)` | **SUT 소스 전 계층(컨트롤러/서비스/공통/도메인) 1회 빌드** |
+| `ConstraintExtractor.extractConjunctions(srcDir)` | 메서드 내 `&&` 다필드 가드 → `Conjunction(atoms)` (원자: NUMERIC/ENUM_EQ/STRING_EQ, 서로 다른 2필드+) | **전 계층 1회** (joint 변이용, Stage 1/2) |
+| `ConstraintExtractor.extractEnumColumns(srcDir)` | `accessor()==Type.CONST` 가드 → 컬럼(snake)→유효 enum 상수 | **전 계층 1회** (enum 컬럼 시드, Stage 3) |
+| `EnumConstantExtractor.extract(srcDir)` | enum FQN → 선언 순서 상수 | SUT 소스 1회 (enum 값 합성/변이) |
 | `ConstraintExtractor.extract(class,method)` | 분기 조건 텍스트 `ConditionSpan` | handler 메서드 (리포트용 `ExploredPath.constraints`, 입력 생성 아님) |
 
 비교식은 **전역 1회 추출** 후 모든 엔드포인트가 공유한다. `ConditionBoundarySolver.solve(comparisons)`가
@@ -61,17 +73,23 @@ bound를 적용하므로, 무관한 필드명의 전역 비교식은 자동 무�
 
 ## 3. 변이 카탈로그 — `InputMutator.forTarget(target)`
 
-두 탐색 엔진은 동일하게 `forTarget`를 쓴다. 이는 두 목록을 이어붙여 이름 기준 dedupe한 것:
+두 탐색 엔진은 동일하게 `forTarget`를 쓴다. 여러 목록을 이어붙여 이름 기준 dedupe한 것:
 
-- **`firstOrder` (generic boundary)** — 필드별: `remove`/`null`(전 타입), `zero`/`negative`/
-  `large(1,000,000)`(숫자), `empty`/`missing-ref`/`literal-<후보>`(문자열).
 - **`constraintDirected` (제약 지향)** —
   - Bean Validation: `@Min(v)`→`v-1`/`v`, `@Max(v)`→`v+1`/`v`, `@Size`→too-short/too-long+경계,
     `@Email`→`"not-an-email"`, `@Positive/@Negative…`→위반값. (`@NotNull/@NotBlank`는 generic이
     덮으므로 no-op, `@Pattern`은 인식만)
   - 비교식 경계: conditionBounds의 각 `(field, v)`마다 `bound-<field>-<v>` (숫자 필드).
+- **`enumValues` (Stage 1/2)** — enum 필드별로 선언된 각 상수 세팅: `enum-<field>-<상수>`. enum 값에
+  갈리는 분기(예 `tier==VIP`)를 연다.
+- **`joint` (Stage 1/2)** — `extractConjunctions`의 각 conjunction을, 원자들을 **동시에** 만족값으로
+  세팅하는 단일 변이: `joint-<class>-<line>-<fields>`. NUMERIC은 op별 만족값(`<`→L-1 등), ENUM_EQ/
+  STRING_EQ는 상수. 다필드 동시 가드(예 `tier==VIP && loyalty<500`)를 연다(seed 누적 위에서 도달).
+- **`firstOrder` (generic boundary)** — 필드별: `remove`/`null`(전 타입), `zero`/`negative`/
+  `large(1,000,000)`(숫자), `empty`/`missing-ref`/`literal-<후보>`(문자열).
 
-모든 순서는 필드 선언/리터럴 정렬로 고정 — **Random/시간 금지(결정성, docs/04)**.
+**우선순위**: 예산이 적을 때 generic firstOrder가 고신호 변이를 굶지 않도록, constraint-directed/enum/joint를
+firstOrder **앞**에 둔다. 모든 순서는 필드 선언/리터럴 정렬로 고정 — **Random/시간 금지(결정성, docs/04)**.
 
 ## 4. "의미있는 결과" 판정과 환류 — 엔진별
 
@@ -112,3 +130,9 @@ diary의 `@Min(1) @Max(10) energyScore` 1건뿐이며 diary는 Java23 커버리�
 (`0`/`-1`/`large`/`empty`/`null`) + 리터럴 후보가 이 앱들의 분기를 이미 덮기 때문이다.
 이 기능의 고유 가치(등치 `== literal`, 비-0 임계값, 숫자 `@Min/@Max/@Size` 경계)를 실증하려면
 해당 구조를 가진 SUT(또는 통제된 엔드포인트)가 필요하다. 메커니즘 자체는 단위 테스트로 입증됨.
+
+**갱신(2026-06-15)**: 위 공백을 메우려 order-service에 **Booking 리소스**(통제된 엔드포인트)를 추가했다 —
+enum 컬럼(tier/status), `LocalDate`, 이메일, 다필드 가드(`tier==VIP && loyaltyPoints<500`),
+by-id PUT/DELETE(boolean param 포함). 이로써 Stage 0/1/2/3/3b가 **CI(order-service e2e)에서 라이브로
+실증·회귀 보호**된다(e2e 22→45 tests). petclinic boarding에서도 실측: enum/joint 변이로
+`tier==VIP` arm 도달, by-id 생성 테스트가 fresh DB에서 통과. 비-Booking 기존 앱들에선 위 한계 그대로.

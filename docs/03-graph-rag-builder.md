@@ -45,7 +45,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 | 레이어 | 도구 | 역할 |
 |---|---|---|
-| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer`), 바디 구조(`BodyShapeExtractor`), 비교/문자열 동치 제약(`ConstraintExtractor`), Bean Validation 제약(`ValidationConstraintExtractor`) |
+| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer`), 바디 구조(`BodyShapeExtractor`), 제약(`ConstraintExtractor`: `extractComparisons` 비교식 / `extractConjunctions` 메서드 내 `&&` 다필드 가드 / `extractEnumColumns` 가드 유래 enum 컬럼값 / `extractStringEqualities` 문자열 동치), enum 상수(`EnumConstantExtractor`: FQN→상수), Bean Validation(`ValidationConstraintExtractor`) |
 | L2 | Spring Boot TestContext | 실제 빈 와이어링 introspection |
 | L2 | Hibernate SchemaExport | JPA Entity → DDL |
 | L2 | Flyway/Liquibase parser | 마이그레이션 → DDL truth |
