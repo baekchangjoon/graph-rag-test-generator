@@ -12,6 +12,7 @@ import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.InsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
@@ -209,6 +210,7 @@ public final class ConcolicOracle implements InputOracle {
             case Opcodes.GOTO, Opcodes.NOP, Opcodes.RETURN -> { }
             case Opcodes.IRETURN, Opcodes.ARETURN, Opcodes.ATHROW -> stack.clear();
             case Opcodes.LRETURN, Opcodes.DRETURN, Opcodes.FRETURN -> stack.clear();
+            case Opcodes.LCMP -> { Sym b = pop(stack); stack.push(pop(stack).sub(b).withSize(1)); }
             case Opcodes.IFEQ, Opcodes.IFNE, Opcodes.IFLT, Opcodes.IFGE, Opcodes.IFGT, Opcodes.IFLE ->
                     record(out, pop(stack));
             case Opcodes.IF_ICMPEQ, Opcodes.IF_ICMPNE, Opcodes.IF_ICMPLT, Opcodes.IF_ICMPGE,
@@ -221,6 +223,17 @@ public final class ConcolicOracle implements InputOracle {
             case Opcodes.GETFIELD -> { pop(stack); stack.push(Sym.top(1)); }
             case Opcodes.INVOKEVIRTUAL, Opcodes.INVOKEINTERFACE, Opcodes.INVOKESTATIC,
                  Opcodes.INVOKESPECIAL -> invoke((MethodInsnNode) insn, stack, op);
+            case Opcodes.INVOKEDYNAMIC -> {
+                // 문자열 concat(makeConcatWithConstants) 등: 인자 desc만큼 pop, 반환 push
+                InvokeDynamicInsnNode indy = (InvokeDynamicInsnNode) insn;
+                for (int i = 0; i < Type.getArgumentTypes(indy.desc).length; i++) {
+                    pop(stack);
+                }
+                Type ret = Type.getReturnType(indy.desc);
+                if (ret.getSort() != Type.VOID) {
+                    pushReturn(stack, ret);
+                }
+            }
             default -> applyGenericStack(insn, op, stack);
         }
     }
@@ -269,16 +282,15 @@ public final class ConcolicOracle implements InputOracle {
                  Opcodes.SWAP -> { /* 드묾 — 무시(보수적) */ }
             case Opcodes.IDIV, Opcodes.IREM, Opcodes.ISHL, Opcodes.ISHR, Opcodes.IUSHR,
                  Opcodes.IAND, Opcodes.IOR, Opcodes.IXOR, Opcodes.LDIV, Opcodes.LREM,
-                 Opcodes.LAND, Opcodes.LOR, Opcodes.LXOR, Opcodes.LCMP -> {
-                pop(stack); pop(stack); stack.push(Sym.top(op == Opcodes.LCMP ? 1 : 1));
+                 Opcodes.LAND, Opcodes.LOR, Opcodes.LXOR -> {
+                pop(stack); pop(stack); stack.push(Sym.top(1));
             }
             case Opcodes.GETSTATIC -> stack.push(Sym.top(1));
             case Opcodes.NEW -> stack.push(Sym.top(1));
-            case Opcodes.CHECKCAST, Opcodes.INSTANCEOF -> { Sym v = pop(stack); stack.push(Sym.top(1)); }
-            default -> {
-                // 알 수 없는 명령 — 스택 상태 신뢰 불가하므로 비움(이후 비교는 top→skip)
-                stack.clear();
-            }
+            case Opcodes.CHECKCAST, Opcodes.INSTANCEOF -> { pop(stack); stack.push(Sym.top(1)); }
+            default ->
+                // 미처리 opcode — 스택 효과 불명. 조용한 손상 대신 깔끔히 bail(앞서 모은 비교는 보존).
+                throw new IllegalStateException("unhandled opcode " + op);
         }
     }
 
