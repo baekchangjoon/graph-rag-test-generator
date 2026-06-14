@@ -54,9 +54,11 @@ public class ExplorationOrchestrator {
             for (ExplorationResult.ExploredInput input : result.inputs()) {
                 List<BranchRef> sorted = input.outcome().coveredBranches().stream()
                         .sorted(BRANCH_ORDER).toList();
-                // path 식별 = 응답 status + 분기 집합. 분기가 같아도 status가 다르면
-                // 관측 가능한 별개 동작이다 (예: Optional 내부 분기는 분석 범위 밖)
-                String key = input.outcome().status() + ":" + sorted;
+                // path 식별 = status + coverage 지문. 지문은 probe 단위(arm-accurate)라 같은 라인의
+                // 다른 arm(예: score==42 true vs false)을 연 입력이 distinct path로 보존된다.
+                // 지문이 없으면(테스트 fake 등) 분기집합으로 폴백.
+                String cov = input.outcome().coverageKey();
+                String key = input.outcome().status() + ":" + (cov != null ? cov : sorted.toString());
                 candidates.putIfAbsent(key, new Proto(input, sorted, engine.name()));
             }
             if (remaining <= 0) {

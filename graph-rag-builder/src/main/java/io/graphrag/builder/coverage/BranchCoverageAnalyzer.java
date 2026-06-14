@@ -31,6 +31,24 @@ public class BranchCoverageAnalyzer {
         this.bootJar = bootJar;
     }
 
+    /** SUT 자체 클래스의 VM 내부명 집합 (예: io/graphrag/sample/orders/PromoController). */
+    public Set<String> appClassNames() {
+        Set<String> names = new LinkedHashSet<>();
+        try (ZipFile zip = new ZipFile(bootJar.toFile())) {
+            var entries = zip.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.getName().startsWith(CLASSES_PREFIX) && entry.getName().endsWith(".class")) {
+                    names.add(entry.getName().substring(CLASSES_PREFIX.length(),
+                            entry.getName().length() - ".class".length()));
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to list app classes: " + bootJar, e);
+        }
+        return names;
+    }
+
     public BranchCoverage analyze(ExecutionDataStore executionData) {
         CoverageBuilder coverageBuilder = new CoverageBuilder();
         Analyzer analyzer = new Analyzer(executionData, coverageBuilder);

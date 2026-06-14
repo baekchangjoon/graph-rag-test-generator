@@ -5,21 +5,30 @@ import io.graphrag.model.BranchRef;
 
 import java.util.Set;
 
-/** 입력 1회 실행 결과. logStart/logEnd는 SUT 로그의 캡처 구간 (sink 파싱용). */
+/**
+ * 입력 1회 실행 결과. logStart/logEnd는 SUT 로그의 캡처 구간 (sink 파싱용).
+ * coverageKey: SUT 자체 클래스 probe 지문(arm-accurate). path 식별에 사용 — null이면 분기집합으로 폴백.
+ */
 public record InvocationOutcome(
         int status,
         JsonNode response,
         Set<BranchRef> coveredBranches,
         long logStart,
         long logEnd,
-        java.util.List<RawHttpExchange> httpExchanges) {
+        java.util.List<RawHttpExchange> httpExchanges,
+        String coverageKey) {
 
     public InvocationOutcome {
         httpExchanges = httpExchanges == null ? java.util.List.of() : httpExchanges;
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
+                             long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges) {
+        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, null);
+    }
+
+    public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd) {
-        this(status, response, coveredBranches, logStart, logEnd, java.util.List.of());
+        this(status, response, coveredBranches, logStart, logEnd, java.util.List.of(), null);
     }
 }

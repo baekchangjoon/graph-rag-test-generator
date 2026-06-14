@@ -7,6 +7,7 @@ import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.coverage.BranchCoverage;
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
+import io.graphrag.builder.coverage.CoverageFingerprint;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutProcess;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
@@ -84,6 +85,7 @@ public class EndpointExplorationRunner {
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
+    private Set<String> appClasses = Set.of();   // path 지문을 SUT 자체 클래스로 한정
 
     public EndpointExplorationRunner(SutProcess sut, Connection connection,
                                      DbConfig.Type dbType,
@@ -116,6 +118,9 @@ public class EndpointExplorationRunner {
                               InputCandidates candidates,
                               Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
+        if (appClasses.isEmpty()) {
+            appClasses = analyzer.appClassNames();
+        }
         boolean readPath = endpoint.httpMethod().equals("GET");
         SynthesizedInput happy = readPath
                 ? new ReadInputSynthesizer().synthesize(endpoint, tables)
@@ -281,6 +286,7 @@ public class EndpointExplorationRunner {
                         HttpResponse.BodyHandlers.ofString());
                 Thread.sleep(150);   // 콘솔 로그 flush 여유
                 ExecutionDataStore delta = coverage.dump(true);
+                String coverageKey = CoverageFingerprint.of(delta, appClasses);
                 for (ExecutionData ed : delta.getContents()) {
                     cumulativeCoverage.put(ed);   // probe OR 병합 (arm-level 누적)
                 }
@@ -289,7 +295,8 @@ public class EndpointExplorationRunner {
                 return new InvocationOutcome(response.statusCode(),
                         parseJsonOrNull(response.body()),
                         requestCoverage.covered(), logStart, logEnd,
-                        httpCapture == null ? List.of() : httpCapture.drainNewExchanges());
+                        httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
+                        coverageKey);
             } catch (Exception e) {
                 throw new IllegalStateException("invocation failed: " + endpoint.path(), e);
             }
