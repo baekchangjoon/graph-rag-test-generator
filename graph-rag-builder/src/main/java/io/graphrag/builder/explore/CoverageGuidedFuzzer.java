@@ -32,8 +32,7 @@ public class CoverageGuidedFuzzer implements PathExplorer {
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
         List<KnownCoverage.Seed> queue = new ArrayList<>(known.seeds());
         queue.sort(Comparator.comparing(seed -> seed.status() / 100 != 2));   // 2xx 먼저 (stable)
-        List<InputMutator.Mutation> mutations =
-                InputMutator.firstOrder(target.mutableFields(), target.literalCandidates());
+        List<InputMutator.Mutation> mutations = InputMutator.forTarget(target);
         int drySeedPasses = 0;
 
         for (int seedIndex = 0; seedIndex < queue.size(); seedIndex++) {
