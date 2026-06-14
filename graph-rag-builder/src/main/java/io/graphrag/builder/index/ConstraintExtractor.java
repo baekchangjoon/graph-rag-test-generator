@@ -31,8 +31,12 @@ public class ConstraintExtractor {
     public record ConditionSpan(int startLine, int endLine, String text) {
     }
 
-    /** field op literal 형태의 정수 비교식. 리터럴이 좌변이면 op를 flip해 우변 정규화. */
-    public record Comparison(String fieldRef, String op, long literal, int line) {
+    /**
+     * field op literal 형태의 정수 비교식. 리터럴이 좌변이면 op를 flip해 우변 정규화.
+     * classFqn/method: 비교식이 발생한 위치(전 계층 추출이므로 태깅 — rec-1 라인 매칭에 사용).
+     */
+    public record Comparison(String classFqn, String method, String fieldRef,
+                             String op, long literal, int line) {
     }
 
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
@@ -79,10 +83,11 @@ public class ConstraintExtractor {
     }
 
     /**
-     * handler 메서드의 비교식을 AST에서 직접 추출한다(권고 2: toString 정규식 회피).
-     * field op literal / literal op field 형태만, 정수 리터럴만 1차 지원.
+     * SUT 소스 모델 전체(컨트롤러/서비스/공통/도메인 등 모든 클래스·메서드)의 비교식을
+     * AST에서 직접 추출한다(정규식 아님). field op literal / literal op field, 정수 리터럴만.
+     * 각 비교는 발생 위치 (classFqn, method, line)로 태깅된다. 1회 빌드.
      */
-    public List<Comparison> extractComparisons(Path srcDir, String classFqn, String methodName) {
+    public List<Comparison> extractComparisons(Path srcDir) {
         Launcher launcher = new Launcher();
         launcher.addInputResource(srcDir.toString());
         launcher.getEnvironment().setNoClasspath(true);
@@ -91,38 +96,38 @@ public class ConstraintExtractor {
         CtModel model = launcher.buildModel();
 
         List<Comparison> comparisons = new ArrayList<>();
-        for (CtType<?> type : model.getAllTypes()) {
-            if (!type.getQualifiedName().replace('$', '.').equals(classFqn)) {
+        for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
+            String opStr = REL_OPS.get(op.getKind());
+            if (opStr == null) {
                 continue;
             }
-            for (CtMethod<?> method : type.getMethods()) {
-                if (!method.getSimpleName().equals(methodName)) {
-                    continue;
-                }
-                method.getElements(new TypeFilter<>(CtBinaryOperator.class)).forEach(op -> {
-                    String opStr = REL_OPS.get(op.getKind());
-                    if (opStr != null) {
-                        addComparison(comparisons, op.getLeftHandOperand(),
-                                op.getRightHandOperand(), opStr, op.getPosition().getLine());
-                    }
-                });
+            CtMethod<?> method = op.getParent(CtMethod.class);
+            CtType<?> type = op.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;   // 메서드 밖(필드 초기화자/정적 블록 등)은 귀속 불가 → skip
             }
+            addComparison(comparisons, op.getLeftHandOperand(), op.getRightHandOperand(),
+                    opStr, op.getPosition().getLine(),
+                    type.getQualifiedName().replace('$', '.'), method.getSimpleName());
         }
-        comparisons.sort(Comparator.comparingInt(Comparison::line)
+        comparisons.sort(Comparator.comparing(Comparison::classFqn)
+                .thenComparing(Comparison::method)
+                .thenComparingInt(Comparison::line)
                 .thenComparing(Comparison::fieldRef));
         return comparisons;
     }
 
     private static void addComparison(List<Comparison> out, CtExpression<?> left,
-                                      CtExpression<?> right, String op, int line) {
+                                      CtExpression<?> right, String op, int line,
+                                      String classFqn, String method) {
         OptionalLong leftLit = literalLong(left);
         OptionalLong rightLit = literalLong(right);
         String leftRef = fieldRef(left);
         String rightRef = fieldRef(right);
         if (rightLit.isPresent() && leftRef != null) {
-            out.add(new Comparison(leftRef, op, rightLit.getAsLong(), line));
+            out.add(new Comparison(classFqn, method, leftRef, op, rightLit.getAsLong(), line));
         } else if (leftLit.isPresent() && rightRef != null) {
-            out.add(new Comparison(rightRef, FLIP.get(op), leftLit.getAsLong(), line));
+            out.add(new Comparison(classFqn, method, rightRef, FLIP.get(op), leftLit.getAsLong(), line));
         }
     }
 

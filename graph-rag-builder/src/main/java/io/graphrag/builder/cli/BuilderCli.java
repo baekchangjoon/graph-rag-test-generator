@@ -178,6 +178,9 @@ public final class BuilderCli {
                         new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
                 ConstraintExtractor constraintExtractor = new ConstraintExtractor();
                 LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
+                // 비교식(분기 조건)은 전 계층 1회 추출 — 모든 엔드포인트가 공유.
+                List<ConstraintExtractor.Comparison> allComparisons =
+                        constraintExtractor.extractComparisons(config.sutSrc());
 
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
@@ -192,8 +195,6 @@ public final class BuilderCli {
                     var conditions = constraintExtractor.extract(
                             config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
                     var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
-                    var comparisons = constraintExtractor.extractComparisons(
-                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
                     Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
                             shape == null ? Map.of()
                                     : new ValidationConstraintExtractor()
@@ -206,7 +207,7 @@ public final class BuilderCli {
                             authProvider, config.authConfig());
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
-                                    comparisons, fieldConstraints);
+                                    allComparisons, fieldConstraints);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());

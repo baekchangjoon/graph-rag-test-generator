@@ -439,7 +439,11 @@ public class EndpointExplorationRunner {
                 .toList();
         int coveredCount = (int) handlerAll.stream().filter(covered::contains).count();
         // 권고 1: 미커버 분기 중 비교식(field op literal) 라인과 겹치는 것 = 솔버가 필요할 잔여.
+        // 비교식은 전 계층 전역 추출이므로, handler-method 분기와 라인 매칭하려면 같은
+        // 클래스·메서드의 비교식만 본다(다른 파일의 동일 라인 번호 오탐 방지).
         Set<Integer> comparisonLines = comparisons.stream()
+                .filter(c -> c.classFqn().equals(endpoint.handlerClass())
+                        && c.method().equals(endpoint.handlerMethod()))
                 .map(ConstraintExtractor.Comparison::line).collect(Collectors.toSet());
         int solverRelevantMissed = (int) missed.stream()
                 .filter(b -> comparisonLines.contains(b.line())).count();
