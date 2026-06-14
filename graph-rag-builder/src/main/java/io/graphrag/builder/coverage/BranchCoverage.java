@@ -11,7 +11,13 @@ import java.util.Set;
  * JaCoCo는 라인별 분기 "개수"만 주므로 (class, method, line, k<covered) 키로
  * 단조 증가 집합을 구성한다 — novelty 판정에 충분하고 결정적이다.
  */
-public record BranchCoverage(Set<BranchRef> covered, Set<BranchRef> missed, int totalBranches) {
+public record BranchCoverage(Set<BranchRef> covered, Set<BranchRef> missed, int totalBranches,
+                             int coveredLines, int totalLines) {
+
+    /** 라인 커버리지 없이 만들던 기존 호출부 호환(라인=0). */
+    public BranchCoverage(Set<BranchRef> covered, Set<BranchRef> missed, int totalBranches) {
+        this(covered, missed, totalBranches, 0, 0);
+    }
 
     /** other에 없던 새로 커버된 분기. */
     public List<BranchRef> newlyCoveredAgainst(Set<BranchRef> other) {

@@ -68,7 +68,8 @@ public class EndpointExplorationRunner {
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  List<RequiredSeed> seeds,
                                  ExplorationReport.EndpointExploration report,
-                                 Set<BranchRef> coveredAppBranches) {
+                                 Set<BranchRef> coveredAppBranches,
+                                 ExecutionDataStore cumulativeExec) {
     }
 
     private final SutProcess sut;
@@ -280,7 +281,7 @@ public class EndpointExplorationRunner {
         // app 집계도 누적 exec data 기준(arm-level) — 전 엔드포인트 합집합이 정확해진다.
         Set<BranchRef> appCovered = analyzer.analyze(cumulativeCoverage).covered();
         return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
-                report(endpoint, outcome, comparisons), appCovered);
+                report(endpoint, outcome, comparisons), appCovered, cumulativeCoverage);
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */

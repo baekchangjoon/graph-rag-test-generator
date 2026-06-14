@@ -71,8 +71,12 @@ public class BranchCoverageAnalyzer {
         Set<BranchRef> covered = new LinkedHashSet<>();
         Set<BranchRef> missed = new LinkedHashSet<>();
         int total = 0;
+        int coveredLines = 0;
+        int totalLines = 0;
         for (IClassCoverage classCoverage : coverageBuilder.getClasses()) {
             String classFqn = classCoverage.getName().replace('/', '.');
+            coveredLines += classCoverage.getLineCounter().getCoveredCount();
+            totalLines += classCoverage.getLineCounter().getTotalCount();
             for (IMethodCoverage method : classCoverage.getMethods()) {
                 for (int line = method.getFirstLine(); line <= method.getLastLine(); line++) {
                     ICounter branches = method.getLine(line).getBranchCounter();
@@ -91,6 +95,6 @@ public class BranchCoverageAnalyzer {
                 }
             }
         }
-        return new BranchCoverage(covered, missed, total);
+        return new BranchCoverage(covered, missed, total, coveredLines, totalLines);
     }
 }
