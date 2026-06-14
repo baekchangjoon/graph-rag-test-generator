@@ -83,6 +83,7 @@ public class EndpointExplorationRunner {
     private final AuthTokenProvider authProvider;  // nullable — D5에서 배선
     private final AuthConfig authConfig;           // nullable — authProvider와 쌍
     private final Map<String, List<String>> enumConstants;  // enum FQN → 상수 (유효 happy 입력)
+    private final Map<String, List<String>> enumColumns;    // 컬럼(snake) → 유효 enum 상수 (시드 읽기 500 방지)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -97,7 +98,8 @@ public class EndpointExplorationRunner {
                                      List<String> literalCandidates,
                                      AuthTokenProvider authProvider,
                                      AuthConfig authConfig,
-                                     Map<String, List<String>> enumConstants) {
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -113,6 +115,7 @@ public class EndpointExplorationRunner {
         this.authProvider = authProvider;
         this.authConfig = authConfig;
         this.enumConstants = enumConstants;
+        this.enumColumns = enumColumns;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -126,15 +129,17 @@ public class EndpointExplorationRunner {
             appClasses = analyzer.appClassNames();
         }
         boolean readPath = endpoint.httpMethod().equals("GET");
-        SynthesizedInput happy = readPath
-                ? new ReadInputSynthesizer(enumConstants).synthesize(endpoint, tables)
-                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+        boolean hasPathParam = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
+        // GET뿐 아니라 비-GET by-id(PUT/DELETE /{id})도 리소스를 미리 시드하고, 생성 테스트가
+        // 그 리소스를 재현하도록 requiredSeeds에 등록해야 빈 DB에서도 통과한다(Bug: 비-GET 시드 미재현).
+        boolean seedResource = readPath || hasPathParam;
+        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns);
 
         List<RequiredSeed> requiredSeeds = new ArrayList<>();
         int seedSeq = 0;
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
             Seeds.insert(connection, dbType, seed);
-            if (readPath) {
+            if (seedResource) {
                 // read-path seed는 IDENTITY PK에 명시 id를 넣는다. 이러면 시퀀스가
                 // 전진하지 않아 이후 POST 탐색의 auto-INSERT가 같은 id로 충돌(500)한다.
                 // 같은 공유 탐색 DB이므로 seed 직후 시퀀스를 재동기화한다.
@@ -193,26 +198,70 @@ public class EndpointExplorationRunner {
                     List.of()));
         }
 
-        // read-path: seed는 첫 번째 2xx path의 사전 조건이다.
-        // 비-2xx path(404/400 등)는 seed와 무관하므로 requiredSeedIds를 비워 둔다.
-        if (readPath && !requiredSeeds.isEmpty()) {
-            int successIdx = -1;
-            for (int i = 0; i < paths.size(); i++) {
-                if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
+        if (seedResource && !requiredSeeds.isEmpty()) {
+            if (readPath) {
+                // GET: id가 변이되므로(404/400 path 존재) seed는 첫 2xx(존재하는 id) path에만 연결.
+                int successIdx = -1;
+                for (int i = 0; i < paths.size(); i++) {
+                    if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
+                }
+                if (successIdx >= 0) {
+                    ExploredPath p = paths.get(successIdx);
+                    List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
+                    paths.set(successIdx, withSeedIds(p, seedIds));
+                    String pid = p.id();
+                    requiredSeeds = requiredSeeds.stream()
+                            .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
+                            .toList();
+                }
+            } else {
+                // 비-GET by-id: id를 변이하지 않으므로 모든 path가 대상 리소스에 의존한다.
+                // path마다 리소스 시드를 고유 PK로 복제(병렬 테스트 PK 충돌 방지)하고, 그 path의
+                // url path-id를 같은 값으로 재기록한다(응답 단언은 notNullValue라 값 변경 안전).
+                String pathParam = endpoint.params().stream()
+                        .filter(pp -> pp.kind() == ParamKind.PATH)
+                        .map(io.graphrag.model.EndpointParam::name).findFirst().orElse(null);
+                List<RequiredSeed> perPath = new ArrayList<>();
+                for (int i = 0; i < paths.size(); i++) {
+                    ExploredPath p = paths.get(i);
+                    List<String> seedIds = new ArrayList<>();
+                    String newPk = null;
+                    for (int j = 0; j < requiredSeeds.size(); j++) {
+                        RequiredSeed base = requiredSeeds.get(j);
+                        List<String> vals = new ArrayList<>(base.values());
+                        String pk = offsetId(vals.get(0), i);
+                        vals.set(0, pk);
+                        if (j == 0) {
+                            newPk = pk;
+                        }
+                        String sid = "seed-" + endpoint.id() + "-p" + i + "-" + j;
+                        perPath.add(new RequiredSeed(sid, p.id(), base.table(), base.columns(), vals));
+                        seedIds.add(sid);
+                    }
+                    ExploredPath np = withSeedIds(p, seedIds);
+                    if (pathParam != null && newPk != null && np.sampleInput() instanceof ObjectNode body) {
+                        ObjectNode nb = body.deepCopy();
+                        nb.put(pathParam, newPk);
+                        // 응답에 같은 id가 실리므로(구체값 단언과 정합) sampleResponse의 PK 필드도 갱신.
+                        JsonNode resp = np.sampleResponse();
+                        if (resp instanceof ObjectNode ro && ro.has(pathParam)) {
+                            ObjectNode rc = ro.deepCopy();
+                            try {
+                                rc.put(pathParam, Long.parseLong(newPk));   // 응답 id는 숫자 노드(어설션 정합)
+                            } catch (NumberFormatException e) {
+                                rc.put(pathParam, newPk);
+                            }
+                            resp = rc;
+                        }
+                        np = new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
+                                resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
+                                np.branchesTaken(), np.discoveredBy(), np.constraints(),
+                                np.validationWarnings(), np.requiredSeedIds());
+                    }
+                    paths.set(i, np);
+                }
+                requiredSeeds = perPath;
             }
-            if (successIdx >= 0) {
-                ExploredPath p = paths.get(successIdx);
-                List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
-                paths.set(successIdx, new ExploredPath(p.id(), p.endpointId(), p.sampleInput(),
-                        p.expectedStatus(), p.sampleResponse(), p.capturedSqlIds(),
-                        p.capturedHttpCallIds(), p.branchesTaken(), p.discoveredBy(),
-                        p.constraints(), p.validationWarnings(), seedIds));
-                String pid = p.id();
-                requiredSeeds = requiredSeeds.stream()
-                        .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
-                        .toList();
-            }
-            // 2xx path가 없으면(degenerate) seed는 어떤 path에도 연결하지 않는다
         }
 
         // app 집계도 누적 exec data 기준(arm-level) — 전 엔드포인트 합집합이 정확해진다.
@@ -305,6 +354,59 @@ public class EndpointExplorationRunner {
                 throw new IllegalStateException("invocation failed: " + endpoint.path(), e);
             }
         };
+    }
+
+    /**
+     * happy 입력 합성. GET 또는 비-GET by-id(PATH 파라미터 보유)는 ReadInputSynthesizer로 path/query +
+     * 리소스 시드(유효 id)를 만든다(Bug 1: PUT/DELETE {id}가 sentinel "0"이 되어 service 미진입하던 것 해결).
+     * 비-GET+PATH+body면 body(SampleInputSynthesizer)를 병합(seed는 table+pk로 dedupe, path/query 우선).
+     */
+    static SynthesizedInput happyInput(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
+                                       Map<String, List<String>> enumConstants,
+                                       Map<String, List<String>> enumColumns) {
+        boolean get = endpoint.httpMethod().equals("GET");
+        boolean hasPath = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
+        if (get || hasPath) {
+            SynthesizedInput pathPart =
+                    new ReadInputSynthesizer(enumConstants, enumColumns).synthesize(endpoint, tables);
+            if (get || shape == null) {
+                return pathPart;
+            }
+            SynthesizedInput bodyPart = new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+            ObjectNode merged = bodyPart.body().deepCopy();
+            merged.setAll(pathPart.body());   // path/query 우선
+            List<SynthesizedInput.SeedRow> seeds = new ArrayList<>(pathPart.seeds());
+            for (SynthesizedInput.SeedRow s : bodyPart.seeds()) {
+                boolean dup = seeds.stream().anyMatch(e -> e.table().equals(s.table())
+                        && !e.values().isEmpty() && !s.values().isEmpty()
+                        && e.values().get(0).equals(s.values().get(0)));
+                if (!dup) {
+                    seeds.add(s);
+                }
+            }
+            return new SynthesizedInput(merged, seeds);
+        }
+        return shape == null
+                ? new SynthesizedInput(Json.mapper().createObjectNode(), List.of())
+                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+    }
+
+    private static ExploredPath withSeedIds(ExploredPath p, List<String> seedIds) {
+        return new ExploredPath(p.id(), p.endpointId(), p.sampleInput(), p.expectedStatus(),
+                p.sampleResponse(), p.capturedSqlIds(), p.capturedHttpCallIds(), p.branchesTaken(),
+                p.discoveredBy(), p.constraints(), p.validationWarnings(), seedIds);
+    }
+
+    /** 정수 PK는 +i 오프셋(비충돌), 문자열 PK는 "_i" 접미사 — path별 고유 시드 id. */
+    private static String offsetId(String value, int i) {
+        if (i == 0) {
+            return value;
+        }
+        try {
+            return Long.toString(Long.parseLong(value) + i);
+        } catch (NumberFormatException e) {
+            return value + "_" + i;
+        }
     }
 
     /** PATH param은 {name} 치환, QUERY param은 쿼리스트링으로. */

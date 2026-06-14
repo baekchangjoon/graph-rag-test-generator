@@ -293,6 +293,48 @@ public class ConstraintExtractor {
         return null;
     }
 
+    /**
+     * 컬럼(snake) → 가드에서 비교된 enum 상수들. {@code accessor() == Type.CONST} / {@code != } 를
+     * 전 계층에서 수집. 휴리스틱(컬럼명 추측)이 아니라 가드가 직접 알려주는 유효 enum 값 →
+     * 시드 행의 enum 컬럼을 유효값으로 채워 읽기 500을 방지(Bug 3). 1회 빌드.
+     */
+    public Map<String, List<String>> extractEnumColumns(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        java.util.TreeMap<String, java.util.TreeSet<String>> acc = new java.util.TreeMap<>();
+        for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
+            if (op.getKind() != BinaryOperatorKind.EQ && op.getKind() != BinaryOperatorKind.NE) {
+                continue;
+            }
+            String field = null;
+            String value = enumConstant(op.getRightHandOperand());
+            if (value != null && fieldRef(op.getLeftHandOperand()) != null) {
+                field = fieldRef(op.getLeftHandOperand());
+            } else {
+                value = enumConstant(op.getLeftHandOperand());
+                if (value != null && fieldRef(op.getRightHandOperand()) != null) {
+                    field = fieldRef(op.getRightHandOperand());
+                }
+            }
+            if (field == null) {
+                continue;
+            }
+            acc.computeIfAbsent(snake(field), k -> new java.util.TreeSet<>()).add(value);
+        }
+        Map<String, List<String>> out = new java.util.TreeMap<>();
+        acc.forEach((k, v) -> out.put(k, List.copyOf(v)));
+        return out;
+    }
+
+    private static String snake(String name) {
+        return name.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase();
+    }
+
     /** {@code Type.CONST} 정적 enum 상수 읽기면 상수 simpleName, 아니면 null. */
     private static String enumConstant(CtExpression<?> expr) {
         if (expr instanceof CtFieldRead<?> fr && fr.getTarget() instanceof CtTypeAccess) {

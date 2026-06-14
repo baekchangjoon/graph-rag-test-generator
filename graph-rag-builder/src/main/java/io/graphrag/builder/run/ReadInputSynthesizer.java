@@ -22,13 +22,20 @@ import java.util.Set;
 public class ReadInputSynthesizer {
 
     private final Map<String, List<String>> enumConstants;
+    private final Map<String, List<String>> enumColumns;   // 소문자 컬럼명 → 유효 enum 상수(시드 가독성)
 
     public ReadInputSynthesizer() {
-        this(Map.of());
+        this(Map.of(), Map.of());
     }
 
     public ReadInputSynthesizer(Map<String, List<String>> enumConstants) {
+        this(enumConstants, Map.of());
+    }
+
+    public ReadInputSynthesizer(Map<String, List<String>> enumConstants,
+                                Map<String, List<String>> enumColumns) {
         this.enumConstants = enumConstants;
+        this.enumColumns = enumColumns;
     }
 
     /**
@@ -214,6 +221,7 @@ public class ReadInputSynthesizer {
         switch (t) {
             case "java.lang.Integer", "int", "java.lang.Long", "long",
                  "java.lang.Short", "short" -> { return String.valueOf(probeId); }
+            case "boolean", "java.lang.Boolean" -> { return "true"; }   // Bug 2: 유효 boolean 바인딩
             case "java.time.LocalDate" -> { return "2999-01-01"; }
             case "java.time.LocalDateTime" -> { return "2999-01-01T00:00:00"; }
             default -> { }
@@ -231,7 +239,12 @@ public class ReadInputSynthesizer {
         return "probe-" + param.name();
     }
 
-    private static Object defaultFor(ColumnSchema column) {
+    private Object defaultFor(ColumnSchema column) {
+        // Bug 3: enum 컬럼(@Enumerated STRING → VARCHAR)은 유효 상수로 시드(읽기 시 valueOf 500 방지).
+        List<String> enumVals = enumColumns.get(column.name().toLowerCase());
+        if (enumVals != null && !enumVals.isEmpty()) {
+            return enumVals.get(0);
+        }
         String type = column.jdbcType().toUpperCase();
         if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) return "probe";
         if (type.contains("BOOL")) return true;

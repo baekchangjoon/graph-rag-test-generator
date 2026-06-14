@@ -29,6 +29,14 @@ class ConstraintExtractorTest {
     }
 
     @Test
+    void extractEnumColumns_collectsGuardComparedConstantsByColumn() {
+        java.util.Map<String, java.util.List<String>> cols =
+                new ConstraintExtractor().extractEnumColumns(SAMPLE_SRC);
+        // Guards.check(): req.tier() == Tier.VIP / == Tier.BASIC → column "tier" → {BASIC, VIP}
+        assertThat(cols.get("tier")).containsExactly("BASIC", "VIP");
+    }
+
+    @Test
     void extractConjunctions_multiFieldAndOnly_withEnumNumericString() {
         List<ConstraintExtractor.Conjunction> cs =
                 new ConstraintExtractor().extractConjunctions(SAMPLE_SRC);
