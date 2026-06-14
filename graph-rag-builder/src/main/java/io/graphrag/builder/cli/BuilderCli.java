@@ -173,7 +173,7 @@ public final class BuilderCli {
                         continue;
                     }
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
-                    if (shape == null) {
+                    if (shape == null && !endpoint.httpMethod().equals("GET")) {
                         log.warn("skip {} (no @RequestBody shape; not yet supported)", endpoint.id());
                         continue;
                     }
