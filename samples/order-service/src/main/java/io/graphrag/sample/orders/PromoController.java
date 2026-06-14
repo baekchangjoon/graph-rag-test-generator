@@ -32,6 +32,9 @@ public class PromoController {
         if (request.score() != null && request.score() == 7) {   // 컨트롤러 숫자 동치
             prefix = "lucky";
         }
+        if (request.score() != null && request.score() * 2 == 84) {  // 파생식: score=42 (소스에 42 없음)
+            prefix = "answer";
+        }
         if ("gold".equals(request.tier())) {                     // 컨트롤러 문자열 동치
             prefix = prefix + "-gold";
         }

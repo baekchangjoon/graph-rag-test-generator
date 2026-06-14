@@ -178,11 +178,17 @@ public final class BuilderCli {
                         new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
                 ConstraintExtractor constraintExtractor = new ConstraintExtractor();
                 LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
-                // 비교식(분기 조건)은 전 계층 1회 추출 — 모든 엔드포인트가 공유.
+                // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
                 List<ConstraintExtractor.Comparison> allComparisons =
                         constraintExtractor.extractComparisons(config.sutSrc());
-                List<ConstraintExtractor.StringEquality> allStringEqualities =
-                        constraintExtractor.extractStringEqualities(config.sutSrc());
+                // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
+                io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
+                        new io.graphrag.builder.oracle.InputOracle.SutCode(config.sutSrc(), config.sutJar());
+                io.graphrag.builder.oracle.InputCandidates inputCandidates =
+                        new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode)
+                                .merge(new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
+                log.info("input oracles → {} numeric field(s), {} string field(s)",
+                        inputCandidates.numeric().size(), inputCandidates.strings().size());
 
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
@@ -209,7 +215,7 @@ public final class BuilderCli {
                             authProvider, config.authConfig());
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, allStringEqualities, fieldConstraints);
+                                    allComparisons, inputCandidates, fieldConstraints);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());
