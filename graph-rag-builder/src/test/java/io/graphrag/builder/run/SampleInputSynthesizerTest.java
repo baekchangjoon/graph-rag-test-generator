@@ -76,7 +76,7 @@ class SampleInputSynthesizerTest {
                 new BodyShape.BodyField("note", "java.lang.String")
         ), List.of()).body();
         assertThat(body.get("priceTier").asText()).isEqualTo("BASIC");
-        assertThat(body.get("checkInDate").asText()).isEqualTo("2999-01-01");
+        assertThat(body.get("checkInDate").asText()).isEqualTo("2037-01-01");
         assertThat(body.get("ownerEmail").asText()).isEqualTo("probe@example.com");
         assertThat(body.get("nights").asInt()).isEqualTo(1);              // 정수 우선
         assertThat(body.get("note").asText()).isEqualTo("sample-note");   // 일반 String default
