@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/promo")
 public class PromoController {
 
-    public record PromoRequest(Integer score, String tier, Long bonus) {
+    public record PromoRequest(Integer score, String tier, Long bonus, String code) {
     }
 
     public record PromoResponse(String result) {
@@ -40,6 +40,9 @@ public class PromoController {
         }
         if (request.bonus() != null && request.bonus() * 2 == 10000000000L) {  // long 파생: bonus=5e9
             prefix = prefix + "-whale";
+        }
+        if (request.code() != null && request.code().length() == 5) {  // 문자열 길이: 길이5 필요
+            prefix = prefix + "-c5";
         }
         return new PromoResponse(promo.classify(request.score(), request.tier(), prefix));
     }
