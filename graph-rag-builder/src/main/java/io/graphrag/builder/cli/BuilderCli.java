@@ -182,13 +182,18 @@ public final class BuilderCli {
                 List<ConstraintExtractor.Comparison> allComparisons =
                         constraintExtractor.extractComparisons(config.sutSrc());
                 // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
+                // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
                 io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
                         new io.graphrag.builder.oracle.InputOracle.SutCode(config.sutSrc(), config.sutJar());
+                boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
                 io.graphrag.builder.oracle.InputCandidates inputCandidates =
-                        new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode)
-                                .merge(new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
-                log.info("input oracles → {} numeric field(s), {} string field(s)",
-                        inputCandidates.numeric().size(), inputCandidates.strings().size());
+                        new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode);
+                if (useConcolic) {
+                    inputCandidates = inputCandidates.merge(
+                            new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
+                }
+                log.info("input oracles (concolic={}) → {} numeric field(s), {} string field(s)",
+                        useConcolic, inputCandidates.numeric().size(), inputCandidates.strings().size());
 
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
