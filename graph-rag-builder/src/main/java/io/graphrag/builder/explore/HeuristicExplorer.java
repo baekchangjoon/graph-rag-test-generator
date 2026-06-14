@@ -20,7 +20,7 @@ public class HeuristicExplorer implements PathExplorer {
         ObjectNode base = target.baseInput().deepCopy();
 
         tryInput(base, target, budget, known, inputs);
-        for (InputMutator.Mutation mutation : InputMutator.firstOrder(target.mutableFields(), target.literalCandidates())) {
+        for (InputMutator.Mutation mutation : InputMutator.forTarget(target)) {
             tryInput(mutation.apply().apply(InputMutator.copy(base)), target, budget, known, inputs);
         }
         return new ExplorationResult(inputs);
