@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.JdbcDatabaseContainer;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.nio.file.Path;
@@ -27,14 +28,19 @@ public class AnalysisEnvironment implements AutoCloseable {
     private final JdbcDatabaseContainer<?> db;
     private final DbConfig dbConfig;
     private final GenericContainer<?> redis;   // nullable — Redis 의존 SUT(예: auth-user)용
+    private final KafkaContainer kafka;        // nullable — Kafka 의존 SUT(예: diary, mindgraph)용
     private final HttpCaptureServer httpCapture = new HttpCaptureServer();
     private SutProcess sut;
 
     public AnalysisEnvironment(DbConfig dbConfig) {
-        this(dbConfig, false);
+        this(dbConfig, false, false);
     }
 
     public AnalysisEnvironment(DbConfig dbConfig, boolean withRedis) {
+        this(dbConfig, withRedis, false);
+    }
+
+    public AnalysisEnvironment(DbConfig dbConfig, boolean withRedis, boolean withKafka) {
         // Docker Engine 29+: docker-java의 구버전 API(1.32) 호출이 거부되므로 명시
         if (System.getProperty("api.version") == null) {
             System.setProperty("api.version", "1.44");
@@ -43,6 +49,9 @@ public class AnalysisEnvironment implements AutoCloseable {
         this.db = JdbcContainers.create(dbConfig);
         this.redis = withRedis
                 ? new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379)
+                : null;
+        this.kafka = withKafka
+                ? new KafkaContainer(DockerImageName.parse("apache/kafka:3.8.0"))
                 : null;
     }
 
@@ -82,6 +91,12 @@ public class AnalysisEnvironment implements AutoCloseable {
             log.info("started analysis redis at {}:{}", redis.getHost(), redis.getMappedPort(6379));
         }
 
+        if (kafka != null) {
+            kafka.start();
+            extraEnv.put("SPRING_KAFKA_BOOTSTRAP_SERVERS", kafka.getBootstrapServers());
+            log.info("started analysis kafka at {}", kafka.getBootstrapServers());
+        }
+
         log.info("starting SUT process: {}", sutJar);
         sut = SutProcess.start(sutJar, workDir, jdbcUrl(), db.getUsername(), db.getPassword(),
                 new SutOptions(options.javaToolOptions(), options.extraLogLevels(), extraEnv,
@@ -113,6 +128,9 @@ public class AnalysisEnvironment implements AutoCloseable {
             httpCapture.close();
             if (redis != null) {
                 redis.stop();
+            }
+            if (kafka != null) {
+                kafka.stop();
             }
         } finally {
             db.stop();

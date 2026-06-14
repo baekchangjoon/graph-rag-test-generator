@@ -32,6 +32,7 @@ spoon = { module = "fr.inria.gforge.spoon:spoon-core", version.ref = "spoon" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
 testcontainers-mysql = { module = "org.testcontainers:mysql", version.ref = "testcontainers" }
 testcontainers-mariadb = { module = "org.testcontainers:mariadb", version.ref = "testcontainers" }
+testcontainers-kafka = { module = "org.testcontainers:kafka", version.ref = "testcontainers" }
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
 mysql-connector-j = { module = "com.mysql:mysql-connector-j", version.ref = "mysqlConnector" }
 restassured = { module = "io.rest-assured:rest-assured", version.ref = "restassured" }

@@ -111,6 +111,7 @@ public final class BuilderCli {
                                 .filter(line -> !line.isBlank()).toList(),
                 authConfig,
                 options.containsKey("--with-redis"),
+                options.containsKey("--with-kafka"),
                 options.get("--sut-java-home"));
 
         GraphAsset asset = build(config);
@@ -170,7 +171,8 @@ public final class BuilderCli {
                 otel.env(config.sutId()),
                 config.sutJavaHome());
 
-        try (AnalysisEnvironment env = new AnalysisEnvironment(config.dbConfig(), config.withRedis())) {
+        try (AnalysisEnvironment env =
+                new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
 

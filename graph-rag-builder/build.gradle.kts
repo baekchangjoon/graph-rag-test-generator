@@ -21,6 +21,7 @@ dependencies {
     implementation(libs.testcontainers.postgresql)
     implementation(libs.testcontainers.mysql)
     implementation(libs.testcontainers.mariadb)
+    implementation(libs.testcontainers.kafka)
     implementation(libs.postgresql)
     implementation(libs.mysql.connector.j)
     implementation(libs.jacoco.core)
