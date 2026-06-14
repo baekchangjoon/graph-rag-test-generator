@@ -151,6 +151,10 @@ public final class BuilderCli {
         int totalAppBranches = 0;
         List<TableSchema> tables;
 
+        // enum 상수 맵: 순수 소스 파싱(SUT/Docker 불요) → 분석 환경 기동 전 1회.
+        Map<String, List<String>> enumConstants =
+                new io.graphrag.builder.index.EnumConstantExtractor().extract(config.sutSrc());
+
         Path workDir = Files.createDirectories(config.out().resolve("work"));
         JacocoAgent jacoco = JacocoAgent.prepare(workDir);
         OtelAgent otel = OtelAgent.prepare(workDir);
@@ -217,7 +221,7 @@ public final class BuilderCli {
                             coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals,
-                            authProvider, config.authConfig());
+                            authProvider, config.authConfig(), enumConstants);
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints);

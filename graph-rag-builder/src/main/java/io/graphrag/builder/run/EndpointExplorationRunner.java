@@ -82,6 +82,7 @@ public class EndpointExplorationRunner {
     private final List<String> literalCandidates;
     private final AuthTokenProvider authProvider;  // nullable — D5에서 배선
     private final AuthConfig authConfig;           // nullable — authProvider와 쌍
+    private final Map<String, List<String>> enumConstants;  // enum FQN → 상수 (유효 happy 입력)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -95,7 +96,8 @@ public class EndpointExplorationRunner {
                                      List<Set<String>> responseDtoFieldSets,
                                      List<String> literalCandidates,
                                      AuthTokenProvider authProvider,
-                                     AuthConfig authConfig) {
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -110,6 +112,7 @@ public class EndpointExplorationRunner {
         this.literalCandidates = literalCandidates;
         this.authProvider = authProvider;
         this.authConfig = authConfig;
+        this.enumConstants = enumConstants;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -123,8 +126,8 @@ public class EndpointExplorationRunner {
         }
         boolean readPath = endpoint.httpMethod().equals("GET");
         SynthesizedInput happy = readPath
-                ? new ReadInputSynthesizer().synthesize(endpoint, tables)
-                : new SampleInputSynthesizer().synthesize(shape, tables);
+                ? new ReadInputSynthesizer(enumConstants).synthesize(endpoint, tables)
+                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
 
         List<RequiredSeed> requiredSeeds = new ArrayList<>();
         int seedSeq = 0;
