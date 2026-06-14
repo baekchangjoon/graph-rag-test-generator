@@ -10,6 +10,7 @@ import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtIf;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLiteral;
+import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
@@ -45,6 +46,15 @@ public class ConstraintExtractor {
      */
     public record StringEquality(String classFqn, String method, String fieldRef,
                                  String value, int line) {
+    }
+
+    /** 메서드 내 한 {@code &&} 조건의 원자들(동시 만족 대상). joint 입력 합성의 근거. */
+    public record Conjunction(String classFqn, String method, int line, List<Atom> atoms) {
+    }
+
+    /** conjunction의 leaf 원자. NUMERIC만 numLiteral 유효; ENUM_EQ/STRING_EQ는 value 사용. */
+    public record Atom(Kind kind, String fieldRef, String op, long numLiteral, String value) {
+        public enum Kind { NUMERIC, ENUM_EQ, STRING_EQ }
     }
 
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
@@ -172,6 +182,123 @@ public class ConstraintExtractor {
                 .thenComparingInt(StringEquality::line)
                 .thenComparing(StringEquality::fieldRef));
         return out;
+    }
+
+    /**
+     * 메서드 내 {@code &&} 조건을 conjunction 단위로 추출(원자 동시성 보존). 전 계층 1회 빌드.
+     * 조건 루트(CtIf/CtConditional의 getCondition)가 AND인 것만 대상 — getElements(CtBinaryOperator)로
+     * 전역 AND를 훑으면 중첩 &&가 중복 수집되므로 쓰지 않는다. 서로 다른 fieldRef 2개+만 보존.
+     */
+    public List<Conjunction> extractConjunctions(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        List<CtExpression<?>> conditions = new ArrayList<>();
+        for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
+            conditions.add(ctIf.getCondition());
+        }
+        for (CtConditional<?> tern : model.getElements(new TypeFilter<>(CtConditional.class))) {
+            conditions.add(tern.getCondition());
+        }
+
+        List<Conjunction> out = new ArrayList<>();
+        for (CtExpression<?> cond : conditions) {
+            if (!(cond instanceof CtBinaryOperator<?> bin)
+                    || bin.getKind() != BinaryOperatorKind.AND) {
+                continue;
+            }
+            List<CtExpression<?>> leaves = new ArrayList<>();
+            flattenAnd(bin, leaves);
+            List<Atom> atoms = new ArrayList<>();
+            for (CtExpression<?> leaf : leaves) {
+                Atom a = toAtom(leaf);
+                if (a != null) {
+                    atoms.add(a);
+                }
+            }
+            if (atoms.stream().map(Atom::fieldRef).distinct().count() < 2) {
+                continue;
+            }
+            CtMethod<?> method = bin.getParent(CtMethod.class);
+            CtType<?> type = bin.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new Conjunction(type.getQualifiedName().replace('$', '.'),
+                    method.getSimpleName(), bin.getPosition().getLine(), atoms));
+        }
+        out.sort(Comparator.comparing(Conjunction::classFqn)
+                .thenComparing(Conjunction::method)
+                .thenComparingInt(Conjunction::line));
+        return out;
+    }
+
+    private static void flattenAnd(CtExpression<?> expr, List<CtExpression<?>> leaves) {
+        if (expr instanceof CtBinaryOperator<?> bin && bin.getKind() == BinaryOperatorKind.AND) {
+            flattenAnd(bin.getLeftHandOperand(), leaves);
+            flattenAnd(bin.getRightHandOperand(), leaves);
+        } else {
+            leaves.add(expr);
+        }
+    }
+
+    private static Atom toAtom(CtExpression<?> leaf) {
+        if (leaf instanceof CtBinaryOperator<?> bin) {
+            String op = REL_OPS.get(bin.getKind());
+            if (op == null) {
+                return null;
+            }
+            CtExpression<?> left = bin.getLeftHandOperand();
+            CtExpression<?> right = bin.getRightHandOperand();
+            OptionalLong leftLit = literalLong(left);
+            OptionalLong rightLit = literalLong(right);
+            String leftRef = fieldRef(left);
+            String rightRef = fieldRef(right);
+            if (rightLit.isPresent() && leftRef != null) {
+                return new Atom(Atom.Kind.NUMERIC, leftRef, op, rightLit.getAsLong(), null);
+            }
+            if (leftLit.isPresent() && rightRef != null) {
+                return new Atom(Atom.Kind.NUMERIC, rightRef, FLIP.get(op), leftLit.getAsLong(), null);
+            }
+            if (bin.getKind() == BinaryOperatorKind.EQ) {
+                String enumConst = enumConstant(right);
+                if (enumConst != null && fieldRef(left) != null) {
+                    return new Atom(Atom.Kind.ENUM_EQ, fieldRef(left), "==", 0, enumConst);
+                }
+                enumConst = enumConstant(left);
+                if (enumConst != null && fieldRef(right) != null) {
+                    return new Atom(Atom.Kind.ENUM_EQ, fieldRef(right), "==", 0, enumConst);
+                }
+            }
+            return null;
+        }
+        if (leaf instanceof CtInvocation<?> inv
+                && "equals".equals(inv.getExecutable().getSimpleName())
+                && inv.getArguments().size() == 1 && inv.getTarget() != null) {
+            CtExpression<?> target = inv.getTarget();
+            CtExpression<?> arg = inv.getArguments().get(0);
+            String argLit = stringLiteral(arg);
+            String targetLit = stringLiteral(target);
+            if (argLit != null && fieldRef(target) != null) {
+                return new Atom(Atom.Kind.STRING_EQ, fieldRef(target), "==", 0, argLit);
+            }
+            if (targetLit != null && fieldRef(arg) != null) {
+                return new Atom(Atom.Kind.STRING_EQ, fieldRef(arg), "==", 0, targetLit);
+            }
+        }
+        return null;
+    }
+
+    /** {@code Type.CONST} 정적 enum 상수 읽기면 상수 simpleName, 아니면 null. */
+    private static String enumConstant(CtExpression<?> expr) {
+        if (expr instanceof CtFieldRead<?> fr && fr.getTarget() instanceof CtTypeAccess) {
+            return fr.getVariable().getSimpleName();
+        }
+        return null;
     }
 
     private static String stringLiteral(CtExpression<?> expr) {
