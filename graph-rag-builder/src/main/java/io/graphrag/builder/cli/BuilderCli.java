@@ -185,6 +185,9 @@ public final class BuilderCli {
                 // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
                 List<ConstraintExtractor.Comparison> allComparisons =
                         constraintExtractor.extractComparisons(config.sutSrc());
+                // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
+                List<ConstraintExtractor.Conjunction> allConjunctions =
+                        constraintExtractor.extractConjunctions(config.sutSrc());
                 // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
                 // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
                 io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
@@ -224,7 +227,7 @@ public final class BuilderCli {
                             authProvider, config.authConfig(), enumConstants);
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, inputCandidates, fieldConstraints);
+                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());

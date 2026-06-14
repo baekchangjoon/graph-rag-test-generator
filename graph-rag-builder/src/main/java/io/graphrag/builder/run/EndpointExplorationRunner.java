@@ -119,7 +119,8 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.ConditionSpan> conditions,
                               List<ConstraintExtractor.Comparison> comparisons,
                               InputCandidates candidates,
-                              Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
+                              Map<String, List<FieldConstraint>> fieldConstraints,
+                              List<ConstraintExtractor.Conjunction> conjunctions) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
@@ -163,7 +164,7 @@ public class EndpointExplorationRunner {
                 budgetRequests);
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                 httpInvoker(endpoint), literalCandidates,
-                fieldConstraints, conditionBounds, stringCandidates);
+                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
