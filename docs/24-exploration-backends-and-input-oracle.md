@@ -1,8 +1,7 @@
 # 탐색 백엔드 전략: out-of-process 관측 + in-process 입력 오라클
 
 작성일: 2026-06-14
-관련: `docs/05-branch-exploration.md`, `docs/23-input-generation-flow.md`,
-`docs/decisions/explorer-engines.md`
+관련: `docs/23-input-generation-flow.md`, `docs/decisions/explorer-engines.md`
 
 ## 배경
 

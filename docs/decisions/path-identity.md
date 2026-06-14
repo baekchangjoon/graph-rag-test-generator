@@ -1,5 +1,9 @@
 # 의사결정: path 식별 = 응답 status + 분기 집합
 
+> **⚠️ SUPERSEDED (2026-06-14)** — path 식별 키가 `status + 요청별 probe 지문`(arm-accurate,
+> `coverage/CoverageFingerprint`)으로 바뀜. 분기 집합은 지문이 없을 때 폴백으로만 사용. true/false
+> arm을 구분해 발견 입력이 distinct path로 보존됨. 현행: [docs/24](../24-exploration-backends-and-input-oracle.md) "arm-aware path 보존". 이 문서는 당시 결정 기록으로 보존.
+
 날짜: 2026-06-10 / 단계: 1.1
 
 ## 문제

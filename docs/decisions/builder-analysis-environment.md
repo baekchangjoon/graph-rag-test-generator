@@ -10,7 +10,13 @@
 
 SUT의 **운영 jar를 자식 프로세스로 실행**하고, 설정은 환경변수로만 주입한다.
 
-- DB: Testcontainers Postgres (운영 동일 DBMS — 원안 유지)
+- DB: Testcontainers (운영 동일 DBMS)
+  (갱신 2026-06-14: Postgres 고정 → `DbConfig` + `JdbcContainers.create`로 다중 DB
+  (POSTGRES/MYSQL/MARIADB) 지원. 타입은 SUT compose에서 탐지. 상세는
+  `docs/decisions/db-from-compose.md`)
+- SUT JDK: `--sut-java-home`로 SUT별 JDK를 지정해 자식 프로세스를 띄운다
+  (`SutProcess`). 이기종 MSA(diary=Java23, mindgraph=Java11 등)가 빌더(17)와 다른
+  Java로 동작하는 경우 필수. 미지정 시 빌더 자신의 `java.home` 사용.
 - datasource/포트: `SPRING_DATASOURCE_*`, `SERVER_PORT`
 - Hibernate SQL 캡처: `SPRING_APPLICATION_JSON`으로
   `logging.level.org.hibernate.SQL=DEBUG`, `logging.level.org.hibernate.orm.jdbc.bind=TRACE`
@@ -31,8 +37,8 @@ SUT의 **운영 jar를 자식 프로세스로 실행**하고, 설정은 환경�
 - `LOGGING_LEVEL_ORG_HIBERNATE_SQL` 같은 env 상대 바인딩은 로거 이름 대소문자를
   잃어 **동작하지 않는다** (`org.hibernate.SQL`은 case-sensitive).
   `SPRING_APPLICATION_JSON` 주입으로 해결.
-- Docker Engine 29+는 구버전 Docker API(<1.40)를 거부 → docker-java에
-  `api.version=1.44` 시스템 프로퍼티 필요 (CLI/테스트 양쪽 설정).
+- Docker Engine 29+는 docker-java의 구버전 API(1.32) 호출을 거부 → docker-java에
+  `api.version=1.44` 시스템 프로퍼티 필요. `AnalysisEnvironment`가 미설정 시 자동 주입.
 
 ## 한계와 복귀 조건
 

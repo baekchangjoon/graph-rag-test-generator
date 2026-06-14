@@ -1,19 +1,60 @@
-# Static Path Discovery — Explicit Limits (R1)
+# 정적 분석의 한계와 입력 오라클 도달 범위
 
-`path-discovery-static` is an **AST-only** Spring controller scanner. It does not
-run the application, it does not resolve symbols across files, and it does not
-read bytecode. The goal is to enumerate REST handlers + boundary-value variants
-cheaply enough to feed back into Stage 2 (`scout-step-translator`) and Stage 3
-(`scout-launcher`); the downstream `strict-mode` quarantine (T3) and coverage
-feedback (T5/T6) are what catch the misses.
+이 프로젝트의 정적 분석은 **Spoon AST 스캔**(`graph-rag-builder`의 `index/` 패키지)으로
+REST/WS 핸들러·요청 바디 구조·응답 DTO·검증 제약을 열거한다. 애플리케이션을 실행하지
+않고, 바이트코드 의미 실행도 하지 않는다. 실제 동작·SQL·도달 분기는 별도의 **탐색 단계**
+(`run/EndpointExplorationRunner` + `explore/ExplorationOrchestrator`)가 SUT를 띄워
+HTTP로 확정·관측한다.
 
-This doc spells out the five most common Spring/JPA patterns the scanner cannot
-see, why, and what to do about each. If you're reading a Stage 6 report and a
-chunk of branches stayed `still_missing`, start here.
+| 단계 | 구성요소 | 하는 일 |
+|---|---|---|
+| AST 인덱싱 | `index/`: `EndpointIndexer`, `BodyShapeExtractor`, `ResponseDtoIndexer`, `ValidationConstraintExtractor`, `ConstraintExtractor` | 핸들러·바디 shape·DTO 필드·검증/비교 제약 추출 (실행 없음) |
+| 입력 오라클 | `cli/BuilderCli`가 `StaticLiteralOracle` + `ConcolicOracle`을 `merge` | 분기를 여는 입력 후보 도출 (아래 1절) |
+| 탐색 | `run/EndpointExplorationRunner` → `explore/ExplorationOrchestrator` | SUT 기동, HTTP 호출, JaCoCo 커버리지·SQL(`capture/SqlLogParser`) 관측 |
+
+산출물은 `exploration-report.json`(엔드포인트별 미도달 분기 포함)과 `GraphAsset`(JSON
+그래프 스토어)이다.
+
+이 문서는 (1) 입력 오라클이 정적 리터럴을 넘어 도달하게 된 범위와, (2) 정적 분석이
+구조적으로 볼 수 없어 **탐색 시 런타임 관측**에 의존하는 다섯 가지 패턴을 정리한다.
 
 ---
 
-## 1. JPA derived-query repository methods
+## 1. 비-리터럴 입력값 도출 — 부분적으로 극복됨
+
+과거에는 "소스에 리터럴로 없는 값은 도출 불가, 범위 밖"이라고 못 박았다. 지금은
+`oracle/ConcolicOracle`(ASM 심볼릭 스캔 + Z3)이 **리터럴이 아닌 입력값**을 도출한다.
+`cli/BuilderCli`에서 `StaticLiteralOracle().analyze(...).merge(ConcolicOracle().analyze(...))`로
+두 오라클의 후보가 합쳐진다.
+
+- **`StaticLiteralOracle`** (Spoon AST): 소스에 리터럴로 박힌 비교식과 문자열 동치
+  (`==`/`equals`)를 싸게 추출한다.
+- **`ConcolicOracle`** (ASM 바이트코드 + Z3): 입력 필드(파라미터/접근자)에서 파생된
+  정수 선형식 `coeff*field+const`를 추적하고, 각 비교 분기의 경계 등식 `==0`을 Z3로 풀어
+  경계값 B의 `{B-1, B, B+1}`을 후보로 낸다. 소스에 리터럴이 없는 값도 도출한다:
+  - **정수 선형**: `amount*3==21` → `7`
+  - **long 산술**: `bonus*2==1e10` → `5e9` (int 범위 밖, `LCMP`로 처리)
+  - **문자열 길이**: `code.length()==5` → `"xxxxx"` (해당 길이 문자열)
+
+**정확한 도달 범위**: intra-method, 정수 선형, 단일 필드. 다음은 보수적으로 skip한다
+(false candidate는 어차피 `mutableFields` 투영에서 무시되므로 안전):
+
+- 비선형식 (곱/나눗셈으로 인한 비선형, 비트연산 등)
+- 다변수 동시해 (전체 입력 배정이 필요한 분기)
+- 문자열 동치/접두사를 Z3 string theory로 푸는 것 (리터럴 문자열 동치는 `StaticLiteralOracle`이 담당)
+- long 비교의 경계 edge, enum ordinal, 분기 간(interprocedural) 전파
+
+자세한 증분·실증 표는 [docs/24](24-exploration-backends-and-input-oracle.md)의
+"ConcolicOracle 지원 범위" 절을 참고. (도구가 못 따라가는 메서드는 그때까지 모은 비교만
+사용하고 깔끔히 bail한다.)
+
+> **아래 2~6절의 다섯 한계는 입력 *값* 도출과 무관하다.** ConcolicOracle은 분기를 여는
+> 입력값을 푸는 것이고, 아래는 정적 분석이 **무엇이 실행되는지 자체를 볼 수 없는** 경우다.
+> 어느 것도 ConcolicOracle로 해결되지 않으며, 모두 탐색 시 런타임 관측으로 메운다.
+
+---
+
+## 2. JPA derived-query 리포지토리 메서드
 
 ```java
 public interface OwnerRepository extends JpaRepository<Owner, Integer> {
@@ -22,21 +63,19 @@ public interface OwnerRepository extends JpaRepository<Owner, Integer> {
 }
 ```
 
-- **What the scanner sees:** an interface, no controller annotation, no
-  method body. The static analyzer reports zero handlers and zero SQL.
-- **Why:** the actual SQL is synthesized by Spring Data at runtime from the
-  method name. No literal SQL exists in the source tree; even a symbol solver
-  wouldn't help.
-- **Workaround:** Stage 3's `jdbc-intercept-agent` bridge captures the SQL
-  *when the live SUT actually executes it*. So an endpoint that hits a
-  derived query will get its `captured_sql.json` populated correctly — as long
-  as a scout step exercises that endpoint. The static scanner's job is just to
-  surface the endpoint exists; the SQL fills itself in at scout time.
-- **What goes red:** nothing if the endpoint is reachable from a scout step.
-  If the endpoint isn't reachable (e.g. needs a specific request body shape
-  to dispatch), Stage 6 lists the missed branches.
+- **AST 스캔이 보는 것:** 컨트롤러 애너테이션도, 메서드 바디도 없는 인터페이스. 핸들러
+  0개, SQL 0개로 보고된다.
+- **이유:** 실제 SQL은 메서드 이름에서 Spring Data가 런타임에 합성한다. 소스 트리에
+  리터럴 SQL이 존재하지 않으므로 심볼 해석으로도 알 수 없다.
+- **메우는 법:** 탐색이 라이브 SUT를 실제로 실행하면, `capture/SqlLogParser`가 SUT
+  stdout 로그(Hibernate `org.hibernate.SQL` DEBUG + 바인딩 TRACE)에서 실행된 SQL과
+  바인딩을 추출한다 (env 주입만으로 활성화, SUT 무수정). 해당 엔드포인트를 탐색이
+  실제로 호출하기만 하면 `CapturedSql`이 채워진다.
+- **무엇이 빨개지나:** 엔드포인트가 탐색으로 도달되면 아무 문제 없다. 도달하지 못하면
+  (예: 특정 바디 shape가 있어야 dispatch) 그 분기가 `exploration-report.json`에
+  미도달로 남는다.
 
-## 2. MyBatis dynamic SQL (`<if>` / `<foreach>` / `<choose>`)
+## 3. MyBatis 동적 SQL (`<if>` / `<foreach>` / `<choose>`)
 
 ```xml
 <select id="findActive" resultType="User">
@@ -48,20 +87,17 @@ public interface OwnerRepository extends JpaRepository<Owner, Integer> {
 </select>
 ```
 
-- **What the scanner sees:** a `@Mapper` interface method, no `@RequestMapping`
-  → not a handler. (Indirectly, this is also a problem for `graph-rag-builder`
-  fixture synthesis even when scout captures the assembled SQL.)
-- **Why:** the SQL shape is computed at runtime from input. There is no single
-  "the SQL for this method" that AST could extract.
-- **Workaround:** rely on scout-time capture (`captured_sql.json` records the
-  *actually-executed* SQL with bindings). A future enhancement could store the
-  XML fragment source alongside the captured SQL (`CapturedSql.source_xml`),
-  but that's out of T4 scope.
-- **What goes red:** nothing for the static scanner specifically. The pain
-  surfaces in `graph-rag-builder` `FixtureComposer` when the captured SQL has
-  no clean way to reverse into seed `INSERT`s.
+- **AST 스캔이 보는 것:** `@Mapper` 인터페이스 메서드 — `@RequestMapping`이 없으니
+  핸들러가 아니다.
+- **이유:** SQL 형태가 입력에서 런타임에 계산된다. "이 메서드의 SQL" 하나를 AST가
+  뽑을 수 없다.
+- **메우는 법:** 탐색 시 캡처에 의존한다. `SqlLogParser`는 MyBatis 로그
+  (`==> Preparing:` / `==> Parameters:`)에서 *실제 조립·실행된* SQL과 바인딩을
+  기록한다.
+- **무엇이 빨개지나:** 정적 스캔 자체로는 없다. 캡처된 SQL을 seed `INSERT`로 역산할
+  깔끔한 방법이 없을 때 fixture 합성 쪽에서 통증이 나타난다.
 
-## 3. `@Async` / `@Scheduled` methods
+## 4. `@Async` / `@Scheduled` 메서드
 
 ```java
 @Service
@@ -74,18 +110,16 @@ public class NotificationService {
 }
 ```
 
-- **What the scanner sees:** a service method, no `@RequestMapping` → not a
-  handler. From the scanner's POV these methods are invisible.
-- **Why:** these aren't HTTP entry points; they run on a TaskExecutor or
-  scheduler thread. They show up in JaCoCo coverage but the scanner has no
-  endpoint to attribute them to.
-- **Workaround:** none from path-discovery-static — async / scheduled code paths
-  must be tested separately (unit tests, manual triggers). T6 final-report.md
-  surfaces them as `still_missing` branches in the `not-reachable-via-rest`
-  bucket so they get on the manual-review queue instead of being silently
-  ignored.
+- **AST 스캔이 보는 것:** 서비스 메서드 — `@RequestMapping`이 없으니 핸들러가 아니다.
+  스캔 관점에서 이 메서드들은 보이지 않는다.
+- **이유:** HTTP 진입점이 아니다. TaskExecutor·스케줄러 스레드에서 돈다. JaCoCo
+  커버리지에는 나타나지만 귀속시킬 엔드포인트가 없다.
+- **메우는 법:** REST 표면 밖이라 탐색으로 도달할 수 없다. 별도(단위 테스트, 수동
+  트리거)로 다뤄야 한다.
+- **무엇이 빨개지나:** REST로 도달 불가한 app 분기로 `exploration-report.json` 커버리지
+  집계에 빠진 채로 남는다(수동 리뷰 대상).
 
-## 4. Spring DI by interface — `@Autowired` of an interface with N implementations
+## 5. Spring DI — 구현체 N개인 인터페이스 주입
 
 ```java
 @RestController
@@ -101,21 +135,17 @@ interface PaymentGateway { void charge(ChargeRequest r); }
 @Service class PayPalGateway implements PaymentGateway { ... }
 ```
 
-- **What the scanner sees:** the controller method, correctly.
-- **What it does NOT see:** which concrete `PaymentGateway` implementation
-  will be wired in at runtime, and therefore which branches inside `charge()`
-  are reachable. So `branches_taken` in `paths.json` only covers the
-  controller's own statements.
-- **Why:** Spring DI binding is runtime — qualifier annotations, `@Primary`,
-  conditional configs, profile activation all affect it.
-- **Workaround:** the scanner intentionally does not try to follow into
-  injected dependencies. The scout captures the *actually-taken* path via JaCoCo
-  at test time, and T5's coverage delta compares predicted vs actual.
-- **What goes red:** Stage 6 reports a "predicted branches differ from actual"
-  delta; cluster of such deltas concentrated in interface methods is a strong
-  signal of DI-by-interface uncertainty.
+- **AST 스캔이 보는 것:** 컨트롤러 메서드는 정확히 본다.
+- **보지 못하는 것:** 런타임에 어떤 `PaymentGateway` 구현체가 주입되는지, 따라서
+  `charge()` 안의 어느 분기가 도달 가능한지. 정적으로는 컨트롤러 자신의 문장까지만이다.
+- **이유:** Spring DI 바인딩은 런타임 — qualifier, `@Primary`, conditional config,
+  profile 활성화가 모두 영향을 준다.
+- **메우는 법:** 스캔은 의도적으로 주입 의존성을 따라 들어가지 않는다. 탐색이 *실제
+  실행된* 경로를 JaCoCo로 캡처한다. 경로 식별은 요청별 probe 지문(`CoverageFingerprint`,
+  SUT 자체 클래스 한정)이라 같은 라인의 다른 arm도 distinct path로 보존된다.
+- **무엇이 빨개지나:** 탐색이 한 구현체만 깨우면 나머지 구현체의 분기는 미도달로 남는다.
 
-## 5. Reflection-based dispatch
+## 6. 리플렉션 기반 dispatch
 
 ```java
 @PostMapping("/handle/{type}")
@@ -127,42 +157,34 @@ public Object handle(@PathVariable String type, @RequestBody Map<String,Object> 
 }
 ```
 
-- **What the scanner sees:** the `handle()` method itself.
-- **What it does NOT see:** which `Handler` subclasses might be dispatched to.
-  The scanner has no chance — even reading `Class.forName(...)` as a constant
-  would require symbol resolution we deliberately skipped.
-- **Why:** reflection by definition resolves at runtime.
-- **Workaround:** none from path-discovery-static. T1's manual-archive seed
-  pattern is the escape hatch — author the missing `ExploredPath`s by hand for
-  the known reflective dispatch targets, then run scout normally. The R2
-  path-id preservation means a hand-authored path joins back to scout-captured
-  SQL the same as an analyzer-emitted one.
+- **AST 스캔이 보는 것:** `handle()` 메서드 자체.
+- **보지 못하는 것:** 어떤 `Handler` 구현체로 dispatch될지. `Class.forName(...)`이
+  상수라 해도 그것을 따라가려면 의도적으로 생략한 심볼 해석이 필요하다.
+- **이유:** 리플렉션은 정의상 런타임에 해소된다.
+- **메우는 법:** 정적·탐색 자동화로는 닿지 않는다. **Manual-Archive Seed**가 탈출구다 —
+  알려진 리플렉티브 dispatch 대상에 대해 `ExploredPath`를 손으로 작성해
+  `--manual-paths` 디렉터리에 두면 `BuilderCli.mergeManualPaths`가 병합한다(id 충돌 시
+  수동본 우선). 손으로 쓴 path도 path-id 보존 덕에 탐색이 캡처한 SQL과 동일하게 이어진다.
 
 ---
 
-## What to do when you see `still_missing` from Stage 6
+## 미도달 분기를 만났을 때
 
-1. **Look at the source location.** If it's inside a JPA repository or
-   `@Mapper` interface → case 1 or 2; the SQL is captured but maybe the
-   triggering endpoint isn't being exercised. Add a scout step.
-2. **If the source is an `@Async` / `@Scheduled` method** → case 3; this code
-   needs unit-test coverage outside the REST surface.
-3. **If the source is inside a method that takes an interface parameter** →
-   case 4; pick a concrete implementation to instantiate explicitly in a
-   manual `ExploredPath` (T1 pattern).
-4. **If the source is dispatched via reflection** → case 5; same — hand-author
-   a path per concrete target.
-5. **Otherwise** the scanner has a bug; please add the failing controller
-   shape to `path-discovery-static/src/test/resources/sample-controllers/`.
+`exploration-report.json`에서 분기가 미도달로 남았다면 소스 위치부터 본다.
 
-## Out of scope (not yet)
+1. **JPA 리포지토리·`@Mapper` 인터페이스 안** → 2·3절. SQL은 캡처되지만 트리거
+   엔드포인트가 탐색되지 않았을 수 있다. 도달 경로(필요 입력 shape)를 확인한다.
+2. **`@Async` / `@Scheduled` 메서드** → 4절. REST 표면 밖이라 별도 단위 테스트가 필요.
+3. **인터페이스 파라미터/의존성을 받는 메서드 안** → 5절. 특정 구현체를 깨우는 입력을
+   찾거나, 수동 `ExploredPath`를 작성한다.
+4. **리플렉션으로 dispatch** → 6절. 구현체별로 수동 path 작성.
+5. **그 외** → 인덱서/오라클 버그일 수 있다. 실패하는 컨트롤러 shape를 인덱서 테스트
+   (`index/` 테스트들)에 추가해 재현한다.
 
-- OpenAPI spec ingestion (`--openapi-spec` flag) for cross-checking discovered
-  endpoints against documented contracts. Workorder T4 mentions it as
-  optional input; deferred to a later iteration once we have signal from real
-  SUTs that it pays off.
-- Spring Security analysis to populate `Endpoint.authRequired` /
-  `requiredRoles`. Currently always false / empty. Out-of-band auth headers
-  travel via the scout config's per-step headers.
-- Reflection / `Class.forName` constant-folding — too much complexity per
-  edge case caught.
+## 아직 범위 밖
+
+- OpenAPI 스펙 ingestion — 발견 엔드포인트를 문서화된 계약과 교차검증. 실 SUT에서
+  값어치가 확인되면 도입.
+- Spring Security 분석으로 `Endpoint.authRequired` / `requiredRoles` 채우기. 현재
+  인증은 탐색 설정의 per-step 헤더(`AuthConfig`)로 처리.
+- 리플렉션 `Class.forName` 상수 폴딩 — edge case당 복잡도가 과해 보류.

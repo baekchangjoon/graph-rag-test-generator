@@ -11,7 +11,7 @@ MySQL·MariaDB를 쓸 수 있고, Postgres 가정이 박힌 채로 외부 SUT를
 
 SUT의 `docker-compose.yml`에서 DB 서비스의 image/port/credentials를 탐지해
 `DbConfig`로 반환(`ComposeInspector`). 분석 환경은 그 타입의 Testcontainers 컨테이너
-(`JdbcContainers.forConfig(DbConfig)`)를 띄운다. SUT compose DB는 재사용하지 않는다.
+(`JdbcContainers.create(DbConfig)`)를 띄운다. SUT compose DB는 재사용하지 않는다.
 
 ## 검토한 대안
 
@@ -28,9 +28,17 @@ SUT의 `docker-compose.yml`에서 DB 서비스의 image/port/credentials를 탐�
 - `JdbcDatabaseContainer` 공통 인터페이스로 Postgres/MySQL/MariaDB를 동일 코드로 처리.
   신규 DB 타입 추가는 `JdbcContainers` 팩토리에만 케이스를 추가하면 된다.
 
+## 오버라이드 플래그
+
+- `--db-service <name>`: multi-DB compose에서 사용할 DB 서비스를 지정
+  (`ComposeInspector.detectDb(path, preferredService)`). 미지정 시 services 순서상 첫 DB 서비스.
+- `--db-image <image>`: 탐지된 image를 덮어쓴다 (`BuilderCli`).
+
 ## 한계
 
-- compose가 없거나 파싱 실패 시 Postgres 기본값으로 폴백 (하위호환).
+- compose + DB 서비스 필수, 없으면 실패: `--sut-compose`는 required(`BuilderCli`가 throw),
+  `ComposeInspector.detectDb`는 DB 서비스가 없으면 throw. **폴백 없음.**
+  (갱신 2026-06-14: 기존 "Postgres 기본값 폴백" 서술은 코드와 불일치 — 실제로는 미존재.)
 - 현재 지원: Postgres, MySQL, MariaDB. Oracle·SQLServer는 미지원.
 - DB 탐지는 image 이름 매칭 휴리스틱 — `my-custom-postgres:latest` 같은 사내 이미지는
-  수동 `--db-type` 플래그가 필요할 수 있다 (미구현, 필요 시 추가).
+  타입이 image 이름으로 결정된다(`postgres`/`mysql`/`mariadb` 부분 문자열).

@@ -28,11 +28,17 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 ./e2e/run-e2e.sh
 ```
 
-흐름: SUT jar 빌드 → 도구 1이 Testcontainers + JaCoCo 분석 환경에서 분기 탐색
-(휴리스틱 + coverage-guided fuzzer, endpoint당 요청 예산 60) 후 graph.json +
-exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 생성
-(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
+흐름: SUT jar 빌드 → 도구 1이 SUT를 **외부 프로세스**로 띄운 Testcontainers + JaCoCo 분석
+환경에서 분기 탐색 후 graph.json + exploration-report.json 생성 → 도구 2가 endpoint별 전 path
+테스트 생성(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
 성공 시 `✅ E2E PASS — tests=N failures=0`.
+
+입력 생성: happy 입력 + (generic 경계 변이 ⊕ **InputOracle** 후보)를 HTTP로 호출한다. 오라클은
+교체 가능하며 현재 두 구현을 합집합으로 쓴다 — `StaticLiteralOracle`(Spoon, 소스 리터럴 비교·문자열
+동치) + `ConcolicOracle`(**ASM 바이트코드 심볼릭 스캔 + Z3**, 소스에 없는 값 도출: `amount*3==21→7`,
+`code.length()==5→"xxxxx"`). 커버리지는 요청 단위 JaCoCo exec data를 누적 병합한 **arm-level**이고,
+path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트로 보존된다.
+원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`.
 
 개별 실행:
 
@@ -44,13 +50,18 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir>"
 
 # 도구 1 — DB 타입을 SUT compose에서 자동 탐지 (Phase 7)
+#   --db-service/--db-image 로 compose 자동탐지를 오버라이드 가능, --with-redis 로 Redis 부착
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
   --sut-compose <path/to/docker-compose.yml> --out <dir>"
 
-# 도구 1 — JWT 인증 주입 (Phase 7)
+# 도구 1 — JWT 인증 주입 (Phase 7) — 필요 시 --auth-token-field/--auth-header/--auth-scheme 추가
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass secret \
   --out <dir>"
+
+# 도구 1 — SUT별 JDK 지정(heterogeneous MSA) / 외부 HTTP 스텁·env 주입
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-java-home /path/to/jdkXX --external-stubs <dir> --sut-env KEY=VAL --out <dir>"
 
 # 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
 git diff --name-only main > changed.txt
@@ -62,10 +73,20 @@ git diff --name-only main > changed.txt
 
 ## 문서
 
-- 설계 spec: `docs/superpowers/specs/2026-06-10-phase0-rebuild-design.md`
-- 구현 계획: `docs/superpowers/plans/2026-06-10-phase0-rebuild.md`
+- 아키텍처: `docs/02-architecture.md` · 빌더 `docs/03` · 제너레이터 `docs/04`
+- 입력 생성·탐색 원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`
+- 정적 분석 한계 + concolic 적용 범위: `docs/22-static-discovery-limits.md`
 - 기능 단위 의사결정: `docs/decisions/`
-- 단계별 진행 기록: `progress/`
+- 개발 내력(specs/plans/progress, 시점 스냅샷): `docs/archive/`
+
+## 외부 SUT 회귀·커버리지 (개발용)
+
+```bash
+# 외부 SUT 1종 격리 실행 (petclinic | auth-user | diary)
+.work/run-suites.sh petclinic
+# 4개 SUT 재생성 + handler/app-aggregate 커버리지 보고
+.work/reg-coverage.sh
+```
 
 ## 현재 상태 / 다음 단계
 
