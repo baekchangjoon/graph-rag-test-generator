@@ -190,7 +190,17 @@ public class Generator {
         scope.put("assertionsBlock", fixture.assertions().stream()
                 .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
                 .reduce("", String::concat));
-        scope.put("bodyExpr", bodyExpr(fixture));
+        // seeds-브랜치(by-id 등)는 bodyFormat을 안 채운다. body를 갖는 메서드(POST/PUT/PATCH)면
+        // 실제 보낸 body(sampleInput에서 path/query 제외)를 직렬화해 요청 body로 쓴다. 빈 객체 "{}"도
+        // 그대로 보내야 컨트롤러 검증(예: "at least one of ...")이 재현된다(빈 문자열 → 일반 400 방지).
+        String bodyExpr = bodyExpr(fixture);
+        boolean methodHasBody = endpoint.httpMethod().equals("POST")
+                || endpoint.httpMethod().equals("PUT") || endpoint.httpMethod().equals("PATCH");
+        if (methodHasBody && fixture.bodyFormat().isEmpty()) {
+            String json = jsonBodyFromInput(endpoint, path.sampleInput());
+            bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        }
+        scope.put("bodyExpr", bodyExpr);
         scope.put("authRequired", endpoint.authRequired());
         scope.put("mocksBlock", mocks.block());
         // 격리 불가(SUT propagation 부재) → 직렬 실행 마크 (docs/04)
@@ -214,6 +224,20 @@ public class Generator {
                 List.of(new GeneratedFile(relativePath, writer.toString())),
                 path.validationWarnings(),
                 safety);
+    }
+
+    /** sampleInput에서 path/query param을 제외한 나머지를 JSON body로 직렬화. */
+    private static String jsonBodyFromInput(Endpoint endpoint, JsonNode input) {
+        if (!(input instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
+            return "{}";
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode body = obj.deepCopy();
+        for (EndpointParam p : endpoint.params()) {
+            if (p.kind() == ParamKind.PATH || p.kind() == ParamKind.QUERY) {
+                body.remove(p.name());
+            }
+        }
+        return body.toString();
     }
 
     private static String bodyExpr(ComposedFixture fixture) {

@@ -168,14 +168,13 @@ public class FixtureComposer {
             return assertions;
         }
         path.sampleResponse().fields().forEachRemaining(entry -> {
-            // null 응답 필드엔 notNullValue를 걸면 런타임에 실패한다. 최소 행 시드라
-            // 비어 있는 필드(미리 시드되지 않은 nullable 컬럼)는 단언하지 않는다.
             if (entry.getValue().isNull()) {
                 return;
             }
             String value = entry.getValue().asText();
-            // equalTo는 결정적으로 재현되는 값에만. 서버 생성 값(UUID/타임스탬프)은 LITERAL 바인딩으로
-            // 잡혀도 매 요청 달라지므로 equalTo로 걸면 실패한다 → notNullValue로.
+            // equalTo는 결정적으로 재현되는 값에만(요청/시드 유래 = SQL LITERAL 바인딩). 서버 생성 값
+            // (시퀀스 id/count/UUID/타임스탬프)은 매 실행 달라지므로 notNullValue.
+            // (필드별 결정성 정밀 분류 = 향후 spec.)
             boolean deterministic = literalValues.contains(value) && !looksServerGenerated(value);
             assertions.add(deterministic
                     ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")
@@ -378,6 +377,24 @@ public class FixtureComposer {
             }
             if (upper.contains("BOOL")) {
                 return Boolean.toString(Boolean.parseBoolean(value));
+            }
+            // 시간/수치 타입: java.time FQN parse / BigDecimal로 emit (setObject가 올바른 타입 바인딩).
+            // 따옴표 문자열로 두면 numeric/date 컬럼 INSERT가 깨진다 (by-id 리소스 시드 재현).
+            if (upper.contains("TIMESTAMP") || upper.contains("DATETIME")) {
+                return "java.time.LocalDateTime.parse(" + javaStringLiteral(value) + ")";
+            }
+            if (upper.contains("DATE")) {
+                return "java.time.LocalDate.parse(" + javaStringLiteral(value) + ")";
+            }
+            if (upper.contains("TIME")) {
+                return "java.time.LocalTime.parse(" + javaStringLiteral(value) + ")";
+            }
+            if (upper.contains("UUID")) {
+                return "java.util.UUID.fromString(" + javaStringLiteral(value) + ")";
+            }
+            if (upper.contains("NUMERIC") || upper.contains("DECIMAL") || upper.contains("NUMBER")
+                    || upper.contains("DOUBLE") || upper.contains("REAL") || upper.contains("FLOAT")) {
+                return "new java.math.BigDecimal(" + javaStringLiteral(value) + ")";
             }
         } catch (NumberFormatException e) {
             return javaStringLiteral(value);

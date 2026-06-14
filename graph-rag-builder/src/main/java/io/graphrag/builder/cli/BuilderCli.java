@@ -188,6 +188,9 @@ public final class BuilderCli {
                 // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
                 List<ConstraintExtractor.Conjunction> allConjunctions =
                         constraintExtractor.extractConjunctions(config.sutSrc());
+                // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
+                Map<String, List<String>> enumColumns =
+                        constraintExtractor.extractEnumColumns(config.sutSrc());
                 // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
                 // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
                 io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
@@ -208,8 +211,12 @@ public final class BuilderCli {
                         continue;
                     }
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
-                    if (shape == null && !endpoint.httpMethod().equals("GET")) {
-                        log.warn("skip {} (no @RequestBody shape; not yet supported)", endpoint.id());
+                    boolean hasPathParam = endpoint.params().stream()
+                            .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+                    // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
+                    // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
+                    if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+                        log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
                         continue;
                     }
                     var conditions = constraintExtractor.extract(
@@ -224,7 +231,7 @@ public final class BuilderCli {
                             coverageClient, analyzer,
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals,
-                            authProvider, config.authConfig(), enumConstants);
+                            authProvider, config.authConfig(), enumConstants, enumColumns);
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions);

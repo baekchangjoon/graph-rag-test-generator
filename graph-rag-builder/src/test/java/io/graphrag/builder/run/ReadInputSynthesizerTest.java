@@ -130,4 +130,30 @@ class ReadInputSynthesizerTest {
         SynthesizedInput out = new ReadInputSynthesizer(enums).synthesize(endpoint, List.of());
         assertThat(out.body().get("palette").asText()).isEqualTo("RED");
     }
+
+    @Test
+    void synthesize_booleanQueryParam_returnsTrue() {   // Bug 2
+        Endpoint endpoint = new Endpoint("get-api-items-id", "GET", "/api/items/{id}", "x.C", "get",
+                List.of(new EndpointParam("id", "int", ParamKind.PATH),
+                        new EndpointParam("includeStale", "boolean", ParamKind.QUERY)), false);
+        TableSchema items = new TableSchema("items",
+                List.of(new ColumnSchema("id", "INT", false, true)), List.of(), List.of());
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(items));
+        assertThat(out.body().get("includeStale").asText()).isEqualTo("true");
+    }
+
+    @Test
+    void synthesize_enumColumn_seededWithValidConstantNotProbe() {   // Bug 3
+        Endpoint endpoint = new Endpoint("get-api-orders-id", "GET", "/api/orders/{id}", "x.C", "get",
+                List.of(new EndpointParam("id", "int", ParamKind.PATH)), false);
+        TableSchema orders = new TableSchema("orders",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("status", "VARCHAR", false, false)),   // enum 컬럼 NOT NULL
+                List.of(), List.of());
+        Map<String, List<String>> enumCols = Map.of("status", List.of("PENDING", "CONFIRMED"));
+        SynthesizedInput out = new ReadInputSynthesizer(Map.of(), enumCols).synthesize(endpoint, List.of(orders));
+        SynthesizedInput.SeedRow seed = out.seeds().get(0);
+        int idx = seed.columns().indexOf("status");
+        assertThat(seed.values().get(idx)).isEqualTo("PENDING");   // "probe" 아님 (읽기 500 방지)
+    }
 }
