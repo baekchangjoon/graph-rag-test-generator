@@ -49,7 +49,8 @@ class BuilderE2eTest {
         // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())
                 .containsExactly("get-api-orders", "get-api-orders-id",
-                        "post-api-auth-login", "post-api-orders", "post-api-orders-search");
+                        "post-api-auth-login", "post-api-orders", "post-api-orders-search",
+                        "post-api-promo");
 
         // JPA endpoint: 201/404/400 path가 모두 발견된다 (Phase 1 메트릭의 핵심)
         List<ExploredPath> orderPaths = pathsOf(asset, "post-api-orders");
