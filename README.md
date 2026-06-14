@@ -14,7 +14,7 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 | `testlib` | 생성 테스트가 의존하는 helper (TestScope, SPI 어댑터) |
 | `test-state-dashboard` | 테스트 자원 추적 + TTL 누수 감지 |
 | `socket-mock-server` | Netty TCP mock + admin REST |
-| `samples/order-service` | Phase 0 SUT (Spring Boot 3 + JPA + Postgres) |
+| `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) |
 | `e2e` | Phase 0 E2E 사이클 |
 
 ## 요구 환경
@@ -38,7 +38,12 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 동치) + `ConcolicOracle`(**ASM 바이트코드 심볼릭 스캔 + Z3**, 소스에 없는 값 도출: `amount*3==21→7`,
 `code.length()==5→"xxxxx"`). 커버리지는 요청 단위 JaCoCo exec data를 누적 병합한 **arm-level**이고,
 path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트로 보존된다.
-원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`.
+
+그 위에 단계별 입력 발견(Stage 0–3b)을 쌓았다: **Stage 0** 유효 happy 합성(enum 첫 상수·날짜 ISO·이메일),
+**Stage 1/2** 메서드 내 `&&` 다필드 가드 추출 + joint/enum 변이(`tier==VIP && loyalty<500` 등),
+**Stage 3** by-id(GET/PUT/DELETE /{id}) path-id+리소스 시드·boolean 파라미터·enum 컬럼 시드,
+**Stage 3b** mutating by-id 요청별 시드 리셋 + 결정성 인지 구체 어설션(생성 by-id 테스트가 빈 DB 재현).
+원리: `docs/23-input-generation-flow.md`, `docs/24`, 이론: `docs/25-input-discovery-theory.md`.
 
 개별 실행:
 
@@ -109,7 +114,9 @@ git diff --name-only main > changed.txt
 - **Phase 7 완료** (2026-06-14): 다중 HTTP method + JWT 인증 + DB 비종속 + GET read-path.
   GET/PUT/DELETE/PATCH 인덱싱, `--sut-compose` 기반 DB 타입 자동 탐지,
   `--auth-*` JWT 인증 주입(탐색·생성 테스트 양쪽), GET 조회 경로 시드+결정적 합성.
-  22 테스트 전부 GREEN (auth POST 10, search 4, WS 2, GET-by-id 3, GET-by-userId 3)
-- 다음: Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강 어노테이션,
-  Phase 7 stage 2(외부 spring-petclinic 적용)
-  (`docs/09-implementation-roadmap.md`)
+- **입력 발견 Stage 0–3b 완료** (2026-06-15): 유효 happy 합성(enum/날짜/이메일) → 다필드 `&&`
+  conjunction joint/enum 변이 → by-id(PUT/DELETE/{id}) 진입(path-id 시드·boolean·enum 컬럼) →
+  mutating by-id 시드 리셋·구체 어설션. 외부 spring-petclinic 적용 실측(coveredAppBranches 33→113/253,
+  by-id 생성 테스트 fresh DB 16/16). order-service에 **Booking** 추가로 CI 회귀화 → **e2e 45 테스트 GREEN**.
+- 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
+  Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
