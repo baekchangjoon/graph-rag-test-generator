@@ -158,6 +158,11 @@ public class FixtureComposer {
             return assertions;
         }
         path.sampleResponse().fields().forEachRemaining(entry -> {
+            // null 응답 필드엔 notNullValue를 걸면 런타임에 실패한다. 최소 행 시드라
+            // 비어 있는 필드(미리 시드되지 않은 nullable 컬럼)는 단언하지 않는다.
+            if (entry.getValue().isNull()) {
+                return;
+            }
             String value = entry.getValue().asText();
             assertions.add(literalValues.contains(value)
                     ? new ComposedFixture.Assertion(entry.getKey(), "equalTo(\"" + value + "\")")

@@ -20,27 +20,34 @@ import java.util.Set;
  */
 public class ReadInputSynthesizer {
 
+    /**
+     * 시드 PK/FK에 쓰는 비충돌 정수 id. SUT가 data.sql 등으로 미리 시드한 행(보통 1..N)과
+     * 겹치지 않도록 충분히 큰 값을 쓴다 → (a) 시드 INSERT가 기존 행과 충돌하지 않고
+     * (b) 시드가 실효(GET이 시드한 행을 반환)하여 관측 응답이 시드를 반영하며
+     * (c) cleanup이 SUT 기준 데이터가 아닌 자기 행만 삭제한다.
+     */
+    private static final int PROBE_ID = 90001;
+
     public SynthesizedInput synthesize(Endpoint endpoint, List<TableSchema> tables) {
         ObjectNode input = Json.mapper().createObjectNode();
         TableSchema target = resolveTargetTable(endpoint, tables);
 
-        // FK 컬럼 → probe값 매핑 (parent 시드와 값 일치를 위해 먼저 결정)
+        // PK/FK 키 컬럼은 비충돌 probe 값, 일반 NOT NULL 컬럼은 타입 기본값
         List<String> columns = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         if (target != null) {
             // PK 컬럼을 먼저 삽입하여 index 0을 보장 (FixtureComposer의 DELETE 키)
             for (ColumnSchema column : target.columns()) {
                 if (column.primaryKey()) {
-                    ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
-                    values.add(fk != null ? fkProbe(column) : defaultFor(column));
+                    values.add(keyProbe(column));
                 }
             }
             for (ColumnSchema column : target.columns()) {
                 if (!column.primaryKey() && !column.nullable()) {
                     ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
-                    values.add(fk != null ? fkProbe(column) : defaultFor(column));
+                    values.add(fk != null ? keyProbe(column) : defaultFor(column));
                 }
             }
         }
@@ -51,7 +58,7 @@ public class ReadInputSynthesizer {
             }
             String value = scalarFor(param);
             input.put(param.name(), value);
-            String column = mapParamToColumn(param.name(), target);
+            String column = mapParamToColumn(param, target);
             if (column != null) {
                 // seed 값은 컬럼 JDBC 타입에 맞춰야 한다. 입력 JSON엔 문자열로 두되
                 // (path/query는 어차피 텍스트), seed row에는 타입 일치 값을 넣는다
@@ -114,7 +121,7 @@ public class ReadInputSynthesizer {
             } else if (!col.nullable()) {
                 ForeignKey fk = findFk(col.name(), parent);
                 if (fk != null) {
-                    Object childProbe = fkProbe(col);
+                    Object childProbe = keyProbe(col);
                     seedParent(fk.referencedTable(), fk.referencedColumn(), childProbe, tables, visited, allSeeds);
                     cols.add(col.name());
                     vals.add(childProbe);
@@ -148,19 +155,20 @@ public class ReadInputSynthesizer {
     }
 
     /**
-     * param → target 컬럼 매핑. 정확히 "id"인 param만 PK로 본다.
-     * "userId" 같은 xxxId는 PK가 아니라 snake_case FK 컬럼(user_id)에 매핑해야 한다
-     * (xxxId를 무조건 PK로 보면 varchar param을 bigint PK에 넣어 INSERT가 깨진다).
+     * param → target 컬럼 매핑.
+     * - PATH 변수(/{x})는 by-id 셀렉터이므로 target PK에 매핑한다.
+     * - QUERY param은 필터이므로 snake_case 동일 컬럼(FK 또는 일반 컬럼)에 매핑한다.
+     *   (QUERY xxxId를 PK로 보면 varchar param을 정수 PK에 넣어 INSERT가 깨진다.)
      */
-    private String mapParamToColumn(String paramName, TableSchema target) {
+    private String mapParamToColumn(EndpointParam param, TableSchema target) {
         if (target == null) {
             return null;
         }
-        if (paramName.equals("id")) {
+        if (param.kind() == ParamKind.PATH) {
             return target.columns().stream().filter(ColumnSchema::primaryKey)
                     .map(ColumnSchema::name).findFirst().orElse(null);
         }
-        String snake = camelToSnake(paramName);
+        String snake = camelToSnake(param.name());
         return target.columns().stream().map(ColumnSchema::name)
                 .filter(snake::equals).findFirst().orElse(null);
     }
@@ -184,7 +192,8 @@ public class ReadInputSynthesizer {
 
     private static String scalarFor(EndpointParam param) {
         return switch (param.javaType()) {
-            case "java.lang.Integer", "int", "java.lang.Long", "long" -> "1";
+            case "java.lang.Integer", "int", "java.lang.Long", "long",
+                 "java.lang.Short", "short" -> String.valueOf(PROBE_ID);
             default -> "probe-" + param.name();
         };
     }
@@ -197,17 +206,18 @@ public class ReadInputSynthesizer {
     }
 
     /**
-     * FK 컬럼(= 참조된 부모 PK)의 JDBC 타입에 맞는 probe 값. 자식 FK와 부모 PK는
+     * 키 컬럼(PK 또는 FK)의 JDBC 타입에 맞는 비충돌 probe 값. 자식 FK와 부모 PK는
      * 같은 타입이므로 이 값을 양쪽에 동일하게 써서 FK 무결성을 만족시킨다.
-     * 정수 PK(petclinic) 컬럼에 "probe-..." varchar를 넣으면 INSERT가 깨진다.
+     * 정수 키에는 PROBE_ID(비충돌 정수)를, 문자열 키에는 컬럼명 기반 문자열을 쓴다
+     * (정수 PK 컬럼에 "probe-..." varchar를 넣으면 INSERT가 깨진다).
      */
-    private static Object fkProbe(ColumnSchema fkColumn) {
-        String type = fkColumn.jdbcType().toUpperCase();
-        if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + fkColumn.name();
-        if (type.contains("BIGINT")) return 1L;
-        if (type.contains("INT")) return 1;
+    private static Object keyProbe(ColumnSchema keyColumn) {
+        String type = keyColumn.jdbcType().toUpperCase();
+        if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + keyColumn.name();
+        if (type.contains("BIGINT")) return (long) PROBE_ID;
+        if (type.contains("INT")) return PROBE_ID;
         if (type.contains("BOOL")) return true;
-        return "probe-" + fkColumn.name();
+        return "probe-" + keyColumn.name();
     }
 
     private static String singular(String name) {
