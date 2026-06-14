@@ -28,8 +28,16 @@ public class ReadInputSynthesizer {
         List<String> columns = new ArrayList<>();
         List<Object> values = new ArrayList<>();
         if (target != null) {
+            // PK 컬럼을 먼저 삽입하여 index 0을 보장 (FixtureComposer의 DELETE 키)
             for (ColumnSchema column : target.columns()) {
-                if (!column.nullable() || column.primaryKey()) {
+                if (column.primaryKey()) {
+                    ForeignKey fk = findFk(column.name(), target);
+                    columns.add(column.name());
+                    values.add(fk != null ? "probe-" + column.name() : defaultFor(column));
+                }
+            }
+            for (ColumnSchema column : target.columns()) {
+                if (!column.primaryKey() && !column.nullable()) {
                     ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
                     values.add(fk != null ? "probe-" + column.name() : defaultFor(column));
@@ -92,10 +100,12 @@ public class ReadInputSynthesizer {
 
         List<String> cols = new ArrayList<>();
         List<Object> vals = new ArrayList<>();
+        // parentColumn(= 참조된 PK)을 먼저 삽입하여 index 0을 보장 (FixtureComposer의 DELETE 키)
+        cols.add(parentColumn);
+        vals.add(probeValue);
         for (ColumnSchema col : parent.columns()) {
             if (col.name().equals(parentColumn)) {
-                cols.add(col.name());
-                vals.add(probeValue);
+                continue; // 이미 index 0에 삽입함
             } else if (!col.nullable()) {
                 ForeignKey fk = findFk(col.name(), parent);
                 if (fk != null) {
