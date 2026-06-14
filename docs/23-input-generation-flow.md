@@ -5,7 +5,7 @@
 
 이 문서는 graph-rag-builder가 SUT를 실행하며 **입력 조합을 생성하는 과정**과, 매 입력의
 실행 결과가 **"의미있다(novel)"고 판정되는 순간** 무엇이 환류되어 다음 조합을 만드는지를
-기술한다. (배경 결정: `docs/05-branch-exploration.md`, `docs/decisions/explorer-engines.md`)
+기술한다. (배경 결정: `docs/decisions/explorer-engines.md`, 백엔드 전략: `docs/24-exploration-backends-and-input-oracle.md`)
 
 ## 한눈에 보기
 
@@ -87,8 +87,8 @@ happy 입력 + 각 변이를 baseInput에 1회씩 적용. 입력마다 `tryInput
 ### 엔진 2: `CoverageGuidedFuzzer` (2차+)
 엔진 1이 남긴 **시드 큐**(= novel 입력들)를 2xx 우선 정렬 후, 각 시드에 **같은 변이 카탈로그를
 다시 적용** → 조합이 누적된다(예: "필드 A를 경계값으로 만든 novel 입력" 위에 "필드 B 변이"). 동일
-루프(markTried→budget→invoke→isNovel→merge+addSeed). 한 시드 패스가 연속 `saturationLimit`(8)회
-novelty 없으면 **포화 종료**.
+루프(markTried→budget→invoke→isNovel→merge+addSeed). 한 시드 패스가 연속 `saturationLimit`
+(코드 상수 `FUZZER_SATURATION = 2`)회 novelty 없으면 **포화 종료**.
 
 `ExplorationOrchestrator`가 두 엔진을 순차 실행하며 예산을 분할(첫 엔진 cap=총예산 절반, 미사용분
 다음 엔진 양도)하고 `KnownCoverage`를 공유, 분기 집합 기준으로 path를 dedupe한다.

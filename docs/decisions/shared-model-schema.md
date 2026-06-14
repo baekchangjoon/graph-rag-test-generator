@@ -21,12 +21,17 @@ docs 03(캡처 사실), 04(GenerationRequest/Result, 규칙), 06(parallel_safety
 - 직렬화: Jackson 단일 `ObjectMapper`(`Json.mapper()`) — unknown 필드 무시
   (전방 호환), ISO-8601 시간
 
-## Phase 0에서 의도적으로 제외한 필드 (후속 Phase에서 추가)
+## Phase 0에서 의도적으로 제외한 필드
 
-- `ExploredPath.branches` / path constraint — Phase 1 분기 탐색에서 도입
-- `CapturedHttpCall`, `CapturedSocketIO` — Phase 2/4
-- `PropagationInfo` — Phase 2 (OTEL baggage)
-- `Endpoint.requiredRoles` — Spring Security 분석 도입 시
+(갱신 2026-06-14: 아래 대부분이 후속 Phase에서 구현됨. 현재 남은 제외는
+`Endpoint.requiredRoles` 하나뿐.)
+
+- ~~`ExploredPath.branches` / path constraint~~ → 구현됨:
+  `ExploredPath.branchesTaken`(`List<BranchRef>`) + `ExploredPath.constraints`(`List<String>`)
+- ~~`CapturedHttpCall`~~ → 구현됨: 전체 record로, `GraphAsset.httpCalls`에 수록
+- ~~`PropagationInfo`(OTEL baggage)~~ → 구현됨: `CapturedHttpCall.baggagePropagated`(boolean)로 실현
+- ~~`CapturedSocketIO`~~ → STOMP/WS는 `WsEndpoint` + `WsExchange`로 실현(소켓IO record는 미채택)
+- `Endpoint.requiredRoles` — Spring Security 분석 도입 시 (유일한 잔여 제외)
 
 ## 영향
 

@@ -1,5 +1,10 @@
 # 의사결정: Phase 0 구조 인덱싱은 Spoon 단독
 
+> **⚠️ SUPERSEDED (2026-06-14)** — 구조 인덱싱(엔드포인트/바디shape/제약)은 여전히 Spoon이지만,
+> 입력 발견(`oracle/ConcolicOracle`)을 위해 빌더가 **ASM + Z3(`tools.aqua:z3-turnkey`)**도 의존함
+> (bootJar 바이트코드 심볼릭 분석). 이 문서의 "복귀 조건"(Phase 1 진입 시 재평가)이 실현된 것.
+> 현행: [docs/24](../24-exploration-backends-and-input-oracle.md). 이 문서는 당시 결정 기록으로 보존.
+
 날짜: 2026-06-10 / 단계: 0.6
 
 ## 원안 (docs/02, 03)

@@ -1,6 +1,6 @@
 # 03 — 도구 1: Graph RAG Builder
 
-소스 코드에서 사실을 추출해 그래프 RAG 자산을 만들고, 증분 갱신하며, 조회 API를 제공한다.
+소스 코드에서 사실을 추출해 그래프 RAG 자산(`graph.json`)을 만들고, 증분 갱신한다. CLI 전용 — 조회 서버는 없다.
 
 LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람이거나 무관하게, 도구 1은 결정적이고 재현 가능하다.
 
@@ -8,10 +8,9 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│ Layer 5: 영속 + 조회 API                                   │
-│  - Graph store (Neo4j 등)                                  │
-│  - Vector store (pgvector 등)                              │
-│  - REST/gRPC 조회 인터페이스 (SCHEMAS.md 참조)              │
+│ Layer 5: 영속 (graph-store)                                 │
+│  - Graph store: JSON 파일(graph.json) + 파티션 샤드          │
+│  - Vector store (pgvector 등) — 보류                        │
 ├───────────────────────────────────────────────────────────┤
 │ Layer 4: Sink Capture                                      │
 │  - Hibernate SQL logger                                    │
@@ -20,9 +19,10 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 │  - Netty LoggingHandler / 자체 javaagent                    │
 ├───────────────────────────────────────────────────────────┤
 │ Layer 3: Path Exploration (분기 탐색)                       │
-│  - JDart (콘콜릭, 1차)                                       │
-│  - Coverage-guided fuzzer + JaCoCo (2차)                    │
-│  - EvoSuite bridge (3차)                                    │
+│  - HeuristicExplorer + CoverageGuidedFuzzer (self-fuzzer)   │
+│    → ExplorationOrchestrator가 예산 분할·순차 구동           │
+│  - 입력 발견: InputOracle (StaticLiteralOracle + ConcolicOracle) │
+│  - JaCoCo arm-level 커버리지 피드백                          │
 │  - Execution harness: Spring TestContext + Testcontainers   │
 ├───────────────────────────────────────────────────────────┤
 │ Layer 2: Framework Introspection                            │
@@ -33,32 +33,33 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 │  - Spring Security 설정 분석                                  │
 ├───────────────────────────────────────────────────────────┤
 │ Layer 1: Structural Indexing                                │
-│  - scip-java (Maven + Gradle 빌드 지원)                      │
-│  - Spoon AST enricher (어노테이션, String 리터럴, dataflow)   │
+│  - Spoon AST (EndpointIndexer, BodyShapeExtractor,          │
+│    ConstraintExtractor, ValidationConstraintExtractor 등)    │
 └───────────────────────────────────────────────────────────┘
 ```
+
+자세한 입력 생성 흐름은 [docs/23](23-input-generation-flow.md),
+오라클·탐색 백엔드는 [docs/24](24-exploration-backends-and-input-oracle.md) 참조.
 
 ## 핵심 도구
 
 | 레이어 | 도구 | 역할 |
 |---|---|---|
-| L1 | scip-java | 타입 해석된 심볼/호출/import 그래프 |
-| L1 | Spoon | AST 레벨 enrichment (어노테이션, dataflow 보조) |
+| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer`), 바디 구조(`BodyShapeExtractor`), 비교/문자열 동치 제약(`ConstraintExtractor`), Bean Validation 제약(`ValidationConstraintExtractor`) |
 | L2 | Spring Boot TestContext | 실제 빈 와이어링 introspection |
 | L2 | Hibernate SchemaExport | JPA Entity → DDL |
 | L2 | Flyway/Liquibase parser | 마이그레이션 → DDL truth |
 | L2 | MyBatis Configuration | mapper 인벤토리 |
-| L3 | JDart | 콘콜릭 path 탐색 (1차) |
-| L3 | 자체 fuzzer | coverage-guided, JaCoCo 피드백 (2차) |
-| L3 | EvoSuite | search-based input 탐색 (3차) |
-| L3 | JaCoCo | branch coverage 측정 |
+| L3 | 자체 fuzzer (`HeuristicExplorer` + `CoverageGuidedFuzzer`) | coverage-guided path 탐색, `ExplorationOrchestrator`가 예산 분할·순차 구동 |
+| L3 | InputOracle (`StaticLiteralOracle` + `ConcolicOracle`) | 분기를 여는 입력 후보 발견. 전자는 Spoon 리터럴, 후자는 ASM 바이트코드 심볼릭 스캔 + Z3(`tools.aqua:z3-turnkey`) |
+| L3 | JaCoCo | arm-level branch coverage 측정 (누적 exec data + per-request probe 지문) |
 | L3 | Testcontainers | 실제 DBMS (운영과 동일 버전) |
 | L4 | Hibernate SQL logger | JPA 발행 SQL 캡처 |
 | L4 | MyBatis Interceptor | MyBatis 발행 SQL 캡처 (동적 SQL 포함 실제 형태) |
 | L4 | WireMock | 분석용 임베디드 HTTP mock, recorder 활성 |
 | L4 | Netty LoggingHandler | 바이트 hex dump |
 | L4 | 자체 javaagent | InputStream/OutputStream 후킹 (raw socket) |
-| L5 | Graph store | `GraphStore` 인터페이스 + JSON 파일(`graph.json`) + 파티션 샤드(`PartitionedGraphStore`, Phase 6.1). Neo4j는 보류 (`decisions/graph-store-phase6.md`) |
+| L5 | Graph store | `GraphStore` 인터페이스 + JSON 파일(`JsonFileGraphStore` → `graph.json`) + 파티션 샤드(`PartitionedGraphStore`, Phase 6.1). 조회 서버 없음(빌더는 CLI 전용). Neo4j는 보류 (`decisions/graph-store-phase6.md`) |
 | L5 | Vector store | 보류 — 임베딩 질의 등장 전까지 불필요 (`decisions/graph-store-phase1.md`) |
 
 ## 캡처되는 핵심 사실
@@ -73,6 +74,9 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - **Table/Column**: 운영 DBMS 기준 물리 스키마 + FK + UNIQUE
 - **Branch**: 분기점 + 조건 + 어느 path에서 실행됐는지
 - **PropagationInfo**: 트레이싱 헤더 전파 능력
+- **ValidationConstraint**: `@RequestBody` DTO의 Bean Validation 제약 (`ValidationConstraintExtractor` — NotNull/Size/Min/Max/Pattern 등)
+- **Comparison / StringEquality**: 전 계층(컨트롤러/서비스/도메인) AST에서 추출한 숫자 비교식·문자열 동치 제약 (`ConstraintExtractor.extractComparisons` / `extractStringEqualities`)
+- **입력 후보**: 오라클이 도출한 비-리터럴 입력 후보값 (`InputOracle` — 분기 경계 ±1 등)
 
 ## 갱신 전략
 
@@ -98,7 +102,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - HTTP downstream: 임베디드 WireMock + recorder
 - Socket downstream: 임베디드 자체 Netty mock + byte recorder
 - Spring TestContext로 SUT 부팅 (실제 빈 와이어링)
-- JaCoCo 에이전트로 coverage 측정
+- JaCoCo 에이전트로 arm-level coverage 측정 (엔드포인트별 누적 exec data를 probe OR 병합 + 요청마다 probe 지문으로 distinct path 식별 — `BranchCoverageAnalyzer`, `CoverageFingerprint`, `EndpointExplorationRunner.cumulativeCoverage`)
 
 이 분석 환경은 **테스트가 실행될 환경과는 별개**. 혼동하지 않도록 분리.
 

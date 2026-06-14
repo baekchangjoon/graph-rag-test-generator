@@ -17,7 +17,7 @@ LLM은 도구 안에 없다. 입력이 같으면 출력이 같다.
   2. Graph RAG 조회 (필요한 사실들)
   3. 규칙 적용 → 사양 결정
   4. 큰 골격: 템플릿. 가변 길이 슬롯: 프로그램.
-  5. (옵션) self-check: compile + run + JaCoCo
+  5. (미구현/계획) self-check: compile + run + JaCoCo
 
 출력:
   - GenerationResult (테스트 코드/데이터 + 리포트)
@@ -110,7 +110,8 @@ DB 상태 검증은 없다. 응답 검증만.
 
 ## 규칙 카탈로그
 
-도구 2의 본체는 다음 규칙들이다.
+도구 2의 핵심 로직은 다음 규칙들이다. 별도 `rules/` 패키지는 없고, 로직은
+`Generator.java`와 `compose/*`(FixtureComposer, HttpMockComposer)에 인라인으로 구현돼 있다.
 
 ### 치환 규칙 (origin 기반)
 
@@ -146,7 +147,9 @@ DB 상태 검증은 없다. 응답 검증만.
 | `auth_mode == disabled` | 토큰 코드 생략. SUT 환경변수로 auth 비활성 가정 |
 | `endpoint.auth_required == false` | 인증 코드 생략 |
 
-### Coverage delta 계산 규칙
+### Coverage delta 계산 규칙 (미구현/계획)
+
+coverage-reporter가 미구현이므로 아래 규칙은 현재 동작하지 않는다.
 
 | 규칙 | 동작 |
 |---|---|
@@ -157,32 +160,23 @@ DB 상태 검증은 없다. 응답 검증만.
 ## 디렉터리
 
 ```
-test-generator/
-├── input-parser/                 GenerationRequest 파싱
-├── existing-analyzer/            기존 테스트 파일 파싱
-├── graph-rag-client/             도구 1 API 호출
-├── gap-analyzer/                 목표 vs 현재 + Graph RAG 사실 비교
-├── rules/                        결정 규칙 카탈로그
-├── composers/                    가변 길이 슬롯 합성 (프로그램)
-│   ├── fixture-composer/
-│   ├── http-mock-composer/
-│   ├── socket-mock-composer/
-│   └── assertion-composer/
-├── templates/                    큰 골격 (Mustache)
-│   ├── test-class.mustache
-│   ├── before-all.mustache
-│   ├── before-each.mustache
-│   ├── after-each.mustache
-│   └── test-method.mustache
-├── snippets/                     작은 정형 조각
-│   ├── fixture-jdbc-line.mustache
-│   ├── wiremock-stub.mustache
-│   ├── socket-expect.mustache
-│   └── assertion-line.mustache
-├── self-check/                   compile/run/JaCoCo
-├── coverage-reporter/            delta 계산 + 리포트
-└── api/                          외부 진입점 (CLI/REST)
+test-generator/src/main/
+├── java/io/graphrag/generator/
+│   ├── Generator.java            Mustache 골격 실행 + 슬롯 합성 조립
+│   ├── cli/                      CLI 진입점 (GeneratorCli)
+│   ├── client/                   도구 1 산출물(graph.json) 조회
+│   │   ├── GraphRagClient.java
+│   │   └── FileGraphRagClient.java
+│   └── compose/                  가변 길이 슬롯 합성 (프로그램)
+│       ├── FixtureComposer.java
+│       ├── HttpMockComposer.java
+│       └── ComposedFixture.java
+└── resources/templates/         큰 골격 (Mustache) — 2개뿐
+    ├── test-class.mustache
+    └── ws-test-class.mustache
 ```
+
+self-check(compile/run/JaCoCo)·coverage-reporter는 **미구현(계획)**.
 
 ## 결정성 보장
 
@@ -193,5 +187,5 @@ test-generator/
 ## 자원 사용
 
 - LLM 호출 없음 → 비용 변동성 낮음
-- 큰 비용 항목: graph-rag-client 조회 + self-check 실행
-- self-check는 옵션. 비활성 시 합성만 수행.
+- 큰 비용 항목: graph.json 조회(`FileGraphRagClient`) + 합성
+- self-check는 미구현(계획). 현재는 합성만 수행.

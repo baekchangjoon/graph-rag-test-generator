@@ -17,7 +17,8 @@ builder(`ReadInputSynthesizer`)가 탐색 전에 시드를 삽입하고, 사용�
 ## 타깃 테이블 결정
 
 path 세그먼트↔테이블명의 단/복수 매칭. 쿼리 파라미터는 스키마의 컬럼명과 매칭.
-추론 실패 시 `--read-target <endpointId>=<table>` 수동 override.
+(갱신 2026-06-14: `resolveTargetTable`은 휴리스틱 전용 — 수동 override 플래그
+`--read-target`는 존재하지 않는다. 추론 실패 시 시드 없이 진행.)
 
 ## FK 부모 시딩
 
@@ -26,7 +27,11 @@ path 세그먼트↔테이블명의 단/복수 매칭. 쿼리 파라미터는 �
 
 ## PK 처리 (IDENTITY 컬럼)
 
-path param `{id}`는 고정 값 1로 시드. Postgres IDENTITY 컬럼은 명시 값 INSERT 가능하나
+path param `{id}`는 엔드포인트별 결정적 probe id로 시드.
+(갱신 2026-06-14: 고정 값 1 → 비충돌 probe id. `PROBE_ID_BASE=90001`,
+`probeIdFor = 90001 + floorMod(endpointId.hashCode(), 9000)` → 90001..98999 범위.
+SUT가 미리 시드한 행(보통 1..N)과 겹치지 않게, 또 엔드포인트 간 시드 오염을 막는다.)
+Postgres IDENTITY 컬럼은 명시 값 INSERT 가능하나
 시퀀스가 갱신되지 않아 이후 자동 증가 INSERT가 충돌할 수 있다. 탐색 중 자동 INSERT가
 발생하므로 명시 INSERT 직후 `SELECT setval(seq, max(id))` 재동기를 수행.
 
@@ -40,8 +45,9 @@ path param `{id}`는 고정 값 1로 시드. Postgres IDENTITY 컬럼은 명시 
 - **증분 빌드**: `IncrementalPlan`에 `carriedSeeds`가 없다. 클린 파티션 이월 시 시드도
   함께 이월돼야 하나 현재 미구현. 풀빌드는 정상; 증분 빌드 후 read-path 테스트 실행 시
   시드 누락 가능. 별도 과제로 처리.
-- **병렬 격리**: PK id=1 고정 + 공유 probe FK → read-path 테스트 클래스 간 `@BeforeEach`/
-  `@AfterEach` 동시 실행 시 row 충돌. 현재 sequential 실행(`@TestMethodOrder`)으로
-  회피; testId-격리 시드는 별도 강화 과제.
+- **병렬 격리**: 엔드포인트별 probe id로 엔드포인트 간 충돌은 줄었으나, 같은 엔드포인트의
+  read-path 테스트 클래스 간 `@BeforeEach`/`@AfterEach` 동시 실행 시 row 충돌 여지가 남는다.
+  현재 generator가 `@Execution(ExecutionMode.SAME_THREAD)` 마커로 회피
+  (갱신 2026-06-14: 이전 서술 `@TestMethodOrder`는 부정확); testId-격리 시드는 별도 강화 과제.
 - **타깃 테이블 결정**: path/스키마 휴리스틱. codegraph handler→repository→entity
   call-graph 추적으로 정확도를 높일 수 있으나 현재 미필요.

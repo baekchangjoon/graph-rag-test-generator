@@ -82,8 +82,8 @@ Neo4j에 transactional 갱신 (commit SHA 태그 갱신)
 - 단계:
   1. 신선한 clone
   2. 빌드 + 모든 모듈의 scip-java
-  3. 영구 캡처 환경 부팅 (Spring TestContext + Testcontainers)
-  4. 알려진 endpoint 전부에 대해 ManualPathExplorer 입력 실행
+  3. 캡처 환경 부팅 (SUT 운영 jar 외부 프로세스 + Testcontainers DB)
+  4. 알려진 endpoint 전부에 대해 ExplorationOrchestrator(HeuristicExplorer/CoverageGuidedFuzzer) 입력 실행 (수동 path는 `BuilderCli.mergeManualPaths`로 병합)
   5. 결과를 staging Neo4j에 적재
   6. staging ↔ production swap (downtime 최소화)
 - 실패 시 production 그래프 유지 + 알람
@@ -109,8 +109,8 @@ public class InventoryReserveMessage {
 
 - **scip-java**: 멀티 모듈 빌드 지원 + 점진적 인덱싱
 - **Neo4j**: causal cluster 3+ 노드. 백업 + 모니터링
-- **Soot/SootUp**: 호출 그래프 + dataflow (Phase 1+의 fuzzer/JDart 강화에)
-- **JDart 또는 자체 fuzzer**: 분기 자동 탐색 (수천 endpoint를 사람이 manual로 갱신 불가능)
+- **Soot/SootUp**: 호출 그래프 + dataflow (Phase 1+의 fuzzer/oracle 강화에)
+- **CoverageGuidedFuzzer + ConcolicOracle(ASM/Z3)**: 분기 자동 탐색 (수천 endpoint를 사람이 manual로 갱신 불가능)
 - **Kafka 또는 메시지 큐**: 분산 worker → 마스터 통합
 - **JaCoCo**: 야간 풀빌드에서 cumulative coverage
 

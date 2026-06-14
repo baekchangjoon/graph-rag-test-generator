@@ -183,7 +183,7 @@ parallel_safety_report:
 | DB | Testcontainers (운영 동일 DBMS) | docker-compose Postgres (운영 동일 DBMS) |
 | HTTP mock | 임베디드 WireMock + recorder | docker-compose WireMock 서비스 |
 | Socket mock | 임베디드 자체 Netty + recorder | docker-compose socket-mock 서비스 |
-| SUT 실행 | Spring TestContext (in-process) | 실 운영 JAR + OTEL javaagent (컨테이너) |
-| 테스트 도구 | JDart, fuzzer, EvoSuite, JaCoCo | RestAssured |
+| SUT 실행 | 실 운영 JAR 외부 프로세스 (env 주입, HTTP 경계) | 실 운영 JAR + OTEL javaagent (컨테이너) |
+| 테스트 도구 | InputOracle(static-literal + concolic ASM/Z3) + HeuristicExplorer/CoverageGuidedFuzzer + JaCoCo(arm-level) + 임베디드 WireMock + OTEL agent | RestAssured |
 
 두 환경을 혼동하지 않는 것이 중요.

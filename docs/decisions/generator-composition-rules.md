@@ -4,7 +4,9 @@
 
 ## 구조 (docs/04 방식 C 준수)
 
-- 큰 골격: Mustache 템플릿 1개 (`templates/test-class.mustache`)
+- 큰 골격: Mustache 템플릿 (`templates/test-class.mustache`)
+  (갱신 2026-06-14: STOMP/WS용 `templates/ws-test-class.mustache` 추가 — 총 2개.
+  `Generator.generateWs`가 WS 엔드포인트에 이 템플릿을 쓴다.)
 - 가변 슬롯: `FixtureComposer` 프로그램이 합성
   (치환 변수 / fixture INSERT / cleanup DELETE / body 포맷 / 응답 assertion)
 - LLM 없음, 시간/Random 없음 → 동일 입력 = byte 동일 출력 (결정성 테스트로 보증)
@@ -17,7 +19,7 @@
 | LITERAL 보존 | 치환 대상이 아닌 body 값은 sampleInput 그대로 |
 | 픽스처 합성 | 캡처된 SELECT가 조회한 테이블에 사전 INSERT. 키 컬럼=치환 변수, NOT NULL은 타입별 기본값 |
 | Cleanup | SUT가 INSERT한 행 + 픽스처 행을 FK 깊이 역순(자식 먼저)으로 DELETE. 자기 스코프(`WHERE key=?`)만 |
-| 응답 검증 | 값이 LITERAL 바인딩과 일치하는 필드 → `equalTo`, 그 외 → `notNullValue()`. DB 상태 검증 없음 (docs/06) |
+| 응답 검증 | 값이 LITERAL 바인딩과 일치하는 필드 → `equalTo`, 그 외 → `notNullValue()`. DB 상태 검증 없음 (docs/06)<br>(갱신 2026-06-14: equalTo 조건 강화 — `looksServerGenerated(value)`(UUID/ISO-타임스탬프)면 매 요청 달라지므로 equalTo→`notNullValue()`로 강등. 또한 응답 필드 값이 `null`이면 단언 자체를 생략. `FixtureComposer.assertionsFromResponse`) |
 | 병렬 안전 | Phase 0은 DB testId 격리 + mock 미사용 → `fully_parallel` 보고 |
 
 ## 알려진 한계

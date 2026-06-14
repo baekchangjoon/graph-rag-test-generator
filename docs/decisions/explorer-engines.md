@@ -1,8 +1,12 @@
 # 의사결정: Phase 1 탐색 엔진 구성과 JDart 보류
 
+> **⚠️ SUPERSEDED (2026-06-14)** — 여기서 "보류"한 콘콜릭은 이후 **InputOracle(`ConcolicOracle`,
+> ASM 심볼릭 스캔 + Z3)**로 구현됨(in-process JDart/JPF 방식 기각은 유효, 콘콜릭 *능력*은 oracle로 도입).
+> 또 "ASM 수준 분기 방향 식별"도 `coverage/CoverageFingerprint`로 구현됨(arm-level). 현행: [docs/24](../24-exploration-backends-and-input-oracle.md), [docs/23](../23-input-generation-flow.md). 이 문서는 당시 결정 기록으로 보존.
+
 날짜: 2026-06-10 / 단계: 1.1, 1.2
 
-## 원안 (docs/05)
+## 원안 (원 설계)
 
 3-엔진 순차 보강: JDart(콘콜릭, 1차) → coverage-guided fuzzer(2차) → EvoSuite(3차).
 오케스트레이터가 totalBudget을 슬라이스로 분할, coverage 누적 전달, 포화 감지.

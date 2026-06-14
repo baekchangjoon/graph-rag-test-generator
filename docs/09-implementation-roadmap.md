@@ -2,15 +2,18 @@
 
 TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 
-## 현황 (2026-06-11)
+## 현황 (2026-06-14)
 
 | Phase | 상태 |
 |---|---|
-| 0 ~ 3 | 완료 (`progress/` 참조) |
+| 0, 1 | 완료 (`archive/progress/` 참조) |
+| 2 (WireMock/외부 HTTP 캡처) | 완료 — `HttpCaptureServer` (`archive/progress/2-*.md`) |
+| 3 (WebSocket/STOMP) | 완료 — `WsEndpointIndexer`/`WsCaptureRunner` (`archive/progress/3-*.md`) |
 | 4 (Netty), 5 (Raw Socket) | **홀딩** (2026-06-11 사용자 결정, Phase 6 선행) |
 | 6.1 그래프 스토어 | 완료 — 파티션 샤드 파일 스토어, Neo4j 보류 (`docs/decisions/graph-store-phase6.md`) |
-| 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`progress/6-2.md`) |
+| 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`archive/progress/6-2.md`) |
 | 6.3, 6.4 | 미착수 |
+| 7 (auth · DB-agnostic · multi-method/GET read-path · constraint-directed input + 콘콜릭 oracle) | 완료 (`archive/progress/7-*.md`) |
 
 ## 권장 순서 원칙
 
@@ -44,7 +47,7 @@ Phase 0의 PoC 통과율 메트릭: 1/1 endpoint의 생성 테스트가 docker-c
 | 단계 | 산출 |
 |---|---|
 | 1.1 PathExplorer SPI + 자체 fuzzer | coverage-guided + JaCoCo 통합 |
-| 1.2 JDart bridge | 콘콜릭 1차 탐색 |
+| 1.2 정적 제약 추출 (콘콜릭 대체) → 이후 ConcolicOracle(ASM+Z3) oracle | handler 분기 조건 정적 수집, 이후 콘콜릭 oracle로 능력 도입 (`docs/24`, `docs/decisions/explorer-engines.md`) |
 | 1.3 MyBatis XML mapper 인덱서 | XML mapper SQL 캡처 |
 | 1.4 MyBatis Interceptor 캡처 | 동적 SQL의 실제 형태 캡처 |
 | 1.5 다중 path → 다중 테스트 합성 | 도구 2가 path별 테스트 생성 |
@@ -108,6 +111,19 @@ Phase 2 메트릭: 외부 HTTP 호출 있는 endpoint의 테스트가 WireMock �
 | 6.3 야간 풀 + PR 증분 | 표류 보정 운영 |
 | 6.4 raw socket 보강 어노테이션 도입 | 프로토콜 사양 부재 영역 보강 |
 
+## Phase 7 — MSA 일반화 (auth · DB-agnostic · multi-method · 제약-지향 입력)
+
+목표: 이기종 MSA 서비스로 확장. 인증·다양한 DBMS·다양한 HTTP 메서드·제약 기반 입력 합성.
+
+| 단계 | 산출 |
+|---|---|
+| 7.1 인증 | `AuthTokenProvider`/`AuthConfig`: endpoint별 `authRequired` 시 토큰 발급·헤더 주입 |
+| 7.2 DB-agnostic | `DbConfig`/`JdbcContainers`(Postgres·MySQL)/`ComposeInspector`(compose에서 DBMS·자격 추출, `${VAR:-default}` 전개) |
+| 7.3 multi-HTTP-method + GET read-path | PUT/DELETE/PATCH 등 PATH param 치환, `ReadInputSynthesizer`로 GET seed 합성 |
+| 7.4 제약-지향 입력 + 콘콜릭 oracle | `InputOracle`(static-literal + `ConcolicOracle` ASM/Z3), `ConstraintExtractor`가 산출한 후보를 필드별 투영 |
+
+Phase 7 메트릭: 이기종 MSA(예: diary=Java23, mindgraph=Java11, auth-user=MySQL)의 endpoint가 인증·다중 메서드·제약 입력으로 통과.
+
 ## 각 단계의 TDD 흐름
 
 각 단계는 다음 순서:
@@ -136,8 +152,8 @@ OPEN-DECISIONS.md 항목 중 일부는 phase 진입을 막을 수 있음:
 
 | 위험 | 대응 |
 |---|---|
-| JDart의 5M 라인 검증 부재 | Phase 1에서는 fuzzer 위주, JDart는 100K 검증 후 확장 |
+| 콘콜릭 솔버의 5M 라인 검증 부재 | Phase 1에서는 fuzzer 위주, ConcolicOracle(ASM/Z3)은 100K 검증 후 확장 (JDart는 보류, `docs/decisions/explorer-engines.md`) |
 | OTEL agent 라이브러리 호환성 | agent 버전 고정 + CI 검증 |
-| Spring TestContext 부팅 시간 | 컨텍스트 캐싱 / 공유 전략 |
+| SUT 외부 프로세스 부팅 시간 | jar 재사용 / 공유 탐색 환경 전략 |
 | Testcontainers 비용 | suite 단위 컨테이너 재사용 |
 | 민감 정보 캡처 누출 | 패턴 마스킹 + 캡처 직후 sanitize |
