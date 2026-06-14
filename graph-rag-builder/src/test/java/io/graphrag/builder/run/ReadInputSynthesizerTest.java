@@ -8,6 +8,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReadInputSynthesizerTest {
 
     @Test
+    void integerFkSeedsTypedValuesAndSkipsNullableFkParent() {
+        // petclinic 시나리오: 모든 PK/FK가 INT, owner_id는 nullable FK
+        Endpoint endpoint = new Endpoint("get-api-pets-petid", "GET", "/api/pets/{petId}",
+                "x.C", "get", List.of(new EndpointParam("petId", "int", ParamKind.PATH)), true);
+        TableSchema types = new TableSchema("types",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("name", "VARCHAR", false, false)),
+                List.of(), List.of());
+        TableSchema owners = new TableSchema("owners",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("last_name", "VARCHAR", false, false)),
+                List.of(), List.of());
+        TableSchema pets = new TableSchema("pets",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("type_id", "INT", false, false),     // NOT NULL FK
+                        new ColumnSchema("owner_id", "INT", true, false)),    // nullable FK
+                List.of(new ForeignKey("type_id", "types", "id"),
+                        new ForeignKey("owner_id", "owners", "id")),
+                List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(pets, types, owners));
+
+        List<String> seededTables = out.seeds().stream()
+                .map(SynthesizedInput.SeedRow::table).toList();
+        // NOT NULL FK 부모(types)는 시드, nullable FK 부모(owners)는 미시드, target(pets) 포함
+        assertThat(seededTables).containsExactly("types", "pets");
+
+        SynthesizedInput.SeedRow petsRow = out.seeds().get(1);
+        int typeFkIdx = petsRow.columns().indexOf("type_id");
+        // INT FK 값은 Integer여야 한다 (varchar "probe-..." 가 아님)
+        assertThat(petsRow.values().get(typeFkIdx)).isInstanceOf(Integer.class).isEqualTo(1);
+        assertThat(petsRow.columns()).doesNotContain("owner_id");   // nullable FK 미시드
+        // 자식 FK 값 == 부모 PK 값
+        SynthesizedInput.SeedRow typesRow = out.seeds().get(0);
+        assertThat(typesRow.values().get(typesRow.columns().indexOf("id")))
+                .isEqualTo(petsRow.values().get(typeFkIdx));
+    }
+
+    @Test
     void fkColumnSeedsParentTableFirst() {
         Endpoint endpoint = new Endpoint("get-api-orders-id", "GET", "/api/orders/{id}",
                 "x.C", "get", java.util.List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)),

@@ -33,14 +33,14 @@ public class ReadInputSynthesizer {
                 if (column.primaryKey()) {
                     ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
-                    values.add(fk != null ? "probe-" + column.name() : defaultFor(column));
+                    values.add(fk != null ? fkProbe(column) : defaultFor(column));
                 }
             }
             for (ColumnSchema column : target.columns()) {
                 if (!column.primaryKey() && !column.nullable()) {
                     ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
-                    values.add(fk != null ? "probe-" + column.name() : defaultFor(column));
+                    values.add(fk != null ? fkProbe(column) : defaultFor(column));
                 }
             }
         }
@@ -72,12 +72,17 @@ public class ReadInputSynthesizer {
             seeds = List.of();
         } else {
             List<SynthesizedInput.SeedRow> allSeeds = new ArrayList<>();
-            // FK 부모 시드를 target 시드보다 먼저 수집 (parent-before-child)
+            // FK 부모 시드를 target 시드보다 먼저 수집 (parent-before-child).
+            // 시드 컬럼에 포함된 FK(= NOT NULL/PK)만 부모를 시드한다. nullable FK는
+            // 자식 row에서 값이 없으므로(컬럼 미포함) 부모 행이 필요 없다.
             Set<String> visited = new HashSet<>();
             for (ForeignKey fk : target.foreignKeys()) {
                 int fkIdx = columns.indexOf(fk.column());
-                Object probeValue = fkIdx >= 0 ? values.get(fkIdx) : "probe-" + fk.column();
-                seedParent(fk.referencedTable(), fk.referencedColumn(), probeValue, tables, visited, allSeeds);
+                if (fkIdx < 0) {
+                    continue;
+                }
+                seedParent(fk.referencedTable(), fk.referencedColumn(), values.get(fkIdx),
+                        tables, visited, allSeeds);
             }
             allSeeds.add(new SynthesizedInput.SeedRow(target.name(), columns, values));
             seeds = allSeeds;
@@ -109,7 +114,7 @@ public class ReadInputSynthesizer {
             } else if (!col.nullable()) {
                 ForeignKey fk = findFk(col.name(), parent);
                 if (fk != null) {
-                    Object childProbe = "probe-" + col.name();
+                    Object childProbe = fkProbe(col);
                     seedParent(fk.referencedTable(), fk.referencedColumn(), childProbe, tables, visited, allSeeds);
                     cols.add(col.name());
                     vals.add(childProbe);
@@ -189,6 +194,20 @@ public class ReadInputSynthesizer {
         if (type.contains("CHAR") || type.contains("TEXT")) return "probe";
         if (type.contains("BOOL")) return true;
         return 1;
+    }
+
+    /**
+     * FK 컬럼(= 참조된 부모 PK)의 JDBC 타입에 맞는 probe 값. 자식 FK와 부모 PK는
+     * 같은 타입이므로 이 값을 양쪽에 동일하게 써서 FK 무결성을 만족시킨다.
+     * 정수 PK(petclinic) 컬럼에 "probe-..." varchar를 넣으면 INSERT가 깨진다.
+     */
+    private static Object fkProbe(ColumnSchema fkColumn) {
+        String type = fkColumn.jdbcType().toUpperCase();
+        if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + fkColumn.name();
+        if (type.contains("BIGINT")) return 1L;
+        if (type.contains("INT")) return 1;
+        if (type.contains("BOOL")) return true;
+        return "probe-" + fkColumn.name();
     }
 
     private static String singular(String name) {
