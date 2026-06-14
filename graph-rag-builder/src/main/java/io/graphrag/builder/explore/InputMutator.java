@@ -63,6 +63,15 @@ public final class InputMutator {
         return mutations;
     }
 
+    /** generic firstOrder + 제약 지향 변이를 합쳐 이름 기준 dedupe. 두 explorer 공용. */
+    public static List<Mutation> forTarget(EndpointTarget target) {
+        List<Mutation> all = new ArrayList<>(
+                firstOrder(target.mutableFields(), target.literalCandidates()));
+        all.addAll(constraintDirected(target.mutableFields(),
+                target.fieldConstraints(), target.conditionBounds()));
+        return dedupeByName(all);
+    }
+
     /**
      * Bean Validation 제약 + handler 비교식 경계를 위반/경계 변이로 환류 (결정적).
      * 필드 선언 순서 → 제약 종류 고정 순서. 값 적용은 generic firstOrder와 별개이며,
