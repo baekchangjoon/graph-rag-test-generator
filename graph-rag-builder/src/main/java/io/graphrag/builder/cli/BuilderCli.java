@@ -38,6 +38,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -144,6 +145,9 @@ public final class BuilderCli {
         List<io.graphrag.model.WsExchange> wsExchanges = new ArrayList<>();
         List<RequiredSeed> allSeeds = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
+        // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
+        Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
+        int totalAppBranches = 0;
         List<TableSchema> tables;
 
         Path workDir = Files.createDirectories(config.out().resolve("work"));
@@ -168,6 +172,9 @@ public final class BuilderCli {
 
                 CoverageClient coverageClient = new CoverageClient("localhost", jacoco.tcpPort());
                 BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
+                // BOOT-INF/classes 전체 분기 = app 커버리지 분모 (1회 산출)
+                totalAppBranches = analyzer.analyze(
+                        new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
                 ConstraintExtractor constraintExtractor = new ConstraintExtractor();
                 LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
 
@@ -197,6 +204,7 @@ public final class BuilderCli {
                     httpCalls.addAll(result.httpCalls());
                     allSeeds.addAll(result.seeds());
                     reportEntries.add(result.report());
+                    coveredAppBranches.addAll(result.coveredAppBranches());
                 }
 
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
@@ -229,7 +237,8 @@ public final class BuilderCli {
 
         Files.writeString(config.out().resolve("exploration-report.json"),
                 Json.mapper().writerWithDefaultPrettyPrinter()
-                        .writeValueAsString(new ExplorationReport(reportEntries)));
+                        .writeValueAsString(new ExplorationReport(
+                                reportEntries, coveredAppBranches.size(), totalAppBranches)));
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
