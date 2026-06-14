@@ -222,8 +222,8 @@ public class ReadInputSynthesizer {
             case "java.lang.Integer", "int", "java.lang.Long", "long",
                  "java.lang.Short", "short" -> { return String.valueOf(probeId); }
             case "boolean", "java.lang.Boolean" -> { return "true"; }   // Bug 2: 유효 boolean 바인딩
-            case "java.time.LocalDate" -> { return "2999-01-01"; }
-            case "java.time.LocalDateTime" -> { return "2999-01-01T00:00:00"; }
+            case "java.time.LocalDate" -> { return "2037-01-01"; }
+            case "java.time.LocalDateTime" -> { return "2037-01-01T00:00:00"; }
             default -> { }
         }
         List<String> consts = enumConstants.get(t);
@@ -236,7 +236,9 @@ public class ReadInputSynthesizer {
         if (consts != null && !consts.isEmpty()) {
             return consts.get(0);
         }
-        return "probe-" + param.name();
+        // 엔드포인트별 비충돌 문자열 PK: 같은 테이블을 읽는 두 엔드포인트가 동일 PK로
+        // 시드해 병렬 실행 시 PK 충돌하는 것을 막는다 (정수 PK의 probeId와 동일한 의도).
+        return "probe-" + param.name() + "-" + probeId;
     }
 
     private Object defaultFor(ColumnSchema column) {
@@ -248,11 +250,12 @@ public class ReadInputSynthesizer {
         String type = column.jdbcType().toUpperCase();
         if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) return "probe";
         if (type.contains("BOOL")) return true;
-        // 시간 타입: setObject가 java.time을 DATE/TIMESTAMP에 바인딩. 2999로 미래 제약도 만족.
+        // 시간 타입: setObject가 java.time을 DATE/TIMESTAMP에 바인딩. 2037로 미래 제약 만족.
+        // (MySQL TIMESTAMP 상한 2038-01-19 → 2999는 ERROR 1292로 거부됨.)
         if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
-            return java.time.LocalDateTime.of(2999, 1, 1, 0, 0);
+            return java.time.LocalDateTime.of(2037, 1, 1, 0, 0);
         }
-        if (type.contains("DATE")) return java.time.LocalDate.of(2999, 1, 1);
+        if (type.contains("DATE")) return java.time.LocalDate.of(2037, 1, 1);
         if (type.contains("TIME")) return java.time.LocalTime.of(0, 0);
         if (type.contains("UUID")) {
             return java.util.UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -268,11 +271,11 @@ public class ReadInputSynthesizer {
      */
     private static Object keyProbe(ColumnSchema keyColumn, int probeId) {
         String type = keyColumn.jdbcType().toUpperCase();
-        if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + keyColumn.name();
+        if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + keyColumn.name() + "-" + probeId;
         if (type.contains("BIGINT")) return (long) probeId;
         if (type.contains("INT")) return probeId;
         if (type.contains("BOOL")) return true;
-        return "probe-" + keyColumn.name();
+        return "probe-" + keyColumn.name() + "-" + probeId;
     }
 
     private static String singular(String name) {

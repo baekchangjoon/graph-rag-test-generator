@@ -324,10 +324,10 @@ public class FixtureComposer {
         }
         // 시간 타입: FQN java.time을 코드에 그대로 (import 불필요), setObject가 DATE/TIMESTAMP에 바인딩
         if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
-            return "java.time.LocalDateTime.of(2999, 1, 1, 0, 0)";
+            return "java.time.LocalDateTime.of(2037, 1, 1, 0, 0)";
         }
         if (type.contains("DATE")) {
-            return "java.time.LocalDate.of(2999, 1, 1)";
+            return "java.time.LocalDate.of(2037, 1, 1)";
         }
         if (type.contains("TIME")) {
             return "java.time.LocalTime.of(0, 0)";

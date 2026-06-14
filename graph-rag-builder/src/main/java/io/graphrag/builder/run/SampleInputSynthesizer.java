@@ -92,10 +92,10 @@ public class SampleInputSynthesizer {
             return true;
         }
         if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
-            return java.time.LocalDateTime.of(2999, 1, 1, 0, 0);
+            return java.time.LocalDateTime.of(2037, 1, 1, 0, 0);
         }
         if (type.contains("DATE")) {
-            return java.time.LocalDate.of(2999, 1, 1);
+            return java.time.LocalDate.of(2037, 1, 1);
         }
         if (type.contains("TIME")) {
             return java.time.LocalTime.of(0, 0);
@@ -117,11 +117,11 @@ public class SampleInputSynthesizer {
             default -> { }
         }
         switch (t) {   // 시간 타입 — ISO-8601 문자열 (SUT Jackson이 string→LocalDate 역직렬화)
-            case "java.time.LocalDate" -> { body.put(field.name(), "2999-01-01"); return; }
-            case "java.time.LocalDateTime" -> { body.put(field.name(), "2999-01-01T00:00:00"); return; }
+            case "java.time.LocalDate" -> { body.put(field.name(), "2037-01-01"); return; }
+            case "java.time.LocalDateTime" -> { body.put(field.name(), "2037-01-01T00:00:00"); return; }
             case "java.time.LocalTime" -> { body.put(field.name(), "00:00:00"); return; }
             case "java.time.Instant", "java.time.OffsetDateTime", "java.time.ZonedDateTime" ->
-                    { body.put(field.name(), "2999-01-01T00:00:00Z"); return; }
+                    { body.put(field.name(), "2037-01-01T00:00:00Z"); return; }
             default -> { }
         }
         List<String> consts = enumConstants.get(t);
