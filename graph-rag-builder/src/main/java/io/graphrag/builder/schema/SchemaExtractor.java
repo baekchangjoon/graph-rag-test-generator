@@ -47,7 +47,8 @@ public class SchemaExtractor {
                         name,
                         rs.getString("TYPE_NAME").toUpperCase(),
                         "YES".equals(rs.getString("IS_NULLABLE")),
-                        primaryKeys.contains(name)));
+                        primaryKeys.contains(name),
+                        "YES".equals(rs.getString("IS_AUTOINCREMENT"))));
             }
         }
 
