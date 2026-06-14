@@ -226,14 +226,23 @@ public class Generator {
         String path = endpoint.path();
         StringBuilder query = new StringBuilder();
         for (EndpointParam p : endpoint.params()) {
-            if (!input.has(p.name())) continue;
-            String v = input.get(p.name()).asText();
             if (p.kind() == ParamKind.PATH) {
+                // 404 등 path param이 누락된 read-path도 유효한 URL을 만들어야 한다.
+                // 빌더의 buildPathAndQuery와 동일한 센티널로 {id} 미바인딩 오류를 방지한다.
+                String v = input.has(p.name()) ? input.get(p.name()).asText() : pathSentinel(p);
                 path = path.replace("{" + p.name() + "}", v);
-            } else if (p.kind() == ParamKind.QUERY) {
-                query.append(query.isEmpty() ? "?" : "&").append(p.name()).append("=").append(v);
+            } else if (p.kind() == ParamKind.QUERY && input.has(p.name())) {
+                query.append(query.isEmpty() ? "?" : "&").append(p.name())
+                        .append("=").append(input.get(p.name()).asText());
             }
         }
         return path + query;
+    }
+
+    private static String pathSentinel(EndpointParam param) {
+        return switch (param.javaType()) {
+            case "java.lang.Integer", "int", "java.lang.Long", "long" -> "0";
+            default -> "missing";
+        };
     }
 }
