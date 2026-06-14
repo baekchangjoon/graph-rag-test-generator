@@ -12,6 +12,7 @@ import io.graphrag.model.TableSchema;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -19,6 +20,16 @@ import java.util.Set;
  * path/query param을 WHERE 제약으로 보고, 타깃 테이블에 매칭 행을 시드한다.
  */
 public class ReadInputSynthesizer {
+
+    private final Map<String, List<String>> enumConstants;
+
+    public ReadInputSynthesizer() {
+        this(Map.of());
+    }
+
+    public ReadInputSynthesizer(Map<String, List<String>> enumConstants) {
+        this.enumConstants = enumConstants;
+    }
 
     /**
      * 시드 PK/FK에 쓰는 비충돌 정수 id의 기준값. SUT가 data.sql 등으로 미리 시드한 행(보통 1..N)과
@@ -198,12 +209,26 @@ public class ReadInputSynthesizer {
         return PROBE_ID_BASE + Math.floorMod(endpoint.id().hashCode(), 9000);
     }
 
-    private static String scalarFor(EndpointParam param, int probeId) {
-        return switch (param.javaType()) {
+    private String scalarFor(EndpointParam param, int probeId) {
+        String t = param.javaType();
+        switch (t) {
             case "java.lang.Integer", "int", "java.lang.Long", "long",
-                 "java.lang.Short", "short" -> String.valueOf(probeId);
-            default -> "probe-" + param.name();
-        };
+                 "java.lang.Short", "short" -> { return String.valueOf(probeId); }
+            case "java.time.LocalDate" -> { return "2999-01-01"; }
+            case "java.time.LocalDateTime" -> { return "2999-01-01T00:00:00"; }
+            default -> { }
+        }
+        List<String> consts = enumConstants.get(t);
+        if (consts == null) {   // simple-name 폴백
+            String simple = t.substring(t.lastIndexOf('.') + 1);
+            consts = enumConstants.entrySet().stream()
+                    .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
+        }
+        if (consts != null && !consts.isEmpty()) {
+            return consts.get(0);
+        }
+        return "probe-" + param.name();
     }
 
     private static Object defaultFor(ColumnSchema column) {

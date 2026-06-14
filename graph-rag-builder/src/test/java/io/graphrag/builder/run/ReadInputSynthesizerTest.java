@@ -3,6 +3,7 @@ package io.graphrag.builder.run;
 import io.graphrag.model.*;
 import org.junit.jupiter.api.Test;
 import java.util.List;
+import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ReadInputSynthesizerTest {
@@ -119,5 +120,14 @@ class ReadInputSynthesizerTest {
         assertThat((Long) seed.values().get(idIdx)).isGreaterThanOrEqualTo(90001L);
         // PATH 변수는 PK 셀렉터 → URL 값(body)과 시드 PK가 일치해야 한다
         assertThat(out.body().get("id").asText()).isEqualTo(String.valueOf(seed.values().get(idIdx)));
+    }
+
+    @Test
+    void synthesize_enumQueryParam_returnsFirstConstant() {
+        Map<String, List<String>> enums = Map.of("io.x.Palette", List.of("RED", "GREEN"));
+        Endpoint endpoint = new Endpoint("get-api-items", "GET", "/api/items", "x.C", "get",
+                List.of(new EndpointParam("palette", "io.x.Palette", ParamKind.QUERY)), false);
+        SynthesizedInput out = new ReadInputSynthesizer(enums).synthesize(endpoint, List.of());
+        assertThat(out.body().get("palette").asText()).isEqualTo("RED");
     }
 }
