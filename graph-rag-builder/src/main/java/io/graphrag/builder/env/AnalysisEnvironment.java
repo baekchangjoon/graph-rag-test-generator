@@ -84,7 +84,8 @@ public class AnalysisEnvironment implements AutoCloseable {
 
         log.info("starting SUT process: {}", sutJar);
         sut = SutProcess.start(sutJar, workDir, jdbcUrl(), db.getUsername(), db.getPassword(),
-                new SutOptions(options.javaToolOptions(), options.extraLogLevels(), extraEnv));
+                new SutOptions(options.javaToolOptions(), options.extraLogLevels(), extraEnv,
+                        options.javaHome()));
     }
 
     public String jdbcUrl() {

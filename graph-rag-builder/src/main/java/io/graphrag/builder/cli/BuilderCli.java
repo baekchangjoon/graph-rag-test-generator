@@ -282,8 +282,17 @@ public final class BuilderCli {
     private static Map<String, String> parseArgs(String[] args) {
         Map<String, String> options = new HashMap<>();
         int start = args.length > 0 && !args[0].startsWith("--") ? 1 : 0;  // "build" 서브커맨드 허용
-        for (int i = start; i + 1 < args.length; i += 2) {
-            options.put(args[i], args[i + 1]);
+        for (int i = start; i < args.length; i++) {
+            if (!args[i].startsWith("--")) {
+                continue;
+            }
+            // 다음 토큰이 값이면 소비, 아니면 값 없는 플래그(예: --with-redis)
+            if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+                options.put(args[i], args[i + 1]);
+                i++;
+            } else {
+                options.put(args[i], "");
+            }
         }
         return options;
     }
