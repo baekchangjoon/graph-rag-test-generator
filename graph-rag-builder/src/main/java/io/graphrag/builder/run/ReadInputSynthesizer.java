@@ -207,10 +207,19 @@ public class ReadInputSynthesizer {
     }
 
     private static Object defaultFor(ColumnSchema column) {
-        String type = column.jdbcType();
-        if (type.contains("CHAR") || type.contains("TEXT")) return "probe";
+        String type = column.jdbcType().toUpperCase();
+        if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) return "probe";
         if (type.contains("BOOL")) return true;
-        return 1;
+        // 시간 타입: setObject가 java.time을 DATE/TIMESTAMP에 바인딩. 2999로 미래 제약도 만족.
+        if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
+            return java.time.LocalDateTime.of(2999, 1, 1, 0, 0);
+        }
+        if (type.contains("DATE")) return java.time.LocalDate.of(2999, 1, 1);
+        if (type.contains("TIME")) return java.time.LocalTime.of(0, 0);
+        if (type.contains("UUID")) {
+            return java.util.UUID.fromString("00000000-0000-0000-0000-000000000001");
+        }
+        return 1;   // INT/SERIAL/NUMERIC/DECIMAL/REAL/DOUBLE/FLOAT 등 수치
     }
 
     /**

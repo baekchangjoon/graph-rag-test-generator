@@ -293,12 +293,25 @@ public class FixtureComposer {
     }
 
     private static String defaultExprFor(ColumnSchema column) {
-        String type = column.jdbcType();
-        if (type.contains("CHAR") || type.contains("TEXT")) {
+        String type = column.jdbcType().toUpperCase();
+        if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) {
             return "\"probe\"";
         }
         if (type.contains("BOOL")) {
             return "true";
+        }
+        // 시간 타입: FQN java.time을 코드에 그대로 (import 불필요), setObject가 DATE/TIMESTAMP에 바인딩
+        if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
+            return "java.time.LocalDateTime.of(2999, 1, 1, 0, 0)";
+        }
+        if (type.contains("DATE")) {
+            return "java.time.LocalDate.of(2999, 1, 1)";
+        }
+        if (type.contains("TIME")) {
+            return "java.time.LocalTime.of(0, 0)";
+        }
+        if (type.contains("UUID")) {
+            return "java.util.UUID.fromString(\"00000000-0000-0000-0000-000000000001\")";
         }
         return "1";
     }
