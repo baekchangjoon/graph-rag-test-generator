@@ -67,12 +67,14 @@ public final class InputMutator {
 
     /** generic firstOrder + 제약 지향 변이를 합쳐 이름 기준 dedupe. 두 explorer 공용. */
     public static List<Mutation> forTarget(EndpointTarget target) {
-        List<Mutation> all = new ArrayList<>(
-                firstOrder(target.mutableFields(), target.literalCandidates()));
-        all.addAll(constraintDirected(target.mutableFields(),
+        // 고신호(제약 지향 + enum + joint)를 generic firstOrder 앞에 둔다. 예산이 적을 때
+        // firstOrder(remove/null/zero × 전 필드)가 bound/enum/joint를 굶기는 것을 방지
+        // (다필드 가드는 bound로 valid-prefix seed를 만들고 enum/joint로 그 위를 열어야 도달).
+        List<Mutation> all = new ArrayList<>(constraintDirected(target.mutableFields(),
                 target.fieldConstraints(), target.conditionBounds(), target.stringCandidates()));
         all.addAll(enumValues(target.mutableFields(), target.enumConstants()));
         all.addAll(joint(target.mutableFields(), target.conjunctions()));
+        all.addAll(firstOrder(target.mutableFields(), target.literalCandidates()));
         return dedupeByName(all);
     }
 
