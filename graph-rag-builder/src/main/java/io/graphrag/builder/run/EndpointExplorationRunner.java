@@ -9,7 +9,6 @@ import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutProcess;
-import io.graphrag.builder.explore.ConditionBoundarySolver;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
 import io.graphrag.builder.explore.EndpointInvoker;
 import io.graphrag.builder.explore.EndpointTarget;
@@ -21,6 +20,7 @@ import io.graphrag.builder.explore.PathCandidate;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
+import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
@@ -113,7 +113,7 @@ public class EndpointExplorationRunner {
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                               List<ConstraintExtractor.ConditionSpan> conditions,
                               List<ConstraintExtractor.Comparison> comparisons,
-                              List<ConstraintExtractor.StringEquality> stringEqualities,
+                              InputCandidates candidates,
                               Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         boolean readPath = endpoint.httpMethod().equals("GET");
@@ -147,13 +147,9 @@ public class EndpointExplorationRunner {
                       .toList()
                 : (shape == null ? List.of() : shape.fields());
 
-        Map<String, Set<Long>> conditionBounds =
-                new ConditionBoundarySolver().solve(comparisons);
-        Map<String, Set<String>> stringCandidates = new java.util.TreeMap<>();
-        for (ConstraintExtractor.StringEquality se : stringEqualities) {
-            stringCandidates.computeIfAbsent(se.fieldRef(), k -> new java.util.TreeSet<>())
-                    .add(se.value());
-        }
+        // 입력 후보는 오라클(static-literal + concolic ASM+Z3)이 이미 합쳐 산출. 필드별 투영.
+        Map<String, Set<Long>> conditionBounds = candidates.numeric();
+        Map<String, Set<String>> stringCandidates = candidates.strings();
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
