@@ -38,6 +38,26 @@ class ReadInputSynthesizerTest {
     }
 
     @Test
+    void pkColumnIsFirstEvenWhenSchemaListsItLater() {
+        Endpoint endpoint = new Endpoint("get-api-orders-id", "GET", "/api/orders/{id}",
+                "x.C", "get", java.util.List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)),
+                true);
+        // schema lists a NOT NULL column ("created_at") BEFORE the PK ("id")
+        TableSchema orders = new TableSchema("orders",
+                java.util.List.of(
+                        new ColumnSchema("created_at", "TIMESTAMP", false, false),
+                        new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("status", "VARCHAR", false, false)),
+                java.util.List.of(), java.util.List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, java.util.List.of(orders));
+
+        SynthesizedInput.SeedRow seed = out.seeds().get(out.seeds().size() - 1); // target row
+        assertThat(seed.columns().get(0)).isEqualTo("id");                       // PK first
+        assertThat(seed.columns()).containsExactlyInAnyOrder("created_at", "id", "status"); // same columns
+    }
+
+    @Test
     void pathVariableSeedsTargetTableAndBuildsInput() {
         Endpoint endpoint = new Endpoint("get-api-orders-id", "GET", "/api/orders/{id}",
                 "x.C", "get", List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)),
