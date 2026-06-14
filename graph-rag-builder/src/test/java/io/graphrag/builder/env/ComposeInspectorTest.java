@@ -70,4 +70,21 @@ class ComposeInspectorTest {
         assertThat(pg.type()).isEqualTo(DbConfig.Type.POSTGRES);
         assertThat(pg.image()).isEqualTo("postgres:18.1");
     }
+
+    @Test
+    void expandsComposeVariablePlaceholders(@TempDir Path dir) throws Exception {
+        // 플랫폼 compose는 ${VAR:-default} 형태를 쓴다 — 리터럴로 읽으면 postgres 기동 실패
+        Path compose = dir.resolve("docker-compose.yml");
+        Files.writeString(compose, """
+                services:
+                  postgres:
+                    image: postgres:16
+                    environment:
+                      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+                      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespw}
+                """);
+        DbConfig pg = ComposeInspector.detectDb(compose, "postgres");
+        assertThat(pg.user()).isEqualTo("postgres");
+        assertThat(pg.password()).isEqualTo("postgrespw");
+    }
 }

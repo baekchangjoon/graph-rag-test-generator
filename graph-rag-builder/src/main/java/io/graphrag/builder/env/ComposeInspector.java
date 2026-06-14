@@ -75,16 +75,43 @@ public final class ComposeInspector {
             case MYSQL, MARIADB -> "MYSQL_" + (suffix.equals("DB") ? "DATABASE" : suffix);
         };
         if (env.isObject()) {
-            return env.path(key).asText("");
+            return expand(env.path(key).asText(""));
         }
         if (env.isArray()) {
             for (JsonNode entry : env) {
                 String text = entry.asText("");
                 if (text.startsWith(key + "=")) {
-                    return text.substring(key.length() + 1);
+                    return expand(text.substring(key.length() + 1));
                 }
             }
         }
         return "";
+    }
+
+    /**
+     * compose 변수 치환을 해석한다: {@code ${VAR:-default}}/{@code ${VAR:default}} → 실제
+     * 환경변수 값이 있으면 그 값, 없으면 default. {@code ${VAR}} → 환경변수 또는 빈 문자열.
+     * (Testcontainers는 fresh DB이므로 보통 default가 맞다 — 리터럴 "${...}"를 컨테이너
+     * user/password로 넣으면 postgres가 기동 실패한다.)
+     */
+    private static String expand(String value) {
+        if (value == null || !value.startsWith("${") || !value.endsWith("}")) {
+            return value == null ? "" : value;
+        }
+        String inner = value.substring(2, value.length() - 1);   // VAR:-default | VAR:default | VAR
+        String name;
+        String def;
+        if (inner.contains(":-")) {                  // ${VAR:-default}
+            name = inner.substring(0, inner.indexOf(":-"));
+            def = inner.substring(inner.indexOf(":-") + 2);
+        } else if (inner.contains(":")) {            // ${VAR:default}
+            name = inner.substring(0, inner.indexOf(':'));
+            def = inner.substring(inner.indexOf(':') + 1);
+        } else {                                      // ${VAR}
+            name = inner;
+            def = "";
+        }
+        String fromEnv = System.getenv(name.trim());
+        return fromEnv != null && !fromEnv.isBlank() ? fromEnv : def;
     }
 }
