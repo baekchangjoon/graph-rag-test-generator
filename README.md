@@ -40,8 +40,17 @@ exploration-report.json 생성 → 도구 2가 endpoint별 전 path 테스트 �
 # 전체 단위/통합 테스트
 ./gradlew check
 
-# 도구 1 단독
+# 도구 1 단독 (기본)
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir>"
+
+# 도구 1 — DB 타입을 SUT compose에서 자동 탐지 (Phase 7)
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir>"
+
+# 도구 1 — JWT 인증 주입 (Phase 7)
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass secret \
+  --out <dir>"
 
 # 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
 git diff --name-only main > changed.txt
@@ -76,5 +85,10 @@ git diff --name-only main > changed.txt
 - **Phase 6.1·6.2 완료** (2026-06-11): 파티션 샤드 그래프 스토어
   (`PartitionedGraphStore`, Neo4j 보류 — `docs/decisions/graph-store-phase6.md`) +
   증분 빌드 (`--incremental-base`/`--changed-files`, 더티 파티션만 재탐색)
-- 다음: Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강 어노테이션
+- **Phase 7 완료** (2026-06-14): 다중 HTTP method + JWT 인증 + DB 비종속 + GET read-path.
+  GET/PUT/DELETE/PATCH 인덱싱, `--sut-compose` 기반 DB 타입 자동 탐지,
+  `--auth-*` JWT 인증 주입(탐색·생성 테스트 양쪽), GET 조회 경로 시드+결정적 합성.
+  22 테스트 전부 GREEN (auth POST 10, search 4, WS 2, GET-by-id 3, GET-by-userId 3)
+- 다음: Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강 어노테이션,
+  Phase 7 stage 2(외부 spring-petclinic 적용)
   (`docs/09-implementation-roadmap.md`)
