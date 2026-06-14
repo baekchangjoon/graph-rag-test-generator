@@ -123,6 +123,29 @@ class ReadInputSynthesizerTest {
     }
 
     @Test
+    void stringPkSeedIsEndpointUniqueAndMatchesPathValue() {
+        // 같은 varchar-PK 테이블(post)을 읽는 두 엔드포인트가 서로 다른 PK로 시드해야
+        // 병렬 실행 시 PK 충돌하지 않고, 한쪽이 시드한 행을 다른 쪽이 우연히 읽지 않는다.
+        TableSchema post = new TableSchema("post",
+                List.of(new ColumnSchema("id", "VARCHAR", false, true),
+                        new ColumnSchema("title", "VARCHAR", false, false)),
+                List.of(), List.of());
+        Endpoint a = new Endpoint("get-internal-posts-id", "GET", "/internal/posts/{id}",
+                "x.C", "get", List.of(new EndpointParam("id", "java.lang.String", ParamKind.PATH)), true);
+        Endpoint b = new Endpoint("get-internal-posts-id-content", "GET", "/internal/posts/{id}/content",
+                "x.C", "get", List.of(new EndpointParam("id", "java.lang.String", ParamKind.PATH)), true);
+
+        SynthesizedInput outA = new ReadInputSynthesizer().synthesize(a, List.of(post));
+        SynthesizedInput outB = new ReadInputSynthesizer().synthesize(b, List.of(post));
+
+        String pkA = outA.seeds().get(0).values().get(outA.seeds().get(0).columns().indexOf("id")).toString();
+        String pkB = outB.seeds().get(0).values().get(outB.seeds().get(0).columns().indexOf("id")).toString();
+        assertThat(pkA).isNotEqualTo(pkB);                              // 엔드포인트별 비충돌
+        assertThat(outA.body().get("id").asText()).isEqualTo(pkA);      // URL 값 == 시드 PK
+        assertThat(outB.body().get("id").asText()).isEqualTo(pkB);
+    }
+
+    @Test
     void synthesize_enumQueryParam_returnsFirstConstant() {
         Map<String, List<String>> enums = Map.of("io.x.Palette", List.of("RED", "GREEN"));
         Endpoint endpoint = new Endpoint("get-api-items", "GET", "/api/items", "x.C", "get",
