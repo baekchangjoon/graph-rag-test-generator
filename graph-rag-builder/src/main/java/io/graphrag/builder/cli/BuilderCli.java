@@ -104,7 +104,8 @@ public final class BuilderCli {
                         : Files.readAllLines(Path.of(changedFilesList)).stream()
                                 .filter(line -> !line.isBlank()).toList(),
                 authConfig,
-                options.containsKey("--with-redis"));
+                options.containsKey("--with-redis"),
+                options.get("--sut-java-home"));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -151,7 +152,8 @@ public final class BuilderCli {
         SutOptions sutOptions = new SutOptions(
                 jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
                 mybatisLogLevels,
-                otel.env(config.sutId()));
+                otel.env(config.sutId()),
+                config.sutJavaHome());
 
         try (AnalysisEnvironment env = new AnalysisEnvironment(config.dbConfig(), config.withRedis())) {
             env.start(config.sutJar(), workDir, sutOptions,

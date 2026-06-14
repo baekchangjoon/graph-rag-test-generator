@@ -46,7 +46,11 @@ public final class SutProcess {
             Path logFile = workDir.resolve("sut.log");
             int port = freePort();
 
-            String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+            // SUT 전용 JDK(--sut-java-home)가 있으면 그걸로, 없으면 빌더 자신의 JDK로 띄운다.
+            // (이기종 MSA: diary=Java23, mindgraph=Java11 등 — 빌더(17)와 다를 수 있음)
+            String javaHome = options.javaHome() == null || options.javaHome().isBlank()
+                    ? System.getProperty("java.home") : options.javaHome();
+            String javaBin = Path.of(javaHome, "bin", "java").toString();
             ProcessBuilder builder = new ProcessBuilder(javaBin, "-jar", sutJar.toAbsolutePath().toString())
                     .redirectErrorStream(true)
                     .redirectOutput(logFile.toFile());
