@@ -166,7 +166,7 @@ public class Generator {
 
         boolean readPath = endpoint.httpMethod().equals("GET");
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
-                client.seedsForPath(pathId));
+                client.seedsForPath(pathId), readPath);
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(pathId));
 

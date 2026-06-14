@@ -21,16 +21,19 @@ import java.util.Set;
 public class ReadInputSynthesizer {
 
     /**
-     * 시드 PK/FK에 쓰는 비충돌 정수 id. SUT가 data.sql 등으로 미리 시드한 행(보통 1..N)과
+     * 시드 PK/FK에 쓰는 비충돌 정수 id의 기준값. SUT가 data.sql 등으로 미리 시드한 행(보통 1..N)과
      * 겹치지 않도록 충분히 큰 값을 쓴다 → (a) 시드 INSERT가 기존 행과 충돌하지 않고
      * (b) 시드가 실효(GET이 시드한 행을 반환)하여 관측 응답이 시드를 반영하며
      * (c) cleanup이 SUT 기준 데이터가 아닌 자기 행만 삭제한다.
+     * 엔드포인트마다 다른 값을 써서, 한 분석 DB를 공유하는 탐색 중 엔드포인트 간 시드 오염
+     * (예: list가 심은 owner를 by-id가 ON CONFLICT no-op로 관측)도 방지한다.
      */
-    private static final int PROBE_ID = 90001;
+    private static final int PROBE_ID_BASE = 90001;
 
     public SynthesizedInput synthesize(Endpoint endpoint, List<TableSchema> tables) {
         ObjectNode input = Json.mapper().createObjectNode();
         TableSchema target = resolveTargetTable(endpoint, tables);
+        int probeId = probeIdFor(endpoint);
 
         // PK/FK 키 컬럼은 비충돌 probe 값, 일반 NOT NULL 컬럼은 타입 기본값
         List<String> columns = new ArrayList<>();
@@ -40,14 +43,14 @@ public class ReadInputSynthesizer {
             for (ColumnSchema column : target.columns()) {
                 if (column.primaryKey()) {
                     columns.add(column.name());
-                    values.add(keyProbe(column));
+                    values.add(keyProbe(column, probeId));
                 }
             }
             for (ColumnSchema column : target.columns()) {
                 if (!column.primaryKey() && !column.nullable()) {
                     ForeignKey fk = findFk(column.name(), target);
                     columns.add(column.name());
-                    values.add(fk != null ? keyProbe(column) : defaultFor(column));
+                    values.add(fk != null ? keyProbe(column, probeId) : defaultFor(column));
                 }
             }
         }
@@ -56,7 +59,7 @@ public class ReadInputSynthesizer {
             if (param.kind() != ParamKind.PATH && param.kind() != ParamKind.QUERY) {
                 continue;
             }
-            String value = scalarFor(param);
+            String value = scalarFor(param, probeId);
             input.put(param.name(), value);
             String column = mapParamToColumn(param, target);
             if (column != null) {
@@ -89,7 +92,7 @@ public class ReadInputSynthesizer {
                     continue;
                 }
                 seedParent(fk.referencedTable(), fk.referencedColumn(), values.get(fkIdx),
-                        tables, visited, allSeeds);
+                        tables, visited, allSeeds, probeId);
             }
             allSeeds.add(new SynthesizedInput.SeedRow(target.name(), columns, values));
             seeds = allSeeds;
@@ -100,7 +103,7 @@ public class ReadInputSynthesizer {
     /** parentTable을 재귀적으로 시드하여 allSeeds에 추가 (사이클 방지: visited). */
     private void seedParent(String parentTable, String parentColumn, Object probeValue,
                             List<TableSchema> tables, Set<String> visited,
-                            List<SynthesizedInput.SeedRow> allSeeds) {
+                            List<SynthesizedInput.SeedRow> allSeeds, int probeId) {
         if (visited.contains(parentTable)) {
             return;
         }
@@ -121,8 +124,8 @@ public class ReadInputSynthesizer {
             } else if (!col.nullable()) {
                 ForeignKey fk = findFk(col.name(), parent);
                 if (fk != null) {
-                    Object childProbe = keyProbe(col);
-                    seedParent(fk.referencedTable(), fk.referencedColumn(), childProbe, tables, visited, allSeeds);
+                    Object childProbe = keyProbe(col, probeId);
+                    seedParent(fk.referencedTable(), fk.referencedColumn(), childProbe, tables, visited, allSeeds, probeId);
                     cols.add(col.name());
                     vals.add(childProbe);
                 } else {
@@ -190,10 +193,15 @@ public class ReadInputSynthesizer {
         return value;
     }
 
-    private static String scalarFor(EndpointParam param) {
+    /** 엔드포인트별 비충돌 정수 id (90001..98999, 결정적). 엔드포인트 간 시드 오염 방지. */
+    private static int probeIdFor(Endpoint endpoint) {
+        return PROBE_ID_BASE + Math.floorMod(endpoint.id().hashCode(), 9000);
+    }
+
+    private static String scalarFor(EndpointParam param, int probeId) {
         return switch (param.javaType()) {
             case "java.lang.Integer", "int", "java.lang.Long", "long",
-                 "java.lang.Short", "short" -> String.valueOf(PROBE_ID);
+                 "java.lang.Short", "short" -> String.valueOf(probeId);
             default -> "probe-" + param.name();
         };
     }
@@ -211,11 +219,11 @@ public class ReadInputSynthesizer {
      * 정수 키에는 PROBE_ID(비충돌 정수)를, 문자열 키에는 컬럼명 기반 문자열을 쓴다
      * (정수 PK 컬럼에 "probe-..." varchar를 넣으면 INSERT가 깨진다).
      */
-    private static Object keyProbe(ColumnSchema keyColumn) {
+    private static Object keyProbe(ColumnSchema keyColumn, int probeId) {
         String type = keyColumn.jdbcType().toUpperCase();
         if (type.contains("CHAR") || type.contains("TEXT")) return "probe-" + keyColumn.name();
-        if (type.contains("BIGINT")) return (long) PROBE_ID;
-        if (type.contains("INT")) return PROBE_ID;
+        if (type.contains("BIGINT")) return (long) probeId;
+        if (type.contains("INT")) return probeId;
         if (type.contains("BOOL")) return true;
         return "probe-" + keyColumn.name();
     }
