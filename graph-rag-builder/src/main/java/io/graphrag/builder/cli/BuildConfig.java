@@ -23,7 +23,8 @@ public record BuildConfig(
         Path incrementalBase,
         List<String> changedFiles,
         AuthConfig authConfig,
-        boolean withRedis) {
+        boolean withRedis,
+        String sutJavaHome) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -36,6 +37,6 @@ public record BuildConfig(
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
-                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false);
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, null);
     }
 }
