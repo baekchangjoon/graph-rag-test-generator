@@ -60,6 +60,10 @@ public final class BuilderCli {
     private static final Logger log = LoggerFactory.getLogger(BuilderCli.class);
 
     public static void main(String[] args) throws Exception {
+        if (args.length > 0 && args[0].equals("coverage")) {
+            runCoverageReport(parseArgs(args));
+            return;
+        }
         Map<String, String> options = parseArgs(args);
         Path sutSrc = Path.of(required(options, "--sut-src"));
         String manualPaths = options.get("--manual-paths");
@@ -149,6 +153,8 @@ public final class BuilderCli {
         // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
         Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
         int totalAppBranches = 0;
+        // 탐색 전체의 line+branch 집계용: 엔드포인트별 누적 exec를 OR 병합한 run-wide 스토어.
+        org.jacoco.core.data.ExecutionDataStore runWideExec = new org.jacoco.core.data.ExecutionDataStore();
         List<TableSchema> tables;
 
         // enum 상수 맵: 순수 소스 파싱(SUT/Docker 불요) → 분석 환경 기동 전 1회.
@@ -241,7 +247,15 @@ public final class BuilderCli {
                     allSeeds.addAll(result.seeds());
                     reportEntries.add(result.report());
                     coveredAppBranches.addAll(result.coveredAppBranches());
+                    result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
                 }
+
+                var explCov = analyzer.analyze(runWideExec);
+                log.info("exploration coverage [{}]: line {}/{} ({}%), branch {}/{} ({}%)",
+                        config.sutId(), explCov.coveredLines(), explCov.totalLines(),
+                        explCov.totalLines() == 0 ? 0 : 100 * explCov.coveredLines() / explCov.totalLines(),
+                        explCov.covered().size(), explCov.totalBranches(),
+                        explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
 
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
                         new io.graphrag.builder.run.WsCaptureRunner(
@@ -326,6 +340,23 @@ public final class BuilderCli {
             env.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
         }
         return env;
+    }
+
+    /** `coverage --exec <file> --jar <bootjar> [--label x]` — .exec를 라인+브랜치로 분석해 출력. */
+    private static void runCoverageReport(Map<String, String> o) throws Exception {
+        Path exec = Path.of(required(o, "--exec"));
+        Path jar = Path.of(required(o, "--jar"));
+        org.jacoco.core.tools.ExecFileLoader loader = new org.jacoco.core.tools.ExecFileLoader();
+        loader.load(exec.toFile());
+        var cov = new BranchCoverageAnalyzer(jar).analyze(loader.getExecutionDataStore());
+        int cl = cov.coveredLines();
+        int tl = cov.totalLines();
+        int cb = cov.covered().size();
+        int tb = cov.totalBranches();
+        System.out.printf("COVERAGE %s: line %d/%d (%.0f%%), branch %d/%d (%.0f%%)%n",
+                o.getOrDefault("--label", "-"),
+                cl, tl, tl == 0 ? 0.0 : 100.0 * cl / tl,
+                cb, tb, tb == 0 ? 0.0 : 100.0 * cb / tb);
     }
 
     private static Map<String, String> parseArgs(String[] args) {
