@@ -9,6 +9,7 @@ dependencies {
     testImplementation(project(":testlib"))
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.postgresql)
+    testRuntimeOnly(libs.mysql.connector.j)   // MSA의 MySQL 기반 서비스(auth-user 등) 대상
     otelAgent(libs.otel.javaagent)
 }
 
