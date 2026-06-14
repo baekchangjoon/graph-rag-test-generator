@@ -167,8 +167,21 @@ public class EndpointExplorationRunner {
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
+        // mutating by-id(PUT/DELETE /{id})는 탐색 중 공유 시드 행을 변이·누적한다 → 각 요청 전에
+        // 리소스를 fresh 시드로 리셋해 각 path 응답을 (fresh 시드, 그 요청)의 순수 함수로 만든다
+        // (생성 테스트가 fresh DB에서 재현 가능). HeuristicExplorer/Fuzzer 둘 다 이 invoker를 쓴다.
+        boolean mutatingById = !readPath && hasPathParam && !happy.seeds().isEmpty();
+        EndpointInvoker invoker = httpInvoker(endpoint);
+        if (mutatingById) {
+            EndpointInvoker base = invoker;
+            List<SynthesizedInput.SeedRow> resetRows = happy.seeds();
+            invoker = body -> {
+                resetSeeds(resetRows);
+                return base.invoke(body);
+            };
+        }
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
-                httpInvoker(endpoint), literalCandidates,
+                invoker, literalCandidates,
                 fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
@@ -389,6 +402,21 @@ public class EndpointExplorationRunner {
         return shape == null
                 ? new SynthesizedInput(Json.mapper().createObjectNode(), List.of())
                 : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+    }
+
+    /** 시드 행들을 fresh 상태로 복원: reverse-order DELETE(child→parent) 후 정순 INSERT(parent→child).
+     *  멱등 insert는 변이된 행 위에서 no-op이므로 반드시 DELETE를 먼저 한다. */
+    private void resetSeeds(List<SynthesizedInput.SeedRow> seeds) {
+        for (int i = seeds.size() - 1; i >= 0; i--) {
+            Seeds.delete(connection, seeds.get(i));
+        }
+        for (SynthesizedInput.SeedRow row : seeds) {
+            try {
+                Seeds.insert(connection, dbType, row);
+            } catch (Exception e) {
+                throw new IllegalStateException("seed reset insert failed: " + row.table(), e);
+            }
+        }
     }
 
     private static ExploredPath withSeedIds(ExploredPath p, List<String> seedIds) {

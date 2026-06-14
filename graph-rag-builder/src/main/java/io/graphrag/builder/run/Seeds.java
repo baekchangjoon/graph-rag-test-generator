@@ -28,4 +28,15 @@ final class Seeds {
         }
         log.info("seeded: {} {}", seed.table(), seed.values());
     }
+
+    /** 시드 행 삭제(PK=columns[0] 기준). 요청별 리셋용 — DELETE는 방언 불요. */
+    static void delete(Connection connection, SynthesizedInput.SeedRow seed) {
+        String sql = "DELETE FROM " + seed.table() + " WHERE " + seed.columns().get(0) + " = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setObject(1, seed.values().get(0));
+            statement.executeUpdate();
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException("seed delete failed: " + seed.table(), e);
+        }
+    }
 }
