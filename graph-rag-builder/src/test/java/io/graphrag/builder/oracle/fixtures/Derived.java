@@ -26,4 +26,12 @@ public class Derived {
         }
         return 0;
     }
+
+    // 문자열 길이 제약: code.length()==5 → 길이5 문자열 필요 (소스에 그런 리터럴 없음)
+    public int codeLen(String code) {
+        if (code.length() == 5) {
+            return 4;
+        }
+        return 0;
+    }
 }

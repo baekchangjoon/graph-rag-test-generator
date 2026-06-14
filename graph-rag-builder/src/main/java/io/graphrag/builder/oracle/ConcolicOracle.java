@@ -87,19 +87,31 @@ public final class ConcolicOracle implements InputOracle {
         ClassNode cn = new ClassNode();
         new ClassReader(classBytes).accept(cn, ClassReader.SKIP_FRAMES);
         Map<String, Set<Long>> numeric = new TreeMap<>();
+        Map<String, Set<String>> strings = new TreeMap<>();
         try (Context ctx = new Context()) {
             for (MethodNode m : cn.methods) {
                 for (Comparison c : scanMethod(m)) {
                     solveBoundary(ctx, c).ifPresent(b -> {
-                        Set<Long> vals = numeric.computeIfAbsent(c.field, k -> new TreeSet<>());
-                        vals.add(b - 1);
-                        vals.add(b);
-                        vals.add(b + 1);
+                        if (c.field.startsWith("len:")) {
+                            // 문자열 길이 제약 → 해당 길이의 문자열 후보 (경계 ±1)
+                            String real = c.field.substring("len:".length());
+                            Set<String> sv = strings.computeIfAbsent(real, k -> new TreeSet<>());
+                            for (long len : new long[]{b - 1, b, b + 1}) {
+                                if (len >= 0 && len <= 256) {
+                                    sv.add("x".repeat((int) len));
+                                }
+                            }
+                        } else {
+                            Set<Long> vals = numeric.computeIfAbsent(c.field, k -> new TreeSet<>());
+                            vals.add(b - 1);
+                            vals.add(b);
+                            vals.add(b + 1);
+                        }
                     });
                 }
             }
         }
-        return new InputCandidates(numeric, Map.of());
+        return new InputCandidates(numeric, strings);
     }
 
     /** field 비교의 선형식 coeff*field+constant (==0의 경계를 풀 대상). */
@@ -146,6 +158,8 @@ public final class ConcolicOracle implements InputOracle {
                 case Type.OBJECT -> {
                     if (isBoxedNumeric(arg.getDescriptor())) {
                         locals.put(slot, Sym.field(name, 1));
+                    } else if (arg.getDescriptor().equals("Ljava/lang/String;")) {
+                        locals.put(slot, Sym.stringValue(name));
                     } else {
                         locals.put(slot, Sym.objectParam(1));
                     }
@@ -252,8 +266,14 @@ public final class ConcolicOracle implements InputOracle {
             stack.push(pop(stack));
             return;
         }
-        // 0-arg 접근자(객체 파라미터 수신자, 숫자/박싱숫자 반환) → field 변수
         Type ret = Type.getReturnType(mi.desc);
+        // String.length() (문자열 입력값 수신자) → len:field 정수 변수
+        if (!isStatic && args.length == 0 && mi.name.equals("length") && ret.getSort() == Type.INT) {
+            Sym recv = pop(stack);
+            stack.push(recv.stringField != null ? Sym.field("len:" + recv.stringField, 1) : Sym.top(1));
+            return;
+        }
+        // 0-arg 접근자(객체 파라미터 수신자, 숫자/박싱숫자 반환) → field 변수
         if (!isStatic && args.length == 0 && isNumericReturn(ret)) {
             Sym recv = pop(stack);
             if (recv.objectParam) {
@@ -261,6 +281,12 @@ public final class ConcolicOracle implements InputOracle {
                 return;
             }
             pushReturn(stack, ret);
+            return;
+        }
+        // 0-arg 접근자, String 반환, 객체 파라미터 수신자 → 문자열 입력값
+        if (!isStatic && args.length == 0 && ret.getDescriptor().equals("Ljava/lang/String;")) {
+            Sym recv = pop(stack);
+            stack.push(recv.objectParam ? Sym.stringValue(property(mi.name)) : Sym.top(1));
             return;
         }
         // 일반 호출: 인자 pop, 수신자 pop(가상), 반환 push
@@ -360,31 +386,39 @@ public final class ConcolicOracle implements InputOracle {
         return accessor;   // record accessor
     }
 
-    /** 심볼릭 값: 정수 선형식 coeff*field+constant. field==null이면 순수 상수. top/objectParam은 비선형. */
-    private record Sym(boolean top, boolean objectParam, String field, long coeff, long constant, int size) {
+    /**
+     * 심볼릭 값: 정수 선형식 coeff*field+constant. field==null이면 순수 상수.
+     * top/objectParam/stringField는 비선형. stringField는 String 입력값(길이 제약용 수신자).
+     */
+    private record Sym(boolean top, boolean objectParam, String stringField,
+                       String field, long coeff, long constant, int size) {
 
         static Sym top(int size) {
-            return new Sym(true, false, null, 0, 0, size);
+            return new Sym(true, false, null, null, 0, 0, size);
         }
 
         static Sym objectParam(int size) {
-            return new Sym(false, true, null, 0, 0, size);
+            return new Sym(false, true, null, null, 0, 0, size);
+        }
+
+        static Sym stringValue(String name) {
+            return new Sym(false, false, name, null, 0, 0, 1);
         }
 
         static Sym constant(long v, int size) {
-            return new Sym(false, false, null, 0, v, size);
+            return new Sym(false, false, null, null, 0, v, size);
         }
 
         static Sym field(String name, int size) {
-            return new Sym(false, false, name, 1, 0, size);
+            return new Sym(false, false, null, name, 1, 0, size);
         }
 
         boolean isLinear() {
-            return !top && !objectParam;
+            return !top && !objectParam && stringField == null;
         }
 
         Sym withSize(int newSize) {
-            return new Sym(top, objectParam, field, coeff, constant, newSize);
+            return new Sym(top, objectParam, stringField, field, coeff, constant, newSize);
         }
 
         Sym add(Sym o) {
@@ -392,7 +426,7 @@ public final class ConcolicOracle implements InputOracle {
                 return Sym.top(size);
             }
             String f = field != null ? field : o.field;
-            return new Sym(false, false, f, coeff + o.coeff, constant + o.constant, size);
+            return new Sym(false, false, null, f, coeff + o.coeff, constant + o.constant, size);
         }
 
         Sym sub(Sym o) {
@@ -403,7 +437,7 @@ public final class ConcolicOracle implements InputOracle {
             if (!isLinear()) {
                 return Sym.top(size);
             }
-            return new Sym(false, false, field, -coeff, -constant, size);
+            return new Sym(false, false, null, field, -coeff, -constant, size);
         }
 
         Sym mul(Sym o) {
@@ -411,10 +445,10 @@ public final class ConcolicOracle implements InputOracle {
                 return Sym.top(size);
             }
             if (field == null) {   // const * (a*x+b)
-                return new Sym(false, false, o.field, constant * o.coeff, constant * o.constant, size);
+                return new Sym(false, false, null, o.field, constant * o.coeff, constant * o.constant, size);
             }
             if (o.field == null) { // (a*x+b) * const
-                return new Sym(false, false, field, coeff * o.constant, constant * o.constant, size);
+                return new Sym(false, false, null, field, coeff * o.constant, constant * o.constant, size);
             }
             return Sym.top(size);  // x*y 비선형
         }
