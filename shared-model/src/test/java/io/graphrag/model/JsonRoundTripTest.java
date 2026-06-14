@@ -106,7 +106,7 @@ class JsonRoundTripTest {
                 new ExplorationReport.EndpointExploration(
                         "post-api-orders", 10, 7,
                         List.of(new BranchRef("C", "m", 12, 0)),
-                        java.util.Map.of("heuristic", 2, "fuzzer", 1))), 24, 58);
+                        java.util.Map.of("heuristic", 2, "fuzzer", 1), 3)), 24, 58);
         assertThat(roundTrip(report, ExplorationReport.class)).isEqualTo(report);
     }
 
