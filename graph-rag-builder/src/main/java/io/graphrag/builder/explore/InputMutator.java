@@ -3,9 +3,11 @@ package io.graphrag.builder.explore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +71,76 @@ public final class InputMutator {
                 firstOrder(target.mutableFields(), target.literalCandidates()));
         all.addAll(constraintDirected(target.mutableFields(),
                 target.fieldConstraints(), target.conditionBounds(), target.stringCandidates()));
+        all.addAll(enumValues(target.mutableFields(), target.enumConstants()));
+        all.addAll(joint(target.mutableFields(), target.conjunctions()));
         return dedupeByName(all);
+    }
+
+    /** enum 필드 → 선언된 각 상수 세팅 변이(VIP 등). enumConstants 키 미스 시 simple-name 폴백. */
+    public static List<Mutation> enumValues(List<BodyShape.BodyField> fields,
+                                            Map<String, List<String>> enumConstants) {
+        List<Mutation> out = new ArrayList<>();
+        for (BodyShape.BodyField field : fields) {
+            List<String> consts = constantsFor(field.javaType(), enumConstants);
+            if (consts == null) {
+                continue;
+            }
+            String name = field.name();
+            for (String c : consts) {
+                out.add(new Mutation("enum-" + name + "-" + c, body -> body.put(name, c)));
+            }
+        }
+        return out;
+    }
+
+    /** conjunction의 모든 원자 필드가 body에 있으면, 원자들을 동시에 만족값으로 세팅하는 단일 변이. */
+    public static List<Mutation> joint(List<BodyShape.BodyField> fields,
+                                       List<ConstraintExtractor.Conjunction> conjunctions) {
+        HashSet<String> fieldNames = new HashSet<>();
+        for (BodyShape.BodyField f : fields) {
+            fieldNames.add(f.name());
+        }
+        List<Mutation> out = new ArrayList<>();
+        for (ConstraintExtractor.Conjunction c : conjunctions) {
+            if (c.atoms().isEmpty()
+                    || !c.atoms().stream().allMatch(a -> fieldNames.contains(a.fieldRef()))) {
+                continue;
+            }
+            String refs = c.atoms().stream().map(ConstraintExtractor.Atom::fieldRef)
+                    .distinct().sorted().reduce((a, b) -> a + "_" + b).orElse("");
+            String simpleClass = c.classFqn().substring(c.classFqn().lastIndexOf('.') + 1);
+            String name = "joint-" + simpleClass + "-" + c.line() + "-" + refs;
+            List<ConstraintExtractor.Atom> atoms = c.atoms();
+            out.add(new Mutation(name, body -> {
+                for (ConstraintExtractor.Atom a : atoms) {
+                    switch (a.kind()) {
+                        case NUMERIC -> body.put(a.fieldRef(), satisfy(a.op(), a.numLiteral()));
+                        case ENUM_EQ, STRING_EQ -> body.put(a.fieldRef(), a.value());
+                    }
+                }
+                return body;
+            }));
+        }
+        return out;
+    }
+
+    private static long satisfy(String op, long literal) {
+        return switch (op) {
+            case "<" -> literal - 1;
+            case ">", "!=" -> literal + 1;
+            default -> literal;   // <=, >=, ==
+        };
+    }
+
+    private static List<String> constantsFor(String javaType, Map<String, List<String>> enumConstants) {
+        List<String> consts = enumConstants.get(javaType);
+        if (consts != null) {
+            return consts;
+        }
+        String simple = javaType.substring(javaType.lastIndexOf('.') + 1);
+        return enumConstants.entrySet().stream()
+                .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
     }
 
     /**

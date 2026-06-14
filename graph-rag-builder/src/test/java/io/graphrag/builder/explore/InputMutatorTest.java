@@ -79,4 +79,50 @@ class InputMutatorTest {
                 .findFirst().orElseThrow();
         return m.apply().apply(MAPPER.createObjectNode());
     }
+
+    @Test
+    void enumValues_emitsMutationPerConstant() {
+        List<BodyShape.BodyField> fields = List.of(new BodyShape.BodyField("tier", "io.x.Tier"));
+        Map<String, List<String>> enums = Map.of("io.x.Tier", List.of("BASIC", "VIP"));
+        List<InputMutator.Mutation> ms = InputMutator.enumValues(fields, enums);
+        assertThat(applied(ms, "enum-tier-BASIC").get("tier").asText()).isEqualTo("BASIC");
+        assertThat(applied(ms, "enum-tier-VIP").get("tier").asText()).isEqualTo("VIP");
+    }
+
+    @Test
+    void joint_setsAllAtomFieldsSimultaneously() {
+        List<BodyShape.BodyField> fields = List.of(
+                new BodyShape.BodyField("tier", "io.x.Tier"),
+                new BodyShape.BodyField("loyalty", "int"));
+        io.graphrag.builder.index.ConstraintExtractor.Conjunction c =
+                new io.graphrag.builder.index.ConstraintExtractor.Conjunction(
+                        "io.x.Svc", "check", 64, List.of(
+                        new io.graphrag.builder.index.ConstraintExtractor.Atom(
+                                io.graphrag.builder.index.ConstraintExtractor.Atom.Kind.ENUM_EQ,
+                                "tier", "==", 0, "VIP"),
+                        new io.graphrag.builder.index.ConstraintExtractor.Atom(
+                                io.graphrag.builder.index.ConstraintExtractor.Atom.Kind.NUMERIC,
+                                "loyalty", "<", 500, null)));
+        List<InputMutator.Mutation> ms = InputMutator.joint(fields, List.of(c));
+        assertThat(ms).hasSize(1);
+        ObjectNode out = ms.get(0).apply().apply(MAPPER.createObjectNode());
+        assertThat(out.get("tier").asText()).isEqualTo("VIP");
+        assertThat(out.get("loyalty").asInt()).isEqualTo(499);   // satisfy("<",500)=499
+        assertThat(ms.get(0).name()).contains("loyalty").contains("tier");
+    }
+
+    @Test
+    void joint_skippedWhenAnyAtomFieldAbsentFromBody() {
+        List<BodyShape.BodyField> fields = List.of(new BodyShape.BodyField("tier", "io.x.Tier"));
+        io.graphrag.builder.index.ConstraintExtractor.Conjunction c =
+                new io.graphrag.builder.index.ConstraintExtractor.Conjunction(
+                        "io.x.Svc", "check", 64, List.of(
+                        new io.graphrag.builder.index.ConstraintExtractor.Atom(
+                                io.graphrag.builder.index.ConstraintExtractor.Atom.Kind.ENUM_EQ,
+                                "tier", "==", 0, "VIP"),
+                        new io.graphrag.builder.index.ConstraintExtractor.Atom(
+                                io.graphrag.builder.index.ConstraintExtractor.Atom.Kind.NUMERIC,
+                                "loyalty", "<", 500, null)));
+        assertThat(InputMutator.joint(fields, List.of(c))).isEmpty();
+    }
 }

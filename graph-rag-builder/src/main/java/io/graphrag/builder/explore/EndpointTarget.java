@@ -2,6 +2,7 @@ package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.TableSchema;
@@ -20,13 +21,15 @@ public record EndpointTarget(
         List<String> literalCandidates,
         Map<String, List<FieldConstraint>> fieldConstraints,
         Map<String, Set<Long>> conditionBounds,
-        Map<String, Set<String>> stringCandidates) {
+        Map<String, Set<String>> stringCandidates,
+        Map<String, List<String>> enumConstants,
+        List<ConstraintExtractor.Conjunction> conjunctions) {
 
     public EndpointTarget(Endpoint endpoint, ObjectNode baseInput,
                           List<BodyShape.BodyField> mutableFields,
                           List<TableSchema> tables, EndpointInvoker invoker) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                List.of(), Map.of(), Map.of(), Map.of());
+                List.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of());
     }
 
     public EndpointTarget(Endpoint endpoint, ObjectNode baseInput,
@@ -34,6 +37,6 @@ public record EndpointTarget(
                           List<TableSchema> tables, EndpointInvoker invoker,
                           List<String> literalCandidates) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                literalCandidates, Map.of(), Map.of(), Map.of());
+                literalCandidates, Map.of(), Map.of(), Map.of(), Map.of(), List.of());
     }
 }
