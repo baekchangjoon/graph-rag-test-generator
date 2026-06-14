@@ -181,6 +181,8 @@ public final class BuilderCli {
                 // 비교식(분기 조건)은 전 계층 1회 추출 — 모든 엔드포인트가 공유.
                 List<ConstraintExtractor.Comparison> allComparisons =
                         constraintExtractor.extractComparisons(config.sutSrc());
+                List<ConstraintExtractor.StringEquality> allStringEqualities =
+                        constraintExtractor.extractStringEqualities(config.sutSrc());
 
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
@@ -207,7 +209,7 @@ public final class BuilderCli {
                             authProvider, config.authConfig());
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, fieldConstraints);
+                                    allComparisons, allStringEqualities, fieldConstraints);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());

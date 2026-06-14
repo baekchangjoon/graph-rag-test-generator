@@ -108,6 +108,7 @@ public class EndpointExplorationRunner {
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                               List<ConstraintExtractor.ConditionSpan> conditions,
                               List<ConstraintExtractor.Comparison> comparisons,
+                              List<ConstraintExtractor.StringEquality> stringEqualities,
                               Map<String, List<FieldConstraint>> fieldConstraints) throws Exception {
         boolean readPath = endpoint.httpMethod().equals("GET");
         SynthesizedInput happy = readPath
@@ -142,13 +143,18 @@ public class EndpointExplorationRunner {
 
         Map<String, Set<Long>> conditionBounds =
                 new ConditionBoundarySolver().solve(comparisons);
+        Map<String, Set<String>> stringCandidates = new java.util.TreeMap<>();
+        for (ConstraintExtractor.StringEquality se : stringEqualities) {
+            stringCandidates.computeIfAbsent(se.fieldRef(), k -> new java.util.TreeSet<>())
+                    .add(se.value());
+        }
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
         ExplorationOutcome outcome = orchestrator.explore(
                 new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                         httpInvoker(endpoint), literalCandidates,
-                        fieldConstraints, conditionBounds));
+                        fieldConstraints, conditionBounds, stringCandidates));
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 

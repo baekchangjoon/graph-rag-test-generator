@@ -35,9 +35,10 @@ class InputMutatorTest {
     @Test
     void constraintDirected_producesViolationAndEdgeAndBoundMutations() {
         Map<String, Set<Long>> bounds = Map.of("quantity", new TreeSet<>(Set.of(0L, 5L)));
+        Map<String, Set<String>> strings = Map.of("name", new TreeSet<>(Set.of("VIP", "gold")));
 
         List<InputMutator.Mutation> ms =
-                InputMutator.constraintDirected(FIELDS, CONSTRAINTS, bounds);
+                InputMutator.constraintDirected(FIELDS, CONSTRAINTS, bounds, strings);
         List<String> names = ms.stream().map(InputMutator.Mutation::name).toList();
 
         assertThat(names).contains(
@@ -46,13 +47,14 @@ class InputMutatorTest {
                 "size-min-violate-name", "size-min-edge-name",
                 "size-max-violate-name", "size-max-edge-name",
                 "email-violate-contact",
-                "bound-quantity-0", "bound-quantity-5");
+                "bound-quantity-0", "bound-quantity-5",
+                "streq-name-VIP", "streq-name-gold");
     }
 
     @Test
     void constraintDirected_appliesCorrectValues() {
         List<InputMutator.Mutation> ms =
-                InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of());
+                InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of(), Map.of());
 
         assertThat(applied(ms, "min-violate-quantity").get("quantity").asLong()).isEqualTo(0);
         assertThat(applied(ms, "max-violate-quantity").get("quantity").asLong()).isEqualTo(101);
@@ -65,9 +67,9 @@ class InputMutatorTest {
 
     @Test
     void constraintDirected_isDeterministic() {
-        List<String> a = InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of())
+        List<String> a = InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of(), Map.of())
                 .stream().map(InputMutator.Mutation::name).toList();
-        List<String> b = InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of())
+        List<String> b = InputMutator.constraintDirected(FIELDS, CONSTRAINTS, Map.of(), Map.of())
                 .stream().map(InputMutator.Mutation::name).toList();
         assertThat(a).isEqualTo(b);
     }
