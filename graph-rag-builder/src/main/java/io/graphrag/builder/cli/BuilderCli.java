@@ -103,7 +103,8 @@ public final class BuilderCli {
                 changedFilesList == null ? null
                         : Files.readAllLines(Path.of(changedFilesList)).stream()
                                 .filter(line -> !line.isBlank()).toList(),
-                authConfig);
+                authConfig,
+                options.containsKey("--with-redis"));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -152,7 +153,7 @@ public final class BuilderCli {
                 mybatisLogLevels,
                 otel.env(config.sutId()));
 
-        try (AnalysisEnvironment env = new AnalysisEnvironment(config.dbConfig())) {
+        try (AnalysisEnvironment env = new AnalysisEnvironment(config.dbConfig(), config.withRedis())) {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
 
