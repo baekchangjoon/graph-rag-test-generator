@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/promo")
 public class PromoController {
 
-    public record PromoRequest(Integer score, String tier) {
+    public record PromoRequest(Integer score, String tier, Long bonus) {
     }
 
     public record PromoResponse(String result) {
@@ -37,6 +37,9 @@ public class PromoController {
         }
         if ("gold".equals(request.tier())) {                     // 컨트롤러 문자열 동치
             prefix = prefix + "-gold";
+        }
+        if (request.bonus() != null && request.bonus() * 2 == 10000000000L) {  // long 파생: bonus=5e9
+            prefix = prefix + "-whale";
         }
         return new PromoResponse(promo.classify(request.score(), request.tier(), prefix));
     }

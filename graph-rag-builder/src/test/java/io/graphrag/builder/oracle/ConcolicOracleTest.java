@@ -24,5 +24,7 @@ class ConcolicOracleTest {
         assertThat(c.numeric().get("score")).contains(42L);
         // amount+5 > 100 → 경계 96 부근
         assertThat(c.numeric().get("amount")).contains(96L);
+        // long 파생: bonus*2 == 10000000000 → 5000000000 (int 범위 밖)
+        assertThat(c.numeric().get("bonus")).contains(5000000000L);
     }
 }

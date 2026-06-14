@@ -18,4 +18,12 @@ public class Derived {
         }
         return 0;
     }
+
+    // long 파생: bonus*2 == 10000000000 → bonus=5000000000 (int 범위 밖, 소스에 5e9 없음)
+    public int bonus(long bonus) {
+        if (bonus * 2 == 10000000000L) {
+            return 3;
+        }
+        return 0;
+    }
 }
