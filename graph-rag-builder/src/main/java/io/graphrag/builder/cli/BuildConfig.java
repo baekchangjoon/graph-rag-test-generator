@@ -24,6 +24,7 @@ public record BuildConfig(
         List<String> changedFiles,
         AuthConfig authConfig,
         boolean withRedis,
+        boolean withKafka,
         String sutJavaHome) {
 
     public BuildConfig {
@@ -37,6 +38,6 @@ public record BuildConfig(
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
-                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, null);
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, false, null);
     }
 }

@@ -44,7 +44,7 @@ class BuilderE2eTest {
                 60, null,
                 Path.of(System.getProperty("external.stubs")),
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
-                null, null, authConfig, false, null));
+                null, null, authConfig, false, false, null));
 
         // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())
