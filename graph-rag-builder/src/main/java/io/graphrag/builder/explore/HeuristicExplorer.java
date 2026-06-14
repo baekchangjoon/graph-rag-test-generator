@@ -1,7 +1,6 @@
 package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.graphrag.builder.run.SampleInputSynthesizer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,11 +17,10 @@ public class HeuristicExplorer implements PathExplorer {
     public ExplorationResult explore(EndpointTarget target, ExplorationBudget budget,
                                      KnownCoverage known) {
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
-        ObjectNode base = new SampleInputSynthesizer()
-                .synthesize(target.shape(), target.tables()).body();
+        ObjectNode base = target.baseInput().deepCopy();
 
         tryInput(base, target, budget, known, inputs);
-        for (InputMutator.Mutation mutation : InputMutator.firstOrder(target.shape(), target.literalCandidates())) {
+        for (InputMutator.Mutation mutation : InputMutator.firstOrder(target.mutableFields(), target.literalCandidates())) {
             tryInput(mutation.apply().apply(InputMutator.copy(base)), target, budget, known, inputs);
         }
         return new ExplorationResult(inputs);

@@ -121,11 +121,20 @@ public class EndpointExplorationRunner {
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
 
+        ObjectNode baseInput = happy.body();
+        List<BodyShape.BodyField> mutableFields = readPath
+                ? endpoint.params().stream()
+                      .filter(p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.QUERY)
+                      .map(p -> new BodyShape.BodyField(p.name(), p.javaType()))
+                      .toList()
+                : (shape == null ? List.of() : shape.fields());
+
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
         ExplorationOutcome outcome = orchestrator.explore(
-                new EndpointTarget(endpoint, shape, tables, httpInvoker(endpoint), literalCandidates));
+                new EndpointTarget(endpoint, baseInput, mutableFields, tables,
+                        httpInvoker(endpoint), literalCandidates));
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
 
