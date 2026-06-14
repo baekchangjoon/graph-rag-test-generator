@@ -85,6 +85,9 @@ public class FileGraphRagClient implements GraphRagClient {
 
     @Override
     public List<RequiredSeed> seedsForPath(String pathId) {
-        return asset.seeds().stream().filter(s -> s.pathId().equals(pathId)).toList();
+        // 2xx path가 없던 read 엔드포인트의 시드는 pathId가 null(어느 path에도 미연결)일 수 있다
+        return asset.seeds().stream()
+                .filter(s -> java.util.Objects.equals(s.pathId(), pathId))
+                .toList();
     }
 }
