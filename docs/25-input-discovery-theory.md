@@ -145,6 +145,107 @@ SUT를 운영 boot jar 그대로 외부 프로세스로 기동(HTTP 경계)
 
 ---
 
+## 7.5 입력 파라미터를 조합·생성하는 과정 (solver · fuzzer · seed) — 예제
+
+초급자가 가장 헷갈리는 부분이다. "한 endpoint의 입력 파라미터들을 **어떻게 만들고 어떻게 조합**하나",
+그리고 **solver / fuzzer / seed**가 각각 무슨 역할인지 한 예제로 끝까지 따라가 보자.
+
+### 예제 SUT — `POST /api/bookings` (order-service의 Booking)
+
+```java
+record CreateBookingRequest(String customerEmail, Integer nights, Integer loyaltyPoints,
+                            BookingTier tier, LocalDate checkInDate) {}   // tier = {BASIC, VIP}
+
+if (nights < 1 || nights > 30)                       throw 422;          // ① 단일 숫자 범위
+if (tier == null)                                    throw 422;          // ②
+if (tier == VIP && loyaltyPoints < 500)              throw 422;          // ③ 다필드 conjunction
+if (!EMAIL.matches(customerEmail))                   throw 422;          // ④ 이메일
+if (!checkInDate.isAfter(now()))                     throw 422;          // ⑤ 날짜
+// 모두 통과 → 201 created
+```
+목표: 위 분기들의 **양쪽(통과/실패)** 을 다 실행시키는 입력 조합들을 자동 생성.
+
+### 1단계 — happy 기준 입력 1개 합성 (출발점)
+
+`SampleInputSynthesizer`가 **유효한 한 벌**을 만든다(Stage 0). 이게 모든 조합의 baseline:
+```
+base = { customerEmail:"probe@example.com", nights:1, loyaltyPoints:1,
+         tier:"BASIC", checkInDate:"2999-01-01" }      → 201 (모든 가드 통과)
+```
+포인트: enum은 첫 상수(BASIC), 날짜는 미래 ISO, 이메일은 정규식 통과값. 이게 안 되면 ④⑤에서 막혀
+③ 같은 깊은 가드에 **도달조차** 못 한다.
+
+### 2단계 — 정적 분석 + solver가 "후보 값"을 만든다 (값 그 자체)
+
+코드를 읽어(실행X) 각 필드에 넣어볼 **의미 있는 값**을 뽑는다:
+
+| 출처 | 산출 후보 | 비고 |
+|---|---|---|
+| `extractComparisons` + 경계 펼침 | `nights ∈ {0,1,2, 29,30,31}` | ① 경계값 (리터럴 1,30에서) |
+| `EnumConstantExtractor` | `tier ∈ {BASIC, VIP}` | enum 상수 |
+| `extractConjunctions` | `{tier==VIP, loyaltyPoints<500}` 묶음 | ③ 다필드 가드 |
+| **`ConcolicOracle`(ASM+**Z3**)** | (파생 가드 있을 때) `score*2==84 → 42` | **solver가 유도** |
+
+**solver(Z3)의 역할**: 소스에 **안 적힌** 값을 *수식을 풀어서* 만든다. Booking엔 파생 가드가 없어 안 쓰이지만,
+`if (amount*2 == 84)` 같은 게 있으면 ConcolicOracle가 `2·f−84==0`을 Z3로 풀어 `f=42`를 후보로 낸다(§6).
+즉 solver는 "**어떤 값**을 넣어야 이 등식이 성립하나"를 답한다 — fuzzer가 무작정 못 맞추는 값.
+
+### 3단계 — 변이 카탈로그로 "조합 규칙"을 만든다 (`InputMutator.forTarget`)
+
+후보들을 **base에 적용하는 변형(mutation) 목록**으로 바꾼다. 각 mutation은 "base를 받아 한 군데(또는
+conjunction이면 여러 군데)를 바꾼 새 입력을 돌려주는 함수":
+```
+constraintDirected : bound-nights-0, bound-nights-1, bound-nights-30, bound-nights-31 …
+enumValues         : enum-tier-BASIC, enum-tier-VIP                         (enum 각 상수)
+joint              : joint-…-loyaltyPoints_tier  →  {tier:"VIP", loyaltyPoints:499} 동시 세팅
+firstOrder(generic): remove-/null-/zero-/negative-/large- (필드별, 값 무지성)
+```
+**우선순위**: 고신호(constraint/enum/joint)를 generic firstOrder **앞**에 둔다 — 예산이 적을 때 무지성
+변이가 의미 있는 변이를 굶기지 않게.
+
+### 4단계 — fuzzer가 입력을 실제로 돌려 조합을 넓힌다 (2개 엔진)
+
+"fuzzer"는 두 엔진의 협업이다. **둘 다 같은 변이 목록을 쓰되 적용 대상이 다르다**:
+
+**(a) `HeuristicExplorer` — 1차(1st-order)**: 각 변이를 **base 하나에** 적용 → 요청 1개씩.
+```
+base + bound-nights-31   → {…, nights:31}             → 422 ① (nights>30)
+base + enum-tier-VIP     → {…, tier:VIP, loyalty:1}   → 422 ③ (VIP && 1<500)   ← base의 loyalty=1이 이미 <500
+base + joint(VIP,499)    → {…, tier:VIP, loyalty:499} → 422 ③
+base + bad email 변이    → …                          → 422 ④
+base (변이 없음)         →                            → 201
+```
+각 요청마다 JaCoCo로 **이 요청이 연 분기(arm)** 를 dump한다.
+
+**(b) `CoverageGuidedFuzzer` — 2차 이상(higher-order)**: **"새 분기를 연 입력"만 시드 큐에 모아**,
+그 위에 변이를 **또** 쌓는다. 즉 조합이 1군데→2군데→…로 깊어진다.
+
+> 왜 필요한가(핵심 예 — petclinic): 가드가 **순차**라 깊은 가드는 앞 가드를 다 통과해야 닿는다.
+> `base`에 roomNumber만 무효라 하자. `bound-roomNumber-100`을 base에 적용하면 **앞 가드 전부 통과한
+> 입력**이 되고, 이게 새 분기를 열어 **시드**가 된다. 다음 라운드에서 그 시드 위에 `enum-tier-VIP`를
+> 얹으면 → roomNumber 유효 **AND** tier=VIP가 **동시에** 성립 → ③ true-arm 도달. 1차 변이 하나로는
+> 못 닿고, **시드를 통한 조합 누적**으로 닿는다. (joint 변이는 이 조합을 한 방에 만들어 견고화.)
+
+"**novel(새 분기)이면 시드로 환류 → 그 위에 또 변이**"가 무작위 fuzzing보다 깊이 들어가는 비결이다.
+새 분기가 더 이상 안 나오면(연속 N회 dry) 그 endpoint 탐색을 끝낸다(saturation).
+
+### 5단계 — "seed"는 두 가지다 (반드시 구분)
+
+| 종류 | 무엇 | 누가 | 예 |
+|---|---|---|---|
+| **DB seed**(`SeedRow`) | 분석 DB에 미리 넣는 **행** | synthesizer + `Seeds.insert` | GET/PUT/DELETE `/{id}`가 읽을 booking 행. (mutating by-id는 요청마다 `resetSeeds`로 fresh 복원 — Stage 3b) |
+| **explorer seed**(`KnownCoverage.Seed`) | **새 분기를 연 입력**(요청 body) | CoverageGuidedFuzzer | 위 4(b)의 `base+bound-roomNumber-100` 입력 |
+
+이름이 같아 헷갈리지만, 하나는 **DB 데이터**(읽을 대상), 하나는 **입력 조합의 발판**(다음 변이의 base)이다.
+
+### 한 줄 요약
+
+> **solver**(Z3) = *값*을 푼다(소스에 없는 값까지). **변이 카탈로그** = 그 값들을 base에 적용하는 *규칙*.
+> **fuzzer** = base/시드에 변이를 적용해 실제로 *돌려보고*, **novel이면 시드로 환류**해 조합을 깊게 쌓는다.
+> **seed** = (DB 행) 읽을 데이터 / (explorer) 다음 조합의 발판. 모두 결정적(Random/시간 없음).
+
+---
+
 ## 8. "LLM에게 직접 코드를 주고 입력/테스트를 만들라" vs 우리 접근
 
 | 관점 | LLM 직접 요청 | graph-rag-builder (정적분석 + ASM/Z3 + 실행관측) |
