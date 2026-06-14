@@ -19,13 +19,14 @@ public record EndpointTarget(
         EndpointInvoker invoker,
         List<String> literalCandidates,
         Map<String, List<FieldConstraint>> fieldConstraints,
-        Map<String, Set<Long>> conditionBounds) {
+        Map<String, Set<Long>> conditionBounds,
+        Map<String, Set<String>> stringCandidates) {
 
     public EndpointTarget(Endpoint endpoint, ObjectNode baseInput,
                           List<BodyShape.BodyField> mutableFields,
                           List<TableSchema> tables, EndpointInvoker invoker) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                List.of(), Map.of(), Map.of());
+                List.of(), Map.of(), Map.of(), Map.of());
     }
 
     public EndpointTarget(Endpoint endpoint, ObjectNode baseInput,
@@ -33,6 +34,6 @@ public record EndpointTarget(
                           List<TableSchema> tables, EndpointInvoker invoker,
                           List<String> literalCandidates) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                literalCandidates, Map.of(), Map.of());
+                literalCandidates, Map.of(), Map.of(), Map.of());
     }
 }

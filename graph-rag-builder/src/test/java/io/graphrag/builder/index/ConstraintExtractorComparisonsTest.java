@@ -1,6 +1,7 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.builder.index.ConstraintExtractor.Comparison;
+import io.graphrag.builder.index.ConstraintExtractor.StringEquality;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -42,5 +43,17 @@ class ConstraintExtractorComparisonsTest {
 
         // 모든 비교식은 발생 위치로 태깅된다
         assertThat(all).allMatch(c -> c.classFqn() != null && c.method() != null && c.line() > 0);
+    }
+
+    @Test
+    void extractStringEqualities_coversBothDirectionsAndAllLayers() {
+        List<StringEquality> all = new ConstraintExtractor().extractStringEqualities(SAMPLE_SRC);
+
+        assertThat(all).extracting(StringEquality::fieldRef, StringEquality::value)
+                .contains(
+                        tuple("label", "VIP"),     // 컨트롤러, 리터럴 좌변 "VIP".equals(label)
+                        tuple("mode", "BULK"),     // 서비스 계층 mode.equals("BULK")
+                        tuple("type", "EXPRESS")); // OrderController "EXPRESS".equals(request.type())
+        assertThat(all).allMatch(s -> s.classFqn() != null && s.method() != null && s.line() > 0);
     }
 }

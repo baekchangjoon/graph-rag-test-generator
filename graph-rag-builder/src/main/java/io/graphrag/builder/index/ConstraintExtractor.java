@@ -39,6 +39,14 @@ public class ConstraintExtractor {
                              String op, long literal, int line) {
     }
 
+    /**
+     * field.equals("LIT") / "LIT".equals(field) 형태의 문자열 동치. value = 비교 대상 리터럴.
+     * 숫자 Comparison의 문자열 짝 — 해당 필드의 문자열 입력 후보로 환류된다.
+     */
+    public record StringEquality(String classFqn, String method, String fieldRef,
+                                 String value, int line) {
+    }
+
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
             BinaryOperatorKind.GT, ">", BinaryOperatorKind.GE, ">=",
             BinaryOperatorKind.LT, "<", BinaryOperatorKind.LE, "<=",
@@ -115,6 +123,62 @@ public class ConstraintExtractor {
                 .thenComparingInt(Comparison::line)
                 .thenComparing(Comparison::fieldRef));
         return comparisons;
+    }
+
+    /**
+     * SUT 소스 전체에서 문자열 동치 {@code field.equals("LIT")} / {@code "LIT".equals(field)}를
+     * AST로 추출한다(전 계층, 1회 빌드). 숫자 extractComparisons의 문자열 짝.
+     */
+    public List<StringEquality> extractStringEqualities(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        List<StringEquality> out = new ArrayList<>();
+        for (CtInvocation<?> inv : model.getElements(new TypeFilter<>(CtInvocation.class))) {
+            if (!"equals".equals(inv.getExecutable().getSimpleName())
+                    || inv.getArguments().size() != 1 || inv.getTarget() == null) {
+                continue;
+            }
+            CtExpression<?> target = inv.getTarget();
+            CtExpression<?> arg = inv.getArguments().get(0);
+            String fieldRef = null;
+            String value = null;
+            String argLit = stringLiteral(arg);
+            String targetLit = stringLiteral(target);
+            if (argLit != null && fieldRef(target) != null) {
+                fieldRef = fieldRef(target);
+                value = argLit;
+            } else if (targetLit != null && fieldRef(arg) != null) {
+                fieldRef = fieldRef(arg);
+                value = targetLit;
+            }
+            if (fieldRef == null) {
+                continue;
+            }
+            CtMethod<?> method = inv.getParent(CtMethod.class);
+            CtType<?> type = inv.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new StringEquality(type.getQualifiedName().replace('$', '.'),
+                    method.getSimpleName(), fieldRef, value, inv.getPosition().getLine()));
+        }
+        out.sort(Comparator.comparing(StringEquality::classFqn)
+                .thenComparing(StringEquality::method)
+                .thenComparingInt(StringEquality::line)
+                .thenComparing(StringEquality::fieldRef));
+        return out;
+    }
+
+    private static String stringLiteral(CtExpression<?> expr) {
+        if (expr instanceof CtLiteral<?> lit && lit.getValue() instanceof String s) {
+            return s;
+        }
+        return null;
     }
 
     private static void addComparison(List<Comparison> out, CtExpression<?> left,

@@ -5,7 +5,10 @@ public class BoundsController {
     public record Req(Integer amount, Integer score) {
     }
 
-    public String handle(Req req) {
+    public String handle(Req req, String label) {
+        if ("VIP".equals(label)) {          // 컨트롤러 계층 문자열 동치 (리터럴 좌변)
+            return "vip";
+        }
         if (req.amount() > 100) {
             return "big";
         }

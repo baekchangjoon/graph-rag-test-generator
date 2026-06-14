@@ -68,7 +68,7 @@ public final class InputMutator {
         List<Mutation> all = new ArrayList<>(
                 firstOrder(target.mutableFields(), target.literalCandidates()));
         all.addAll(constraintDirected(target.mutableFields(),
-                target.fieldConstraints(), target.conditionBounds()));
+                target.fieldConstraints(), target.conditionBounds(), target.stringCandidates()));
         return dedupeByName(all);
     }
 
@@ -80,7 +80,8 @@ public final class InputMutator {
     public static List<Mutation> constraintDirected(
             List<BodyShape.BodyField> fields,
             Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints,
-            Map<String, Set<Long>> conditionBounds) {
+            Map<String, Set<Long>> conditionBounds,
+            Map<String, Set<String>> stringCandidates) {
         List<Mutation> mutations = new ArrayList<>();
         for (BodyShape.BodyField field : fields) {
             String name = field.name();
@@ -150,6 +151,11 @@ public final class InputMutator {
             if (numeric) {
                 for (Long v : conditionBounds.getOrDefault(name, Set.of())) {
                     putLong(mutations, "bound-" + name + "-" + v, name, v);
+                }
+            }
+            if (string) {
+                for (String v : stringCandidates.getOrDefault(name, Set.of())) {
+                    putStr(mutations, "streq-" + name + "-" + v, name, v);
                 }
             }
         }
