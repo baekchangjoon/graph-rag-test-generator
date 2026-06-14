@@ -37,8 +37,9 @@ class ReadInputSynthesizerTest {
 
         SynthesizedInput.SeedRow petsRow = out.seeds().get(1);
         int typeFkIdx = petsRow.columns().indexOf("type_id");
-        // INT FK 값은 비충돌 정수(PROBE_ID=90001)여야 한다 (varchar "probe-..." 가 아님)
-        assertThat(petsRow.values().get(typeFkIdx)).isInstanceOf(Integer.class).isEqualTo(90001);
+        // INT FK 값은 비충돌 정수(>=90001, 엔드포인트별)여야 한다 (varchar "probe-..." 가 아님)
+        assertThat(petsRow.values().get(typeFkIdx)).isInstanceOf(Integer.class);
+        assertThat((Integer) petsRow.values().get(typeFkIdx)).isGreaterThanOrEqualTo(90001);
         assertThat(petsRow.columns()).doesNotContain("owner_id");   // nullable FK 미시드
         // 자식 FK 값 == 부모 PK 값
         SynthesizedInput.SeedRow typesRow = out.seeds().get(0);
@@ -108,13 +109,15 @@ class ReadInputSynthesizerTest {
 
         SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(orders));
 
-        // PATH 변수는 PK 셀렉터 → 비충돌 PROBE_ID(90001)로 URL/시드가 일치
-        assertThat(out.body().get("id").asText()).isEqualTo("90001");
         assertThat(out.seeds()).hasSize(1);
         SynthesizedInput.SeedRow seed = out.seeds().get(0);
         assertThat(seed.table()).isEqualTo("orders");
         assertThat(seed.columns()).contains("id");
         // bigint PK 컬럼이므로 seed 값은 문자열이 아니라 Long으로 강제된다 (varchar→bigint INSERT 방지)
-        assertThat(seed.values()).contains(90001L);
+        int idIdx = seed.columns().indexOf("id");
+        assertThat(seed.values().get(idIdx)).isInstanceOf(Long.class);
+        assertThat((Long) seed.values().get(idIdx)).isGreaterThanOrEqualTo(90001L);
+        // PATH 변수는 PK 셀렉터 → URL 값(body)과 시드 PK가 일치해야 한다
+        assertThat(out.body().get("id").asText()).isEqualTo(String.valueOf(seed.values().get(idIdx)));
     }
 }

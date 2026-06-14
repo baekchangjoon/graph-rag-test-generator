@@ -32,12 +32,22 @@ public class FixtureComposer {
 
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables) {
-        return compose(path, sqlList, tables, List.of());
+        return compose(path, sqlList, tables, List.of(), false);
     }
 
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds) {
-        if (!seeds.isEmpty()) {
+        return compose(path, sqlList, tables, seeds, false);
+    }
+
+    /**
+     * readPath=true(GET 엔드포인트)면 항상 read-path 합성을 쓴다. 2xx path는 RequiredSeed로
+     * 시드하고, 비-2xx path(404/400)는 seeds가 비어 있어 시드 없이 요청+응답 단언만 만든다.
+     * write-path(POST/PUT)의 SQL 바인딩 기반 시드 로직을 GET non-2xx에 잘못 적용하지 않게 한다.
+     */
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath) {
+        if (readPath || !seeds.isEmpty()) {
             Map<String, TableSchema> seedTables = new HashMap<>();
             tables.forEach(t -> seedTables.put(t.name(), t));
             List<ComposedFixture.Stmt> seedInserts = seeds.stream()
