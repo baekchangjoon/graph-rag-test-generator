@@ -3,9 +3,12 @@ package io.graphrag.builder.explore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.ValidationConstraintExtractor;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.UnaryOperator;
 
@@ -58,6 +61,106 @@ public final class InputMutator {
             }
         }
         return mutations;
+    }
+
+    /**
+     * Bean Validation 제약 + handler 비교식 경계를 위반/경계 변이로 환류 (결정적).
+     * 필드 선언 순서 → 제약 종류 고정 순서. 값 적용은 generic firstOrder와 별개이며,
+     * 같은 (field,value)로 수렴하면 explorer의 markTried가 예산 낭비를 차단한다.
+     */
+    public static List<Mutation> constraintDirected(
+            List<BodyShape.BodyField> fields,
+            Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints,
+            Map<String, Set<Long>> conditionBounds) {
+        List<Mutation> mutations = new ArrayList<>();
+        for (BodyShape.BodyField field : fields) {
+            String name = field.name();
+            boolean numeric = NUMERIC_TYPES.contains(field.javaType());
+            boolean string = field.javaType().equals("java.lang.String");
+            for (ValidationConstraintExtractor.FieldConstraint c :
+                    fieldConstraints.getOrDefault(name, List.of())) {
+                switch (c.kind()) {
+                    case NOT_NULL, NOT_BLANK, PATTERN -> {
+                        // null/빈문자는 generic firstOrder가 덮고, @Pattern 값 생성은 보류(YAGNI).
+                    }
+                    case SIZE_MIN -> {
+                        if (string && c.numArg() > 0) {
+                            int m = (int) c.numArg();
+                            putStr(mutations, "size-min-violate-" + name, name, "x".repeat(m - 1));
+                            putStr(mutations, "size-min-edge-" + name, name, "x".repeat(m));
+                        }
+                    }
+                    case SIZE_MAX -> {
+                        if (string) {
+                            int m = (int) c.numArg();
+                            putStr(mutations, "size-max-violate-" + name, name, "x".repeat(m + 1));
+                            putStr(mutations, "size-max-edge-" + name, name, "x".repeat(m));
+                        }
+                    }
+                    case MIN -> {
+                        if (numeric) {
+                            putLong(mutations, "min-violate-" + name, name, c.numArg() - 1);
+                            putLong(mutations, "min-edge-" + name, name, c.numArg());
+                        }
+                    }
+                    case MAX -> {
+                        if (numeric) {
+                            putLong(mutations, "max-violate-" + name, name, c.numArg() + 1);
+                            putLong(mutations, "max-edge-" + name, name, c.numArg());
+                        }
+                    }
+                    case POSITIVE -> {
+                        if (numeric) {
+                            putLong(mutations, "pos-violate-zero-" + name, name, 0);
+                            putLong(mutations, "pos-violate-neg-" + name, name, -1);
+                        }
+                    }
+                    case POSITIVE_OR_ZERO -> {
+                        if (numeric) {
+                            putLong(mutations, "posz-violate-" + name, name, -1);
+                        }
+                    }
+                    case NEGATIVE -> {
+                        if (numeric) {
+                            putLong(mutations, "neg-violate-zero-" + name, name, 0);
+                            putLong(mutations, "neg-violate-pos-" + name, name, 1);
+                        }
+                    }
+                    case NEGATIVE_OR_ZERO -> {
+                        if (numeric) {
+                            putLong(mutations, "negz-violate-" + name, name, 1);
+                        }
+                    }
+                    case EMAIL -> {
+                        if (string) {
+                            putStr(mutations, "email-violate-" + name, name, "not-an-email");
+                        }
+                    }
+                }
+            }
+            if (numeric) {
+                for (Long v : conditionBounds.getOrDefault(name, Set.of())) {
+                    putLong(mutations, "bound-" + name + "-" + v, name, v);
+                }
+            }
+        }
+        return dedupeByName(mutations);
+    }
+
+    private static void putStr(List<Mutation> out, String mName, String field, String value) {
+        out.add(new Mutation(mName, body -> body.put(field, value)));
+    }
+
+    private static void putLong(List<Mutation> out, String mName, String field, long value) {
+        out.add(new Mutation(mName, body -> body.put(field, value)));
+    }
+
+    private static List<Mutation> dedupeByName(List<Mutation> mutations) {
+        LinkedHashMap<String, Mutation> byName = new LinkedHashMap<>();
+        for (Mutation m : mutations) {
+            byName.putIfAbsent(m.name(), m);
+        }
+        return new ArrayList<>(byName.values());
     }
 
     public static ObjectNode copy(JsonNode body) {
