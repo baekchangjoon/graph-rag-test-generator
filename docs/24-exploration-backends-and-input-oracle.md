@@ -93,10 +93,15 @@ in-process 도구의 고유 가치는 **분기를 여는 입력 값을 찾아내
   promo에 파생 분기 `score*2==84` 추가 → concolic이 42 도출 → promo handler **10/10**(소스 리터럴로는
   불가능한 arm 커버). 전 단위 + BuilderE2eTest green.
 
-## 알려진 후속 한계 (다음 단계)
+## arm-aware path 보존 (완료 2026-06-14)
 
-오라클이 찾은 입력(예: score=42)은 **arm-level 커버리지로 크레딧되지만, 생성 PATH로는 보존되지
-않는다** — 오케스트레이터 path 식별이 `status + arm-blind 분기집합`이라 score=42가 happy와 같은 키로
-dedupe됨(retained path 2개). 즉 **테스트 제너레이터가 score=42를 보내는 테스트를 emit하지 못함**.
-임의 Spring 프로젝트용 테스트를 실제로 *생성*하려면 path 식별을 arm-aware(또는 응답 지문 기반)로
-강화해 발견 입력이 distinct path/test가 되게 해야 한다. (path/test 개수에 광범위 영향 → 설계 결정)
+path 식별을 `status + arm-blind 분기집합` → `status + 요청별 probe 지문`(`CoverageFingerprint`,
+SUT 자체 클래스 한정으로 프레임워크 노이즈 제거)으로 강화. true/false arm은 서로 다른 probe라
+**발견 입력이 distinct path로 보존**된다. 지문이 없으면(테스트 fake) 분기집합으로 폴백.
+
+실증: order-service promo가 **7개 distinct path**로 보존 — score=7(lucky)/**42(answer, Z3 도출)**/
+99(jackpot)/tier=gold/vip/happy. 즉 concolic이 찾은 비-리터럴 값 42가 실제 생성 테스트가 된다.
+4개 SUT 회귀 GREEN(무회귀), order-service app 44/48.
+
+전 과정 검증 완료: **in-process 발견(static+concolic) → out-of-process HTTP 확정·관측 →
+arm-aware 보존 → 각 발견 입력이 distinct 테스트.**
