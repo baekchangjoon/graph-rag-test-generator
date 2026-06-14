@@ -185,6 +185,28 @@ conjunction 정렬 고정, 원자 만족값 결정적, enum 선언 순서 고정
 3. 신규 추출/변이 단위 테스트로 결정성 보장.
 4. L73/L76/L84(비목표)는 미달성 허용.
 
+## 실측 결과 (구현 후, 동일 jar A/B, 기본 budget)
+
+같은 petclinic jar에 main(Stage 0까지)과 이 브랜치(Stage 1+2)를 각각 적용.
+
+| | coveredAppBranches | VIP true-arm(L64) |
+|---|---|---|
+| BEFORE static | 47/253 (18.6%) | 미도달 |
+| BEFORE both | 47/253 (18.6%) | 미도달 |
+| AFTER static | 68/253 (26.9%) | **도달** |
+| AFTER both | 69/253 (27.3%) | **도달** |
+
+**Δ +22 분기 (47→69, +8.7pp).** `post-api-reservations` 응답에 `VIP requires at least 500 loyalty
+points`(422) 등장 = L64 true-arm 도달. enum-상수 변이(`enum-priceTier-VIP`)가 `bound-roomNumber`로
+형성된 valid-prefix seed 위에서 L64를 열었고, 그 너머 단변수 가드(animalCount/petName/email/
+checkInDate/deposit/priceTier-null)도 연쇄 도달. budget을 400으로 올리면 80/253 + 일부 `201` 성공 생성
+(deposit까지 큰 값으로 통과)도 관측 — 기본 budget(60)에서도 핵심 목표 달성.
+
+**구현 중 발견·수정**: 다필드 가드 도달은 **변이 우선순위**에 민감했다. 기존 `forTarget`은 generic
+firstOrder(remove/null/zero × 전 필드 ≈ 50개)를 앞에 둬, 예산(60)이 적으면 고신호 변이(bound/enum/
+joint)가 굶었다. → `forTarget`에서 constraint-directed/enum/joint를 firstOrder 앞으로 재배치
+(order-service e2e 22/22 무회귀 확인).
+
 ## 위험과 완화
 
 - **noClasspath enum 식별**(opus G1/sonnet MAJOR-3): `field == Type.CONST` 판별을 `CtFieldRead` +
