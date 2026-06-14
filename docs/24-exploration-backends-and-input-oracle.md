@@ -79,10 +79,24 @@ in-process 도구의 고유 가치는 **분기를 여는 입력 값을 찾아내
 도입 판단은 `ExplorationReport.solverRelevantMissed` 누적치로 게이트한다(콘콜릭 복귀 트리거와 동일
 기준, `docs/decisions/explorer-engines.md`).
 
-## 실행 계획
+## 구현 현황 (2026-06-14)
 
-1. **기존 메커니즘 입증/수정** — 통제된 엔드포인트(order-service `post-api-promo`, 컨트롤러·
-   서비스 양 계층의 등치/문자열 분기)로 "정적분석 분기조건이 입력으로 환류되어 generic이 못 여는
-   분기를 연다"를 수치로 입증. (선행: 현재 wiring 버그 root-cause)
-2. **입력 오라클 PathExplorer 스파이크** — in-process 도구로 입력값을 수확해 기존 HTTP replay로
-   그래프를 만드는 `PathExplorer`를 작게 프로토타입. 단독 백엔드 아님, SPI 확장.
+- **arm-level 커버리지 수정 완료** — 누적 exec data 분석(probe OR)으로 전환. count-union의
+  arm-blind 한계(이진 분기 ~50% 캡) 해소. order-service create 8/16→16/16.
+- **교체가능 인터페이스 `InputOracle` 도입** — `analyze(SutCode) → InputCandidates`(필드별 numeric/
+  string 후보). 구현 2종:
+  - `StaticLiteralOracle` — 기존 Spoon 비교식/문자열동치 추출 흡수(소스 srcDir).
+  - `ConcolicOracle` — **ASM 심볼릭 스캔 + Z3**(bootJar 바이트코드). 입력 파생 정수 선형식을
+    추적해 각 분기 경계 `coeff*field+const==0`을 Z3로 풀어 **소스에 없는 값**(예: `score*2==84`→42)을
+    도출. 도구는 `org.ow2.asm`(JDK 추적)·`tools.aqua:z3-turnkey`(native 번들) — 버전 rot 없음.
+- **배선** — BuilderCli가 두 오라클을 merge해 constraintDirected로 환류. **실증**: order-service
+  promo에 파생 분기 `score*2==84` 추가 → concolic이 42 도출 → promo handler **10/10**(소스 리터럴로는
+  불가능한 arm 커버). 전 단위 + BuilderE2eTest green.
+
+## 알려진 후속 한계 (다음 단계)
+
+오라클이 찾은 입력(예: score=42)은 **arm-level 커버리지로 크레딧되지만, 생성 PATH로는 보존되지
+않는다** — 오케스트레이터 path 식별이 `status + arm-blind 분기집합`이라 score=42가 happy와 같은 키로
+dedupe됨(retained path 2개). 즉 **테스트 제너레이터가 score=42를 보내는 테스트를 emit하지 못함**.
+임의 Spring 프로젝트용 테스트를 실제로 *생성*하려면 path 식별을 arm-aware(또는 응답 지문 기반)로
+강화해 발견 입력이 distinct path/test가 되게 해야 한다. (path/test 개수에 광범위 영향 → 설계 결정)
