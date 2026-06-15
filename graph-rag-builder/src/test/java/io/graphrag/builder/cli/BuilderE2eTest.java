@@ -53,6 +53,7 @@ class BuilderE2eTest {
                         "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings", "post-api-orders",
                         "post-api-orders-search", "post-api-promo", "post-web-orders",
+                        "post-web-users-userid-submit",
                         "put-api-bookings-id");
 
         // JPA endpoint: 201/404/400 path가 모두 발견된다 (Phase 1 메트릭의 핵심)
@@ -248,6 +249,31 @@ class BuilderE2eTest {
         assertThat(webValidPaths.stream().map(ExploredPath::branchesTaken).distinct().count())
                 .isGreaterThanOrEqualTo(2L);
         assertThat(webValidPaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .containsExactly(302);
+
+        // 작업 a 회귀 가드 — 클래스-레벨 path 변수 @ModelAttribute 역추출: UserOrderWebController
+        // (@Controller, @RequestMapping("/web/users/{userId}"))의 {userId}는 핸들러 파라미터가 아니라
+        // @ModelAttribute findUser(@PathVariable userId)에서만 해석된다. 빌더가 이를 PATH로 역추출해야
+        // userId가 users 행으로 시드되고 findUser가 성공해 폼 핸들러에 진입한다(양 arm).
+        io.graphrag.model.Endpoint webUserOrders = asset.endpoints().stream()
+                .filter(e -> e.id().equals("post-web-users-userid-submit")).findFirst().orElseThrow();
+        // userId는 FORM이 아니라 PATH로 잡혀야 한다(역추출 성공). + 폼 커맨드(OrderForm) FORM.
+        assertThat(webUserOrders.params()).filteredOn(p -> p.name().equals("userId"))
+                .extracting(io.graphrag.model.EndpointParam::kind)
+                .containsExactly(io.graphrag.model.ParamKind.PATH);
+        // userId PATH가 시드한 users 행이 존재(findUser 성공의 증거 — 미역추출 시 센티널 → orElseThrow 5xx).
+        List<RequiredSeed> webUserSeeds = asset.seeds().stream()
+                .filter(s -> pathsOf(asset, "post-web-users-userid-submit").stream()
+                        .anyMatch(p -> p.id().equals(s.pathId())))
+                .toList();
+        assertThat(webUserSeeds).extracting(RequiredSeed::table).contains("users");
+        // valid-token path(negative-auth 제외)가 분기 집합 다른 ≥2개 + 모두 302 — findUser 성공 후 amount 양 arm.
+        // 역추출 미적용으로 되돌리면 userId 센티널 → findUser orElseThrow 5xx → valid path 1개(또는 폼 미진입) → FAIL.
+        List<ExploredPath> webUserValidPaths = pathsOf(asset, "post-web-users-userid-submit").stream()
+                .filter(p -> !p.discoveredBy().equals("negative-auth")).toList();
+        assertThat(webUserValidPaths.stream().map(ExploredPath::branchesTaken).distinct().count())
+                .isGreaterThanOrEqualTo(2L);
+        assertThat(webUserValidPaths.stream().map(ExploredPath::expectedStatus).distinct())
                 .containsExactly(302);
 
         // MyBatis mapper 사실 + still_missing 리포트

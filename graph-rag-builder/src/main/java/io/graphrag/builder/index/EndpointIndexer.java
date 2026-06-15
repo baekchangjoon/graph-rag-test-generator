@@ -71,6 +71,8 @@ public class EndpointIndexer {
                 continue;
             }
             String basePath = annotationPath(findAnnotation(type, REQUEST_MAPPING));
+            // 컨트롤러 타입의 모든 메서드에서 @PathVariable 수집(클래스-레벨/헬퍼-전용 path 변수 역추출용).
+            Map<String, String> pathVarTypes = collectPathVarTypes(type);
             for (CtMethod<?> method : type.getMethods()) {
                 String httpMethod = null;
                 CtAnnotation<?> mapping = null;
@@ -86,6 +88,22 @@ public class EndpointIndexer {
 
                 String fullPath = joinPaths(basePath, annotationPath(mapping));
                 List<EndpointParam> params = extractParams(method, model, bodyShapes, !rest);
+                // 클래스-레벨/헬퍼-전용 path 변수 역추출: path 템플릿의 placeholder 중 핸들러가 PATH로 잡지
+                // 못한 것을, 같은 컨트롤러의 @PathVariable 타입 신호(pathVarTypes)로 PATH 파라미터로 추가한다.
+                // 타입 신호 없으면 skip(센티널 폴백 유지, 회귀 0).
+                java.util.Set<String> alreadyPath = new java.util.HashSet<>();
+                for (EndpointParam p : params) {
+                    if (p.kind() == ParamKind.PATH) {
+                        alreadyPath.add(p.name());
+                    }
+                }
+                for (String placeholder : extractPlaceholders(fullPath)) {
+                    if (!alreadyPath.contains(placeholder) && pathVarTypes.containsKey(placeholder)) {
+                        params.add(new EndpointParam(placeholder, pathVarTypes.get(placeholder), ParamKind.PATH));
+                    }
+                }
+                // 정렬 규약: PATH → QUERY → FORM → BODY (동일 kind 내 등장 순서 유지, 안정 정렬).
+                params.sort(java.util.Comparator.comparingInt(p -> kindOrder(p.kind())));
                 // @Controller-only(폼) 핸들러는 FORM 커맨드 객체가 있을 때만 인덱싱(뷰-표시 핸들러는 분기 없음 → skip).
                 if (!rest && params.stream().noneMatch(p -> p.kind() == ParamKind.FORM)) {
                     continue;
@@ -120,8 +138,9 @@ public class EndpointIndexer {
                 params.add(new EndpointParam(parameter.getSimpleName(), bodyType, ParamKind.BODY));
                 extractBodyShape(model, bodyType).ifPresent(s -> bodyShapes.put(bodyType, s));
             } else if (findAnnotation(parameter, PATH_VARIABLE) != null) {
+                // 이름은 정규화(@PathVariable value/name 우선) — path 템플릿 {x}와 일치해야 치환·역추출이 정확.
                 params.add(new EndpointParam(
-                        parameter.getSimpleName(),
+                        pathVarName(parameter),
                         parameter.getType().getQualifiedName(),
                         ParamKind.PATH));
             } else if (findAnnotation(parameter, REQUEST_PARAM) != null) {
@@ -189,6 +208,93 @@ public class EndpointIndexer {
             String fqn = annotation.getAnnotationType().getQualifiedName();
             if (qualifiedName.equals(fqn) || simpleName.equals(annotation.getAnnotationType().getSimpleName())) {
                 return annotation;
+            }
+        }
+        return null;
+    }
+
+    /** path 변수 정렬 순서: PATH(0) → QUERY(1) → FORM(2) → BODY(3). */
+    private static int kindOrder(ParamKind kind) {
+        return switch (kind) {
+            case PATH -> 0;
+            case QUERY -> 1;
+            case FORM -> 2;
+            case BODY -> 3;
+            default -> 4;
+        };
+    }
+
+    /** path 템플릿의 {placeholder} 집합(등장 순서 유지). 슬래시·중괄호 불포함만 — 콜론 정규식은 매칭 안 됨. */
+    private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^/}]+)}");
+
+    static java.util.LinkedHashSet<String> extractPlaceholders(String path) {
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher matcher = PLACEHOLDER.matcher(path);
+        while (matcher.find()) {
+            out.add(matcher.group(1));
+        }
+        return out;
+    }
+
+    /** @PathVariable의 정규화 이름: value → name → 파라미터 단순명. */
+    private static String pathVarName(CtParameter<?> parameter) {
+        CtAnnotation<?> pv = findAnnotation(parameter, PATH_VARIABLE);
+        if (pv != null) {
+            String explicit = annotationStringValue(pv, "value", "name");
+            if (explicit != null) {
+                return explicit;
+            }
+        }
+        return parameter.getSimpleName();
+    }
+
+    /** @PathVariable required 속성(미지정/명시 true → true). */
+    private static boolean pathVarRequired(CtParameter<?> parameter) {
+        CtAnnotation<?> pv = findAnnotation(parameter, PATH_VARIABLE);
+        if (pv == null) {
+            return true;
+        }
+        CtExpression<?> r = pv.getValues().get("required");
+        if (r instanceof CtLiteral<?> literal && literal.getValue() instanceof Boolean b) {
+            return b;
+        }
+        return true;
+    }
+
+    /**
+     * 컨트롤러 타입의 모든 메서드(@ModelAttribute/@InitBinder/핸들러 무관)에서 @PathVariable을 수집해
+     * 정규화이름 → javaType 맵을 만든다. 충돌(동일 이름 타입 2종): required 미지정/true가 required=false보다
+     * 우선, 그래도 동률이면 첫 등장 유지(`@PathVariable`은 어느 메서드에 있든 같은 이름=같은 라우트 변수).
+     */
+    private static Map<String, String> collectPathVarTypes(CtType<?> type) {
+        Map<String, String> types = new LinkedHashMap<>();
+        Map<String, Boolean> required = new HashMap<>();
+        for (CtMethod<?> method : type.getMethods()) {
+            for (CtParameter<?> parameter : method.getParameters()) {
+                if (findAnnotation(parameter, PATH_VARIABLE) == null) {
+                    continue;
+                }
+                String name = pathVarName(parameter);
+                String javaType = parameter.getType().getQualifiedName();
+                boolean req = pathVarRequired(parameter);
+                if (!types.containsKey(name)) {
+                    types.put(name, javaType);
+                    required.put(name, req);
+                } else if (req && !required.get(name)) {
+                    // 기존이 required=false인데 새것이 required=true → 더 강한 신호로 교체.
+                    types.put(name, javaType);
+                    required.put(name, true);
+                }
+            }
+        }
+        return types;
+    }
+
+    private static String annotationStringValue(CtAnnotation<?> annotation, String... keys) {
+        for (String key : keys) {
+            CtExpression<?> v = annotation.getValues().get(key);
+            if (v instanceof CtLiteral<?> literal && literal.getValue() instanceof String s && !s.isBlank()) {
+                return s;
             }
         }
         return null;
