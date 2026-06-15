@@ -52,7 +52,8 @@ PATH 파라미터로 잡지 못하고, 탐색 시 `buildPathAndQuery`가 치환 
 1. **타입의 모든 메서드**에서 `@PathVariable` 파라미터를 수집해 `Map<pathVarName, javaType>` 구성
    (`@ModelAttribute`/`@InitBinder`/핸들러 무관 — 같은 컨트롤러 내 어디서든 그 path 변수의 타입 신호).
    **충돌 해결(동일 이름 타입 2종)**: (a) `required` 미지정/`true`가 `required=false`보다 우선, (b) 그래도
-   동률이면 핸들러 메서드에 등장한 `@PathVariable`의 타입 우선, (c) 그래도 동률이면 첫 등장.
+   동률이면 **javaType 사전순**으로 결정적 선택. (`getMethods()`가 unordered Set이라 "첫 등장"은 비결정적 —
+   사전순 tiebreak로 JVM/실행 간 안정화. `@PathVariable`은 어느 메서드든 같은 이름=같은 변수라 타입 충돌 드묾.)
 2. **placeholder 추출 = 순수 함수** `extractPlaceholders(fullPath) → LinkedHashSet<String>`: 정규식
    `\{([^/}]+)\}`로 캡처(슬래시·`}` 불포함). 콜론 정규식(`{id:\d+}`)은 매칭되지 않아 자동 제외(비목표).
    각 핸들러에서 `extractParams` 후, placeholder 집합에서 **이미 PATH로 잡힌 정규화 이름**을 제외한 나머지를
@@ -84,7 +85,9 @@ PATH 파라미터로 잡지 못하고, 탐색 시 `buildPathAndQuery`가 치환 
 - `@Controller @RequestMapping("/web/users/{userId}")` (클래스레벨 단일 추가-PATH `{userId}` — String PK).
 - `@ModelAttribute("user") User findUser(@PathVariable("userId") String userId)` =
   `users.findById(userId).orElseThrow(() -> new IllegalArgumentException(...))` (역추출 안 되면 5xx).
-- `@PostMapping("/orders") String submit(@ModelAttribute("user") User user, OrderForm form)`,
+- `@PostMapping("/submit") String submit(OrderForm form)` — `User user`를 핸들러 파라미터로 받지 **않는다**
+  (받으면 첫 FORM-적격 파라미터로 잡혀 OrderForm을 가림). `findUser(@ModelAttribute)`는 매 요청 전 호출되어
+  도달성 가드 역할. path는 `/submit`(테이블명 미포함)으로 둬 target-table 휴리스틱이 users로 정확히 잡히게 한다,
   **amount 가드(양 arm redirect 302)**: `if (form.getAmount() == null || form.getAmount() < 1 ||
   form.getAmount() > 1000) return "redirect:/web/users/error"; return "redirect:/web/users/ok";`
 - inner `OrderForm`(JavaBean: `Integer amount` + getter/setter). users 테이블은 기존 `User.java`로 존재 →
@@ -102,7 +105,8 @@ PATH 파라미터로 잡지 못하고, 탐색 시 `buildPathAndQuery`가 치환 
 `@PathVariable("ownerId")`에서 역추출되어 핸들러가 PATH(ownerId, 정규화 이름) 파라미터를 가진다, (ii) 핸들러+헬퍼
 혼재(petId 핸들러 `@PathVariable int petId`, ownerId 헬퍼)도 둘 다 PATH, (iii) 타입 신호 없는 placeholder는
 추가 안 됨(skip), (iv) `@RestController`는 무변(IndexResult 동일), (v) **충돌 우선순위**: 동일 `{x}`가
-`required=false int`(헬퍼)와 `long`(핸들러)로 등장 → 핸들러 타입(long) 채택, (vi) **정렬**: 핸들러가 FORM만
+`required=false int`와 `long`(둘 다 헬퍼)로 등장 → required=true(long)가 required=false(int)보다 우선 →
+long 채택, (vi) **정렬**: 핸들러가 FORM만
 선언하고 역추출 PATH 1개 → params가 `[PATH, FORM]` 순, (vii) `@PathVariable("x") T y`의 `EndpointParam.name`이
 `x`(정규화)다.
 
@@ -131,7 +135,13 @@ APP-AGGREGATE 비감소. 대표 MSA 1~2종(notification/analytics) builder 실�
 **반영(important):**
 - **정규화 이름 헬퍼 전 구간 일관**(Sonnet I2, Gemini I2, GPT I1): `pathVarName()`(value→name→simpleName) +
   `name` 키 읽는 추출 추가. prepass·핸들러추출·placeholder비교 동일 기준(§3). 기존 이름-불일치 치환 버그도 교정.
-- **충돌 우선순위 결정 규칙 + 테스트**(Sonnet I3 부분, GPT I2): required true>false → 핸들러 타입 → 첫 등장(§3-1, 단위 (v)).
+- **충돌 우선순위 결정 규칙 + 테스트**(Sonnet I3 부분, GPT I2): required true>false → 동률 시 javaType 사전순(결정적, §3-1, 단위 (v)).
+
+## 9. 사후 코드리뷰 반영(2차)
+- (spec F2 doc-drift) §5 벤치마크: `@PostMapping("/orders") submit(User, OrderForm)` → `@PostMapping("/submit") submit(OrderForm)`로 정정. User 핸들러-파라미터 제거(첫 FORM 슬롯 가림 방지), path를 테이블명 미포함 `/submit`으로(target=users 정확). endpoint id `post-web-users-userid-submit`.
+- (spec F1 / code #2) 충돌 동률 tiebreak를 "첫 등장"(getMethods() Set 순서 의존, 비결정) → **javaType 사전순**(결정적)으로 변경. tie-break (b) "핸들러 타입 우선"은 §4 D1(어느 메서드든 같은 변수)에 비춰 redundant라 미채택.
+- (spec F4) 단위 (iv) `@RestController` 무변 명시 테스트(`restControllerWithMatchingPathVarNameUnchanged`) 추가.
+- (code #1) `extractPlaceholders` 콜론 정규식 주석 정정(캡처되지만 정규화 이름 불일치로 skip).
 - **placeholder 순수함수 + 콜론 비목표**(GPT I3, Sonnet I7, Gemini I3): `extractPlaceholders`, `{id:\d+}` skip(§2,§3-2).
 - **파라미터 정렬 규약 PATH→QUERY→FORM→BODY 안정정렬 + 테스트**(Sonnet I5, GPT I4): §3-3, 단위 (vi).
 - **벤치마크 구체화·공존·containsExactly 갱신·amount 가드**(Sonnet I1/I4/I6, GPT I5): §5 UserOrderWebController 명세.

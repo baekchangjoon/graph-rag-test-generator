@@ -224,7 +224,11 @@ public class EndpointIndexer {
         };
     }
 
-    /** path 템플릿의 {placeholder} 집합(등장 순서 유지). 슬래시·중괄호 불포함만 — 콜론 정규식은 매칭 안 됨. */
+    /**
+     * path 템플릿의 {placeholder} 집합(등장 순서 유지). 슬래시·`}` 불포함만 캡처. 콜론 정규식/SpEL
+     * (`{id:\d+}`)은 `id:\d+`처럼 suffix까지 통째로 캡처되지만, 정규화된 @PathVariable 이름(`id`)과
+     * 일치하지 않아 역추출에서 자동 skip된다(센티널 폴백). 콜론 path 변수는 비목표.
+     */
     private static final java.util.regex.Pattern PLACEHOLDER = java.util.regex.Pattern.compile("\\{([^/}]+)}");
 
     static java.util.LinkedHashSet<String> extractPlaceholders(String path) {
@@ -263,8 +267,10 @@ public class EndpointIndexer {
 
     /**
      * 컨트롤러 타입의 모든 메서드(@ModelAttribute/@InitBinder/핸들러 무관)에서 @PathVariable을 수집해
-     * 정규화이름 → javaType 맵을 만든다. 충돌(동일 이름 타입 2종): required 미지정/true가 required=false보다
-     * 우선, 그래도 동률이면 첫 등장 유지(`@PathVariable`은 어느 메서드에 있든 같은 이름=같은 라우트 변수).
+     * 정규화이름 → javaType 맵을 만든다. 충돌(동일 이름 타입 2종): (a) required 미지정/true가 required=false
+     * 보다 우선, (b) 동률이면 javaType **사전순**으로 결정적 선택. getMethods()는 unordered Set이므로
+     * "첫 등장"에 의존하면 비결정적 — 사전순 tiebreak로 JVM/실행 간 안정성을 보장한다.
+     * (`@PathVariable`은 어느 메서드에 있든 같은 이름=같은 라우트 변수라 동일-이름-다른-타입 충돌은 드물다.)
      */
     private static Map<String, String> collectPathVarTypes(CtType<?> type) {
         Map<String, String> types = new LinkedHashMap<>();
@@ -281,9 +287,12 @@ public class EndpointIndexer {
                     types.put(name, javaType);
                     required.put(name, req);
                 } else if (req && !required.get(name)) {
-                    // 기존이 required=false인데 새것이 required=true → 더 강한 신호로 교체.
+                    // 기존 required=false보다 required=true가 강한 신호 → 교체.
                     types.put(name, javaType);
                     required.put(name, true);
+                } else if (req == required.get(name) && javaType.compareTo(types.get(name)) < 0) {
+                    // 동률(required 동일) → javaType 사전순으로 결정적 선택(Set 순서 무관).
+                    types.put(name, javaType);
                 }
             }
         }
