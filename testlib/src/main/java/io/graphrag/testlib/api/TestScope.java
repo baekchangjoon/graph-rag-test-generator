@@ -34,12 +34,14 @@ public final class TestScope {
     private final AuthClient auth;
     private final DashboardReporter dashboard;
     private final String appBaseUri;
+    private final String kafkaBootstrap;   // nullable — Kafka 생성 테스트용
     private final java.util.List<StompHelper> stompHelpers = new java.util.ArrayList<>();
+    private final java.util.List<KafkaHelper> kafkaHelpers = new java.util.ArrayList<>();
     private boolean cleaned;
 
     private TestScope(String testId, JdbcHelper jdbc, RestAssuredHelper rest,
                       HttpMockClient http, SocketMockClient socket, AuthClient auth,
-                      DashboardReporter dashboard, String appBaseUri) {
+                      DashboardReporter dashboard, String appBaseUri, String kafkaBootstrap) {
         this.testId = testId;
         this.jdbc = jdbc;
         this.rest = rest;
@@ -48,6 +50,7 @@ public final class TestScope {
         this.auth = auth;
         this.dashboard = dashboard;
         this.appBaseUri = appBaseUri;
+        this.kafkaBootstrap = kafkaBootstrap;
     }
 
     public static TestScope create() {
@@ -82,7 +85,8 @@ public final class TestScope {
                 socketAdapter.create(env, testId),
                 authClient,
                 dashboard,
-                appBaseUri);
+                appBaseUri,
+                env.get("KAFKA_BOOTSTRAP_SERVERS"));
         dashboard.report(new TestEvent(EventType.SCOPE_CREATED, testId, runId,
                 Instant.now(), Json.mapper().nullNode()));
         return scope;
@@ -120,6 +124,16 @@ public final class TestScope {
         return helper;
     }
 
+    /** Kafka producer를 연다(KAFKA_BOOTSTRAP_SERVERS 필요). cleanup 시 자동으로 닫힌다. */
+    public KafkaHelper kafka() {
+        if (kafkaBootstrap == null || kafkaBootstrap.isBlank()) {
+            throw new IllegalStateException("KAFKA_BOOTSTRAP_SERVERS not set");
+        }
+        KafkaHelper helper = new KafkaHelper(kafkaBootstrap);
+        kafkaHelpers.add(helper);
+        return helper;
+    }
+
     /** 자기 스코프의 mock/연결만 해제. DB row 정리는 테스트 코드가 FK 역순으로 직접 수행. */
     public void cleanup() {
         if (cleaned) {
@@ -127,6 +141,7 @@ public final class TestScope {
         }
         cleaned = true;
         stompHelpers.forEach(StompHelper::close);
+        kafkaHelpers.forEach(KafkaHelper::close);
         http.removeAllForScope(testId);
         socket.removeSession(testId);
         jdbc.close();

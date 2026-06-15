@@ -35,6 +35,7 @@ public class Generator {
     private final GraphRagClient client;
     private final Mustache template;
     private final Mustache wsTemplate;
+    private final Mustache kafkaTemplate;
 
     public Generator(Path graphDir) {
         this(new FileGraphRagClient(graphDir));
@@ -45,10 +46,14 @@ public class Generator {
         DefaultMustacheFactory factory = new DefaultMustacheFactory();
         this.template = factory.compile("templates/test-class.mustache");
         this.wsTemplate = factory.compile("templates/ws-test-class.mustache");
+        this.kafkaTemplate = factory.compile("templates/kafka-test-class.mustache");
     }
 
     /** pathId 미지정 시 endpoint의 전 path에 대해 path당 테스트 클래스 1개씩 생성 (1.5). */
     public GenerationResult generate(GenerationRequest request) {
+        if (client.hasKafkaConsumer(request.endpointId())) {
+            return generateKafka(request);
+        }
         if (client.hasWsEndpoint(request.endpointId())) {
             return generateWs(request);
         }
@@ -150,6 +155,74 @@ public class Generator {
         }
         return new GenerationResult(files, List.of(),
                 new ParallelSafetyReport(fullyParallel, serialRequired));
+    }
+
+    /** @KafkaListener consumer: 토픽 발행 후 consumer의 INSERT side-effect를 폴링 단언하는 테스트 생성. */
+    private GenerationResult generateKafka(GenerationRequest request) {
+        io.graphrag.model.KafkaConsumer consumer = client.kafkaConsumer(request.endpointId());
+        List<io.graphrag.model.KafkaExchange> exchanges = client.kafkaExchangesFor(consumer.id());
+
+        List<GeneratedFile> files = new ArrayList<>();
+        List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
+        for (io.graphrag.model.KafkaExchange exchange : exchanges) {
+            String className = request.testClassName() + classSuffix(consumer.id(), exchange.id());
+
+            // consumer가 쓴 INSERT 중, payload 값이 바인딩된 컬럼을 side-effect 키로 단언.
+            String table = null;
+            String keyColumn = null;
+            String keyValue = null;
+            for (CapturedSql s : client.sqlForPath(exchange.id())) {
+                if (!s.sqlKind().equals("INSERT")) {
+                    continue;
+                }
+                for (io.graphrag.model.SqlBinding b : s.bindings()) {
+                    if (b.origin() == io.graphrag.model.BindingOrigin.API_PARAM
+                            && b.column() != null && !b.column().isEmpty()) {
+                        table = s.tableName();
+                        keyColumn = b.column();
+                        keyValue = b.value();
+                        break;
+                    }
+                }
+                if (table != null) {
+                    break;
+                }
+            }
+
+            String key = exchange.payload().has("userId")
+                    ? exchange.payload().get("userId").asText()
+                    : (exchange.payload().has("eventId") ? exchange.payload().get("eventId").asText() : exchange.id());
+
+            Map<String, Object> scope = new HashMap<>();
+            scope.put("packageName", request.packageName());
+            scope.put("className", className);
+            scope.put("consumerId", consumer.id());
+            scope.put("topic", consumer.topic());
+            scope.put("testMethodName", exchange.id().replace('-', '_'));
+            scope.put("key", jsonEscape(key));
+            scope.put("payloadJson", jsonEscape(exchange.payload().toString()));
+            scope.put("hasAssert", table != null);
+            if (table != null) {
+                scope.put("table", table);
+                scope.put("keyColumn", keyColumn);
+                scope.put("keyValueExpr", "\"" + jsonEscape(keyValue) + "\"");
+            }
+
+            StringWriter writer = new StringWriter();
+            kafkaTemplate.execute(writer, scope);
+            files.add(new GeneratedFile(
+                    request.packageName().replace('.', '/') + "/" + className + ".java",
+                    writer.toString()));
+            // Kafka consumer는 공유 토픽 — 격리 위해 직렬 실행.
+            serialRequired.add(new io.graphrag.model.SerialRequired(className,
+                    "KAFKA_SHARED_TOPIC", "Kafka consumer는 공유 토픽이라 격리 불가 — 직렬 실행"));
+        }
+        return new GenerationResult(files, List.of(),
+                new ParallelSafetyReport(List.of(), serialRequired));
+    }
+
+    private static String jsonEscape(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String classSuffix(String endpointId, String pathId) {
