@@ -27,7 +27,9 @@ PR #22로 by-id가 service에 진입하고 GET-by-id 생성 테스트는 빈 DB�
 
 ## 비목표
 
-- 상태 의존 가드 **양 arm**을 여는 concolic 시드 변종(stale 과거날짜, capacity 다중행) — 별도(Stage 4).
+- 상태 의존 가드 **양 arm**을 여는 시드 변종(stale 과거날짜, capacity 다중행) — 별도(Stage 4).
+  (갱신 2026-06-15: 저장된 단일 행 TEMPORAL/ENUM 가드의 양 arm은 Stage 4 정적 StateGuardOracle로 해결 —
+  `docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md`. capacity 다중행은 여전히 보류.)
 - 다중 행/관계형 상태(여러 리소스 조합) 시나리오.
 - 비-by-id(POST 등)의 상태 격리 — POST는 리소스를 미리 시드 안 하므로 해당 없음.
 
