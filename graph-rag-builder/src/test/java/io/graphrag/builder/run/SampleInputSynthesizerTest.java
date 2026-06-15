@@ -150,6 +150,24 @@ class SampleInputSynthesizerTest {
     }
 
     @Test
+    void mergeComparisonBounds_oneSidedComparison_skipped() {
+        // 단방향 비교(비-가드 비즈니스 분기 위험)는 happy에 반영하지 않는다(안전망).
+        BodyShape shape = shape(new BodyShape.BodyField("nights", "int"));
+        var comparisons = List.of(
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "m", "nights", ">", 7, 1));
+        var merged = EndpointExplorationRunner.mergeComparisonBounds(Map.of(), comparisons, shape);
+        ObjectNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
+        assertThat(body.get("nights").asInt()).isEqualTo(1);   // 변형 없음
+    }
+
+    @Test
+    void synthesize_unconstrainedFloat_moderateLargeDefault() {
+        ObjectNode body = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("depositAmount", "double")), List.of(), Map.of()).body();
+        assertThat(body.get("depositAmount").asDouble()).isGreaterThanOrEqualTo(1000.0);
+    }
+
+    @Test
     void mergeComparisonBounds_ignoresNonBodyFields() {
         BodyShape shape = shape(new BodyShape.BodyField("nights", "int"));
         var comparisons = List.of(
