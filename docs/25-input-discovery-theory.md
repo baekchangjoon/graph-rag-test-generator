@@ -311,8 +311,8 @@ base (변이 없음)         →                            → 201
 
 **여전히 미해결(Stage 4 잔여)**:
 - **결합 다변수(inter-field)**(`deposit*1.1 < nights*priceTier.getNightlyRate()`): 비선형(곱셈)+interprocedural
-  (enum 메서드)+3변수. 2-필드 선형은 Z3 `solveTuple`로 정공 진행 중
-  (`docs/superpowers/plans/2026-06-15-stage4-z3-interfield-solver.md`); float rational·enum-grounding은 best-effort.
+  (enum 메서드)+3변수. 2-필드 선형은 Z3 `solveTuple`로 정공 진행 중(별도 Stage 4 inter-field 작업);
+  float rational·enum-grounding은 best-effort.
 - **정규식 일반 생성·불투명 값**(`hashCode`): solver로도 어려움 / 영구 비목표.
 
 관련 문서: `docs/22`(정적 한계), `docs/23`(입력 생성 흐름), `docs/24`(탐색 백엔드·단계별 진행).

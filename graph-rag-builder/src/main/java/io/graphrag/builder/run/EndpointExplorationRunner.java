@@ -798,30 +798,8 @@ public class EndpointExplorationRunner {
     }
 
     private List<CapturedSql> captureSql(PathCandidate candidate) {
-        List<ParsedSql> parsed = SqlLogParser.parse(
-                sut.readLogRange(candidate.logStart(), candidate.logEnd()));
-        Set<String> apiValues = bodyValues(candidate.body());
-        List<CapturedSql> captured = new ArrayList<>();
-        int sequence = 0;
-        for (ParsedSql statement : parsed) {
-            sequence++;
-            List<SqlBinding> bindings = new ArrayList<>();
-            for (ParsedSql.Binding binding : statement.bindings()) {
-                bindings.add(new SqlBinding(
-                        binding.position(),
-                        statement.columnForPosition(binding.position()),
-                        binding.value(),
-                        apiValues.contains(binding.value())
-                                ? BindingOrigin.API_PARAM
-                                : BindingOrigin.LITERAL,
-                        statement.bindingTableForPosition(binding.position())));
-            }
-            captured.add(new CapturedSql(
-                    "sql-" + candidate.pathId() + "-" + sequence,
-                    candidate.pathId(),
-                    statement.kind(), statement.sql(), statement.tableName(), bindings));
-        }
-        return captured;
+        return captureSqlForRange(candidate.pathId(), candidate.body(),
+                candidate.logStart(), candidate.logEnd());
     }
 
     /** path의 도달 분기 라인과 겹치는 handler 분기 조건을 제약으로 첨부 (1.2). */

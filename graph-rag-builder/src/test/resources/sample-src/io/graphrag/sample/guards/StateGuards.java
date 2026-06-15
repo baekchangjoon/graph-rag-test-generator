@@ -31,6 +31,13 @@ public class StateGuards {
         return "ok";
     }
 
+    String filter(BookingStatus requested) {
+        if (requested != BookingStatus.CANCELLED) {   // pure-input enum(파라미터) — state guard 아님
+            return "active";
+        }
+        return "cancelled";
+    }
+
     String delete(Booking b, boolean confirm) {
         if (!confirm) {
             return "needs-confirm";
