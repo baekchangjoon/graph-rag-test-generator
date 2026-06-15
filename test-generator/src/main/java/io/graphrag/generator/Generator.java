@@ -65,6 +65,12 @@ public class Generator {
         List<String> warnings = new ArrayList<>();
         List<String> fullyParallel = new ArrayList<>();
         List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
+        // @Controller 폼(form-urlencoded) 엔드포인트는 현재 생성 미지원 — 커버리지 전용(빌더가 탐색·캡처).
+        if (endpoint.params().stream().anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.FORM)) {
+            return new GenerationResult(List.of(),
+                    List.of("form endpoint not generated (coverage-only): " + endpoint.id()),
+                    new io.graphrag.model.ParallelSafetyReport(List.of(), List.of()));
+        }
         for (ExploredPath path : client.pathsForEndpoint(request.endpointId())) {
             if ("negative-auth".equals(path.discoveredBy())) {
                 continue;   // 부정-인증 커버용 path(무효 토큰 거부 arm)는 테스트 생성 대상 아님

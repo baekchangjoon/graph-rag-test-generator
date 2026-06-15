@@ -29,10 +29,12 @@ import java.util.Map;
 public class EndpointIndexer {
 
     private static final String REST_CONTROLLER = "org.springframework.web.bind.annotation.RestController";
+    private static final String CONTROLLER       = "org.springframework.stereotype.Controller";
     private static final String REQUEST_MAPPING  = "org.springframework.web.bind.annotation.RequestMapping";
     private static final String REQUEST_BODY     = "org.springframework.web.bind.annotation.RequestBody";
     private static final String PATH_VARIABLE    = "org.springframework.web.bind.annotation.PathVariable";
     private static final String REQUEST_PARAM    = "org.springframework.web.bind.annotation.RequestParam";
+    private static final String MODEL_ATTRIBUTE  = "org.springframework.web.bind.annotation.ModelAttribute";
 
     /** Spring mapping annotation FQN → HTTP method name. */
     private static final Map<String, String> MAPPING_TO_METHOD = new LinkedHashMap<>();
@@ -61,7 +63,11 @@ public class EndpointIndexer {
         Map<String, BodyShape> bodyShapes = new HashMap<>();
 
         for (CtType<?> type : model.getAllTypes()) {
-            if (findAnnotation(type, REST_CONTROLLER) == null) {
+            boolean rest = findAnnotation(type, REST_CONTROLLER) != null;
+            // @Controller(폼/뷰)도 처리 — @RestController는 @Controller의 meta-annotation이지만 noClasspath에서
+            // meta-resolution이 불확실하므로 둘 다 직접 본다. rest=true면 JSON 경로(불변), 아니면 폼 경로.
+            boolean controller = rest || findAnnotation(type, CONTROLLER) != null;
+            if (!controller) {
                 continue;
             }
             String basePath = annotationPath(findAnnotation(type, REQUEST_MAPPING));
@@ -79,7 +85,11 @@ public class EndpointIndexer {
                 if (httpMethod == null) continue;
 
                 String fullPath = joinPaths(basePath, annotationPath(mapping));
-                List<EndpointParam> params = extractParams(method, model, bodyShapes);
+                List<EndpointParam> params = extractParams(method, model, bodyShapes, !rest);
+                // @Controller-only(폼) 핸들러는 FORM 커맨드 객체가 있을 때만 인덱싱(뷰-표시 핸들러는 분기 없음 → skip).
+                if (!rest && params.stream().noneMatch(p -> p.kind() == ParamKind.FORM)) {
+                    continue;
+                }
                 endpoints.add(new Endpoint(
                         endpointId(httpMethod, fullPath),
                         httpMethod,
@@ -101,8 +111,9 @@ public class EndpointIndexer {
     }
 
     private List<EndpointParam> extractParams(CtMethod<?> method, CtModel model,
-                                              Map<String, BodyShape> bodyShapes) {
+                                              Map<String, BodyShape> bodyShapes, boolean formMode) {
         List<EndpointParam> params = new ArrayList<>();
+        boolean formAdded = false;   // 단일 커맨드 객체로 스코프 — 첫 FORM 파라미터만
         for (CtParameter<?> parameter : method.getParameters()) {
             if (findAnnotation(parameter, REQUEST_BODY) != null) {
                 String bodyType = parameter.getType().getQualifiedName();
@@ -118,6 +129,17 @@ public class EndpointIndexer {
                         parameter.getSimpleName(),
                         parameter.getType().getQualifiedName(),
                         ParamKind.QUERY));
+            } else if (formMode && !formAdded) {
+                // @Controller 폼 커맨드 객체: @ModelAttribute 또는 SUT 클래스(필드 해석)인 unannotated POJO.
+                // BindingResult/Model 등 프레임워크 타입은 bodyShape 미해석 → 자동 제외.
+                String formType = parameter.getType().getQualifiedName();
+                java.util.Optional<BodyShape> shape = extractBodyShape(model, formType);
+                boolean modelAttr = findAnnotation(parameter, MODEL_ATTRIBUTE) != null;
+                if (shape.isPresent() && (modelAttr || !shape.get().fields().isEmpty())) {
+                    shape.ifPresent(s -> bodyShapes.put(formType, s));
+                    params.add(new EndpointParam(parameter.getSimpleName(), formType, ParamKind.FORM));
+                    formAdded = true;
+                }
             }
         }
         return params;

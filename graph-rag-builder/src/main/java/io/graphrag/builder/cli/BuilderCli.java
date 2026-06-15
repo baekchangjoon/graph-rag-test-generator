@@ -363,7 +363,8 @@ public final class BuilderCli {
 
     private static BodyShape bodyShapeFor(Endpoint endpoint, Map<String, BodyShape> shapes) {
         return endpoint.params().stream()
-                .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY)
+                .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
+                        || p.kind() == io.graphrag.model.ParamKind.FORM)   // @Controller 폼 커맨드 객체도 body shape
                 .map(p -> shapes.get(p.javaType()))
                 .filter(java.util.Objects::nonNull)
                 .findFirst().orElse(null);

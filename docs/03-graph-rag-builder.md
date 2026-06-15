@@ -45,7 +45,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 | 레이어 | 도구 | 역할 |
 |---|---|---|
-| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer`), 바디 구조(`BodyShapeExtractor`), 제약(`ConstraintExtractor`: `extractComparisons` 비교식 / `extractConjunctions` 메서드 내 `&&` 다필드 가드 / `extractEnumColumns` 가드 유래 enum 컬럼값 / `extractStringEqualities` 문자열 동치), enum 상수(`EnumConstantExtractor`: FQN→상수), Bean Validation(`ValidationConstraintExtractor`) |
+| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer` — `@RestController`(JSON/`@RequestBody`) + `@Controller`(폼/커맨드 객체, `ParamKind.FORM`) 모두), 바디 구조(`BodyShapeExtractor`), 제약(`ConstraintExtractor`: `extractComparisons` 비교식 / `extractConjunctions` 메서드 내 `&&` 다필드 가드 / `extractEnumColumns` 가드 유래 enum 컬럼값 / `extractStringEqualities` 문자열 동치), enum 상수(`EnumConstantExtractor`: FQN→상수), Bean Validation(`ValidationConstraintExtractor`) |
 | L2 | Spring Boot TestContext | 실제 빈 와이어링 introspection |
 | L2 | Hibernate SchemaExport | JPA Entity → DDL |
 | L2 | Flyway/Liquibase parser | 마이그레이션 → DDL truth |
@@ -122,3 +122,4 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - **외부 시스템 응답 enum/range**: 임베디드 mock의 minimal valid 응답에서 출발
 - **비결정적 분기 (시간/Random)**: 분석 시점 `Clock.fixed`, seeded Random 사용
 - **민감 정보**: 캡처 시 패턴 기반 마스킹 필수
+- **`@Controller` 폼 — 클래스-레벨 path 변수**: `@RequestMapping("/owners/{ownerId}")`의 `{ownerId}`가 핸들러 파라미터가 아니라 `@ModelAttribute` 헬퍼 메서드(`findOwner(@PathVariable ownerId)`)에서만 해석되는 경우(petclinic 패턴), 빌더는 그 path 변수를 PATH 파라미터로 인지하지 못한다. 치환 안 된 `{...}`는 URL 유효성을 위해 센티널("0")로 치환되며(`buildPathAndQuery`), 해당 리소스를 시드하지 못해 부모-not-found arm(4xx/5xx)만 커버한다. path 변수가 핸들러 파라미터이거나 path 변수가 없는 폼(예: order-service `OrderWebController`, petclinic `OwnerController` 신규/수정)은 양 arm까지 정상 탐색. `@Controller` 폼은 현재 **커버리지 전용**(테스트 생성 미지원 — `Generator`가 `ParamKind.FORM` 엔드포인트를 스킵)이다.
