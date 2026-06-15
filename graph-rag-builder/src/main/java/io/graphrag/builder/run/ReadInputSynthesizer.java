@@ -22,6 +22,8 @@ import java.util.Set;
  */
 public class ReadInputSynthesizer {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ReadInputSynthesizer.class);
+
     private final Map<String, List<String>> enumConstants;
     private final Map<String, List<String>> enumColumns;   // 소문자 컬럼명 → 유효 enum 상수(시드 가독성)
 
@@ -166,58 +168,96 @@ public class ReadInputSynthesizer {
             if (col == null) {
                 continue;   // 가드 컬럼이 타깃 테이블에 없으면 skip (스키마 가드, 보수적)
             }
-            Object flip = flipValue(guard, col);
-            if (flip == null) {
-                continue;   // flip 미해석(enum 상수 미발견 등) → skip
-            }
-            variantIdx++;
             SynthesizedInput.SeedRow targetRow = base.seeds().get(targetIdx);
-            List<String> cols = new ArrayList<>(targetRow.columns());
-            List<Object> vals = new ArrayList<>(targetRow.values());
-            Object variantPk = offsetPk(vals.get(0), variantIdx);
-            vals.set(0, variantPk);
-            int gi = indexOfIgnoreCase(cols, guard.column());
-            if (gi >= 0) {
-                vals.set(gi, flip);
-            } else {
-                cols.add(col.name());   // base seed에 없던(nullable) 가드 컬럼 추가 → arm을 연다
-                vals.add(flip);
-            }
-            List<SynthesizedInput.SeedRow> variantSeeds = new ArrayList<>();
-            for (int i = 0; i < base.seeds().size(); i++) {
-                variantSeeds.add(i == targetIdx
-                        ? new SynthesizedInput.SeedRow(targetRow.table(), cols, vals)
-                        : base.seeds().get(i));   // FK 부모 공유(동일 PK)
-            }
-            ObjectNode vbody = base.body().deepCopy();
-            if (pkColumn != null) {
-                for (EndpointParam param : endpoint.params()) {
-                    if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
-                            && pkColumn.equalsIgnoreCase(mapParamToColumn(param, target, null))) {
-                        vbody.put(param.name(), String.valueOf(variantPk));
+            String baseState = stateAt(targetRow, guard.column());   // happy 상태(중복 변종 회피용)
+            // 다중 전이 arm: 가드가 구분하는 상태값(EQ 각 상수 + else 잔여 1개, NE 잔여)별로 변종.
+            for (Object flip : flipValues(guard, col, baseState)) {
+                variantIdx++;   // 전역 — EQ/NE가 같은 상태명을 내도 offset PK가 고유
+                List<String> cols = new ArrayList<>(targetRow.columns());
+                List<Object> vals = new ArrayList<>(targetRow.values());
+                Object variantPk = offsetPk(vals.get(0), variantIdx);
+                vals.set(0, variantPk);
+                int gi = indexOfIgnoreCase(cols, guard.column());
+                if (gi >= 0) {
+                    vals.set(gi, flip);
+                } else {
+                    cols.add(col.name());   // base seed에 없던(nullable) 가드 컬럼 추가 → arm을 연다
+                    vals.add(flip);
+                }
+                List<SynthesizedInput.SeedRow> variantSeeds = new ArrayList<>();
+                for (int i = 0; i < base.seeds().size(); i++) {
+                    variantSeeds.add(i == targetIdx
+                            ? new SynthesizedInput.SeedRow(targetRow.table(), cols, vals)
+                            : base.seeds().get(i));   // FK 부모 공유(동일 PK)
+                }
+                ObjectNode vbody = base.body().deepCopy();
+                if (pkColumn != null) {
+                    for (EndpointParam param : endpoint.params()) {
+                        if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
+                                && pkColumn.equalsIgnoreCase(mapParamToColumn(param, target, null))) {
+                            vbody.put(param.name(), String.valueOf(variantPk));
+                        }
                     }
                 }
+                out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
             }
-            out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
         }
         return out;
     }
 
-    /** 가드별 결정적 flip 값. TEMPORAL=과거 날짜(1900-01-01), ENUM=부정집합 밖 사전순 첫 상수. */
-    private Object flipValue(ConstraintExtractor.StateGuard guard, ColumnSchema col) {
+    /** 변종 상한(컬럼당) — enum 상수가 많은 경우 변종 폭발 방지. 결정적 정렬 순 앞에서 K개. */
+    private static final int VARIANT_CAP = 4;
+
+    /** 시드 행에서 컬럼 값을 case-insensitive로 읽는다(happy 상태값 — 중복 변종 회피). */
+    private static String stateAt(SynthesizedInput.SeedRow row, String column) {
+        int i = indexOfIgnoreCase(row.columns(), column);
+        if (i < 0) {
+            return null;
+        }
+        Object v = row.values().get(i);
+        return v == null ? null : v.toString();
+    }
+
+    /**
+     * 가드별 결정적 대체-상태 값 리스트(다중 전이 arm). TEMPORAL=과거 날짜 1개. ENUM=
+     * [EQ positive 각 상수(정렬)] + [EQ else-arm 잔여 1개(positive·negated 밖)] + [NE 잔여 상수(정렬,
+     * negated 비어있지 않을 때만)]. base 상태(happy)는 제외, 컬럼당 최대 VARIANT_CAP개.
+     */
+    private List<Object> flipValues(ConstraintExtractor.StateGuard guard, ColumnSchema col, String baseState) {
         if (guard.kind() == ConstraintExtractor.GuardKind.TEMPORAL) {
             String type = col.jdbcType().toUpperCase();
-            if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
-                return java.time.LocalDateTime.of(1900, 1, 1, 0, 0);
-            }
-            return java.time.LocalDate.of(1900, 1, 1);
+            Object v = (type.contains("TIMESTAMP") || type.contains("DATETIME"))
+                    ? java.time.LocalDateTime.of(1900, 1, 1, 0, 0)
+                    : java.time.LocalDate.of(1900, 1, 1);
+            return List.of(v);
         }
         List<String> all = enumConstantsForType(guard.enumType());
         if (all == null) {
-            return null;
+            return List.of();
         }
-        return all.stream().filter(c -> !guard.negatedConstants().contains(c))
-                .sorted().findFirst().orElse(null);
+        java.util.LinkedHashSet<String> picks = new java.util.LinkedHashSet<>();
+        // EQ: positive 각 상수(그 == arm)
+        guard.positiveConstants().stream().sorted().forEach(picks::add);
+        // EQ else-arm: positive·negated 어디에도 없는 잔여 1개(fallthrough arm)
+        if (!guard.positiveConstants().isEmpty()) {
+            all.stream().sorted()
+                    .filter(c -> !guard.positiveConstants().contains(c) && !guard.negatedConstants().contains(c))
+                    .findFirst().ifPresent(picks::add);
+        }
+        // NE: 잔여 상수 전체 — negated가 비어있지 않을 때만(EQ-only 컬럼 폭발 방지)
+        if (!guard.negatedConstants().isEmpty()) {
+            all.stream().sorted().filter(c -> !guard.negatedConstants().contains(c)).forEach(picks::add);
+        }
+        List<Object> result = picks.stream()
+                .filter(c -> baseState == null || !c.equalsIgnoreCase(baseState))
+                .limit(VARIANT_CAP)
+                .map(c -> (Object) c)
+                .collect(java.util.stream.Collectors.toList());
+        if (picks.size() > VARIANT_CAP) {
+            log.info("state-guard {}.{} column {} variants capped at {} (dropped {})",
+                    guard.classFqn(), guard.method(), guard.column(), VARIANT_CAP, picks.size() - VARIANT_CAP);
+        }
+        return result;
     }
 
     /** enumConstants를 FQN 직접 조회 후 simple-name 폴백(scalarFor와 동일 규칙). */

@@ -125,6 +125,30 @@ public class BookingController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * 상태머신 다중 전이 회귀 가드(작업 #5): 저장된 행의 status enum 값에 따라 세 arm(200/409/410)으로 갈린다.
+     * 각 상태가 명시 == 비교라 빌더가 EQ 가드를 추출하고 각 상태 변종 시드로 세 arm을 모두 캡처해야 한다
+     * (다중 변종 미적용으로 되돌리면 happy 상태 1 arm만 → 회귀 시 FAIL).
+     */
+    @PostMapping("/{id}/advance")
+    public ResponseEntity<BookingResponse> advance(@PathVariable Long id) {
+        if (id == null || id <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "id must be a positive integer");
+        }
+        Booking b = bookings.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "booking " + id + " not found"));
+        if (b.getStatus() == BookingStatus.PENDING) {
+            return ResponseEntity.ok(toResponse(b));                                          // 200 — 전이 가능
+        }
+        if (b.getStatus() == BookingStatus.CONFIRMED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "booking already advanced"); // 409
+        }
+        if (b.getStatus() == BookingStatus.CANCELLED) {
+            throw new ResponseStatusException(HttpStatus.GONE, "booking is cancelled");         // 410
+        }
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "unknown state");
+    }
+
     private static BookingResponse toResponse(Booking b) {
         return new BookingResponse(b.getId(), b.getCustomerEmail(), b.getNights(), b.getLoyaltyPoints(),
                 b.getTier().name(), b.getStatus().name(), b.getCheckInDate().toString());

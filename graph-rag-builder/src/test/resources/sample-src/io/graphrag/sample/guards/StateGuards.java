@@ -47,4 +47,26 @@ public class StateGuards {
         }
         return "deleted";
     }
+
+    /** 다중 전이(작업 #5): 각 상태 명시 == → positiveConstants={PENDING,CONFIRMED,CANCELLED}. */
+    String advance(Booking b) {
+        if (b.getStatus() == BookingStatus.PENDING) {                       // EQ state guard
+            return "confirmed";
+        }
+        if (b.getStatus() == BookingStatus.CONFIRMED) {                     // EQ state guard
+            return "conflict";
+        }
+        if (b.getStatus() == BookingStatus.CANCELLED) {                     // EQ state guard
+            return "gone";
+        }
+        return "unknown";
+    }
+
+    /** NE+EQ 혼합 컬럼((viii)): status != PENDING && status == CONFIRMED → negated=[PENDING]·positive=[CONFIRMED]. */
+    String mixed(Booking b) {
+        if (b.getStatus() != BookingStatus.PENDING && b.getStatus() == BookingStatus.CONFIRMED) {
+            return "x";
+        }
+        return "y";
+    }
 }

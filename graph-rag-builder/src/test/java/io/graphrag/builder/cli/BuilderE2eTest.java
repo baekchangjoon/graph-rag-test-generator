@@ -51,7 +51,9 @@ class BuilderE2eTest {
                 .containsExactly("delete-api-bookings-id", "get-api-bookings-id",
                         "get-api-orders", "get-api-orders-id",
                         "get-api-profiles-by-name-name",
-                        "post-api-auth-login", "post-api-bookings", "post-api-orders",
+                        "post-api-auth-login", "post-api-bookings",
+                        "post-api-bookings-id-advance",
+                        "post-api-orders",
                         "post-api-orders-search", "post-api-promo", "post-web-orders",
                         "post-web-users-userid-submit",
                         "put-api-bookings-id");
@@ -220,6 +222,19 @@ class BuilderE2eTest {
                 .filter(p -> p.id().equals(confirmedSeed.pathId())).findFirst().orElseThrow();
         assertThat(conflictPath.expectedStatus()).isEqualTo(409);
         assertThat(conflictPath.sampleInput().get("confirm").asBoolean()).isTrue();   // 게이팅 검증
+
+        // 작업 #5 상태머신 다중 전이: POST /api/bookings/{id}/advance 는 status 명시 == 로 세 arm(200/409/410).
+        // 빌더가 EQ 가드(positive={PENDING,CONFIRMED,CANCELLED})를 추출하고 각 상태 변종 시드로 세 arm을 모두
+        // 캡처해야 한다. 단일 변종으로 되돌리면 happy 상태 1 arm만 → 단언 FAIL.
+        List<ExploredPath> advancePaths = pathsOf(asset, "post-api-bookings-id-advance");
+        assertThat(advancePaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .contains(200, 409, 410);
+        // 409·410 arm은 각각 CONFIRMED·CANCELLED 변종 시드 행에서 비롯한다(다중 변종 증거).
+        assertThat(asset.seeds().stream()
+                .filter(s -> advancePaths.stream().anyMatch(p -> p.id().equals(s.pathId())))
+                .filter(s -> s.table().equals("bookings"))
+                .flatMap(s -> s.values().stream()))
+                .contains("CONFIRMED", "CANCELLED");
 
         // 부정-인증 경로: auth-required 엔드포인트(get-api-orders)에 무효 토큰 1회 발행 → JWT 필터 거부 arm
         // (JwtAuthFilter validate→false + JwtUtil.validate catch). discoveredBy="negative-auth" 4xx path 캡처.

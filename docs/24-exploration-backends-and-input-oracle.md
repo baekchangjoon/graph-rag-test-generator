@@ -150,7 +150,12 @@ InputOracle(ASM+Z3) 위에, 더 흔한 분기 종류를 여는 단계들을 쌓�
 - **Stage 3b — mutating by-id 정합성**: 요청별 시드 리셋(`resetSeeds`)으로 상태 누적 제거 + 결정성 인지
   구체 어설션. **생성 by-id 테스트가 빈 DB에서 재현**(petclinic 16/16).
 - **회귀 보호**: order-service에 **Booking 리소스**를 추가해 위 전 단계를 CI(e2e)가 라이브로 검증
-  (e2e 22→45 tests). 비목표: 상태 의존 가드 양 arm concolic 변종(stale 과거날짜, capacity) = 향후.
+  (e2e 22→45 tests).
+- **Stage 4 — 상태 의존 가드 다-arm 시드**: `extractStateGuards`(TEMPORAL stale 과거날짜 + ENUM `!=`/`==`)
+  + `ReadInputSynthesizer.synthesizeVariants`가 저장-행 상태별 대체 시드 변종을 합성해 by-id 엔드포인트의
+  여러 전이 arm을 연다. ENUM은 NE 잔여 상수 + EQ positive 각 상수 + else 잔여 1개로 **상태머신 다중 전이**를
+  커버(order-service `advance` 200/409/410). inter-field 등식은 Z3 `solveTuple`(정수). float inter-field는
+  설계 보류(실측 SUT 부재, `2026-06-16-interfield-float-double.md`).
 
 ## ConcolicOracle 지원 범위 (확장 중)
 

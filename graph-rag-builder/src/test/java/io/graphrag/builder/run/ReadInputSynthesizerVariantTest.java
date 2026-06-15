@@ -37,6 +37,10 @@ class ReadInputSynthesizerVariantTest {
     private static final StateGuard ENUM =
             new StateGuard("x.BookingController", "delete", 115, "status",
                     GuardKind.ENUM, "BookingStatus", List.of("CANCELLED", "PENDING"));
+    /** EQ 다중 전이: status == PENDING / CONFIRMED / CANCELLED → positive 3개, negated 없음. */
+    private static final StateGuard ENUM_EQ_MULTI =
+            new StateGuard("x.BookingController", "advance", 130, "status",
+                    GuardKind.ENUM, "BookingStatus", List.of(), List.of("PENDING", "CONFIRMED", "CANCELLED"));
 
     private static ReadInputSynthesizer synth() {
         // enumColumns: status 컬럼의 유효값(가드의 != 상수들) → base status = 사전순 첫째 CANCELLED
@@ -92,6 +96,22 @@ class ReadInputSynthesizerVariantTest {
         List<Object> pks = variants.stream().map(ReadInputSynthesizerVariantTest::bookingsRow)
                 .map(r -> r.values().get(0)).toList();
         assertThat(pks).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void eqGuardSeedsVariantPerPositiveStateExcludingHappy() {
+        // base status=CANCELLED(enumColumns 첫). positive={PENDING,CONFIRMED,CANCELLED} - happy(CANCELLED)
+        // → CONFIRMED/PENDING 두 변종(다중 전이 arm). 전체 enum이 positive라 else-arm 잔여 없음.
+        List<SeedVariant> variants =
+                synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(ENUM_EQ_MULTI));
+
+        assertThat(variants).hasSize(3);   // base + 2
+        List<Object> statuses = variants.subList(1, 3).stream()
+                .map(ReadInputSynthesizerVariantTest::bookingsRow).map(r -> col(r, "status")).toList();
+        assertThat(statuses).containsExactlyInAnyOrder("CONFIRMED", "PENDING");
+        // 변종 PK는 모두 고유(전역 variantIdx offset)
+        assertThat(variants.stream().map(ReadInputSynthesizerVariantTest::bookingsRow)
+                .map(r -> r.values().get(0)).toList()).doesNotHaveDuplicates();
     }
 
     @Test

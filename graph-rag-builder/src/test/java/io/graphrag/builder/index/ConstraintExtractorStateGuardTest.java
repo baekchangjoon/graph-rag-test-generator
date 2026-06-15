@@ -42,6 +42,31 @@ class ConstraintExtractorStateGuardTest {
     }
 
     @Test
+    void recognizesEqGuard_withPositiveConstantSet() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+        // advance: status == PENDING / == CONFIRMED / == CANCELLED → positive={CANCELLED,CONFIRMED,PENDING}
+        StateGuard eq = guards.stream()
+                .filter(g -> g.kind() == GuardKind.ENUM)
+                .filter(g -> g.classFqn().endsWith("StateGuards") && g.method().equals("advance"))
+                .findFirst().orElseThrow();
+        assertThat(eq.column()).isEqualTo("status");
+        assertThat(eq.positiveConstants()).containsExactly("CANCELLED", "CONFIRMED", "PENDING");
+        assertThat(eq.negatedConstants()).isEmpty();
+    }
+
+    @Test
+    void recognizesMixedNeAndEqOnSameColumn() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+        // mixed: status != PENDING && status == CONFIRMED → 한 가드에 negated=[PENDING]·positive=[CONFIRMED]
+        StateGuard mixed = guards.stream()
+                .filter(g -> g.kind() == GuardKind.ENUM)
+                .filter(g -> g.classFqn().endsWith("StateGuards") && g.method().equals("mixed"))
+                .findFirst().orElseThrow();
+        assertThat(mixed.negatedConstants()).containsExactly("PENDING");
+        assertThat(mixed.positiveConstants()).containsExactly("CONFIRMED");
+    }
+
+    @Test
     void doesNotRecognizePureInputComparison_asStateGuard() {
         List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
 
