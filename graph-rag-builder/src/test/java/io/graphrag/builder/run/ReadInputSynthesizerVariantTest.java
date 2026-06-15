@@ -115,6 +115,35 @@ class ReadInputSynthesizerVariantTest {
     }
 
     @Test
+    void neGuardWithMultipleResidualsSeedsVariantPerResidual() {
+        // negated={PENDING}만 → 잔여 {CONFIRMED, CANCELLED} 2개. base=CANCELLED(happy) 제외 → CONFIRMED 1개?
+        // base가 잔여 중 하나(CANCELLED)면 그것 제외 → CONFIRMED. 잔여 다중 검증 위해 base 밖 enum 사용:
+        StateGuard ne1 = new StateGuard("x.B", "m", 1, "status",
+                GuardKind.ENUM, "BookingStatus", List.of("PENDING"), List.of());
+        // enumColumns base=CANCELLED. 잔여(전체-PENDING)={CONFIRMED,CANCELLED} - happy(CANCELLED) → {CONFIRMED}.
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(ne1));
+        assertThat(variants.subList(1, variants.size()).stream()
+                .map(ReadInputSynthesizerVariantTest::bookingsRow).map(r -> col(r, "status")))
+                .containsExactly("CONFIRMED");   // 잔여에서 happy(CANCELLED) 제외
+    }
+
+    @Test
+    void variantsCappedAtFourWithDeterministicOrder() {
+        // enum 6상수 전부 positive → happy 제외 5개 적격, cap=4로 절단(사전순 앞 4).
+        ReadInputSynthesizer s = new ReadInputSynthesizer(
+                Map.of("E", List.of("S0", "S1", "S2", "S3", "S4", "S5")),
+                Map.of("status", List.of("S5")));   // base=S5
+        StateGuard eq6 = new StateGuard("x.B", "m", 1, "status", GuardKind.ENUM, "E",
+                List.of(), List.of("S0", "S1", "S2", "S3", "S4", "S5"));
+        List<SeedVariant> variants = s.synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(eq6));
+        // base + 4 변종(S5는 happy 제외, 나머지 5 중 사전순 앞 4 = S0..S3)
+        assertThat(variants).hasSize(5);
+        assertThat(variants.subList(1, 5).stream()
+                .map(ReadInputSynthesizerVariantTest::bookingsRow).map(r -> col(r, "status")))
+                .containsExactly("S0", "S1", "S2", "S3");
+    }
+
+    @Test
     void returnsSingletonWhenGuardColumnAbsentOnTable() {
         StateGuard missing = new StateGuard("x.BookingController", "getById", 76, "no_such_column",
                 GuardKind.TEMPORAL, null, List.of());
