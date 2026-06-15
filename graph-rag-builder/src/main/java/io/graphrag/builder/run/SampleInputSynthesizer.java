@@ -165,8 +165,11 @@ public class SampleInputSynthesizer {
                 default -> { }
             }
         }
-        long v = Math.min(Math.max(1, lower), upper);
-        return lower > upper ? lower : v;   // 범위 충돌 → MIN 우선
+        // 범위 충돌(모순 제약, 흔히 비-가드 비교 혼입)은 안전하게 default로 흡수.
+        if (lower > upper) {
+            return 1;
+        }
+        return Math.min(Math.max(1, lower), upper);
     }
 
     /** 문자열 필드: @Size(min,max) 를 만족하도록 padding/truncate. */

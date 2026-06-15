@@ -132,6 +132,16 @@
 - **A 한계**: inter-field 가드는 happy로 못 풀어 일부 throw 잔존 — 단일필드는 개선, 회귀 아님.
 - **B2 e2e Kafka broker**: testlib/e2e에 broker 의존 추가 — 조건부 단계에서 평가.
 
+## 5.4 Feature A 실측 + 비교-threading 확장 (2026-06-15)
+
+- 어노테이션-only Feature A는 **전 SUT 커버리지 0 변화**(petclinic/order는 Bean Validation 어노테이션 0개, 검증이 명령형 `if` 가드). 회귀 0이나 실효 없음.
+- → **비교-threading 확장**(커밋 후): `ConstraintExtractor.extractComparisons`(전 계층, 이미 존재)의 `field op literal`을 합성 MIN/MAX로 변환해 happy에 반영(`EndpointExplorationRunner.mergeComparisonBounds`). 범위 충돌→default(안전망).
+- **실측(회귀 재측정)**:
+  - **order-service e2e 45→48 GREEN** — Booking create가 단일필드 가드 통과 → **201 성공경로(s201-1/2/3) 생성**. 비교-threading이 실제로 작동(repo 내 검증).
+  - **7-SUT(petclinic/community/diary/auth-user/notification/analytics/mindgraph) 전부 baseline 동일 → 회귀 0.**
+  - **petclinic Reservation은 커버리지 불변(36%)**: happy는 단일필드 가드 통과(`roomNumber=100,nights=1,…` 검증됨)하나 (a) 그 분기들은 이미 constraint-directed 변이가 커버, (b) 9번 `depositAmount*1.1<nights*rate` **inter-field 가드**에서 422 → 201 미도달. inter-field 추론은 Stage-4 미해결(범위 밖).
+- **결론**: 비교-threading은 단일필드 가드 SUT(order Booking)에서 win, inter-field 가드 SUT(petclinic Reservation 201)는 Stage-4 필요. 회귀 0.
+
 ## 5.5 진척 상태 (2026-06-15)
 
 - ✅ **Feature A 완료** (커밋 `4594841`): `SampleInputSynthesizer.synthesize(.,.,fieldConstraints)` 오버로드(boundedInt/applySize) + `happyInput` 배선. 빌더 전 테스트 GREEN(제약 케이스 + BuilderE2eTest 통합).
