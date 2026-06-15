@@ -91,8 +91,9 @@ public final class InputMutator {
             if (tuple.isEmpty() || !fieldNames.containsAll(tuple.keySet())) {
                 continue;
             }
-            String name = "interfield-" + tuple.keySet().stream().sorted()
-                    .reduce((a, b) -> a + "_" + b).orElse("");
+            // 이름에 값까지 포함(joint이 line을 넣듯) — 같은 필드쌍의 서로 다른 튜플이 dedupeByName에서
+            // 충돌·소실하지 않게 한다.
+            String name = "interfield-" + new java.util.TreeMap<>(tuple);
             Map<String, Long> t = tuple;
             out.add(new Mutation(name, body -> {
                 t.forEach((field, value) -> body.put(field, value.longValue()));

@@ -381,6 +381,9 @@ public final class ConcolicOracle implements InputOracle {
             return Optional.empty();   // 문자열 길이는 단일필드 경로 전용
         }
         Optimize opt = ctx.mkOptimize();
+        com.microsoft.z3.Params params = ctx.mkParams();
+        params.add("timeout", 2000);   // 2s — 큰 bootJar에서 Optimize가 늘어지지 않게(plan §2D)
+        opt.setParameters(params);
         Map<String, IntExpr> vars = new TreeMap<>();
         ArithExpr sum = ctx.mkInt(c.constant());
         ArithExpr objective = ctx.mkInt(0);
