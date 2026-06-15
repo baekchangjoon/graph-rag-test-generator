@@ -2,6 +2,8 @@ package io.graphrag.builder.run;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
+import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ForeignKey;
 import io.graphrag.model.Json;
@@ -10,6 +12,7 @@ import io.graphrag.model.TableSchema;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * endpoint body 타입에서 결정적 happy-path 입력을 합성한다 (Phase 0).
@@ -30,6 +33,15 @@ public class SampleInputSynthesizer {
     }
 
     public SynthesizedInput synthesize(BodyShape shape, List<TableSchema> tables) {
+        return synthesize(shape, tables, Map.of());
+    }
+
+    /**
+     * Bean Validation 단일필드 제약(@Min/@Max/@Size/@Email/@Positive/@Negative)을 happy 값에 반영해
+     * 핸들러의 검증 가드를 통과시킨다(Feature A). inter-field/수학 제약은 범위 밖 — enum은 첫 상수로 둔다.
+     */
+    public SynthesizedInput synthesize(BodyShape shape, List<TableSchema> tables,
+                                       Map<String, List<FieldConstraint>> fieldConstraints) {
         ObjectNode body = Json.mapper().createObjectNode();
         List<SynthesizedInput.SeedRow> seeds = new ArrayList<>();
 
@@ -42,7 +54,7 @@ public class SampleInputSynthesizer {
                 body.put(field.name(), probeValue);
                 seeds.add(seedRow(fk, probeValue, tables));
             } else {
-                putScalar(body, field);
+                putScalar(body, field, fieldConstraints.getOrDefault(field.name(), List.of()));
             }
         }
         return new SynthesizedInput(body, seeds);
@@ -106,16 +118,16 @@ public class SampleInputSynthesizer {
         return 1;
     }
 
-    private void putScalar(ObjectNode body, BodyShape.BodyField field) {
+    private static final Set<String> INT_TYPES = Set.of(
+            "java.lang.Integer", "int", "java.lang.Long", "long", "java.lang.Short", "short");
+    private static final Set<String> FLOAT_TYPES = Set.of(
+            "java.lang.Double", "double", "java.lang.Float", "float", "java.math.BigDecimal");
+
+    private void putScalar(ObjectNode body, BodyShape.BodyField field, List<FieldConstraint> cons) {
         String t = field.javaType();
-        switch (t) {
-            case "java.lang.Integer", "int", "java.lang.Long", "long",
-                 "java.lang.Short", "short" -> { body.put(field.name(), 1); return; }
-            case "java.lang.Double", "double", "java.lang.Float", "float",
-                 "java.math.BigDecimal" -> { body.put(field.name(), 1.0); return; }
-            case "java.lang.Boolean", "boolean" -> { body.put(field.name(), true); return; }
-            default -> { }
-        }
+        if (INT_TYPES.contains(t)) { body.put(field.name(), boundedInt(cons)); return; }
+        if (FLOAT_TYPES.contains(t)) { body.put(field.name(), (double) boundedInt(cons)); return; }
+        if (t.equals("java.lang.Boolean") || t.equals("boolean")) { body.put(field.name(), true); return; }
         switch (t) {   // 시간 타입 — ISO-8601 문자열 (SUT Jackson이 string→LocalDate 역직렬화)
             case "java.time.LocalDate" -> { body.put(field.name(), "2037-01-01"); return; }
             case "java.time.LocalDateTime" -> { body.put(field.name(), "2037-01-01T00:00:00"); return; }
@@ -132,8 +144,42 @@ public class SampleInputSynthesizer {
                     .map(Map.Entry::getValue).findFirst().orElse(null);
         }
         if (consts != null && !consts.isEmpty()) { body.put(field.name(), consts.get(0)); return; }
-        if (field.name().toLowerCase().endsWith("email")) { body.put(field.name(), "probe@example.com"); return; }
-        body.put(field.name(), "sample-" + field.name());
+        boolean email = field.name().toLowerCase().endsWith("email")
+                || cons.stream().anyMatch(c -> c.kind() == Kind.EMAIL);
+        String value = email ? "probe@example.com" : "sample-" + field.name();
+        body.put(field.name(), applySize(value, cons));
+    }
+
+    /** 정수 필드: MIN/MAX/POSITIVE/NEGATIVE 교집합 범위 내 결정적 값(기본 1 기준, 범위 충돌 시 하한 우선). */
+    private static long boundedInt(List<FieldConstraint> cons) {
+        long lower = Long.MIN_VALUE;
+        long upper = Long.MAX_VALUE;
+        for (FieldConstraint c : cons) {
+            switch (c.kind()) {
+                case MIN -> lower = Math.max(lower, c.numArg());
+                case MAX -> upper = Math.min(upper, c.numArg());
+                case POSITIVE -> lower = Math.max(lower, 1);
+                case POSITIVE_OR_ZERO -> lower = Math.max(lower, 0);
+                case NEGATIVE -> upper = Math.min(upper, -1);
+                case NEGATIVE_OR_ZERO -> upper = Math.min(upper, 0);
+                default -> { }
+            }
+        }
+        long v = Math.min(Math.max(1, lower), upper);
+        return lower > upper ? lower : v;   // 범위 충돌 → MIN 우선
+    }
+
+    /** 문자열 필드: @Size(min,max) 를 만족하도록 padding/truncate. */
+    private static String applySize(String s, List<FieldConstraint> cons) {
+        int min = 0;
+        int max = Integer.MAX_VALUE;
+        for (FieldConstraint c : cons) {
+            if (c.kind() == Kind.SIZE_MIN) { min = Math.max(min, (int) c.numArg()); }
+            if (c.kind() == Kind.SIZE_MAX) { max = Math.min(max, (int) c.numArg()); }
+        }
+        if (s.length() > max) { s = s.substring(0, Math.max(0, max)); }
+        if (s.length() < min) { s = (s + "a".repeat(min)).substring(0, min); }
+        return s;
     }
 
     static String camelToSnake(String name) {

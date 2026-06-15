@@ -134,7 +134,7 @@ public class EndpointExplorationRunner {
         // GET뿐 아니라 비-GET by-id(PUT/DELETE /{id})도 리소스를 미리 시드하고, 생성 테스트가
         // 그 리소스를 재현하도록 requiredSeeds에 등록해야 빈 DB에서도 통과한다(Bug: 비-GET 시드 미재현).
         boolean seedResource = readPath || hasPathParam;
-        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns);
+        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints);
 
         List<RequiredSeed> requiredSeeds = new ArrayList<>();
         int seedSeq = 0;
@@ -377,7 +377,8 @@ public class EndpointExplorationRunner {
      */
     static SynthesizedInput happyInput(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                                        Map<String, List<String>> enumConstants,
-                                       Map<String, List<String>> enumColumns) {
+                                       Map<String, List<String>> enumColumns,
+                                       Map<String, List<FieldConstraint>> fieldConstraints) {
         boolean get = endpoint.httpMethod().equals("GET");
         boolean hasPath = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
         if (get || hasPath) {
@@ -386,7 +387,8 @@ public class EndpointExplorationRunner {
             if (get || shape == null) {
                 return pathPart;
             }
-            SynthesizedInput bodyPart = new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+            SynthesizedInput bodyPart = new SampleInputSynthesizer(enumConstants)
+                    .synthesize(shape, tables, fieldConstraints);
             ObjectNode merged = bodyPart.body().deepCopy();
             merged.setAll(pathPart.body());   // path/query 우선
             List<SynthesizedInput.SeedRow> seeds = new ArrayList<>(pathPart.seeds());
@@ -402,7 +404,7 @@ public class EndpointExplorationRunner {
         }
         return shape == null
                 ? new SynthesizedInput(Json.mapper().createObjectNode(), List.of())
-                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables);
+                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables, fieldConstraints);
     }
 
     /** 시드 행들을 fresh 상태로 복원: reverse-order DELETE(child→parent) 후 정순 INSERT(parent→child).
