@@ -1,0 +1,6 @@
+{
+  "endpointId": "kafka-order-events",
+  "testClassName": "OrderEventConsumerTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}
