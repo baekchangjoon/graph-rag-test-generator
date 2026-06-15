@@ -150,6 +150,10 @@ class BuilderE2eTest {
         assertThat(Files.exists(out.resolve("exploration-report.json"))).isTrue();
         String report = Files.readString(out.resolve("exploration-report.json"));
         assertThat(report).contains("post-api-orders").contains("totalBranches");
+        // consumer 커버리지가 exploration 지표에 반영된다(F1-F3): @KafkaListener 발행 후 consumer가
+        // 실행되면 그 클래스 분기가 run-wide covered 집합(coveredAppClasses)에 들어와야 한다.
+        // HTTP 탐색만 집계하던 회귀로 되돌아가면 consumer 클래스가 빠져 FAIL.
+        assertThat(report).contains("io.graphrag.sample.orders.OrderEventConsumer");
     }
 
     private static List<ExploredPath> pathsOf(GraphAsset asset, String endpointId) {

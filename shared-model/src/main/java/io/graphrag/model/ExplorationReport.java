@@ -10,11 +10,15 @@ import java.util.Map;
  * 컨트롤러는 0/0이 정상이다. SUT 전체 도달 분기는 app 집계로 본다:
  * coveredAppBranches/totalAppBranches = 전 엔드포인트가 도달한 whole-app 분기 합집합 /
  * BOOT-INF/classes 전체 분기.
+ *
+ * <p>coveredAppClasses = ≥1 분기가 covered된 app 클래스 FQN(정렬). HTTP 탐색뿐 아니라
+ * Kafka consumer/WS 핸들러 실행 커버까지 포함된다(전 루프 종료 후 runWideExec 집계 기준).
  */
 public record ExplorationReport(
         List<EndpointExploration> endpoints,
         int coveredAppBranches,
-        int totalAppBranches) {
+        int totalAppBranches,
+        List<String> coveredAppClasses) {
 
     /**
      * solverRelevantMissed: 미커버 분기 중 handler 비교식(field op literal) 라인과
