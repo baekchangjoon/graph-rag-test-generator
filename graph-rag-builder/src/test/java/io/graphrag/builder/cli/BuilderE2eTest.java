@@ -219,6 +219,13 @@ class BuilderE2eTest {
         assertThat(conflictPath.expectedStatus()).isEqualTo(409);
         assertThat(conflictPath.sampleInput().get("confirm").asBoolean()).isTrue();   // 게이팅 검증
 
+        // 부정-인증 경로: auth-required 엔드포인트(get-api-orders)에 무효 토큰 1회 발행 → JWT 필터 거부 arm
+        // (JwtAuthFilter validate→false + JwtUtil.validate catch). discoveredBy="negative-auth" 4xx path 캡처.
+        // 되돌리면(happy valid-token만) 그 path 없음 → FAIL. (생성 제외라 B2/run-e2e 무영향.)
+        ExploredPath negAuthPath = pathsOf(asset, "get-api-orders").stream()
+                .filter(p -> p.discoveredBy().equals("negative-auth")).findFirst().orElseThrow();
+        assertThat(negAuthPath.expectedStatus()).isIn(401, 403);
+
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
         assertThat(Files.exists(out.resolve("exploration-report.json"))).isTrue();

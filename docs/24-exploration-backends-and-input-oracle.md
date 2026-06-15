@@ -121,6 +121,12 @@ out-of-process 관측이 HTTP 엔드포인트에만 머물지 않는다. 이벤�
   고정 settle, `GRB_KAFKA_VARIANTS=off`로 ablation. 실증: order-service `OrderEventConsumer`의 결측-필드·dedup arm
   missed→covered(`docs/superpowers/plans/2026-06-15-kafka-consumer-payload-variants.md`).
 - **STOMP/WS 핸들러** — `WsCaptureRunner`도 교환별 dump delta로 핸들러 커버를 캡처.
+- **부정-인증 경로(2026-06-15)** — 탐색은 auth-required 엔드포인트에 항상 valid 토큰을 주입하므로 JWT 필터/유틸의
+  거부 arm이 미커버였다. happy 탐색 후 **무효 토큰**(`Bearer invalid-token-<id>`) 요청을 1회 보내(httpInvoker의
+  `doSend` 코어 재사용, 토큰만 교체) `JwtAuthFilter` validate→false + `JwtUtil.validate` catch arm을 cumulativeCoverage에
+  크레딧한다. 결과는 `discoveredBy="negative-auth"` 4xx ExploredPath로 캡처하되 **`Generator`가 생성에서 제외**(B2 무영향).
+  `GRB_NEGATIVE_AUTH=off`로 ablation. 실증: order-service 전 auth 엔드포인트 403 거부 arm 커버
+  (`docs/superpowers/plans/2026-06-15-negative-auth-paths.md`).
 - **집계** — Kafka/WS/HTTP의 누적 exec를 모두 `runWideExec`에 OR-병합하고, exploration 커버리지
   지표는 **전 루프 종료 후 1회** 산출한다. `exploration-report.json`의 `coveredAppClasses`(≥1 분기
   covered된 app 클래스)에 consumer/WS 핸들러 클래스가 포함된다.
