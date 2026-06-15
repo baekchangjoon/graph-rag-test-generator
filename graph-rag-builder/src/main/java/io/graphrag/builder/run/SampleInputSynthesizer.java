@@ -180,7 +180,9 @@ public class SampleInputSynthesizer {
     private static double boundedFloat(List<FieldConstraint> cons) {
         boolean hasUpper = cons.stream().anyMatch(c ->
                 c.kind() == Kind.MAX || c.kind() == Kind.NEGATIVE || c.kind() == Kind.NEGATIVE_OR_ZERO);
-        return hasUpper ? (double) boundedInt(cons) : 1_000_000.0;
+        // 상한 제약이 있으면 그 범위를 존중, 없으면 inter-field "must be large" 가드용으로 다소 큰
+        // 기본값(과도하지 않게 — overflow/precision 리스크 최소화). 일반 inter-field는 Z3가 정공(Stage-4).
+        return hasUpper ? (double) boundedInt(cons) : 1_000.0;
     }
 
     /** 문자열 필드: @Size(min,max) 를 만족하도록 padding/truncate. */

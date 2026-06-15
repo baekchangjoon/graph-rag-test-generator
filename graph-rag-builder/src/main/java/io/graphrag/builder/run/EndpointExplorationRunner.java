@@ -380,9 +380,12 @@ public class EndpointExplorationRunner {
      */
     /**
      * 명령형 검증 가드(`if (field op literal) throw`)를 합성 MIN/MAX 제약으로 변환해 어노테이션
-     * 제약과 병합한다(Feature A 확장). 가드가 throw하는 invalid 측의 반대(valid)로 happy 값을 민다:
-     * `field < L`→MIN(L), `<=`→MIN(L+1), `>`→MAX(L), `>=`→MAX(L-1). ==/!=는 모호 → skip.
-     * body 필드명과 일치하는 비교만(전 계층 추출이므로 이름 매칭). 범위 충돌은 boundedInt가 default로 흡수.
+     * 제약과 병합한다(Feature A 확장). `field < L`→MIN(L), `<=`→MIN(L+1), `>`→MAX(L), `>=`→MAX(L-1).
+     *
+     * 안전망: 비교는 전 계층에서 추출되고 throw/branch 방향 정보가 없으므로(비-가드 비교 오용 위험),
+     * **하한(`<`/`<=`)과 상한(`>`/`>=`) 비교를 모두 가진 필드에만** 적용한다 — 양방향 범위는 검증
+     * range 가드(`if(x<lo || x>hi) throw`)의 강한 신호이고, 단방향 비교(흔히 비즈니스 분기)는 제외.
+     * body 필드명 일치만. 범위 충돌은 boundedInt가 default로 흡수.
      */
     static Map<String, List<FieldConstraint>> mergeComparisonBounds(
             Map<String, List<FieldConstraint>> annotations,
@@ -392,23 +395,36 @@ public class EndpointExplorationRunner {
         }
         Set<String> bodyFields = shape.fields().stream()
                 .map(BodyShape.BodyField::name).collect(Collectors.toSet());
-        Map<String, List<FieldConstraint>> merged = new java.util.HashMap<>();
-        annotations.forEach((k, v) -> merged.put(k, new ArrayList<>(v)));
+        // 필드별 비교 수집 후, 양방향(하한+상한)을 모두 가진 필드만 채택.
+        Map<String, List<ConstraintExtractor.Comparison>> byField = new java.util.LinkedHashMap<>();
         for (ConstraintExtractor.Comparison c : comparisons) {
-            if (!bodyFields.contains(c.fieldRef())) {
-                continue;
-            }
-            FieldConstraint fc = switch (c.op()) {
-                case "<" -> new FieldConstraint(c.fieldRef(), Kind.MIN, c.literal(), null);
-                case "<=" -> new FieldConstraint(c.fieldRef(), Kind.MIN, c.literal() + 1, null);
-                case ">" -> new FieldConstraint(c.fieldRef(), Kind.MAX, c.literal(), null);
-                case ">=" -> new FieldConstraint(c.fieldRef(), Kind.MAX, c.literal() - 1, null);
-                default -> null;
-            };
-            if (fc != null) {
-                merged.computeIfAbsent(c.fieldRef(), x -> new ArrayList<>()).add(fc);
+            if (bodyFields.contains(c.fieldRef())
+                    && (c.op().equals("<") || c.op().equals("<=")
+                        || c.op().equals(">") || c.op().equals(">="))) {
+                byField.computeIfAbsent(c.fieldRef(), x -> new ArrayList<>()).add(c);
             }
         }
+        Map<String, List<FieldConstraint>> merged = new java.util.HashMap<>();
+        annotations.forEach((k, v) -> merged.put(k, new ArrayList<>(v)));
+        byField.forEach((field, comps) -> {
+            boolean hasLower = comps.stream().anyMatch(c -> c.op().startsWith("<"));
+            boolean hasUpper = comps.stream().anyMatch(c -> c.op().startsWith(">"));
+            if (!(hasLower && hasUpper)) {
+                return;   // 단방향 비교(비-가드 위험) 제외
+            }
+            for (ConstraintExtractor.Comparison c : comps) {
+                FieldConstraint fc = switch (c.op()) {
+                    case "<" -> new FieldConstraint(field, Kind.MIN, c.literal(), null);
+                    case "<=" -> new FieldConstraint(field, Kind.MIN, c.literal() + 1, null);
+                    case ">" -> new FieldConstraint(field, Kind.MAX, c.literal(), null);
+                    case ">=" -> new FieldConstraint(field, Kind.MAX, c.literal() - 1, null);
+                    default -> null;
+                };
+                if (fc != null) {
+                    merged.computeIfAbsent(field, x -> new ArrayList<>()).add(fc);
+                }
+            }
+        });
         return merged;
     }
 
