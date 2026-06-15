@@ -233,6 +233,23 @@ public class EndpointExplorationRunner {
             finalSql.addAll(vr.sql());
         }
 
+        // 부정-인증 패스: auth-required 엔드포인트에 무효 토큰 1회 발행 → JWT 필터 거부 arm(validate→false +
+        // JwtUtil.validate catch) 커버. doSend의 per-request dump가 cumulativeCoverage에 크레딧(report 전).
+        // negative-auth path는 생성에서 제외(discoveredBy 마커). GRB_NEGATIVE_AUTH=off면 skip.
+        if (authProvider != null && endpoint.authRequired() && baseInput != null
+                && !"off".equalsIgnoreCase(System.getenv("GRB_NEGATIVE_AUTH"))) {
+            try {
+                InvocationOutcome neg = doSend(HttpClient.newHttpClient(), endpoint, baseInput,
+                        authConfig.headerValue("invalid-token-" + endpoint.id()));
+                finalPaths.add(new ExploredPath(endpoint.id() + "-negauth", endpoint.id(),
+                        baseInput, neg.status(), neg.response(), List.of(), List.of(),
+                        List.copyOf(neg.coveredBranches()), "negative-auth", List.of(), List.of(), List.of()));
+                log.info("negative-auth {} -> status {}", endpoint.id(), neg.status());
+            } catch (Exception e) {   // best-effort: 부정 패스 실패는 회귀 아님
+                log.warn("negative-auth pass failed for {}: {}", endpoint.id(), e.getMessage());
+            }
+        }
+
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
@@ -554,43 +571,53 @@ public class EndpointExplorationRunner {
         HttpClient http = HttpClient.newHttpClient();
         return input -> {
             try {
-                long logStart = sut.logOffset();
-                String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
-                HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
-                        .timeout(Duration.ofSeconds(30))
-                        .header("Content-Type", "application/json")
-                        // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
-                        .header("baggage", "test-id=explore");
-                if (authProvider != null && endpoint.authRequired()) {
-                    builder.header(authConfig.headerName(),
-                            authConfig.headerValue(authProvider.token()));
-                }
-                String method = endpoint.httpMethod();
-                if (method.equals("GET") || method.equals("DELETE")) {
-                    builder.method(method, HttpRequest.BodyPublishers.noBody());
-                } else {
-                    builder.method(method, HttpRequest.BodyPublishers.ofString(
-                            Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
-                }
-                HttpResponse<String> response = http.send(builder.build(),
-                        HttpResponse.BodyHandlers.ofString());
-                Thread.sleep(150);   // 콘솔 로그 flush 여유
-                ExecutionDataStore delta = coverage.dump(true);
-                String coverageKey = CoverageFingerprint.of(delta, appClasses);
-                for (ExecutionData ed : delta.getContents()) {
-                    cumulativeCoverage.put(ed);   // probe OR 병합 (arm-level 누적)
-                }
-                BranchCoverage requestCoverage = analyzer.analyze(delta);
-                long logEnd = sut.logOffset();
-                return new InvocationOutcome(response.statusCode(),
-                        parseJsonOrNull(response.body()),
-                        requestCoverage.covered(), logStart, logEnd,
-                        httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                        coverageKey);
+                String authHeader = (authProvider != null && endpoint.authRequired())
+                        ? authConfig.headerValue(authProvider.token()) : null;
+                return doSend(http, endpoint, input, authHeader);
             } catch (Exception e) {
                 throw new IllegalStateException("invocation failed: " + endpoint.path(), e);
             }
         };
+    }
+
+    /**
+     * HTTP 요청 1회 전송 + 요청 단위 커버리지 dump. authHeaderValue!=null이면 그 값을 auth 헤더로 설정,
+     * null이면 미설정. 부정-인증 패스(무효 토큰)도 이 코어를 재사용한다(per-request dump가 거부 arm을 크레딧).
+     */
+    private InvocationOutcome doSend(HttpClient http, Endpoint endpoint, JsonNode input,
+                                    String authHeaderValue) throws Exception {
+        long logStart = sut.logOffset();
+        String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", "application/json")
+                // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
+                .header("baggage", "test-id=explore");
+        if (authHeaderValue != null) {
+            builder.header(authConfig.headerName(), authHeaderValue);
+        }
+        String method = endpoint.httpMethod();
+        if (method.equals("GET") || method.equals("DELETE")) {
+            builder.method(method, HttpRequest.BodyPublishers.noBody());
+        } else {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(
+                    Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
+        }
+        HttpResponse<String> response = http.send(builder.build(),
+                HttpResponse.BodyHandlers.ofString());
+        Thread.sleep(150);   // 콘솔 로그 flush 여유
+        ExecutionDataStore delta = coverage.dump(true);
+        String coverageKey = CoverageFingerprint.of(delta, appClasses);
+        for (ExecutionData ed : delta.getContents()) {
+            cumulativeCoverage.put(ed);   // probe OR 병합 (arm-level 누적)
+        }
+        BranchCoverage requestCoverage = analyzer.analyze(delta);
+        long logEnd = sut.logOffset();
+        return new InvocationOutcome(response.statusCode(),
+                parseJsonOrNull(response.body()),
+                requestCoverage.covered(), logStart, logEnd,
+                httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
+                coverageKey);
     }
 
     /**

@@ -66,6 +66,9 @@ public class Generator {
         List<String> fullyParallel = new ArrayList<>();
         List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
         for (ExploredPath path : client.pathsForEndpoint(request.endpointId())) {
+            if ("negative-auth".equals(path.discoveredBy())) {
+                continue;   // 부정-인증 커버용 path(무효 토큰 거부 arm)는 테스트 생성 대상 아님
+            }
             String className = request.testClassName() + classSuffix(endpoint.id(), path.id());
             GenerationResult single = generateSingle(request, className, path.id());
             files.addAll(single.files());
