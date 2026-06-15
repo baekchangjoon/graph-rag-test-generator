@@ -94,7 +94,7 @@ public class KafkaCaptureRunner {
             if (!"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_VARIANTS"))) {
                 // missing-field(결정적, 하드): 빈 payload → required-필드 null-guard early-return arm.
                 publishAndCapture(producer, consumer, consumer.id() + "-missing",
-                        Json.mapper().createObjectNode(), variantKey(consumer, "missing"),
+                        missingFieldPayload(), variantKey(consumer, "missing"),
                         true, false, exchanges, allSql, cumulativeExec);
                 // duplicate(best-effort): happy 행 커밋 가시성 확인 후 동일 payload 재발행 → dedup-skip arm.
                 if (awaitHappyRowCommitted(happySql, tables)) {
