@@ -175,6 +175,28 @@ class BuilderE2eTest {
                 .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("users")
                         && s.bindings().stream().anyMatch(b -> b.column().equals("name")));
 
+        // Stage 4 양-arm 시드 가드(StateGuardOracle): 저장된 단일 행 상태로 갈리는 가드의 반대 arm을
+        // 대체 시드 변종으로 연다. 회귀(HTTP 탐색만)로 되돌아가면 변종 시드/arm이 사라져 FAIL.
+        // GET stale 가드(check_in_date.isBefore(now)): 과거날짜(1900-01-01) 변종 행 → 404 stale arm.
+        RequiredSeed staleSeed = asset.seeds().stream()
+                .filter(s -> s.table().equals("bookings") && s.values().contains("1900-01-01"))
+                .findFirst().orElseThrow();
+        ExploredPath stalePath = pathsOf(asset, "get-api-bookings-id").stream()
+                .filter(p -> p.id().equals(staleSeed.pathId())).findFirst().orElseThrow();
+        assertThat(stalePath.expectedStatus()).isEqualTo(404);     // 과거 행 + includeStale=false → stale 404
+        // 미래날짜 happy 행(2xx arm)도 함께 존재 → 두 arm 모두 시드됨
+        assertThat(pathsOf(asset, "get-api-bookings-id"))
+                .anyMatch(p -> p.expectedStatus() / 100 == 2);
+
+        // DELETE conflict 가드(status != PENDING && != CANCELLED): CONFIRMED 변종 행 + confirm=true → 409.
+        RequiredSeed confirmedSeed = asset.seeds().stream()
+                .filter(s -> s.table().equals("bookings") && s.values().contains("CONFIRMED"))
+                .findFirst().orElseThrow();
+        ExploredPath conflictPath = pathsOf(asset, "delete-api-bookings-id").stream()
+                .filter(p -> p.id().equals(confirmedSeed.pathId())).findFirst().orElseThrow();
+        assertThat(conflictPath.expectedStatus()).isEqualTo(409);
+        assertThat(conflictPath.sampleInput().get("confirm").asBoolean()).isTrue();   // 게이팅 검증
+
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
         assertThat(Files.exists(out.resolve("exploration-report.json"))).isTrue();

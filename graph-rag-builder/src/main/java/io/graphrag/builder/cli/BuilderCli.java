@@ -202,6 +202,11 @@ public final class BuilderCli {
                 // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
                 Map<String, List<String>> enumColumns =
                         constraintExtractor.extractEnumColumns(config.sutSrc());
+                // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
+                // GRB_STATE_GUARDS=off 면 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control).
+                List<ConstraintExtractor.StateGuard> allStateGuards =
+                        "off".equalsIgnoreCase(System.getenv("GRB_STATE_GUARDS"))
+                                ? List.of() : constraintExtractor.extractStateGuards(config.sutSrc());
                 // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
                 // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
                 io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
@@ -265,9 +270,15 @@ public final class BuilderCli {
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals,
                             authProvider, config.authConfig(), enumConstants, enumColumns);
+                    // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
+                    List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
+                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
+                                    && g.method().equals(endpoint.handlerMethod()))
+                            .toList();
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions);
+                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions,
+                                    endpointStateGuards);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());

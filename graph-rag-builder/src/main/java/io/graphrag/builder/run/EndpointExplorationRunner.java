@@ -124,7 +124,8 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.Comparison> comparisons,
                               InputCandidates candidates,
                               Map<String, List<FieldConstraint>> fieldConstraints,
-                              List<ConstraintExtractor.Conjunction> conjunctions) throws Exception {
+                              List<ConstraintExtractor.Conjunction> conjunctions,
+                              List<ConstraintExtractor.StateGuard> stateGuards) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
@@ -215,11 +216,117 @@ public class EndpointExplorationRunner {
 
         AttachResult attached = attachSeeds(endpoint, readPath, bundle.paths(), requiredSeeds);
 
+        // Stage 4: 상태 의존 가드(저장 행 상태로 분기)의 반대 arm을 대체 시드 변종으로 연다.
+        // httpInvoker가 변종 요청의 커버리지를 cumulativeCoverage에 OR-병합하므로 report()의
+        // missedBranches에서 그 라인이 사라진다(missed→covered). 변종 path/seed는 결과에 추가.
+        List<ExploredPath> finalPaths = new ArrayList<>(attached.paths());
+        List<RequiredSeed> finalSeeds = new ArrayList<>(
+                attached.requiredSeeds() == null ? List.of() : attached.requiredSeeds());
+        List<CapturedSql> finalSql = new ArrayList<>(bundle.allSql());
+        if (seedResource && stateGuards != null && !stateGuards.isEmpty()) {
+            VariantResult vr = exploreStateGuardVariants(endpoint, tables, stateGuards);
+            finalPaths.addAll(vr.paths());
+            finalSeeds.addAll(vr.seeds());
+            finalSql.addAll(vr.sql());
+        }
+
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
-        // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거).
-        return new EndpointResult(attached.paths(), bundle.allSql(), bundle.httpCalls(),
-                attached.requiredSeeds(),
-                report(endpoint, outcome, comparisons), cumulativeCoverage);
+        // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
+        // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
+        return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
+                finalSeeds, report(endpoint, outcome, comparisons), cumulativeCoverage);
+    }
+
+    private record VariantResult(List<ExploredPath> paths, List<RequiredSeed> seeds,
+                                 List<CapturedSql> sql) {
+    }
+
+    /**
+     * 상태가드 변종 pass: 가드별 대체 시드 행을 insert하고, 게이팅 boolean 쿼리 param을 설정해
+     * by-id 요청을 1회 구동(orchestrator 밖 — 입력 변이·시드 리셋 간섭 회피). httpInvoker가 커버리지를
+     * cumulativeCoverage에 OR-병합한다. 각 변종 arm을 distinct ExploredPath + 자기 RequiredSeed로 등록.
+     * 게이팅 규칙(검증된 두 family): TEMPORAL(stale)→boolean=false(예: includeStale=false),
+     * ENUM(conflict)→boolean=true(예: confirm=true).
+     */
+    private VariantResult exploreStateGuardVariants(Endpoint endpoint, List<TableSchema> tables,
+                                                    List<ConstraintExtractor.StateGuard> stateGuards)
+            throws Exception {
+        List<ExploredPath> paths = new ArrayList<>();
+        List<RequiredSeed> seeds = new ArrayList<>();
+        List<CapturedSql> sqls = new ArrayList<>();
+        List<ReadInputSynthesizer.SeedVariant> variants =
+                new ReadInputSynthesizer(enumConstants, enumColumns)
+                        .synthesizeVariants(endpoint, tables, stateGuards);
+        if (variants.size() <= 1) {
+            return new VariantResult(paths, seeds, sqls);
+        }
+        EndpointInvoker invoker = httpInvoker(endpoint);   // raw — 시드 리셋 래핑 없음
+        int vseq = 0;
+        for (int v = 1; v < variants.size(); v++) {
+            ReadInputSynthesizer.SeedVariant variant = variants.get(v);
+            vseq++;
+            try {
+                for (SynthesizedInput.SeedRow row : variant.input().seeds()) {
+                    Seeds.insert(connection, dbType, row);   // 변종 행(offset PK) — 기존 happy 행과 공존
+                }
+                boolean gate = variant.guard().kind() != ConstraintExtractor.GuardKind.TEMPORAL;
+                ObjectNode body = variant.input().body().deepCopy();
+                for (EndpointParam param : endpoint.params()) {
+                    if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
+                        body.put(param.name(), gate);
+                    }
+                }
+                InvocationOutcome out = invoker.invoke(body);
+                String pathId = endpoint.id() + "-sg" + vseq;
+                List<CapturedSql> sql = captureSqlForRange(pathId, body, out.logStart(), out.logEnd());
+                sqls.addAll(sql);
+                List<String> seedIds = new ArrayList<>();
+                int sj = 0;
+                for (SynthesizedInput.SeedRow row : variant.input().seeds()) {
+                    sj++;
+                    String sid = "seed-" + pathId + "-" + sj;
+                    seeds.add(new RequiredSeed(sid, pathId, row.table(), row.columns(),
+                            row.values().stream().map(String::valueOf).toList()));
+                    seedIds.add(sid);
+                }
+                paths.add(new ExploredPath(pathId, endpoint.id(), body, out.status(), out.response(),
+                        sql.stream().map(CapturedSql::id).toList(), List.of(),
+                        List.copyOf(out.coveredBranches()), "state-guard",
+                        List.of("state-guard:" + variant.guard().kind() + ":" + variant.guard().column()),
+                        List.of(), seedIds));
+            } catch (Exception e) {   // best-effort: 변종 실패는 회귀 아님(base 결과 유지)
+                log.warn("state-guard variant failed for {} ({}): {}",
+                        endpoint.id(), variant.guard().column(), e.getMessage());
+            }
+        }
+        return new VariantResult(paths, seeds, sqls);
+    }
+
+    private static boolean isBooleanType(String javaType) {
+        return javaType.equals("boolean") || javaType.equals("java.lang.Boolean");
+    }
+
+    /** captureSql(PathCandidate)의 임의 로그구간 버전 — 변종 요청의 SQL 캡처용. */
+    private List<CapturedSql> captureSqlForRange(String pathId, JsonNode body,
+                                                 long logStart, long logEnd) {
+        List<ParsedSql> parsed = SqlLogParser.parse(sut.readLogRange(logStart, logEnd));
+        Set<String> apiValues = bodyValues(body);
+        List<CapturedSql> captured = new ArrayList<>();
+        int sequence = 0;
+        for (ParsedSql statement : parsed) {
+            sequence++;
+            List<SqlBinding> bindings = new ArrayList<>();
+            for (ParsedSql.Binding binding : statement.bindings()) {
+                bindings.add(new SqlBinding(binding.position(),
+                        statement.columnForPosition(binding.position()), binding.value(),
+                        apiValues.contains(binding.value())
+                                ? BindingOrigin.API_PARAM : BindingOrigin.LITERAL,
+                        statement.bindingTableForPosition(binding.position())));
+            }
+            captured.add(new CapturedSql("sql-" + pathId + "-" + sequence, pathId,
+                    statement.kind(), statement.sql(), statement.tableName(), bindings));
+        }
+        return captured;
     }
 
     private record PathsBundle(List<ExploredPath> paths, List<CapturedSql> allSql,
