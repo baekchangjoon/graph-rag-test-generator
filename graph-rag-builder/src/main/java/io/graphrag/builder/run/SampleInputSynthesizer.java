@@ -126,7 +126,7 @@ public class SampleInputSynthesizer {
     private void putScalar(ObjectNode body, BodyShape.BodyField field, List<FieldConstraint> cons) {
         String t = field.javaType();
         if (INT_TYPES.contains(t)) { body.put(field.name(), boundedInt(cons)); return; }
-        if (FLOAT_TYPES.contains(t)) { body.put(field.name(), (double) boundedInt(cons)); return; }
+        if (FLOAT_TYPES.contains(t)) { body.put(field.name(), boundedFloat(cons)); return; }
         if (t.equals("java.lang.Boolean") || t.equals("boolean")) { body.put(field.name(), true); return; }
         switch (t) {   // 시간 타입 — ISO-8601 문자열 (SUT Jackson이 string→LocalDate 역직렬화)
             case "java.time.LocalDate" -> { body.put(field.name(), "2037-01-01"); return; }
@@ -170,6 +170,17 @@ public class SampleInputSynthesizer {
             return 1;
         }
         return Math.min(Math.max(1, lower), upper);
+    }
+
+    /**
+     * 실수 필드: 상한 제약(MAX/NEGATIVE)이 있으면 boundedInt로 캡, 없으면 "충분히 큰" 기본값.
+     * inter-field "must be large" 가드(예: deposit*1.1 >= nights*rate)를 happy에서 통과시키기 위함
+     * (단일필드 제약/비교가 상한을 주면 그 범위를 존중). 일반 amount/price 필드도 보통 무해.
+     */
+    private static double boundedFloat(List<FieldConstraint> cons) {
+        boolean hasUpper = cons.stream().anyMatch(c ->
+                c.kind() == Kind.MAX || c.kind() == Kind.NEGATIVE || c.kind() == Kind.NEGATIVE_OR_ZERO);
+        return hasUpper ? (double) boundedInt(cons) : 1_000_000.0;
     }
 
     /** 문자열 필드: @Size(min,max) 를 만족하도록 padding/truncate. */
