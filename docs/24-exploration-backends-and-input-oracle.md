@@ -150,7 +150,13 @@ order-service에 해당 분기를 추가해 distinct 테스트로 보존됨을 �
 | 정수 선형 등치/비교 `score*2==84` | score=42 | `score=42 → answer` |
 | long 산술 `bonus*2==10000000000` | bonus=5000000000 (int 범위 밖) | `bonus=5e9 → -whale` |
 | 문자열 길이 `code.length()==5` | "xxxxx" (길이5 문자열) | `code=xxxxx → -c5` |
+| **2-필드 선형 inter-field** `loyaltyPoints==nights*600+7` | 튜플 `{loyaltyPoints:607, nights:1}` | `bookings 201`(필드별 변이로는 불가) |
+
+`Sym`은 정수 선형식 `Σ(coeff·field)+const`를 **최대 2개 필드**까지 추적한다(3개째·진짜 곱 `x·y`는 top으로
+bail). 비교 opcode(EQ/NE/LT/LE/GT/GE)를 threading해, 단일 필드는 경계 ±1, **2-필드는 `solveTuple`**로
+동시충족 정수 튜플을 Z3 Optimize(합 최소화 → 작은·in-range 값)로 푼다. `InputMutator.interField`가 한
+atomic 변이로 적용. 결정적 in-repo 승리: `InputCandidates.tuples` 채널은 additive(단일 필드 무회귀).
 
 구현 노트: `INVOKEDYNAMIC`(문자열 concat) 처리, `LCMP`→a-b, 미처리 opcode는 깔끔히 bail(앞선
-기록 보존). 미지원(향후): 문자열 동치/접두사(Z3 string theory), 다변수 동시해(전체 입력 배정),
-enum ordinal, 분기 간(interprocedural) 전파.
+기록 보존). 미지원/보류(향후): 문자열 동치/접두사(Z3 string theory), **float rational 계수·enum 메서드
+grounding**(petclinic `deposit*1.1<nights*rate`는 best-effort), 3+변수 동시해, enum ordinal, interprocedural 전파.

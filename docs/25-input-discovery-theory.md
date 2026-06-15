@@ -308,11 +308,16 @@ base (변이 없음)         →                            → 201
   missed→covered(branch 85% 106/124). `docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md`.
   - 여전히 보류: **집계/capacity 다중 행**(`COUNT(status==CONFIRMED)>=cap`)·인식 안 되는 임의 상태 가드
     (계산형·cross-entity)는 in-process concolic 라인(PoC `.work/concolic-poc/`)의 몫.
+- ✅ **2-필드 선형 inter-field — Z3 `solveTuple`로 해결**: `ConcolicOracle`의 `Sym`을 2개 필드까지 선형식
+  `Σ(coeff·field)+const`로 확장하고(3개째·진짜 곱은 bail), 비교 opcode를 threading해 두 필드를 동시충족하는
+  정수 튜플을 Z3로 푼다(합 최소화 → 작은·in-range 값). `InputMutator.interField`가 한 atomic 변이로 적용.
+  결정적 in-repo 승리: order-service `loyaltyPoints == nights*600+7` → 튜플 (607,1)만 201을 열며 필드별
+  변이로는 불가(BuilderE2eTest 단언). `docs/superpowers/plans/2026-06-15-stage4-z3-interfield-solver.md`.
 
 **여전히 미해결(Stage 4 잔여)**:
-- **결합 다변수(inter-field)**(`deposit*1.1 < nights*priceTier.getNightlyRate()`): 비선형(곱셈)+interprocedural
-  (enum 메서드)+3변수. 2-필드 선형은 Z3 `solveTuple`로 정공 진행 중(별도 Stage 4 inter-field 작업);
-  float rational·enum-grounding은 best-effort.
+- **결합 다변수 중 비선형·interprocedural**(`deposit*1.1 < nights*priceTier.getNightlyRate()`):
+  float 계수(rational 스케일)·enum 메서드 grounding(`priceTier.getNightlyRate()`)·3+변수는 **best-effort/보류**
+  (petclinic Reservation은 아직 휴리스틱 의존). 2-필드 **정수 선형**은 위 ✅로 정공.
 - **정규식 일반 생성·불투명 값**(`hashCode`): solver로도 어려움 / 영구 비목표.
 
 관련 문서: `docs/22`(정적 한계), `docs/23`(입력 생성 흐름), `docs/24`(탐색 백엔드·단계별 진행).
