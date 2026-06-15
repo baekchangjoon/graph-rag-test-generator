@@ -46,6 +46,37 @@ public final class JdbcHelper {
         }
     }
 
+    /** 단일 long 값 조회(보통 SELECT count(*)). */
+    public long queryLong(String sql, Object... args) {
+        try (PreparedStatement statement = connection().prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                statement.setObject(i + 1, args[i]);
+            }
+            try (var rs = statement.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("jdbc query failed: " + sql, e);
+        }
+    }
+
+    /** async consumer side-effect 대기: count 쿼리가 >0 될 때까지 폴링(타임아웃 시 false). */
+    public boolean pollUntilExists(String countSql, java.time.Duration timeout, Object... args) {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        while (System.nanoTime() < deadline) {
+            if (queryLong(countSql, args) > 0) {
+                return true;
+            }
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return queryLong(countSql, args) > 0;
+    }
+
     private void reportRowEvent(String sql, Object[] args) {
         SqlTableParser.RowRef ref = SqlTableParser.parse(sql, args);
         if (ref == null) {
