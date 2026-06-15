@@ -195,4 +195,139 @@ class EndpointIndexerTest {
         // 분기 없는 뷰-표시 핸들러(FORM 커맨드 객체 없음)는 인덱싱 대상 아님.
         assertThat(result.endpoints()).isEmpty();
     }
+
+    @Test
+    void classLevelPathVarBackExtractedFromModelAttribute(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // petclinic PetController 패턴: 클래스레벨 {ownerId}가 핸들러 파라미터가 아니라 @ModelAttribute
+        // 헬퍼의 @PathVariable에서만 해석된다. 역추출되어 핸들러가 PATH(ownerId) 파라미터를 가져야 한다.
+        java.nio.file.Path src = dir.resolve("PetC.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/owners/{ownerId}")
+                class PetC {
+                    static class PetForm { private String name;
+                        public String getName(){return name;}
+                        public void setName(String n){this.name=n;} }
+                    @ModelAttribute("owner")
+                    Object findOwner(@PathVariable("ownerId") int ownerId) { return null; }
+                    @PostMapping("/pets/new")
+                    String create(PetForm pet) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST") && e.path().equals("/owners/{ownerId}/pets/new"))
+                .findFirst().orElseThrow();
+        // ownerId가 PATH(int)로 역추출 + 폼 커맨드 PetForm이 FORM. 정렬: PATH가 FORM 앞.
+        assertThat(post.params()).extracting(EndpointParam::name, EndpointParam::kind)
+                .containsExactly(
+                        org.assertj.core.api.Assertions.tuple("ownerId", ParamKind.PATH),
+                        org.assertj.core.api.Assertions.tuple("pet", ParamKind.FORM));
+        assertThat(post.params().get(0).javaType()).isEqualTo("int");
+    }
+
+    @Test
+    void mixedHandlerAndHelperPathVarsBothBecomePath(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // VisitController 패턴: petId는 핸들러 @PathVariable, ownerId는 @ModelAttribute 헬퍼에만. 둘 다 PATH.
+        java.nio.file.Path src = dir.resolve("VisitC.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                class VisitC {
+                    static class VisitForm { private String desc;
+                        public String getDesc(){return desc;}
+                        public void setDesc(String d){this.desc=d;} }
+                    @ModelAttribute("visit")
+                    Object load(@PathVariable("ownerId") int ownerId, @PathVariable("petId") int petId) { return null; }
+                    @PostMapping("/owners/{ownerId}/pets/{petId}/visits/new")
+                    String create(@PathVariable int petId, VisitForm visit) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST")).findFirst().orElseThrow();
+        assertThat(post.params()).filteredOn(p -> p.kind() == ParamKind.PATH)
+                .extracting(EndpointParam::name).containsExactlyInAnyOrder("ownerId", "petId");
+        assertThat(post.params()).filteredOn(p -> p.kind() == ParamKind.PATH)
+                .extracting(EndpointParam::kind).containsOnly(ParamKind.PATH);
+        // PATH가 FORM 앞(정렬). 마지막은 FORM.
+        assertThat(post.params().get(post.params().size() - 1).kind()).isEqualTo(ParamKind.FORM);
+    }
+
+    @Test
+    void placeholderWithoutTypeSignalIsSkipped(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // {foo}가 어디에도 @PathVariable로 안 나타남 → 타입 신호 없음 → PATH 추가 안 함(센티널 폴백 유지).
+        java.nio.file.Path src = dir.resolve("Rest.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                class Rest {
+                    @GetMapping("/a/{foo}/b") String h() { return null; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint get = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("GET")).findFirst().orElseThrow();
+        assertThat(get.params()).noneMatch(p -> p.kind() == ParamKind.PATH);
+    }
+
+    @Test
+    void conflictingTypeSignalPrefersRequiredTrue(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // 동일 {x}가 두 @ModelAttribute 헬퍼에 int(required=false)와 long으로 등장(핸들러엔 없음).
+        // 충돌 해결: required 미지정/true(long)가 required=false(int)보다 우선 → long.
+        java.nio.file.Path src = dir.resolve("Conf.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/r/{x}")
+                class Conf {
+                    static class F { private String a;
+                        public String getA(){return a;} public void setA(String v){this.a=v;} }
+                    @ModelAttribute("m1") Object m1(@PathVariable(name="x", required=false) int x) { return null; }
+                    @ModelAttribute("m2") Object m2(@PathVariable("x") long x) { return null; }
+                    @PostMapping("/go") String go(F f) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST")).findFirst().orElseThrow();
+        EndpointParam x = post.params().stream().filter(p -> p.name().equals("x")).findFirst().orElseThrow();
+        assertThat(x.kind()).isEqualTo(ParamKind.PATH);
+        assertThat(x.javaType()).isEqualTo("long");
+    }
+
+    @Test
+    void handlerPathVarNameNormalizedToAnnotationValue(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // @PathVariable("userId") String id → EndpointParam.name이 파라미터명 "id"가 아니라 "userId"(정규화).
+        // 이름이 path 템플릿 {userId}와 일치해야 buildPathAndQuery 치환이 정확하다.
+        java.nio.file.Path src = dir.resolve("U.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                class U {
+                    @GetMapping("/u/{userId}") String h(@PathVariable("userId") String id) { return null; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint get = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("GET")).findFirst().orElseThrow();
+        assertThat(get.params()).extracting(EndpointParam::name, EndpointParam::kind)
+                .containsExactly(org.assertj.core.api.Assertions.tuple("userId", ParamKind.PATH));
+    }
 }
