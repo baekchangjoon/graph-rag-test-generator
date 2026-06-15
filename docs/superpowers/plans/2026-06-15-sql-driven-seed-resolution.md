@@ -36,18 +36,26 @@
 
 1. **Pass 1 (현행 그대로)**: 휴리스틱 시드(`ReadInputSynthesizer` 무-hint) → `orchestrator.explore` → path별 `captureSql` 누적(`allSql`). community/petclinic/order 는 여기서 이미 올바르게 시드·200.
 2. **hint 도출**: pass-1 `allSql`(전체 path 합산) 에서 `SqlSeedResolver.resolve(...)` 로 `ResolutionHint` 산출(§2.2).
-3. **pass-2 필요 판정 (명시적 술어)**:
+3. **pass-2 필요 판정 (게이트: 휴리스틱이 테이블 미해석일 때만)** — v3 정정(전 SUT 스윕 후):
    ```
-   String pass1TableName = (pass1Target == null) ? null : pass1Target.name();
-   boolean needsPass2 =
-       hint != null && hint.table() != null
-       && ( pass1TableName == null                       // 휴리스틱이 테이블 미해석 (analytics/mindgraph)
-            || !pass1TableName.equals(hint.table())       // 다른 테이블로 해석
-            || !heuristicParamColumns.equals(hint.paramColumn()) ); // 같은 테이블이나 param→컬럼 매핑 상이
+   ResolutionHint heuristic = readSynth.heuristicResolution(endpoint, tables);
+   ResolutionHint hint = (heuristic.table() == null)
+       ? SqlSeedResolver.resolve(allSql, sentParamValues, endpoint, tables) : null;
+   boolean needsPass2 = hint != null && hint.table() != null;
    ```
-   - `pass1Target` = `ReadInputSynthesizer`가 pass-1에서 쓴 target(무-hint `resolveTargetTable` 결과; 동일 인스턴스에서 노출).
-   - `heuristicParamColumns` = pass-1에서 각 PATH/QUERY param에 매핑된 컬럼(무-hint `mapParamToColumn`)의 맵.
-   - community/petclinic/order → `pass1TableName == hint.table()` && 매핑 동일 → **needsPass2=false** → pass-2 스킵(회귀 0, 추가 비용 0).
+   - **핵심 게이트 `heuristic.table()==null`**: 휴리스틱이 이미 테이블을 해석한 엔드포인트
+     (petclinic `/pets`→`pets`, community `/posts`→`post`, order `/orders`→`orders`)는 **재탐색을
+     아예 하지 않는다** → baseline과 byte-identical → **회귀 0**(증명 가능).
+   - 게이트가 필요한 2가지 실증 근거(8개 SUT 스윕에서 관측):
+     1. **다중 SELECT 오선택**: petclinic `GET /api/pets/{petId}`는 부모 `pets`와 자식 컬렉션
+        `visits`(by `pet_id`)를 모두 SELECT. param명 `petId`가 자식 FK `pet_id`와 이름 매칭돼 리졸버가
+        **`visits` 오선택**. 휴리스틱은 `pets`를 맞히므로 게이트로 차단.
+     2. **재탐색 측정 아티팩트**: community `get-internal-posts-id`의 post SELECT는 바인딩이 없어
+        hint=(post,**빈 paramColumn**)≠heuristic으로 트리거되나 시드는 동일(빈 맵→PK 폴백). 그럼에도
+        재탐색+cumulative 리셋만으로 측정 line이 62→79%로 흔들림(↑/↓ 가능). 동작하던 엔드포인트의
+        측정 불안정 = 회귀 위험 → 게이트로 재탐색 자체를 차단.
+   - 실제 타깃(analytics/mindgraph/diary/auth-user)은 모두 resource명≠table명 → `heuristic.table()==null`
+     → 게이트 통과 → 정상 보정. **게이트는 타깃을 하나도 놓치지 않는다.**
 4. **Pass 2 (보정, 조건부)** — needsPass2일 때만, 아래 순서로:
    ```
    1) DELETE pass-1 seeds (happy.seeds() 역순 — child→parent)        // pass-1 시드 정리(있었다면)
@@ -144,18 +152,32 @@ pass-1에서 analytics/mindgraph는 `resolveTargetTable`=null → `happy.seeds()
 - **explore 2회 비용**: 보정 대상 엔드포인트만. budget은 엔드포인트별이라 전체 영향 적음.
 - **수용기준 측정성**: 200 코드가 아닌 seed 참조·`coveredAppBranches`·핀 커버리지로 falsifiable(§3 반영).
 
-## 5.1 측정 결과 (2026-06-15 실측)
+## 5.1 측정 결과 — 전 SUT 회귀 매트릭스 (2026-06-15 실측, 게이트 적용 후)
 
-실제 빌더 구동(JDK23/PG/Kafka, JDK11/PG/Redis/Kafka) + order e2e:
+baseline = `main`(변경 전), gated = 워크트리(게이트). 동일 명령(`--budget-requests 60`), handler-class line 기준.
 
-- **analytics** `exploration coverage: line 25/119 (21%), branch 2/4 (50%)` (baseline 12%).
-  - `getUserMood` s200 path → seed `mood_point`(cols 포함 `user_id`), `user_id="probe-userId-…"` == 보낸 userId. 응답 `{points:[{score:1,…}], averageScore:1.0, count:1}` (빈→데이터). 2-pass `re-explored (hint table=mood_point)`.
-  - `getGlobal` → mood_point 시드 연결 200.
-- **mindgraph** `line 27/274 (9%)` (baseline 5%).
-  - `byDiary` → seed `graph_record`(cols 포함 `diary_id`) 생성 = 해석+시드 성공. 응답 500(nodes_json 역직렬화, Step 5 제외). 2-pass `re-explored (hint table=graph_record)`. 시드는 2xx path 부재로 path 미연결(orphan) — 정상(생성 테스트 대상 아님).
-  - `byUser` → Redis(hint=null), 재탐색 없음, 404 유지.
-- **order-service e2e**: 45/45 GREEN (pass-2 no-op, 무회귀).
-- 참고: varchar-PK 시드 시 `identity resync ... COALESCE text/integer` WARN은 skip(non-fatal). 시퀀스 없는 varchar PK에 정상. (후속 정리 후보)
+| SUT | infra | baseline line | gated line | re-explored | 판정 |
+|---|---|---|---|---|---|
+| petclinic | PG, auth | 244/660 (36%) | 244/660 (36%) | 0 | **회귀 0** (휴리스틱 해석) |
+| community | MySQL+Kafka | 154/248 (62%) | 154/248 (62%) | 0 | **회귀 0** |
+| notification | Redis+Kafka | 4/83 (4%) | 4/83 (4%) | 0 | 불변 (Redis, hint=null) |
+| order-service | PG (e2e) | 45/45 PASS | 45/45 PASS | 0 | **회귀 0** (e2e) |
+| **diary** | PG+Kafka | 81/208 (38%) | 131/208 (**62%**) | 4 | **+24 실제 수정** (`/diaries`≠`diary_entry`) |
+| **analytics** | PG+Kafka | 25/119→(12%) | 25/119 (**21%**) | 2 | **+9 실제 수정** (`/mood`≠`mood_point`) |
+| **mindgraph** | PG+Redis+Kafka | (5%) | 27/274 (**9%**) | 1 | **+4** (`/graphs`≠`graph_record`; byDiary seed, 응답 500=Step5 제외) |
+| **auth-user** | MySQL+Redis | 28/251 (11%) | 35/251 (**13%**) | 1 | **+2 실제 수정** (`/users`≠`user_account`) |
+
+- **회귀 0 보장**: 휴리스틱이 테이블을 해석하는 SUT(petclinic/community/notification/order)는 게이트로 재탐색
+  자체를 안 해 baseline과 동일.
+- **실제 개선**: resource명≠table명 4종(diary/analytics/mindgraph/auth-user)에서만 재탐색, 전부 커버리지 상승.
+- analytics `getUserMood`: seed `mood_point`/`user_id`, 응답 `{points:[{score:1}], averageScore:1.0, count:1}`(빈→데이터). diary는 by-id GET/PUT/DELETE 4개가 `diary_entry`로 보정.
+- (탐색 경로) broad(게이트 전) 버전은 community +17%/petclinic 동일이었으나, 그 +17%는 **동일 시드 재탐색의 측정 아티팩트**(community post SELECT 바인딩 없음 → hint 빈 paramColumn → 시드 불변)였고 petclinic은 `visits` 오선택이라 게이트로 제거. §2.1-3 참조.
+- 참고: varchar-PK 시드 시 `identity resync ... COALESCE text/integer` WARN은 skip(non-fatal). 후속 정리 후보.
+
+## 5.2 범위 밖(테스트 불가/무관)
+
+- **counseling**: WebFlux, `@*Mapping` 컨트롤러 없음 → 빌더 엔드포인트 0. 빌드 jar 없음.
+- **bff-gateway**: HTTP 집계 게이트웨이(자체 DB 없음), JDK21·빌드 jar 부재. SQL 시드 무관.
 
 ## 6. 관련 파일
 

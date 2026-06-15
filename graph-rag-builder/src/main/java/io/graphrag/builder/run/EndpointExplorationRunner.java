@@ -167,14 +167,19 @@ public class EndpointExplorationRunner {
         PathsBundle bundle = buildPaths(outcome, endpoint, conditions);
 
         // ---- SQL-기반 보정 2-pass ----
-        // pass-1 캡처 SQL이 휴리스틱이 놓친 시드 타깃(FROM 테이블/WHERE 컬럼)을 드러내면
-        // hint로 재시드하고 재탐색한다. 정상 해석 엔드포인트(hint==휴리스틱)는 no-op(회귀 0).
+        // path-string 휴리스틱이 테이블을 **못 찾은** 엔드포인트(resource명≠table명)에 한해,
+        // pass-1 캡처 SQL의 FROM/WHERE로 시드를 보정하고 재탐색한다. 휴리스틱이 이미 테이블을
+        // 해석한 엔드포인트(petclinic /pets→pets 등)는 건드리지 않는다 — 다중 SELECT(부모 엔티티+
+        // 컬렉션 로드)에서 param명이 자식 FK 컬럼명과 우연히 일치해 자식 테이블을 오선택하는
+        // 회귀를 원천 차단(회귀 0). 실제 타깃(analytics/mindgraph/diary/auth-user)은 모두 null.
         if (seedResource) {
-            ResolutionHint hint = SqlSeedResolver.resolve(bundle.allSql(),
-                    sentParamValues(endpoint, happy.body()), endpoint, tables);
             ResolutionHint heuristic = new ReadInputSynthesizer(enumConstants, enumColumns)
                     .heuristicResolution(endpoint, tables);
-            if (hint != null && hint.table() != null && !hint.equals(heuristic)) {
+            ResolutionHint hint = heuristic.table() == null
+                    ? SqlSeedResolver.resolve(bundle.allSql(),
+                          sentParamValues(endpoint, happy.body()), endpoint, tables)
+                    : null;
+            if (hint != null && hint.table() != null) {
                 SynthesizedInput pass1Happy = happy;
                 List<RequiredSeed> pass1Seeds = requiredSeeds;
                 PathsBundle pass1Bundle = bundle;
