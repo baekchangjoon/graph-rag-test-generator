@@ -389,6 +389,18 @@ public final class BuilderCli {
                 o.getOrDefault("--label", "-"),
                 cl, tl, tl == 0 ? 0.0 : 100.0 * cl / tl,
                 cb, tb, tb == 0 ? 0.0 : 100.0 * cb / tb);
+        // 진단: 미커버 브랜치를 class#method → line 으로 그룹 출력 (도달 불가 사유 분석용).
+        if (o.containsKey("--missed")) {
+            java.util.Map<String, java.util.TreeMap<Integer, Long>> byMethod = new java.util.TreeMap<>();
+            for (io.graphrag.model.BranchRef b : cov.missed()) {
+                byMethod.computeIfAbsent(b.classFqn() + "#" + b.method(), k -> new java.util.TreeMap<>())
+                        .merge(b.line(), 1L, Long::sum);
+            }
+            byMethod.forEach((cm, lines) -> {
+                long miss = lines.values().stream().mapToLong(Long::longValue).sum();
+                System.out.printf("  MISSED %s : %d branch(es) at lines %s%n", cm, miss, lines.keySet());
+            });
+        }
     }
 
     private static Map<String, String> parseArgs(String[] args) {
