@@ -66,12 +66,19 @@ public class ConstraintExtractor {
      * <ul>
      *   <li>TEMPORAL: {@code row.getX().isBefore/isAfter(LocalDate(Time).now())} → column=snake(X),
      *       enumType=null, negatedConstants=[]. 대체 시드는 과거(1900-01-01) 날짜로 반대 arm을 연다.</li>
-     *   <li>ENUM: {@code row.getStatus() != A && != B}(NE) → column, enumType(상수 타입 simpleName),
-     *       negatedConstants={A,B}(정렬). 대체 시드는 negatedConstants 밖 첫 상수로 반대 arm을 연다.</li>
+     *   <li>ENUM: {@code row.getStatus() != A}(NE) / {@code == B}(EQ) → column, enumType(상수 타입 simpleName),
+     *       negatedConstants={A…}(NE 정렬) + positiveConstants={B…}(EQ 정렬). 대체 시드 변종은 EQ 각 상수
+     *       (그 == arm) + NE 잔여 상수 + (positive/negated 밖) 잔여 1개(else arm)로 다중 전이 arm을 연다.</li>
      * </ul>
      */
     public record StateGuard(String classFqn, String method, int line, String column,
-                             GuardKind kind, String enumType, List<String> negatedConstants) {
+                             GuardKind kind, String enumType,
+                             List<String> negatedConstants, List<String> positiveConstants) {
+        /** 후방호환 7-arg(positiveConstants 없음 — TEMPORAL/기존 NE emit·테스트 보존). */
+        public StateGuard(String classFqn, String method, int line, String column,
+                          GuardKind kind, String enumType, List<String> negatedConstants) {
+            this(classFqn, method, line, column, kind, enumType, negatedConstants, List.of());
+        }
     }
 
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
@@ -383,10 +390,13 @@ public class ConstraintExtractor {
                     inv.getPosition().getLine(), snake(ref), GuardKind.TEMPORAL, null, List.of()));
         }
 
-        // ENUM: getter() != CONST (NE). (class|method|column)별로 부정 상수를 모아 한 가드로.
+        // ENUM: getter() != CONST (NE) / getter() == CONST (EQ). (class|method|column)별로 모아 한 가드로.
+        // NE는 negatedConstants, EQ는 positiveConstants로 누적 — 한 컬럼에 둘이 공존하면 둘 다 보존.
         java.util.LinkedHashMap<String, EnumGuardAcc> enumAcc = new java.util.LinkedHashMap<>();
         for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
-            if (op.getKind() != BinaryOperatorKind.NE) {
+            boolean ne = op.getKind() == BinaryOperatorKind.NE;
+            boolean eq = op.getKind() == BinaryOperatorKind.EQ;
+            if (!ne && !eq) {
                 continue;
             }
             String constName = enumConstant(op.getRightHandOperand());
@@ -414,25 +424,26 @@ public class ConstraintExtractor {
             String key = classFqn + '|' + methodName + '|' + column;
             EnumGuardAcc acc = enumAcc.computeIfAbsent(key, k ->
                     new EnumGuardAcc(classFqn, methodName, line, column, enumTypeF));
-            acc.constants.add(constName);
+            (ne ? acc.constants : acc.positives).add(constName);
             acc.line = Math.min(acc.line, line);
         }
         enumAcc.values().forEach(a -> out.add(new StateGuard(a.classFqn, a.method, a.line,
-                a.column, GuardKind.ENUM, a.enumType, List.copyOf(a.constants))));
+                a.column, GuardKind.ENUM, a.enumType, List.copyOf(a.constants), List.copyOf(a.positives))));
 
         out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
                 .thenComparingInt(StateGuard::line));
         return out;
     }
 
-    /** ENUM NE 가드 누적기: (class,method,column)별 부정 상수 집합(정렬). */
+    /** ENUM 가드 누적기: (class,method,column)별 부정(NE)·긍정(EQ) 상수 집합(정렬). */
     private static final class EnumGuardAcc {
         final String classFqn;
         final String method;
         int line;
         final String column;
         final String enumType;
-        final java.util.TreeSet<String> constants = new java.util.TreeSet<>();
+        final java.util.TreeSet<String> constants = new java.util.TreeSet<>();   // NE
+        final java.util.TreeSet<String> positives = new java.util.TreeSet<>();   // EQ
 
         EnumGuardAcc(String classFqn, String method, int line, String column, String enumType) {
             this.classFqn = classFqn;
