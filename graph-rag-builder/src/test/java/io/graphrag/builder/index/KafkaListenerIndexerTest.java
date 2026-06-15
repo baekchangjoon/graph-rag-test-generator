@@ -51,6 +51,28 @@ class KafkaListenerIndexerTest {
     }
 
     @Test
+    void index_stringParam_resolvesInnerReadValueType(@TempDir Path dir) throws Exception {
+        // void on(String message) { CommentEvent e = mapper.readValue(message, CommentEvent.class); }
+        Path pkg = Files.createDirectories(dir.resolve("com/x"));
+        Files.writeString(pkg.resolve("CommentEvent.java"),
+                "package com.x;\npublic record CommentEvent(String eventId, String postAuthorUserId) {}\n");
+        Files.writeString(pkg.resolve("Consumer.java"),
+                "package com.x;\n"
+                        + "import com.fasterxml.jackson.databind.ObjectMapper;\n"
+                        + "import org.springframework.kafka.annotation.KafkaListener;\n"
+                        + "public class Consumer {\n"
+                        + "  private final ObjectMapper mapper = new ObjectMapper();\n"
+                        + "  @KafkaListener(topics = \"comment.created\", groupId = \"g\")\n"
+                        + "  public void on(String message) throws Exception {\n"
+                        + "    CommentEvent e = mapper.readValue(message, CommentEvent.class);\n"
+                        + "  }\n}\n");
+        KafkaIndexResult result = new KafkaListenerIndexer().index(dir);
+        assertThat(result.consumers().get(0).payloadType()).isEqualTo("com.x.CommentEvent");
+        assertThat(result.payloadShapes().get("com.x.CommentEvent").fields())
+                .extracting(BodyShape.BodyField::name).contains("eventId", "postAuthorUserId");
+    }
+
+    @Test
     void index_noListener_empty(@TempDir Path dir) throws Exception {
         Path pkg = Files.createDirectories(dir.resolve("com/x"));
         Files.writeString(pkg.resolve("Plain.java"), "package com.x;\npublic class Plain { public void f(){} }\n");
