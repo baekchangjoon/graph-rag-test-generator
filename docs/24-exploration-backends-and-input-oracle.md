@@ -114,6 +114,12 @@ out-of-process 관측이 HTTP 엔드포인트에만 머물지 않는다. 이벤�
   baseline dump(boot/seed 컷) + consumer 실행 후 dump delta로 핸들러 커버를 캡처한다. SQL을 안 쓰는
   consumer(예: Redis 기록)도 핸들러 분기가 잡힌다. consumer 루프는 HTTP 탐색보다 **먼저** 실행 →
   consumer가 쓴 행을 read 엔드포인트가 관측(read 보너스).
+- **consumer 양-arm 변종(2026-06-15)** — happy 뒤에 결정적 변종 payload를 발행해 핸들러 가드의 반대 arm을
+  연다: **missing-field**(빈 `{}` → required-필드 null-guard early-return arm, 결정적) + **duplicate**(happy 행
+  커밋 확인 후 동일 payload 재발행 → dedup-skip arm, best-effort). 변종 교환은 `KafkaExchange.variant=true`로
+  표시돼 **테스트 생성에서 제외**(SQL 유무가 아닌 명시 플래그 — Redis-happy 0-SQL 교환 보호). `VARIANT_SETTLE_MILLIS`
+  고정 settle, `GRB_KAFKA_VARIANTS=off`로 ablation. 실증: order-service `OrderEventConsumer`의 결측-필드·dedup arm
+  missed→covered(`docs/superpowers/plans/2026-06-15-kafka-consumer-payload-variants.md`).
 - **STOMP/WS 핸들러** — `WsCaptureRunner`도 교환별 dump delta로 핸들러 커버를 캡처.
 - **집계** — Kafka/WS/HTTP의 누적 exec를 모두 `runWideExec`에 OR-병합하고, exploration 커버리지
   지표는 **전 루프 종료 후 1회** 산출한다. `exploration-report.json`의 `coveredAppClasses`(≥1 분기

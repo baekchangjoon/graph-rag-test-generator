@@ -160,9 +160,24 @@ class BuilderE2eTest {
         assertThat(orderEventConsumer.topic()).isEqualTo("order.events");
         assertThat(orderEventConsumer.payloadType()).contains("OrderEventPayload");   // readValue 타깃 해석
         var orderEventExchange = asset.kafkaExchanges().stream()
-                .filter(e -> e.kafkaConsumerId().equals("kafka-order-events")).findFirst().orElseThrow();
+                .filter(e -> e.kafkaConsumerId().equals("kafka-order-events") && !e.variant())
+                .findFirst().orElseThrow();
         assertThat(asset.sql().stream().filter(s -> orderEventExchange.capturedSqlIds().contains(s.id())))
                 .anyMatch(s -> s.sqlKind().equals("INSERT") && s.tableName().equals("order_events"));
+
+        // Kafka 양-arm: happy 뒤에 반대-arm 변종(결측-필드 등)을 발행해 consumer 가드의 미커버 arm을 연다.
+        // 하드 게이트(결정적): happy(variant=false, INSERT) 정확히 1개 + 변종(variant=true) ≥1개이고,
+        // 변종은 반대-arm(스킵/리턴)이라 **INSERT를 만들지 않는다**(dedup의 existsById SELECT는 허용).
+        // 되돌리면(happy만) 변종 0 → FAIL. (변종은 생성에서 제외되므로 B2 무영향.)
+        List<io.graphrag.model.KafkaExchange> orderEventExchanges = asset.kafkaExchanges().stream()
+                .filter(e -> e.kafkaConsumerId().equals("kafka-order-events")).toList();
+        assertThat(orderEventExchanges).filteredOn(e -> !e.variant()).hasSize(1);   // happy 1개
+        List<io.graphrag.model.KafkaExchange> variants = orderEventExchanges.stream()
+                .filter(io.graphrag.model.KafkaExchange::variant).toList();
+        assertThat(variants).isNotEmpty();                                          // 변종 ≥1개(최소 missing-field)
+        assertThat(variants).allSatisfy(v -> assertThat(asset.sql().stream()
+                .filter(s -> v.capturedSqlIds().contains(s.id())))
+                .noneMatch(s -> s.sqlKind().equals("INSERT")));                      // 반대-arm = INSERT 없음
 
         // 시드 타깃 해석(SQL-기반 2-pass) 회귀 가드: resource명("profiles")≠table명("users")이고
         // 비-PK 컬럼 name 으로 조회 → path-string 휴리스틱은 테이블을 못 찾는다. 빌더가 캡처한

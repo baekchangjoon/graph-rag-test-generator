@@ -165,6 +165,9 @@ public class Generator {
         List<GeneratedFile> files = new ArrayList<>();
         List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
         for (io.graphrag.model.KafkaExchange exchange : exchanges) {
+            if (exchange.variant()) {
+                continue;   // 반대-arm 커버용 변종 교환(결측/중복)은 테스트 생성 대상 아님
+            }
             String className = request.testClassName() + classSuffix(consumer.id(), exchange.id());
 
             // consumer가 쓴 INSERT의 키 컬럼으로 side-effect를 단언한다. 키는 **PK 컬럼 우선**
