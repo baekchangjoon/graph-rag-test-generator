@@ -154,13 +154,15 @@ public class EndpointExplorationRunner {
         // 입력 후보는 오라클(static-literal + concolic ASM+Z3)이 이미 합쳐 산출. 필드별 투영.
         Map<String, Set<Long>> conditionBounds = candidates.numeric();
         Map<String, Set<String>> stringCandidates = candidates.strings();
+        List<Map<String, Long>> interFieldTuples = candidates.tuples();   // inter-field 동시충족 해
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
         EndpointInvoker invoker = buildInvoker(endpoint, readPath, hasPathParam, happy);
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                 invoker, literalCandidates,
-                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
+                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
+                interFieldTuples);
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
@@ -196,7 +198,8 @@ public class EndpointExplorationRunner {
                     EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
                     EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
                             tables, invoker2, literalCandidates,
-                            fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
+                            fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
+                            interFieldTuples);
                     outcome = orchestrator.explore(target2);
                     log.info("re-explored {} (SQL hint table={}): {} path(s)",
                             endpoint.id(), hint.table(), outcome.paths().size());

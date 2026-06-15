@@ -91,6 +91,13 @@ class BuilderE2eTest {
                 .filter(p -> p.expectedStatus() == 201).findFirst().orElseThrow();
         assertThat(asset.sql().stream().filter(s -> s.pathId().equals(bookingHappy.id())))
                 .anyMatch(s -> s.sqlKind().equals("INSERT") && s.tableName().equals("bookings"));
+        // Stage 4 inter-field 가드(Z3 solveTuple): 201 입력은 loyaltyPoints == nights*600+7 을 만족해야 한다.
+        // 필드별 경계/large 변이로는 두 필드 동시충족 불가 → solveTuple이 푼 튜플(607,1)만 201을 연다.
+        // (solver 회귀 시 201 자체가 사라져 위 contains(201)이 먼저 FAIL — 이 단언은 '솔버 덕'임을 못박는다.)
+        var bookingInput = bookingHappy.sampleInput();
+        assertThat(bookingInput.has("loyaltyPoints") && bookingInput.has("nights")).isTrue();
+        assertThat(bookingInput.get("loyaltyPoints").asLong())
+                .isEqualTo(bookingInput.get("nights").asLong() * 600 + 7);
 
         // 분기/엔진/제약 메타데이터
         assertThat(orderHappy.branchesTaken()).isNotEmpty();

@@ -74,8 +74,32 @@ public final class InputMutator {
                 target.fieldConstraints(), target.conditionBounds(), target.stringCandidates()));
         all.addAll(enumValues(target.mutableFields(), target.enumConstants()));
         all.addAll(joint(target.mutableFields(), target.conjunctions()));
+        all.addAll(interField(target.mutableFields(), target.interFieldTuples()));
         all.addAll(firstOrder(target.mutableFields(), target.literalCandidates()));
         return dedupeByName(all);
+    }
+
+    /** inter-field 튜플(필드→값 동시충족 해)을 한 atomic 변이로. 튜플 전 필드가 body에 있을 때만. */
+    public static List<Mutation> interField(List<BodyShape.BodyField> fields,
+                                            List<Map<String, Long>> tuples) {
+        HashSet<String> fieldNames = new HashSet<>();
+        for (BodyShape.BodyField f : fields) {
+            fieldNames.add(f.name());
+        }
+        List<Mutation> out = new ArrayList<>();
+        for (Map<String, Long> tuple : tuples) {
+            if (tuple.isEmpty() || !fieldNames.containsAll(tuple.keySet())) {
+                continue;
+            }
+            String name = "interfield-" + tuple.keySet().stream().sorted()
+                    .reduce((a, b) -> a + "_" + b).orElse("");
+            Map<String, Long> t = tuple;
+            out.add(new Mutation(name, body -> {
+                t.forEach((field, value) -> body.put(field, value.longValue()));
+                return body;
+            }));
+        }
+        return out;
     }
 
     /** enum 필드 → 선언된 각 상수 세팅 변이(VIP 등). enumConstants 키 미스 시 simple-name 폴백. */

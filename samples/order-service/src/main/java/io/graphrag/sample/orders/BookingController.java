@@ -59,6 +59,12 @@ public class BookingController {
         if (req.checkInDate() == null || !req.checkInDate().isAfter(LocalDate.now())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "checkInDate must be in the future");
         }
+        // inter-field 가드(Stage 4 벤치마크): loyaltyPoints == nights*600+7. 두 필드를 한 식에 엮으므로
+        // 필드별 경계/large 변이로는 동시충족 불가 — Z3 inter-field solveTuple만 (607,1)을 도출한다.
+        if (req.loyaltyPoints() != null && req.loyaltyPoints() != req.nights() * 600 + 7) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "loyaltyPoints must equal nights*600+7");
+        }
         int loyalty = req.loyaltyPoints() == null ? 0 : req.loyaltyPoints();
         Booking saved = bookings.save(new Booking(req.customerEmail(), req.nights(), loyalty,
                 req.tier(), BookingStatus.PENDING, req.checkInDate()));
