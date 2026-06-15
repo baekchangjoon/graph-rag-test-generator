@@ -146,7 +146,10 @@
 
 - ✅ **Feature A 완료** (커밋 `4594841`): `SampleInputSynthesizer.synthesize(.,.,fieldConstraints)` 오버로드(boundedInt/applySize) + `happyInput` 배선. 빌더 전 테스트 GREEN(제약 케이스 + BuilderE2eTest 통합).
 - ✅ **B1-1 완료** (커밋 `30ca8e3`): `KafkaConsumer`/`KafkaExchange` 모델 + `KafkaListenerIndexer`(+`KafkaIndexResult`). `KafkaListenerIndexerTest` GREEN(리터럴/`${prop}`/no-listener).
-- ⬜ **B1-2 남음**: kafka-clients 의존 추가 → `AnalysisEnvironment` bootstrap getter(현재 `kafka.getBootstrapServers()`를 95-97행에서 env로만 주입) → `KafkaCaptureRunner`(producer 발행 + §2.3 폴링 종료조건) → `GraphAsset`에 `kafkaConsumers/kafkaExchanges` 필드 추가(생성은 `BuilderCli` 1곳 + `JsonRoundTripTest`) → BuilderCli 배선(Kafka 루프를 HTTP 루프보다 먼저, §2.4) → order-service `@KafkaListener`+`order_events` 픽스처 → `BuilderE2eTest` 단언.
+- ✅ **Feature A 확장 완료** (커밋 `3740d07`+`6a61461`): 명령형 비교가드 happy 반영(`mergeComparisonBounds`) + 무상한 float 큰 기본값. **order Booking 45→48(201), petclinic 36→43%(Reservation 201)**.
+- ✅ **B1-2 빌더-side 완료** (커밋 `15b20eb`): kafka-clients + `AnalysisEnvironment.kafkaBootstrapServers()` + `KafkaCaptureRunner`(producer 발행 + 8s SQL 폴링) + `GraphAsset.kafkaConsumers/kafkaExchanges`(store/round-trip 호환) + BuilderCli 배선(`--with-kafka` 시). **notification 실측: 2 consumer 인덱싱·발행 성공.** 빌더 전 테스트 GREEN.
+  - 알려진 refinement: String-param consumer(`onCommentCreated(String message)`)는 핸들러 내부 역직렬화라 payload shape 미추출(빈 `{}`). 타입-이벤트 param consumer(analytics 등)는 정상. 내부 `readValue(message, XEvent)` 타깃 분석은 후속.
+  - 미완(B1-2 잔여): order-service `@KafkaListener`+`order_events` 픽스처 + BuilderE2eTest 단언(spring-kafka 의존 필요); Kafka 루프를 HTTP보다 먼저(§2.4 순서 불변식, 현재는 HTTP 後).
 - ⬜ **B2 남음**: `Generator.generateKafka` + `kafka-test-class.mustache` + `testlib/KafkaHelper`+`TestScope.kafka` + e2e(broker/요청파일).
 
 ## 6. 관련 파일
