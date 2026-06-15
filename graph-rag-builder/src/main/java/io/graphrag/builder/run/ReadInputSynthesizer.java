@@ -248,16 +248,16 @@ public class ReadInputSynthesizer {
         if (!guard.negatedConstants().isEmpty()) {
             all.stream().sorted().filter(c -> !guard.negatedConstants().contains(c)).forEach(picks::add);
         }
-        List<Object> result = picks.stream()
+        // happy 상태 제외 후의 적격 후보 기준으로 cap 판정·로그(필터 전 picks.size()를 쓰면 false-positive 로그·오집계).
+        List<Object> eligible = picks.stream()
                 .filter(c -> baseState == null || !c.equalsIgnoreCase(baseState))
-                .limit(VARIANT_CAP)
                 .map(c -> (Object) c)
                 .collect(java.util.stream.Collectors.toList());
-        if (picks.size() > VARIANT_CAP) {
+        if (eligible.size() > VARIANT_CAP) {
             log.info("state-guard {}.{} column {} variants capped at {} (dropped {})",
-                    guard.classFqn(), guard.method(), guard.column(), VARIANT_CAP, picks.size() - VARIANT_CAP);
+                    guard.classFqn(), guard.method(), guard.column(), VARIANT_CAP, eligible.size() - VARIANT_CAP);
         }
-        return result;
+        return eligible.size() > VARIANT_CAP ? eligible.subList(0, VARIANT_CAP) : eligible;
     }
 
     /** enumConstants를 FQN 직접 조회 후 simple-name 폴백(scalarFor와 동일 규칙). */
