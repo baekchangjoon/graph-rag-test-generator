@@ -10,6 +10,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation(libs.mybatis.spring.boot.starter)
     implementation("org.springframework.boot:spring-boot-starter-websocket")
+    implementation("org.springframework.kafka:spring-kafka")   // @KafkaListener 회귀 가드(consumer)
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("io.jsonwebtoken:jjwt-api:0.12.6")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:0.12.6")
