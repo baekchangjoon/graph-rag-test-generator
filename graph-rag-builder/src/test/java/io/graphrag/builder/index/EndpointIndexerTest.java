@@ -311,6 +311,30 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void restControllerWithMatchingPathVarNameUnchanged(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // (iv) @RestController에서 @PathVariable 이름이 파라미터명과 일치하면 정규화/역추출이 결과를 바꾸지
+        // 않는다(D4 무변): 핸들러가 PATH로 이미 잡으므로 역추출 안 함, 이름도 동일.
+        java.nio.file.Path src = dir.resolve("RestById.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                @RequestMapping("/api/orders")
+                class RestById {
+                    @GetMapping("/{id}") String get(@PathVariable Long id) { return null; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint get = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("GET")).findFirst().orElseThrow();
+        // PATH(id) 정확히 1개 — 역추출로 중복 추가되지 않는다.
+        assertThat(get.params()).extracting(EndpointParam::name, EndpointParam::kind)
+                .containsExactly(org.assertj.core.api.Assertions.tuple("id", ParamKind.PATH));
+        assertThat(get.params().get(0).javaType()).isEqualTo("java.lang.Long");
+    }
+
+    @Test
     void handlerPathVarNameNormalizedToAnnotationValue(
             @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
         // @PathVariable("userId") String id → EndpointParam.name이 파라미터명 "id"가 아니라 "userId"(정규화).
