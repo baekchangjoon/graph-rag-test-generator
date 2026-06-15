@@ -132,6 +132,13 @@
 - **A 한계**: inter-field 가드는 happy로 못 풀어 일부 throw 잔존 — 단일필드는 개선, 회귀 아님.
 - **B2 e2e Kafka broker**: testlib/e2e에 broker 의존 추가 — 조건부 단계에서 평가.
 
+## 5.5 진척 상태 (2026-06-15)
+
+- ✅ **Feature A 완료** (커밋 `4594841`): `SampleInputSynthesizer.synthesize(.,.,fieldConstraints)` 오버로드(boundedInt/applySize) + `happyInput` 배선. 빌더 전 테스트 GREEN(제약 케이스 + BuilderE2eTest 통합).
+- ✅ **B1-1 완료** (커밋 `30ca8e3`): `KafkaConsumer`/`KafkaExchange` 모델 + `KafkaListenerIndexer`(+`KafkaIndexResult`). `KafkaListenerIndexerTest` GREEN(리터럴/`${prop}`/no-listener).
+- ⬜ **B1-2 남음**: kafka-clients 의존 추가 → `AnalysisEnvironment` bootstrap getter(현재 `kafka.getBootstrapServers()`를 95-97행에서 env로만 주입) → `KafkaCaptureRunner`(producer 발행 + §2.3 폴링 종료조건) → `GraphAsset`에 `kafkaConsumers/kafkaExchanges` 필드 추가(생성은 `BuilderCli` 1곳 + `JsonRoundTripTest`) → BuilderCli 배선(Kafka 루프를 HTTP 루프보다 먼저, §2.4) → order-service `@KafkaListener`+`order_events` 픽스처 → `BuilderE2eTest` 단언.
+- ⬜ **B2 남음**: `Generator.generateKafka` + `kafka-test-class.mustache` + `testlib/KafkaHelper`+`TestScope.kafka` + e2e(broker/요청파일).
+
 ## 6. 관련 파일
 - A: `run/SampleInputSynthesizer`(+오버로드), `run/EndpointExplorationRunner`(happyInput 시그니처+배선), `index/ValidationConstraintExtractor`(재사용), 테스트 `SampleInputSynthesizerTest`.
 - B: 신규 `index/KafkaListenerIndexer`, `run/KafkaCaptureRunner`, model `KafkaConsumer`/`KafkaExchange`, `env/AnalysisEnvironment`(bootstrap getter), `cli/BuilderCli`(배선), (B2) `test-generator/Generator`+`kafka-test-class.mustache`+`testlib/KafkaHelper`. 참조: `WsEndpointIndexer`/`WsCaptureRunner`/`StompHelper`(패턴).
