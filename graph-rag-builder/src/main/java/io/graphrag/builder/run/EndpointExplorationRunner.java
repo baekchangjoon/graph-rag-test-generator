@@ -69,7 +69,6 @@ public class EndpointExplorationRunner {
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  List<RequiredSeed> seeds,
                                  ExplorationReport.EndpointExploration report,
-                                 Set<BranchRef> coveredAppBranches,
                                  ExecutionDataStore cumulativeExec) {
     }
 
@@ -281,10 +280,10 @@ public class EndpointExplorationRunner {
             }
         }
 
-        // app 집계도 누적 exec data 기준(arm-level) — 전 엔드포인트 합집합이 정확해진다.
-        Set<BranchRef> appCovered = analyzer.analyze(cumulativeCoverage).covered();
+        // app 분기 집계는 BuilderCli가 전 루프 종료 후 runWideExec(이 cumulativeExec들의 합집합 +
+        // Kafka/WS)로 1회 산출한다. 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거).
         return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
-                report(endpoint, outcome, comparisons), appCovered, cumulativeCoverage);
+                report(endpoint, outcome, comparisons), cumulativeCoverage);
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */

@@ -216,6 +216,28 @@ public final class BuilderCli {
                 log.info("input oracles (concolic={}) → {} numeric field(s), {} string field(s)",
                         useConcolic, inputCandidates.numeric().size(), inputCandidates.strings().size());
 
+                // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
+                // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
+                // runWideExec에 병합돼 exploration 지표에 반영된다. baseline dump가 boot 구간을
+                // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
+                String kafkaBootstrap = env.kafkaBootstrapServers();
+                if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
+                    io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
+                            new io.graphrag.builder.run.KafkaCaptureRunner(
+                                    env.sut(), connection, env.dbType(), kafkaBootstrap, coverageClient);
+                    for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
+                        if (!plan.shouldExplore(kafkaConsumer.id())) {
+                            continue;
+                        }
+                        BodyShape kShape = kafkaIndex.payloadShapes().get(kafkaConsumer.payloadType());
+                        io.graphrag.builder.run.KafkaCaptureRunner.KafkaResult kResult =
+                                kafkaRunner.run(kafkaConsumer, kShape, tables);
+                        kafkaExchanges.addAll(kResult.exchanges());
+                        sql.addAll(kResult.sql());
+                        kResult.cumulativeExec().accept(runWideExec);   // consumer 커버 병합
+                    }
+                }
+
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
                         log.info("skip {} (partition clean; carrying over)", endpoint.id());
@@ -251,20 +273,12 @@ public final class BuilderCli {
                     httpCalls.addAll(result.httpCalls());
                     allSeeds.addAll(result.seeds());
                     reportEntries.add(result.report());
-                    coveredAppBranches.addAll(result.coveredAppBranches());
                     result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
                 }
 
-                var explCov = analyzer.analyze(runWideExec);
-                log.info("exploration coverage [{}]: line {}/{} ({}%), branch {}/{} ({}%)",
-                        config.sutId(), explCov.coveredLines(), explCov.totalLines(),
-                        explCov.totalLines() == 0 ? 0 : 100 * explCov.coveredLines() / explCov.totalLines(),
-                        explCov.covered().size(), explCov.totalBranches(),
-                        explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
-
                 io.graphrag.builder.run.WsCaptureRunner wsRunner =
                         new io.graphrag.builder.run.WsCaptureRunner(
-                                env.sut(), connection, env.dbType());
+                                env.sut(), connection, env.dbType(), coverageClient);
                 for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
                     if (!plan.shouldExplore(wsEndpoint.id())) {
                         log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
@@ -279,26 +293,17 @@ public final class BuilderCli {
                             wsRunner.run(wsEndpoint, shape, tables);
                     wsExchanges.addAll(result.exchanges());
                     sql.addAll(result.sql());
+                    result.cumulativeExec().accept(runWideExec);   // WS 핸들러 커버 병합
                 }
 
-                // @KafkaListener consumer: 토픽에 유효 이벤트 발행 → consumer 커버 + SQL 캡처.
-                // (consumer가 쓰는 데이터는 read 엔드포인트 커버에도 기여 — 전역 cumulative에 반영.)
-                String kafkaBootstrap = env.kafkaBootstrapServers();
-                if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
-                    io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
-                            new io.graphrag.builder.run.KafkaCaptureRunner(
-                                    env.sut(), connection, env.dbType(), kafkaBootstrap);
-                    for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
-                        if (!plan.shouldExplore(kafkaConsumer.id())) {
-                            continue;
-                        }
-                        BodyShape kShape = kafkaIndex.payloadShapes().get(kafkaConsumer.payloadType());
-                        io.graphrag.builder.run.KafkaCaptureRunner.KafkaResult kResult =
-                                kafkaRunner.run(kafkaConsumer, kShape, tables);
-                        kafkaExchanges.addAll(kResult.exchanges());
-                        sql.addAll(kResult.sql());
-                    }
-                }
+                // 전 루프(Kafka + HTTP + WS) 종료 후 1회 집계 — consumer/WS 커버까지 지표에 반영된다.
+                var explCov = analyzer.analyze(runWideExec);
+                coveredAppBranches.addAll(explCov.covered());
+                log.info("exploration coverage [{}]: line {}/{} ({}%), branch {}/{} ({}%)",
+                        config.sutId(), explCov.coveredLines(), explCov.totalLines(),
+                        explCov.totalLines() == 0 ? 0 : 100 * explCov.coveredLines() / explCov.totalLines(),
+                        explCov.covered().size(), explCov.totalBranches(),
+                        explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
             }
         }
 
@@ -313,10 +318,13 @@ public final class BuilderCli {
                 .mapToInt(ExplorationReport.EndpointExploration::solverRelevantMissed).sum();
         log.info("solver-relevant still-missing branches (concolic-return trigger): {}",
                 solverRelevantMissedTotal);
+        List<String> coveredAppClasses = coveredAppBranches.stream()
+                .map(io.graphrag.model.BranchRef::classFqn).distinct().sorted().toList();
         Files.writeString(config.out().resolve("exploration-report.json"),
                 Json.mapper().writerWithDefaultPrettyPrinter()
                         .writeValueAsString(new ExplorationReport(
-                                reportEntries, coveredAppBranches.size(), totalAppBranches)));
+                                reportEntries, coveredAppBranches.size(), totalAppBranches,
+                                coveredAppClasses)));
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,

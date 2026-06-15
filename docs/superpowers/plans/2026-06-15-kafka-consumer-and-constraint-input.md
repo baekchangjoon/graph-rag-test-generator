@@ -153,7 +153,13 @@
 - ✅ **B1-2 order-service 회귀 가드 완료** (커밋 `06725d0`): `OrderEventConsumer @KafkaListener(order.events)` + `order_events` 엔티티(@ConditionalOnProperty broker 게이트). BuilderE2eTest가 인덱싱·readValue 타깃·INSERT 캡처 단언. run-e2e 48/48(no kafka 무회귀).
 - ✅ **B2 완료** (브랜치 `worktree-feat-kafka-b2`): `Generator.generateKafka` + `kafka-test-class.mustache` + `testlib/KafkaHelper`+`TestScope.kafka`+`JdbcHelper.pollUntilExists` + `GraphRagClient` kafka accessor. e2e: docker-compose Kafka(KRaft dual-listener) + app `SPRING_KAFKA_BOOTSTRAP_SERVERS` + 빌더 `--with-kafka` + `request-order-events` + `:e2e:test` `KAFKA_BOOTSTRAP_SERVERS`. **실측 E2E 46/46 — 생성 `OrderEventConsumerTest`가 라이브로 발행→consumer `order_events` INSERT→DB 폴링 단언 통과**(빌더 'kafka published ... 3 sql'). `GeneratorKafkaTest` 단위 GREEN. 잔여: 키 컬럼이 PK(id) 대신 첫 API_PARAM(type)이라 정밀도 낮음(동작 무해, refinement 후순위).
 - ⬜ **① Z3 inter-field 솔버 남음**: 현재는 float 큰-기본값 휴리스틱으로 petclinic deposit 가드 통과(36→43%). 일반 inter-field(`a*k op b*c`)는 Z3로 정공 — 별도 Stage-4.
-- ⬜ **B1-2 순서 불변식**: Kafka 루프를 HTTP read 루프보다 먼저(현재는 HTTP 後) — read 보너스 커버 최적화(consumer 데이터를 read가 관측). 현재도 consumer 커버는 동작.
+- ✅ **#3 순서 불변식 + consumer 커버 측정 (F1-F3 + reorder, 브랜치 `worktree-feat-consumer-coverage`)**:
+  - **근본 원인(디버깅으로 규명)**: "exploration coverage" 지표가 **HTTP 탐색 전용**이었다 — (1) `BuilderCli`가 지표를 WS·Kafka 루프 *이전*에 계산, (2) `runWideExec`에 HTTP 엔드포인트 exec만 병합, (3) `KafkaCaptureRunner`/`WsCaptureRunner`가 커버리지를 **아예 안 뜸**(SQL만 파싱). consumer는 SUT에서 실제 실행되나(analytics 3 sql, notification Redis 발행 성공) 그 커버가 지표에 0 기여 → "Kafka 넣어도 커버리지 무변화"의 정체. 단순 reorder만으론 `dump(true)` 리셋 때문에 consumer 커버가 첫 HTTP baseline에 휩쓸려 폐기됨.
+  - **F1**: `KafkaCaptureRunner`가 발행 직전 baseline dump(boot 절단) + await 후 dump delta로 consumer 실행 커버를 떠서 `KafkaResult.cumulativeExec()`로 반환(SQL 없는 Redis consumer도 핸들러 분기 포함).
+  - **F2**: `WsCaptureRunner`도 교환별 핸들러 커버 delta 반환(WS 커버도 그간 동일하게 누락이었음).
+  - **F3**: `BuilderCli`가 Kafka/WS exec를 `runWideExec`에 병합 + 지표 계산을 **전 루프(Kafka+HTTP+WS) 종료 후 1회**로 이동. `ExplorationReport`에 `coveredAppClasses`(≥1 분기 covered된 app 클래스) 추가.
+  - **#3 reorder**: Kafka 루프를 HTTP 탐색보다 **먼저** 실행 → read 엔드포인트가 consumer가 쓴 행 관측(read 보너스). Kafka의 baseline+delta dump가 boot/consumer 구간을 닫으므로 HTTP baseline에 누수 없음.
+  - **수용 검증**: `BuilderE2eTest`(`--with-kafka`)가 `exploration-report.json`의 `coveredAppClasses`에 `OrderEventConsumer` 포함을 단언(RED→GREEN: consumer는 HTTP로 도달 불가 → F1+F3 없으면 covered 집합에 없음). 빌더 통합 1/1 GREEN(60.9s). 실측 MSA 스윕: notification/analytics line coverage 상승, petclinic(no kafka) 불변.
 
 ## 6. 관련 파일
 - A: `run/SampleInputSynthesizer`(+오버로드), `run/EndpointExplorationRunner`(happyInput 시그니처+배선), `index/ValidationConstraintExtractor`(재사용), 테스트 `SampleInputSynthesizerTest`.
