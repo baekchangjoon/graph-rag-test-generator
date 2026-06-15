@@ -2,6 +2,7 @@ package io.graphrag.builder.run;
 
 import io.graphrag.builder.index.ConstraintExtractor.GuardKind;
 import io.graphrag.builder.index.ConstraintExtractor.StateGuard;
+import io.graphrag.builder.run.ReadInputSynthesizer.SeedVariant;
 import io.graphrag.builder.run.SynthesizedInput.SeedRow;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.Endpoint;
@@ -46,8 +47,9 @@ class ReadInputSynthesizerVariantTest {
                 Map.of("status", List.of("CANCELLED", "PENDING")));
     }
 
-    private static SeedRow bookingsRow(SynthesizedInput in) {
-        return in.seeds().stream().filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+    private static SeedRow bookingsRow(SeedVariant v) {
+        return v.input().seeds().stream().filter(s -> s.table().equals("bookings"))
+                .findFirst().orElseThrow();
     }
 
     private static Object col(SeedRow row, String column) {
@@ -56,7 +58,7 @@ class ReadInputSynthesizerVariantTest {
 
     @Test
     void synthesizesBasePlusOneVariantPerApplicableGuard() {
-        List<SynthesizedInput> variants =
+        List<SeedVariant> variants =
                 synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(TEMPORAL, ENUM));
 
         assertThat(variants).hasSize(3);   // base + temporal + enum
@@ -68,7 +70,7 @@ class ReadInputSynthesizerVariantTest {
 
     @Test
     void temporalVariantFlipsOnlyDateToPast_enumVariantFlipsOnlyStatus() {
-        List<SynthesizedInput> variants =
+        List<SeedVariant> variants =
                 synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(TEMPORAL, ENUM));
 
         SeedRow temporal = variants.subList(1, 3).stream().map(ReadInputSynthesizerVariantTest::bookingsRow)
@@ -82,7 +84,7 @@ class ReadInputSynthesizerVariantTest {
 
     @Test
     void allRowsKeepPkAtIndexZero_withDistinctNonCollidingPks() {
-        List<SynthesizedInput> variants =
+        List<SeedVariant> variants =
                 synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(TEMPORAL, ENUM));
 
         assertThat(variants).map(ReadInputSynthesizerVariantTest::bookingsRow)
@@ -96,7 +98,7 @@ class ReadInputSynthesizerVariantTest {
     void returnsSingletonWhenGuardColumnAbsentOnTable() {
         StateGuard missing = new StateGuard("x.BookingController", "getById", 76, "no_such_column",
                 GuardKind.TEMPORAL, null, List.of());
-        List<SynthesizedInput> variants =
+        List<SeedVariant> variants =
                 synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(missing));
 
         assertThat(variants).hasSize(1);   // base only

@@ -123,21 +123,26 @@ public class ReadInputSynthesizer {
         return new SynthesizedInput(input, seeds);
     }
 
+    /** base happy + 상태가드 변종 1개. guard==null이면 base. */
+    public record SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard) {
+    }
+
     /**
      * 상태 의존 가드(TEMPORAL/ENUM)별 대체 시드 변종 합성 (Stage 4 양-arm 시드).
-     * 반환: [base happy] + 적용 가드별 변종 1개. 변종은 (i) 타깃 행만 클론(FK 부모는 공유),
-     * (ii) columns[0]=PK 유지하되 offset PK로 충돌 회피, (iii) 가드 컬럼만 결정적 flip 값으로 덮어쓰고
-     * 그 변종의 path PK param을 offset PK로 갱신한다. 적용 가드 없으면 singleton [base].
+     * 반환: [base(guard=null)] + 적용 가드별 변종 1개(guard 동봉 — 러너의 게이팅 쿼리 param 결정용).
+     * 변종은 (i) 타깃 행만 클론(FK 부모는 공유), (ii) columns[0]=PK 유지하되 offset PK로 충돌 회피,
+     * (iii) 가드 컬럼만 결정적 flip 값으로 덮어쓰고 그 변종의 path PK param을 offset PK로 갱신.
+     * 적용 가드 없으면 singleton [base].
      */
-    public List<SynthesizedInput> synthesizeVariants(Endpoint endpoint, List<TableSchema> tables,
-                                                     List<ConstraintExtractor.StateGuard> guards) {
+    public List<SeedVariant> synthesizeVariants(Endpoint endpoint, List<TableSchema> tables,
+                                                List<ConstraintExtractor.StateGuard> guards) {
         SynthesizedInput base = synthesize(endpoint, tables);
         if (guards == null || guards.isEmpty() || base.seeds().isEmpty()) {
-            return List.of(base);
+            return List.of(new SeedVariant(base, null));
         }
         TableSchema target = resolveTargetTable(endpoint, tables, null);
         if (target == null) {
-            return List.of(base);
+            return List.of(new SeedVariant(base, null));
         }
         int targetIdx = -1;
         for (int i = 0; i < base.seeds().size(); i++) {
@@ -147,13 +152,13 @@ public class ReadInputSynthesizer {
             }
         }
         if (targetIdx < 0) {
-            return List.of(base);
+            return List.of(new SeedVariant(base, null));
         }
 
         String pkColumn = target.columns().stream().filter(ColumnSchema::primaryKey)
                 .map(ColumnSchema::name).findFirst().orElse(null);
-        List<SynthesizedInput> out = new ArrayList<>();
-        out.add(base);
+        List<SeedVariant> out = new ArrayList<>();
+        out.add(new SeedVariant(base, null));
         int variantIdx = 0;
         for (ConstraintExtractor.StateGuard guard : guards) {
             ColumnSchema col = target.columns().stream()
@@ -193,7 +198,7 @@ public class ReadInputSynthesizer {
                     }
                 }
             }
-            out.add(new SynthesizedInput(vbody, variantSeeds));
+            out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
         }
         return out;
     }
