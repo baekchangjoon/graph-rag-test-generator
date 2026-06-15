@@ -44,7 +44,7 @@ class BuilderE2eTest {
                 60, null,
                 Path.of(System.getProperty("external.stubs")),
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
-                null, null, authConfig, false, false, null));
+                null, null, authConfig, false, true, null));   // withKafka=true (consumer 회귀 가드)
 
         // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())
@@ -132,6 +132,18 @@ class BuilderE2eTest {
         // GET path는 read이므로 INSERT가 아닌 SELECT SQL을 캡처한다
         assertThat(asset.sql().stream().filter(s -> s.pathId().equals(getByIdHappy.id())))
                 .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("orders"));
+
+        // Kafka consumer 회귀 가드: @KafkaListener(order.events) 인덱싱 + raw String payload의 내부
+        // readValue(OrderEventPayload) 타깃 해석 + 발행 후 consumer가 order_events INSERT(SQL 캡처).
+        assertThat(asset.kafkaConsumers()).extracting(c -> c.id()).contains("kafka-order-events");
+        var orderEventConsumer = asset.kafkaConsumers().stream()
+                .filter(c -> c.id().equals("kafka-order-events")).findFirst().orElseThrow();
+        assertThat(orderEventConsumer.topic()).isEqualTo("order.events");
+        assertThat(orderEventConsumer.payloadType()).contains("OrderEventPayload");   // readValue 타깃 해석
+        var orderEventExchange = asset.kafkaExchanges().stream()
+                .filter(e -> e.kafkaConsumerId().equals("kafka-order-events")).findFirst().orElseThrow();
+        assertThat(asset.sql().stream().filter(s -> orderEventExchange.capturedSqlIds().contains(s.id())))
+                .anyMatch(s -> s.sqlKind().equals("INSERT") && s.tableName().equals("order_events"));
 
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
