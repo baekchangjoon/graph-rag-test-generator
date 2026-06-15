@@ -25,10 +25,17 @@ class GeneratorKafkaTest {
                 "x.OrderEventConsumer", "onOrderEvent", "x.OrderEventPayload");
         var exchange = new KafkaExchange("kafka-order-events-x1", "kafka-order-events", "order.events",
                 payload, List.of("sql-1"));
+        // 실제 JPA INSERT 컬럼 순서(type, user_id, id) — PK(id)는 첫 컬럼이 아니다.
         var insert = new CapturedSql("sql-1", "kafka-order-events-x1", "INSERT",
-                "insert into order_events (id, user_id) values (?, ?)", "order_events",
-                List.of(new SqlBinding(1, "id", "e1", BindingOrigin.API_PARAM, "order_events"),
-                        new SqlBinding(2, "user_id", "u1", BindingOrigin.API_PARAM, "order_events")));
+                "insert into order_events (type, user_id, id) values (?, ?, ?)", "order_events",
+                List.of(new SqlBinding(1, "type", "t1", BindingOrigin.API_PARAM, "order_events"),
+                        new SqlBinding(2, "user_id", "u1", BindingOrigin.API_PARAM, "order_events"),
+                        new SqlBinding(3, "id", "e1", BindingOrigin.API_PARAM, "order_events")));
+        var orderEventsTable = new io.graphrag.model.TableSchema("order_events",
+                List.of(new io.graphrag.model.ColumnSchema("id", "VARCHAR", false, true),
+                        new io.graphrag.model.ColumnSchema("type", "VARCHAR", false, false),
+                        new io.graphrag.model.ColumnSchema("user_id", "VARCHAR", false, false)),
+                List.of(), List.of());
         return new GraphRagClient() {
             public io.graphrag.model.Endpoint endpoint(String id) { throw new UnsupportedOperationException(); }
             public io.graphrag.model.ExploredPath path(String id) { throw new UnsupportedOperationException(); }
@@ -44,7 +51,7 @@ class GeneratorKafkaTest {
             public boolean hasKafkaConsumer(String id) { return id.equals("kafka-order-events"); }
             public KafkaConsumer kafkaConsumer(String id) { return consumer; }
             public List<KafkaExchange> kafkaExchangesFor(String c) { return List.of(exchange); }
-            public List<io.graphrag.model.TableSchema> tables() { return List.of(); }
+            public List<io.graphrag.model.TableSchema> tables() { return List.of(orderEventsTable); }
             public List<io.graphrag.model.RequiredSeed> seedsForPath(String p) { return List.of(); }
         };
     }

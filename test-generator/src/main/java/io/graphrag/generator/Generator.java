@@ -167,7 +167,8 @@ public class Generator {
         for (io.graphrag.model.KafkaExchange exchange : exchanges) {
             String className = request.testClassName() + classSuffix(consumer.id(), exchange.id());
 
-            // consumer가 쓴 INSERT 중, payload 값이 바인딩된 컬럼을 side-effect 키로 단언.
+            // consumer가 쓴 INSERT의 키 컬럼으로 side-effect를 단언한다. 키는 **PK 컬럼 우선**
+            // (cleanup DELETE 과다 삭제 + 비-고유 컬럼 count>0 false-green 방지), 없으면 첫 API_PARAM.
             String table = null;
             String keyColumn = null;
             String keyValue = null;
@@ -175,16 +176,22 @@ public class Generator {
                 if (!s.sqlKind().equals("INSERT")) {
                     continue;
                 }
-                for (io.graphrag.model.SqlBinding b : s.bindings()) {
-                    if (b.origin() == io.graphrag.model.BindingOrigin.API_PARAM
-                            && b.column() != null && !b.column().isEmpty()) {
-                        table = s.tableName();
-                        keyColumn = b.column();
-                        keyValue = b.value();
-                        break;
-                    }
+                String pkColumn = primaryKeyColumn(s.tableName());
+                io.graphrag.model.SqlBinding chosen = null;
+                if (pkColumn != null) {
+                    chosen = s.bindings().stream()
+                            .filter(b -> pkColumn.equals(b.column())).findFirst().orElse(null);
                 }
-                if (table != null) {
+                if (chosen == null) {
+                    chosen = s.bindings().stream()
+                            .filter(b -> b.origin() == io.graphrag.model.BindingOrigin.API_PARAM
+                                    && b.column() != null && !b.column().isEmpty())
+                            .findFirst().orElse(null);
+                }
+                if (chosen != null) {
+                    table = s.tableName();
+                    keyColumn = chosen.column();
+                    keyValue = chosen.value();
                     break;
                 }
             }
@@ -223,6 +230,16 @@ public class Generator {
 
     private static String jsonEscape(String s) {
         return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    /** 테이블의 PK 컬럼명 (Kafka side-effect 단언 키 우선순위). 없으면 null. */
+    private String primaryKeyColumn(String tableName) {
+        return client.tables().stream()
+                .filter(t -> t.name().equals(tableName))
+                .flatMap(t -> t.columns().stream())
+                .filter(io.graphrag.model.ColumnSchema::primaryKey)
+                .map(io.graphrag.model.ColumnSchema::name)
+                .findFirst().orElse(null);
     }
 
     private static String classSuffix(String endpointId, String pathId) {
