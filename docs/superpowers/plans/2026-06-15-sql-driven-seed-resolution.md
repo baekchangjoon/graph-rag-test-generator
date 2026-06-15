@@ -161,7 +161,7 @@ baseline = `main`(변경 전), gated = 워크트리(게이트). 동일 명령(`-
 | petclinic | PG, auth | 244/660 (36%) | 244/660 (36%) | 0 | **회귀 0** (휴리스틱 해석) |
 | community | MySQL+Kafka | 154/248 (62%) | 154/248 (62%) | 0 | **회귀 0** |
 | notification | Redis+Kafka | 4/83 (4%) | 4/83 (4%) | 0 | 불변 (Redis, hint=null) |
-| order-service | PG (e2e) | 45/45 PASS | 45/45 PASS | 0 | **회귀 0** (e2e) |
+| order-service | PG (e2e) | 45/45 PASS | 48/48 PASS | 0(기존)+가드 | **회귀 0** + 회귀 가드 +3 |
 | **diary** | PG+Kafka | 81/208 (38%) | 131/208 (**62%**) | 4 | **+24 실제 수정** (`/diaries`≠`diary_entry`) |
 | **analytics** | PG+Kafka | 25/119→(12%) | 25/119 (**21%**) | 2 | **+9 실제 수정** (`/mood`≠`mood_point`) |
 | **mindgraph** | PG+Redis+Kafka | (5%) | 27/274 (**9%**) | 1 | **+4** (`/graphs`≠`graph_record`; byDiary seed, 응답 500=Step5 제외) |
@@ -173,6 +173,7 @@ baseline = `main`(변경 전), gated = 워크트리(게이트). 동일 명령(`-
 - analytics `getUserMood`: seed `mood_point`/`user_id`, 응답 `{points:[{score:1}], averageScore:1.0, count:1}`(빈→데이터). diary는 by-id GET/PUT/DELETE 4개가 `diary_entry`로 보정.
 - (탐색 경로) broad(게이트 전) 버전은 community +17%/petclinic 동일이었으나, 그 +17%는 **동일 시드 재탐색의 측정 아티팩트**(community post SELECT 바인딩 없음 → hint 빈 paramColumn → 시드 불변)였고 petclinic은 `visits` 오선택이라 게이트로 제거. §2.1-3 참조.
 - 참고: varchar-PK 시드 시 `identity resync ... COALESCE text/integer` WARN은 skip(non-fatal). 후속 정리 후보.
+- **회귀 가드(CI 라이브)**: order-service `ProfileController` `GET /api/profiles/by-name/{name}`(resource `profiles`≠table `users`, 비-PK `name` 조회) 추가. (a) `BuilderE2eTest`(CI `check`)가 seed table=`users` + `SELECT from users where name=?` 단언 → 회귀 시 FAIL; (b) e2e(CI `e2e`)가 `ProfilesByNameTest_S200_1`(`INSERT INTO users` 시드 후 GET→200) 생성·실행. order e2e 45→48 GREEN.
 
 ## 5.2 범위 밖(테스트 불가/무관)
 
