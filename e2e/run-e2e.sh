@@ -20,6 +20,7 @@ rm -rf "$OUT"
   --sut-jar $ROOT/samples/order-service/build/libs/order-service.jar \
   --out $OUT/graph \
   --sut-id order-service \
+  --with-kafka \
   --budget-requests 60 \
   --external-stubs $E2E/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}} \
@@ -31,7 +32,8 @@ rm -rf "$OUT"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
 for req in request-orders request-search request-ws request-orders-get-id request-orders-get-user \
-           request-bookings request-bookings-get-id request-bookings-put-id request-bookings-delete-id; do
+           request-bookings request-bookings-get-id request-bookings-put-id request-bookings-delete-id \
+           request-order-events; do
   "$GW" -q :test-generator:run --args="generate \
     --request $E2E/$req.json \
     --graph $OUT/graph \
@@ -71,6 +73,7 @@ APP_BASE_URI=http://localhost:58080 \
 JDBC_URL=jdbc:postgresql://localhost:56432/app \
 JDBC_USER=app \
 JDBC_PASS=app \
+KAFKA_BOOTSTRAP_SERVERS=localhost:59092 \
 HTTP_MOCK_ADMIN=http://localhost:59091/__admin \
 DASHBOARD_URL=http://localhost:58099 \
 AUTH_ADAPTER=real \
