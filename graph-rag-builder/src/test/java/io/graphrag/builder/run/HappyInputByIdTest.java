@@ -23,7 +23,7 @@ class HappyInputByIdTest {
                 List.of(new ColumnSchema("id", "INT", false, true)), List.of(), List.of());
 
         SynthesizedInput out = EndpointExplorationRunner.happyInput(
-                put, null, List.of(orders), Map.of(), Map.of());
+                put, null, List.of(orders), Map.of(), Map.of(), Map.of());
 
         assertThat(out.body().get("id").asInt()).isGreaterThan(0);   // sentinel 0 아님
         assertThat(out.seeds()).isNotEmpty();                        // 리소스 행 시드됨

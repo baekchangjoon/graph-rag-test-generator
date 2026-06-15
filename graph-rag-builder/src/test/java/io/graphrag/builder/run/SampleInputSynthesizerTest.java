@@ -88,4 +88,59 @@ class SampleInputSynthesizerTest {
                 new BodyShape.BodyField("priceTier", "io.x.PriceTier")), List.of()).body();
         assertThat(body.get("priceTier").asText()).isEqualTo("sample-priceTier");
     }
+
+    // ----- 제약-aware happy (Feature A) -----
+    private static io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint fc(
+            String field, io.graphrag.builder.index.ValidationConstraintExtractor.Kind kind, long n) {
+        return new io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint(field, kind, n, null);
+    }
+
+    @Test
+    void synthesize_minConstraint_intAtLeastMin() {
+        var fcMap = Map.of("roomNumber", List.of(
+                fc("roomNumber", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MIN, 100)));
+        ObjectNode body = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("roomNumber", "int")), List.of(), fcMap).body();
+        assertThat(body.get("roomNumber").asInt()).isGreaterThanOrEqualTo(100);
+    }
+
+    @Test
+    void synthesize_minMaxConstraint_intInRange() {
+        var fcMap = Map.of("nights", List.of(
+                fc("nights", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MIN, 1),
+                fc("nights", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MAX, 30)));
+        ObjectNode body = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("nights", "int")), List.of(), fcMap).body();
+        assertThat(body.get("nights").asInt()).isBetween(1, 30);
+    }
+
+    @Test
+    void synthesize_negativeConstraint_intNegative() {
+        var fcMap = Map.of("delta", List.of(
+                fc("delta", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.NEGATIVE, 0)));
+        ObjectNode body = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("delta", "int")), List.of(), fcMap).body();
+        assertThat(body.get("delta").asInt()).isLessThan(0);
+    }
+
+    @Test
+    void synthesize_sizeConstraint_stringWithinBounds() {
+        var fcMap = Map.of("petName", List.of(
+                fc("petName", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.SIZE_MIN, 2),
+                fc("petName", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.SIZE_MAX, 5)));
+        ObjectNode body = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("petName", "java.lang.String")), List.of(), fcMap).body();
+        assertThat(body.get("petName").asText().length()).isBetween(2, 5);
+    }
+
+    @Test
+    void synthesize_emptyConstraints_unchanged() {
+        ObjectNode withEmpty = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("amount", "int"),
+                        new BodyShape.BodyField("type", "java.lang.String")), List.of(), Map.of()).body();
+        ObjectNode legacy = new SampleInputSynthesizer().synthesize(
+                shape(new BodyShape.BodyField("amount", "int"),
+                        new BodyShape.BodyField("type", "java.lang.String")), List.of()).body();
+        assertThat(withEmpty).isEqualTo(legacy);
+    }
 }
