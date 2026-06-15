@@ -21,6 +21,7 @@ import io.graphrag.builder.explore.PathCandidate;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
+import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
@@ -134,7 +135,9 @@ public class EndpointExplorationRunner {
         // GET뿐 아니라 비-GET by-id(PUT/DELETE /{id})도 리소스를 미리 시드하고, 생성 테스트가
         // 그 리소스를 재현하도록 requiredSeeds에 등록해야 빈 DB에서도 통과한다(Bug: 비-GET 시드 미재현).
         boolean seedResource = readPath || hasPathParam;
-        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints);
+        Map<String, List<FieldConstraint>> happyConstraints =
+                mergeComparisonBounds(fieldConstraints, comparisons, shape);
+        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints);
 
         List<RequiredSeed> requiredSeeds = new ArrayList<>();
         int seedSeq = 0;
@@ -375,6 +378,40 @@ public class EndpointExplorationRunner {
      * 리소스 시드(유효 id)를 만든다(Bug 1: PUT/DELETE {id}가 sentinel "0"이 되어 service 미진입하던 것 해결).
      * 비-GET+PATH+body면 body(SampleInputSynthesizer)를 병합(seed는 table+pk로 dedupe, path/query 우선).
      */
+    /**
+     * 명령형 검증 가드(`if (field op literal) throw`)를 합성 MIN/MAX 제약으로 변환해 어노테이션
+     * 제약과 병합한다(Feature A 확장). 가드가 throw하는 invalid 측의 반대(valid)로 happy 값을 민다:
+     * `field < L`→MIN(L), `<=`→MIN(L+1), `>`→MAX(L), `>=`→MAX(L-1). ==/!=는 모호 → skip.
+     * body 필드명과 일치하는 비교만(전 계층 추출이므로 이름 매칭). 범위 충돌은 boundedInt가 default로 흡수.
+     */
+    static Map<String, List<FieldConstraint>> mergeComparisonBounds(
+            Map<String, List<FieldConstraint>> annotations,
+            List<ConstraintExtractor.Comparison> comparisons, BodyShape shape) {
+        if (shape == null || comparisons.isEmpty()) {
+            return annotations;
+        }
+        Set<String> bodyFields = shape.fields().stream()
+                .map(BodyShape.BodyField::name).collect(Collectors.toSet());
+        Map<String, List<FieldConstraint>> merged = new java.util.HashMap<>();
+        annotations.forEach((k, v) -> merged.put(k, new ArrayList<>(v)));
+        for (ConstraintExtractor.Comparison c : comparisons) {
+            if (!bodyFields.contains(c.fieldRef())) {
+                continue;
+            }
+            FieldConstraint fc = switch (c.op()) {
+                case "<" -> new FieldConstraint(c.fieldRef(), Kind.MIN, c.literal(), null);
+                case "<=" -> new FieldConstraint(c.fieldRef(), Kind.MIN, c.literal() + 1, null);
+                case ">" -> new FieldConstraint(c.fieldRef(), Kind.MAX, c.literal(), null);
+                case ">=" -> new FieldConstraint(c.fieldRef(), Kind.MAX, c.literal() - 1, null);
+                default -> null;
+            };
+            if (fc != null) {
+                merged.computeIfAbsent(c.fieldRef(), x -> new ArrayList<>()).add(fc);
+            }
+        }
+        return merged;
+    }
+
     static SynthesizedInput happyInput(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                                        Map<String, List<String>> enumConstants,
                                        Map<String, List<String>> enumColumns,

@@ -134,6 +134,31 @@ class SampleInputSynthesizerTest {
     }
 
     @Test
+    void mergeComparisonBounds_imperativeGuards_happyInValidRange() {
+        // petclinic Reservation 류: 명령형 if(nights<1 || nights>30) throw → happy nights ∈ [1,30]
+        BodyShape shape = shape(new BodyShape.BodyField("nights", "int"),
+                new BodyShape.BodyField("roomNumber", "int"));
+        var comparisons = List.of(
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "nights", "<", 1, 10),
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "nights", ">", 30, 11),
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "roomNumber", "<", 100, 12),
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "roomNumber", ">", 499, 13));
+        var merged = EndpointExplorationRunner.mergeComparisonBounds(Map.of(), comparisons, shape);
+        ObjectNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
+        assertThat(body.get("nights").asInt()).isBetween(1, 30);
+        assertThat(body.get("roomNumber").asInt()).isBetween(100, 499);
+    }
+
+    @Test
+    void mergeComparisonBounds_ignoresNonBodyFields() {
+        BodyShape shape = shape(new BodyShape.BodyField("nights", "int"));
+        var comparisons = List.of(
+                new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "m", "otherField", "<", 5, 1));
+        var merged = EndpointExplorationRunner.mergeComparisonBounds(Map.of(), comparisons, shape);
+        assertThat(merged).doesNotContainKey("otherField");
+    }
+
+    @Test
     void synthesize_emptyConstraints_unchanged() {
         ObjectNode withEmpty = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("amount", "int"),
