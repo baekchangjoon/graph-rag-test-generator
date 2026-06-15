@@ -143,6 +143,13 @@ SUT를 운영 boot jar 그대로 외부 프로세스로 기동(HTTP 경계)
 
 > **갱신(2026-06-15)**: 아래 §9가 이 표의 "한계"를 단계별로 어떻게 좁혔는지(Stage 0–3b) 정리한다.
 
+**관측 경계는 HTTP만이 아니다 (2026-06-15)**: "out-of-process 관측"의 진입점은 HTTP 엔드포인트에
+국한되지 않는다. 이벤트 구동 SUT는 메시지로도 코드가 실행된다 — 그래서 빌더는 **@KafkaListener
+consumer**(토픽에 유효 이벤트 발행)와 **STOMP/WS 핸들러**도 같은 JaCoCo dump 모델로 관측한다. 각
+캡처가 baseline+delta dump로 핸들러 커버를 떠서 전역 커버리지(runWideExec)에 병합하므로, exploration
+커버리지는 HTTP+consumer+WS를 합산한다. (SQL을 안 쓰는 Redis consumer도 핸들러 분기는 잡힌다.)
+이를 빠뜨리면 "consumer가 실제로 돌아도 커버리지 0"이 되어 기능을 과소평가한다. 상세: `docs/24` 말미.
+
 ---
 
 ## 7.5 입력 파라미터를 조합·생성하는 과정 (solver · fuzzer · seed) — 예제
@@ -283,6 +290,15 @@ base (변이 없음)         →                            → 201
 | Stage 1/2 | `tier==VIP && loyalty<500` 등 독립 다필드 가드 true-arm | 47→69/253 |
 | Stage 3 | by-id(GET/PUT/DELETE /{id}) 진입 + 시드 읽기(enum 컬럼) | 69→113/253 |
 | Stage 3b | mutating by-id 생성 테스트가 빈 DB에서 재현(시드 리셋) | by-id 16/16 통과 |
+
+> **먼저 두 용어 (초급자용)**:
+> - **arm(분기 갈래)**: `if (cond)`는 갈래가 둘 — `cond`가 참일 때 실행되는 **true-arm**, 거짓일 때의
+>   **false-arm**. JaCoCo branch(arm-level) 100%는 **두 arm을 모두 실행**해야 한다. 한 입력은 보통
+>   한 arm만 찍으므로, 나머지 arm을 여는 **다른 입력 또는 다른 시드 데이터**가 따로 필요하다.
+> - **단일필드 vs inter-field(필드 간) 제약**: `nights >= 1`처럼 **한 필드만** 보는 조건은 그 필드 값을
+>   독립적으로 고르면 끝(현 휴리스틱이 처리). 반면 `deposit*1.1 < nights*rate`처럼 **여러 필드를 한 식에
+>   엮는** 조건(inter-field)은 필드를 따로 못 정한다 — 셋이 부등식을 **동시에** 만족해야 하므로 연립으로
+>   풀어야 한다(= Z3 같은 SMT 솔버의 일).
 
 **여전히 미해결(다음 = Stage 4)**:
 - **결합 다변수**(`deposit*1.1 < nights*priceTier.getNightlyRate()`): 비선형(곱셈)+interprocedural

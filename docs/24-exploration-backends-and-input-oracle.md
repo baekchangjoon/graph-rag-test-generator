@@ -105,6 +105,23 @@ SUT 자체 클래스 한정으로 프레임워크 노이즈 제거)으로 강화
 전 과정 검증 완료: **in-process 발견(static+concolic) → out-of-process HTTP 확정·관측 →
 arm-aware 보존 → 각 발견 입력이 distinct 테스트.**
 
+## 관측 대상 확장: HTTP 외 이벤트/메시지 핸들러 (완료 2026-06-15)
+
+out-of-process 관측이 HTTP 엔드포인트에만 머물지 않는다. 이벤트 구동 SUT의 커버리지를 정확히 잡으려면
+**관측 파이프라인이 비-HTTP 진입점도 같은 JaCoCo dump 모델로 다뤄야 한다**:
+
+- **@KafkaListener consumer** — `KafkaCaptureRunner`가 토픽에 유효 이벤트를 발행하고, 발행 직전
+  baseline dump(boot/seed 컷) + consumer 실행 후 dump delta로 핸들러 커버를 캡처한다. SQL을 안 쓰는
+  consumer(예: Redis 기록)도 핸들러 분기가 잡힌다. consumer 루프는 HTTP 탐색보다 **먼저** 실행 →
+  consumer가 쓴 행을 read 엔드포인트가 관측(read 보너스).
+- **STOMP/WS 핸들러** — `WsCaptureRunner`도 교환별 dump delta로 핸들러 커버를 캡처.
+- **집계** — Kafka/WS/HTTP의 누적 exec를 모두 `runWideExec`에 OR-병합하고, exploration 커버리지
+  지표는 **전 루프 종료 후 1회** 산출한다. `exploration-report.json`의 `coveredAppClasses`(≥1 분기
+  covered된 app 클래스)에 consumer/WS 핸들러 클래스가 포함된다.
+- **실증**: HTTP-only 집계 → 전체 집계 전환으로 notification(Redis consumer) line 4→33%,
+  analytics(kafka consumer) line 12→48%·branch 25→100%. consumer 없는 SUT(petclinic 등)는 무회귀.
+  근본 원인·검증은 `docs/superpowers/plans/2026-06-15-kafka-consumer-and-constraint-input.md` 참조.
+
 ## 단계별 입력 발견 진행 (Stage 0–3b, 2026-06-15)
 
 InputOracle(ASM+Z3) 위에, 더 흔한 분기 종류를 여는 단계들을 쌓았다. 각 단계는 동일 jar A/B로 실측.

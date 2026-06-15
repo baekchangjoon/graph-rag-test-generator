@@ -18,14 +18,18 @@
        happy 입력 + (generic 변이 ⊕ 오라클 후보)를 SUT에 HTTP로 호출, 요청 단위 JaCoCo로
        arm-level 커버리지 관측, novelty 입력을 시드로 환류
   → sink 캡처 (capture/run): SUT 로그에서 SQL 파싱(SqlLogParser), WireMock 저널에서 외부 HTTP,
-                              STOMP/WS 교환, 필요한 DB seed
+                              STOMP/WS 교환, @KafkaListener consumer 발행, 필요한 DB seed.
+       Kafka consumer 루프는 HTTP 탐색보다 먼저 실행(consumer가 쓴 행을 read 엔드포인트가 관측).
+       WS/Kafka 캡처도 각자 JaCoCo dump delta를 떠 전역 커버리지(runWideExec)에 병합되므로,
+       exploration 커버리지는 HTTP뿐 아니라 consumer/WS 핸들러 실행까지 포함한다(지표는 전 루프 종료 후 1회 산출).
   → 그래프 저장 (store): JsonFileGraphStore(graph.json) + PartitionedGraphStore(패키지별 샤드)
               ↓
         [GRAPH ASSET = graph.json]
         - endpoints / exploredPaths(분기·status·바디·응답)
         - capturedSql / capturedHttpCalls / wsExchanges
         - tables(스키마) / requiredSeeds
-        - exploration-report.json (handler 커버리지 + coveredAppBranches + solverRelevantMissed)
+        - exploration-report.json (handler 커버리지 + coveredAppBranches + coveredAppClasses
+          [≥1 분기 covered된 app 클래스 — HTTP+consumer+WS 합산] + solverRelevantMissed)
 ====================================================================================
 
 ================ GENERATE PHASE — test-generator CLI ================
