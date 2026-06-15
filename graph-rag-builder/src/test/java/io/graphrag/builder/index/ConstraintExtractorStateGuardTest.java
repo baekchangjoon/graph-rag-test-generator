@@ -47,6 +47,8 @@ class ConstraintExtractorStateGuardTest {
 
         // id <= 0 은 입력 파라미터 비교 — 어떤 컬럼 상태 가드로도 잡히면 안 된다
         assertThat(guards).noneMatch(g -> "id".equals(g.column()) && g.method().equals("getById"));
+        // requested != CANCELLED 는 파라미터 enum 비교(getter 아님) — ENUM state guard로 잡히면 안 된다
+        assertThat(guards).noneMatch(g -> g.method().equals("filter"));
         assertThat(guards).allMatch(g -> g.classFqn() != null && g.method() != null);
     }
 }

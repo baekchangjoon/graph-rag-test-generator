@@ -373,7 +373,7 @@ public class ConstraintExtractor {
                 continue;
             }
             CtExpression<?> target = inv.getTarget();   // 컬럼은 isBefore의 target getter에서 유도(‘before’ 아님)
-            String ref = target == null ? null : fieldRef(target);
+            String ref = getterRef(target);              // 저장 행 getter만(파라미터/지역변수 날짜 비교 제외)
             CtMethod<?> method = inv.getParent(CtMethod.class);
             CtType<?> type = inv.getParent(CtType.class);
             if (ref == null || method == null || type == null) {
@@ -391,11 +391,12 @@ public class ConstraintExtractor {
             }
             String constName = enumConstant(op.getRightHandOperand());
             String enumType = enumTypeAccess(op.getRightHandOperand());
-            String field = constName != null ? fieldRef(op.getLeftHandOperand()) : null;
+            // 필드 측은 저장 행 getter/accessor만(bare 파라미터/지역변수 enum 비교 = pure-input → 제외)
+            String field = constName != null ? getterRef(op.getLeftHandOperand()) : null;
             if (field == null) {
                 constName = enumConstant(op.getLeftHandOperand());
                 enumType = enumTypeAccess(op.getLeftHandOperand());
-                field = constName != null ? fieldRef(op.getRightHandOperand()) : null;
+                field = constName != null ? getterRef(op.getRightHandOperand()) : null;
             }
             if (field == null || constName == null) {
                 continue;
@@ -452,6 +453,11 @@ public class ConstraintExtractor {
             return t.equals("LocalDate") || t.equals("LocalDateTime");
         }
         return false;
+    }
+
+    /** getter/accessor invocation(저장 행 상태 접근)일 때만 fieldRef, 아니면 null(pure-input 제외). */
+    private static String getterRef(CtExpression<?> expr) {
+        return expr instanceof CtInvocation ? fieldRef(expr) : null;
     }
 
     /** {@code Type.CONST} enum 상수 읽기의 선언 타입 simpleName(예: BookingStatus), 아니면 null. */
