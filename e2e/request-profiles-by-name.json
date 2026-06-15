@@ -1,0 +1,6 @@
+{
+  "endpointId": "get-api-profiles-by-name-name",
+  "testClassName": "ProfilesByNameTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}

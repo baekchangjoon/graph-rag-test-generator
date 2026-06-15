@@ -50,6 +50,7 @@ class BuilderE2eTest {
         assertThat(asset.endpoints()).extracting(e -> e.id())
                 .containsExactly("delete-api-bookings-id", "get-api-bookings-id",
                         "get-api-orders", "get-api-orders-id",
+                        "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings", "post-api-orders",
                         "post-api-orders-search", "post-api-promo", "put-api-bookings-id");
 
@@ -144,6 +145,24 @@ class BuilderE2eTest {
                 .filter(e -> e.kafkaConsumerId().equals("kafka-order-events")).findFirst().orElseThrow();
         assertThat(asset.sql().stream().filter(s -> orderEventExchange.capturedSqlIds().contains(s.id())))
                 .anyMatch(s -> s.sqlKind().equals("INSERT") && s.tableName().equals("order_events"));
+
+        // 시드 타깃 해석(SQL-기반 2-pass) 회귀 가드: resource명("profiles")≠table명("users")이고
+        // 비-PK 컬럼 name 으로 조회 → path-string 휴리스틱은 테이블을 못 찾는다. 빌더가 캡처한
+        // SELECT(from users where name=?)로 users 를 시드해야 2xx read 데이터가 나온다.
+        List<ExploredPath> profilePaths = pathsOf(asset, "get-api-profiles-by-name-name");
+        assertThat(profilePaths).isNotEmpty();
+        List<RequiredSeed> profileSeeds = asset.seeds().stream()
+                .filter(s -> profilePaths.stream().anyMatch(p -> p.id().equals(s.pathId())))
+                .toList();
+        // SQL-기반 해석이 동작해야 휴리스틱이 못 찾은 users 테이블이 시드된다 (회귀 시 빈 seed)
+        assertThat(profileSeeds).isNotEmpty();
+        assertThat(profileSeeds).extracting(RequiredSeed::table).contains("users");
+        // 비-PK 컬럼 name 으로 조회하는 SELECT from users 가 캡처된다
+        ExploredPath profileHappy = profilePaths.stream()
+                .filter(p -> p.expectedStatus() / 100 == 2).findFirst().orElseThrow();
+        assertThat(asset.sql().stream().filter(s -> s.pathId().equals(profileHappy.id())))
+                .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("users")
+                        && s.bindings().stream().anyMatch(b -> b.column().equals("name")));
 
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");

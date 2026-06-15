@@ -52,6 +52,30 @@
   **각 요청 전에 리소스를 fresh 시드로 리셋**(`resetSeeds` = reverse-DELETE 후 재-INSERT). 각 path 응답이
   (fresh 시드, 그 요청)의 순수 함수가 되어 생성 테스트가 빈 DB에서 재현된다(Stage 3b).
 
+### 1.1 SQL-기반 시드 타깃 해석 (보정형 2-pass)
+
+`ReadInputSynthesizer.resolveTargetTable`은 기본적으로 **path-string 휴리스틱**(경로에 테이블명/단수형이
+등장하는 첫 매칭)으로 시드 테이블을, PATH 변수는 PK로 매핑한다. 그러나 **REST 리소스명 ≠ 테이블명**
+(`/internal/analytics/mood`→`mood_point`, `/internal/graphs/diary`→`graph_record`, `/api/profiles`→`users`)
+이거나 **비-PK 컬럼으로 조회**(`getUserMood`→`user_id`)하는 엔드포인트는 휴리스틱이 테이블을 못 찾아
+시드가 비고 조회가 빈 결과/404가 된다(커버리지 바닥).
+
+이때 `EndpointExplorationRunner`는 **보정형 2-pass**를 쓴다:
+1. **게이트**: `heuristic.table()==null`(휴리스틱이 테이블 미해석)일 때만 보정한다. 휴리스틱이 이미
+   테이블을 해석한 엔드포인트(`/api/orders`→`orders` 등)는 재탐색을 **아예 하지 않아** baseline과
+   byte-identical(회귀 0). — 다중 SELECT(부모 엔티티+컬렉션 로드)에서 param명이 자식 FK 컬럼명과
+   우연히 일치해 자식 테이블을 오선택하는 회귀, 동일-시드 재탐색의 측정 흔들림을 원천 차단.
+2. **hint 도출**(`SqlSeedResolver`): pass-1이 캡처한 SELECT의 `tableName()`(FROM)→시드 테이블,
+   WHERE `col=?` 바인딩(컬럼명=`camelToSnake(param)` 1순위, 바인딩값=보낸값 2순위)→param 시드 컬럼.
+   스키마에 없는 FROM/Redis(SELECT 없음)는 `null`.
+3. **pass-2**: pass-1 시드 DELETE → `synthesize(.,.,hint)`로 재시드(INSERT+identity resync) →
+   `coverage.dump(true)` + `cumulativeCoverage` 리셋 → 재탐색. INSERT 실패 시 pass-1로 폴백.
+
+해석 대상이 아닌 백엔드(Redis 캐시 조회: mindgraph `byUser`, notification)는 pass-1에 SELECT가 없어
+hint=null → 보정 안 함(현행 유지). **회귀 가드**: order-service `GET /api/profiles/by-name/{name}`
+(resource `profiles`≠table `users`, 비-PK `name` 조회)이 CI(`BuilderE2eTest` + e2e)에서 `users`/`name`
+시드 해석을 라이브 검증한다.
+
 ## 2. 정적 분석 결과를 입력 생성에 환류 (BuilderCli, 1회 빌드)
 
 `BuilderCli.build()`가 엔드포인트 루프 전/중에 Spoon으로 다음을 추출해 `EndpointTarget`에 싣는다:
