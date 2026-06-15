@@ -149,8 +149,11 @@
 - ✅ **Feature A 확장 완료** (커밋 `3740d07`+`6a61461`): 명령형 비교가드 happy 반영(`mergeComparisonBounds`) + 무상한 float 큰 기본값. **order Booking 45→48(201), petclinic 36→43%(Reservation 201)**.
 - ✅ **B1-2 빌더-side 완료** (커밋 `15b20eb`): kafka-clients + `AnalysisEnvironment.kafkaBootstrapServers()` + `KafkaCaptureRunner`(producer 발행 + 8s SQL 폴링) + `GraphAsset.kafkaConsumers/kafkaExchanges`(store/round-trip 호환) + BuilderCli 배선(`--with-kafka` 시). **notification 실측: 2 consumer 인덱싱·발행 성공.** 빌더 전 테스트 GREEN.
   - 알려진 refinement: String-param consumer(`onCommentCreated(String message)`)는 핸들러 내부 역직렬화라 payload shape 미추출(빈 `{}`). 타입-이벤트 param consumer(analytics 등)는 정상. 내부 `readValue(message, XEvent)` 타깃 분석은 후속.
-  - 미완(B1-2 잔여): order-service `@KafkaListener`+`order_events` 픽스처 + BuilderE2eTest 단언(spring-kafka 의존 필요); Kafka 루프를 HTTP보다 먼저(§2.4 순서 불변식, 현재는 HTTP 後).
-- ⬜ **B2 남음**: `Generator.generateKafka` + `kafka-test-class.mustache` + `testlib/KafkaHelper`+`TestScope.kafka` + e2e(broker/요청파일).
+- ✅ **B1-2 payload refinement 완료** (커밋 `ada1020`): String-param consumer(`on(String message){readValue(message,X.class)}`)의 내부 readValue 타깃 X를 추출(Spoon CtFieldRead/CtTypeAccess)해 유효 이벤트 발행. **analytics 실측: consumer가 DB write(diary-created 3 sql=existsById+insert), mood_point 데이터 채움 → 0-sql 해결.**
+- ✅ **B1-2 order-service 회귀 가드 완료** (커밋 `06725d0`): `OrderEventConsumer @KafkaListener(order.events)` + `order_events` 엔티티(@ConditionalOnProperty broker 게이트). BuilderE2eTest가 인덱싱·readValue 타깃·INSERT 캡처 단언. run-e2e 48/48(no kafka 무회귀).
+- ⬜ **B2 남음(대형·async-fragile)**: `Generator.generateKafka` + `kafka-test-class.mustache` + `testlib/KafkaHelper`+`TestScope.kafka` + e2e(broker를 compose에 추가 + 발행 후 side-effect 폴링 단언). WS 생성 경로 미러 가능하나, 생성 테스트의 async consumer side-effect 단언 + e2e Kafka broker가 핵심 난점.
+- ⬜ **① Z3 inter-field 솔버 남음**: 현재는 float 큰-기본값 휴리스틱으로 petclinic deposit 가드 통과(36→43%). 일반 inter-field(`a*k op b*c`)는 Z3로 정공 — 별도 Stage-4.
+- ⬜ **B1-2 순서 불변식**: Kafka 루프를 HTTP read 루프보다 먼저(현재는 HTTP 後) — read 보너스 커버 최적화(consumer 데이터를 read가 관측). 현재도 consumer 커버는 동작.
 
 ## 6. 관련 파일
 - A: `run/SampleInputSynthesizer`(+오버로드), `run/EndpointExplorationRunner`(happyInput 시그니처+배선), `index/ValidationConstraintExtractor`(재사용), 테스트 `SampleInputSynthesizerTest`.
