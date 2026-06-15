@@ -847,7 +847,12 @@ public class EndpointExplorationRunner {
             String name = names.next();
             JsonNode v = obj.get(name);
             if (v == null || v.isNull() || v.isContainerNode()) {
-                continue;   // null/중첩은 폼 필드로 안 보냄(평면 스칼라만)
+                // null/중첩은 폼 필드로 안 보냄(평면 스칼라만, multipart/중첩 폼은 비범위).
+                // 묵시적 손실을 관측 가능하게 — 폼 arm이 바인딩 실패하면 이 로그로 추적.
+                if (v != null && v.isContainerNode()) {
+                    log.debug("formEncode: dropping non-scalar form field '{}' (nested/multipart out of scope)", name);
+                }
+                continue;
             }
             if (sb.length() > 0) {
                 sb.append('&');

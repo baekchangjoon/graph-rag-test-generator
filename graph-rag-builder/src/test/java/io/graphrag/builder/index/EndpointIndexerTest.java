@@ -149,6 +149,35 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void formSlotNotWastedByLeadingFrameworkParam(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // 프레임워크 타입(BindingResult)이 커맨드 객체보다 앞에 와도 단일 FORM 슬롯을 낭비하지 않고
+        // 뒤따르는 커맨드 객체를 FORM으로 잡아야 한다(formAdded는 성공 시에만 set).
+        java.nio.file.Path src = dir.resolve("WebC2.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                import org.springframework.validation.BindingResult;
+                @Controller
+                @RequestMapping("/web/orders")
+                class WebC2 {
+                    static class OrderForm { private String customer;
+                        public String getCustomer(){return customer;}
+                        public void setCustomer(String c){this.customer=c;} }
+                    @PostMapping
+                    String submit(BindingResult br, OrderForm form) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST")).findFirst().orElseThrow();
+        assertThat(post.params()).extracting(EndpointParam::kind).containsExactly(ParamKind.FORM);
+        assertThat(post.params().get(0).javaType()).isEqualTo("x.WebC2$OrderForm");
+    }
+
+    @Test
     void skipsControllerViewHandlerWithoutCommandObject(
             @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
         java.nio.file.Path src = dir.resolve("ViewC.java");
