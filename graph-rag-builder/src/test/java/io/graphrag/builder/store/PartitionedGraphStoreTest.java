@@ -61,6 +61,7 @@ class PartitionedGraphStoreTest {
                 List.of(http),
                 List.of(wsEndpoint),
                 List.of(wsExchange),
+                List.of(), List.of(),
                 List.of());
     }
 
@@ -103,6 +104,7 @@ class PartitionedGraphStoreTest {
                         "io.graphrag.sample.orders.OrderController", "create",
                         List.of(), false)),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(),
                 List.of());
         store.save(ordersOnly);
 

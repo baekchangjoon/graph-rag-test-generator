@@ -77,6 +77,9 @@ class JsonRoundTripTest {
                 "order-service", "abc123",
                 List.of(endpoint), List.of(path), List.of(sql), List.of(table),
                 List.of(mapperStatement), List.of(httpCall), List.of(wsEndpoint), List.of(wsExchange),
+                List.of(new KafkaConsumer("kafka-order-events", "order.events", "g", "x.C", "on", "x.E")),
+                List.of(new KafkaExchange("kafka-order-events-x1", "kafka-order-events", "order.events",
+                        mapper.createObjectNode().put("eventId", "e1"), List.of("sql-1"))),
                 List.of());
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);

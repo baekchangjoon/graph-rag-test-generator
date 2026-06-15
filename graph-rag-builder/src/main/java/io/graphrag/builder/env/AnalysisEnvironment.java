@@ -119,6 +119,11 @@ public class AnalysisEnvironment implements AutoCloseable {
         return httpCapture;
     }
 
+    /** Kafka 부트스트랩 서버 (--with-kafka 일 때). 빌더의 KafkaProducer 발행용. null이면 미기동. */
+    public String kafkaBootstrapServers() {
+        return kafka == null ? null : kafka.getBootstrapServers();
+    }
+
     @Override
     public void close() {
         try {
