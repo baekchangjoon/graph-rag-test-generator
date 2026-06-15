@@ -126,6 +126,8 @@ public final class BuilderCli {
         IndexResult index = new EndpointIndexer().index(config.sutSrc(), config.authConfig());
         io.graphrag.builder.index.WsIndexResult wsIndex =
                 new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
+        io.graphrag.builder.index.KafkaIndexResult kafkaIndex =
+                new io.graphrag.builder.index.KafkaListenerIndexer().index(config.sutSrc());
         List<MapperStatement> mappers = Files.isDirectory(config.sutResources())
                 ? new MapperXmlIndexer().index(config.sutResources())
                 : List.<MapperStatement>of();
@@ -149,6 +151,7 @@ public final class BuilderCli {
         List<CapturedSql> sql = new ArrayList<>();
         List<CapturedHttpCall> httpCalls = new ArrayList<>();
         List<io.graphrag.model.WsExchange> wsExchanges = new ArrayList<>();
+        List<io.graphrag.model.KafkaExchange> kafkaExchanges = new ArrayList<>();
         List<RequiredSeed> allSeeds = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
@@ -277,6 +280,25 @@ public final class BuilderCli {
                     wsExchanges.addAll(result.exchanges());
                     sql.addAll(result.sql());
                 }
+
+                // @KafkaListener consumer: 토픽에 유효 이벤트 발행 → consumer 커버 + SQL 캡처.
+                // (consumer가 쓰는 데이터는 read 엔드포인트 커버에도 기여 — 전역 cumulative에 반영.)
+                String kafkaBootstrap = env.kafkaBootstrapServers();
+                if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
+                    io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
+                            new io.graphrag.builder.run.KafkaCaptureRunner(
+                                    env.sut(), connection, env.dbType(), kafkaBootstrap);
+                    for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
+                        if (!plan.shouldExplore(kafkaConsumer.id())) {
+                            continue;
+                        }
+                        BodyShape kShape = kafkaIndex.payloadShapes().get(kafkaConsumer.payloadType());
+                        io.graphrag.builder.run.KafkaCaptureRunner.KafkaResult kResult =
+                                kafkaRunner.run(kafkaConsumer, kShape, tables);
+                        kafkaExchanges.addAll(kResult.exchanges());
+                        sql.addAll(kResult.sql());
+                    }
+                }
             }
         }
 
@@ -298,7 +320,7 @@ public final class BuilderCli {
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
-                wsIndex.endpoints(), wsExchanges, allSeeds);
+                wsIndex.endpoints(), wsExchanges, kafkaIndex.consumers(), kafkaExchanges, allSeeds);
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;

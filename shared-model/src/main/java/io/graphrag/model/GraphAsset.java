@@ -14,6 +14,8 @@ public record GraphAsset(
         List<CapturedHttpCall> httpCalls,
         List<WsEndpoint> wsEndpoints,
         List<WsExchange> wsExchanges,
+        List<KafkaConsumer> kafkaConsumers,
+        List<KafkaExchange> kafkaExchanges,
         List<RequiredSeed> seeds) {
 
     /** 이전 Phase 그래프(누락 필드)와의 후방 호환. */
@@ -22,6 +24,8 @@ public record GraphAsset(
         httpCalls = httpCalls == null ? List.of() : httpCalls;
         wsEndpoints = wsEndpoints == null ? List.of() : wsEndpoints;
         wsExchanges = wsExchanges == null ? List.of() : wsExchanges;
+        kafkaConsumers = kafkaConsumers == null ? List.of() : kafkaConsumers;
+        kafkaExchanges = kafkaExchanges == null ? List.of() : kafkaExchanges;
         seeds = seeds == null ? List.of() : seeds;
     }
 }

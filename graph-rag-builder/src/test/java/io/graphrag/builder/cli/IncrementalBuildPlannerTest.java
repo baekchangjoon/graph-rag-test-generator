@@ -40,6 +40,7 @@ class IncrementalBuildPlannerTest {
                 List.of(WS_ORDERS),
                 List.of(new WsExchange("wsx-1", "ws-orders-count", null, "/topic/orders",
                         null, List.of("sql-ws-1"))),
+                List.of(), List.of(),
                 List.of());
     }
 
