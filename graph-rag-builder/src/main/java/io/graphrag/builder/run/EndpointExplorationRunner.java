@@ -588,9 +588,11 @@ public class EndpointExplorationRunner {
                                     String authHeaderValue) throws Exception {
         long logStart = sut.logOffset();
         String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
+        // @Controller 폼 핸들러는 application/x-www-form-urlencoded, 그 외는 JSON.
+        boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", "application/json")
+                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json")
                 // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
                 .header("baggage", "test-id=explore");
         if (authHeaderValue != null) {
@@ -599,6 +601,8 @@ public class EndpointExplorationRunner {
         String method = endpoint.httpMethod();
         if (method.equals("GET") || method.equals("DELETE")) {
             builder.method(method, HttpRequest.BodyPublishers.noBody());
+        } else if (form) {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(formEncode(bodyOnly(endpoint, input))));
         } else {
             builder.method(method, HttpRequest.BodyPublishers.ofString(
                     Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
@@ -770,6 +774,11 @@ public class EndpointExplorationRunner {
                         .append(param.name()).append("=").append(input.get(param.name()).asText());
             }
         }
+        // 클래스-레벨 path 변수(@RequestMapping("/owners/{ownerId}"))가 @ModelAttribute 헬퍼에서만
+        // 해석되어 핸들러 파라미터에 없는 경우(petclinic @Controller 폼 패턴), {placeholder}가 남아
+        // URI.create가 깨진다. 매칭 안 된 placeholder는 센티널("0")로 치환해 URL을 항상 유효하게 둔다
+        // (해당 리소스 미시드 → SUT가 not-found/4xx arm 반환).
+        path = path.replaceAll("\\{[^/}]+}", "0");
         return path + query;
     }
 
@@ -825,6 +834,29 @@ public class EndpointExplorationRunner {
         ObjectNode body = objectNode.deepCopy();
         nonBody.forEach(body::remove);
         return body;
+    }
+
+    /** 평면 ObjectNode → application/x-www-form-urlencoded (field=urlencode(value)&...). 스칼라 필드만. */
+    static String formEncode(JsonNode body) {
+        if (!(body instanceof ObjectNode obj)) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        java.util.Iterator<String> names = obj.fieldNames();
+        while (names.hasNext()) {
+            String name = names.next();
+            JsonNode v = obj.get(name);
+            if (v == null || v.isNull() || v.isContainerNode()) {
+                continue;   // null/중첩은 폼 필드로 안 보냄(평면 스칼라만)
+            }
+            if (sb.length() > 0) {
+                sb.append('&');
+            }
+            sb.append(java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8))
+              .append('=')
+              .append(java.net.URLEncoder.encode(v.asText(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return sb.toString();
     }
 
     private List<CapturedSql> captureSql(PathCandidate candidate) {

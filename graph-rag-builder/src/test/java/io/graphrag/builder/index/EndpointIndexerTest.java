@@ -110,4 +110,60 @@ class EndpointIndexerTest {
                 .filter(e -> e.path().equals("/api/orders/{id}")).findFirst().orElseThrow()
                 .authRequired()).isTrue();
     }
+
+    @Test
+    void indexesControllerFormWithCommandObjectAsFormParam(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path src = dir.resolve("WebC.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                import org.springframework.validation.BindingResult;
+                import org.springframework.ui.Model;
+                @Controller
+                @RequestMapping("/web/orders")
+                class WebC {
+                    static class OrderForm { private String customer; private Integer quantity;
+                        public String getCustomer(){return customer;}
+                        public void setCustomer(String c){this.customer=c;}
+                        public Integer getQuantity(){return quantity;}
+                        public void setQuantity(Integer q){this.quantity=q;} }
+                    @PostMapping
+                    String submit(OrderForm form, BindingResult br, Model model) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST") && e.path().equals("/web/orders"))
+                .findFirst().orElseThrow();
+        // 커맨드 객체만 FORM으로 — BindingResult/Model(프레임워크 타입, bodyShape 미해석)은 제외(단일 커맨드 객체).
+        assertThat(post.params()).extracting(EndpointParam::kind).containsExactly(ParamKind.FORM);
+        assertThat(post.params().get(0).javaType()).isEqualTo("x.WebC$OrderForm");
+        // FORM 커맨드 객체도 bodyShape이 추출되어 빌더가 필드를 합성·변이할 수 있어야 한다.
+        BodyShape shape = result.bodyShapes().get("x.WebC$OrderForm");
+        assertThat(shape).isNotNull();
+        assertThat(shape.fields()).extracting(BodyShape.BodyField::name)
+                .containsExactly("customer", "quantity");
+    }
+
+    @Test
+    void skipsControllerViewHandlerWithoutCommandObject(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path src = dir.resolve("ViewC.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                import org.springframework.ui.Model;
+                @Controller
+                class ViewC {
+                    @GetMapping("/web/home") String home(Model model) { return "home"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        // 분기 없는 뷰-표시 핸들러(FORM 커맨드 객체 없음)는 인덱싱 대상 아님.
+        assertThat(result.endpoints()).isEmpty();
+    }
 }

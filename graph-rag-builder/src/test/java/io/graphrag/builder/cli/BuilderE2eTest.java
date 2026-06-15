@@ -52,7 +52,8 @@ class BuilderE2eTest {
                         "get-api-orders", "get-api-orders-id",
                         "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings", "post-api-orders",
-                        "post-api-orders-search", "post-api-promo", "put-api-bookings-id");
+                        "post-api-orders-search", "post-api-promo", "post-web-orders",
+                        "put-api-bookings-id");
 
         // JPA endpoint: 201/404/400 path가 모두 발견된다 (Phase 1 메트릭의 핵심)
         List<ExploredPath> orderPaths = pathsOf(asset, "post-api-orders");
@@ -225,6 +226,29 @@ class BuilderE2eTest {
         ExploredPath negAuthPath = pathsOf(asset, "get-api-orders").stream()
                 .filter(p -> p.discoveredBy().equals("negative-auth")).findFirst().orElseThrow();
         assertThat(negAuthPath.expectedStatus()).isIn(401, 403);
+
+        // @Controller 폼 인덱싱 회귀 가드: OrderWebController(@Controller, @RestController 아님)의
+        // POST /web/orders가 form-urlencoded 커맨드 객체(OrderForm)로 인덱싱되고, 빌더가 폼 인코딩으로
+        // 탐색해 명령형 가드(quantity 1..100)의 **양 arm**을 모두 연다. 둘 다 302 redirect(/ok vs /error).
+        // 핵심: ok arm은 quantity가 [1,100]으로 폼 바인딩됐을 때만 도달 → JSON으로 보냈으면 바인딩 실패로
+        // quantity=null이 되어 error arm만 나온다. 따라서 ≥2개의 구별된 path(양 arm) 존재 자체가
+        // form-urlencoded 전송이 올바름을 증명한다. @Controller 미인덱싱으로 되돌리면 endpoint 자체가 사라져 FAIL.
+        io.graphrag.model.Endpoint webOrders = asset.endpoints().stream()
+                .filter(e -> e.id().equals("post-web-orders")).findFirst().orElseThrow();
+        assertThat(webOrders.params()).extracting(io.graphrag.model.EndpointParam::kind)
+                .containsExactly(io.graphrag.model.ParamKind.FORM);
+        assertThat(webOrders.params().get(0).javaType())
+                .isEqualTo("io.graphrag.sample.orders.OrderWebController$OrderForm");
+        // valid-token 탐색 path만(authRequired라 negative-auth 무효-토큰 403 path도 함께 생기므로 제외).
+        List<ExploredPath> webValidPaths = pathsOf(asset, "post-web-orders").stream()
+                .filter(p -> !p.discoveredBy().equals("negative-auth")).toList();
+        // 양 arm: 분기 집합이 다른 valid path가 ≥2개. 모두 302(Java HttpClient 기본 redirect=NEVER로 미추적).
+        // ok arm(redirect:/ok)은 quantity가 [1,100]으로 폼 바인딩됐을 때만 도달 — JSON 전송이면 바인딩 실패로
+        // quantity=null이 되어 error arm만 나온다. 즉 ≥2개의 구별된 분기 집합 존재가 form-urlencoded 정합 증명.
+        assertThat(webValidPaths.stream().map(ExploredPath::branchesTaken).distinct().count())
+                .isGreaterThanOrEqualTo(2L);
+        assertThat(webValidPaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .containsExactly(302);
 
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
