@@ -29,6 +29,12 @@ public interface GraphRagClient {
 
     io.graphrag.model.WsExchange wsExchange(String exchangeId);
 
+    boolean hasKafkaConsumer(String id);
+
+    io.graphrag.model.KafkaConsumer kafkaConsumer(String id);
+
+    List<io.graphrag.model.KafkaExchange> kafkaExchangesFor(String consumerId);
+
     List<TableSchema> tables();
 
     List<RequiredSeed> seedsForPath(String pathId);

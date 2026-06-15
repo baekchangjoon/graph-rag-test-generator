@@ -79,6 +79,23 @@ public class FileGraphRagClient implements GraphRagClient {
     }
 
     @Override
+    public boolean hasKafkaConsumer(String id) {
+        return asset.kafkaConsumers().stream().anyMatch(c -> c.id().equals(id));
+    }
+
+    @Override
+    public io.graphrag.model.KafkaConsumer kafkaConsumer(String id) {
+        return asset.kafkaConsumers().stream().filter(c -> c.id().equals(id)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("unknown kafka consumer: " + id));
+    }
+
+    @Override
+    public List<io.graphrag.model.KafkaExchange> kafkaExchangesFor(String consumerId) {
+        return asset.kafkaExchanges().stream()
+                .filter(x -> x.kafkaConsumerId().equals(consumerId)).toList();
+    }
+
+    @Override
     public List<TableSchema> tables() {
         return asset.tables();
     }
