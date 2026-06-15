@@ -81,6 +81,17 @@ class BuilderE2eTest {
                 .filteredOn(b -> b.column().equals("status"))
                 .extracting(SqlBinding::origin).containsExactly(BindingOrigin.LITERAL);
 
+        // 제약-aware happy 회귀 가드(Feature A, 빌더 레벨): POST /api/bookings 는 다중 명령형 가드
+        // (nights 1..30, tier 필수, VIP&&loyalty>=500 conjunction, email 정규식, checkInDate 미래)를
+        // 모두 통과해야 201. 제약-aware happy가 깨지면 422만 남아 201 path가 사라진다(= 회귀 시 FAIL).
+        List<ExploredPath> bookingPaths = pathsOf(asset, "post-api-bookings");
+        assertThat(bookingPaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .contains(201);
+        ExploredPath bookingHappy = bookingPaths.stream()
+                .filter(p -> p.expectedStatus() == 201).findFirst().orElseThrow();
+        assertThat(asset.sql().stream().filter(s -> s.pathId().equals(bookingHappy.id())))
+                .anyMatch(s -> s.sqlKind().equals("INSERT") && s.tableName().equals("bookings"));
+
         // 분기/엔진/제약 메타데이터
         assertThat(orderHappy.branchesTaken()).isNotEmpty();
         assertThat(orderHappy.discoveredBy()).isIn("heuristic", "fuzzer");
