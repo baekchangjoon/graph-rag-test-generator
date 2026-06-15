@@ -79,7 +79,9 @@ class JsonRoundTripTest {
                 List.of(mapperStatement), List.of(httpCall), List.of(wsEndpoint), List.of(wsExchange),
                 List.of(new KafkaConsumer("kafka-order-events", "order.events", "g", "x.C", "on", "x.E")),
                 List.of(new KafkaExchange("kafka-order-events-x1", "kafka-order-events", "order.events",
-                        mapper.createObjectNode().put("eventId", "e1"), List.of("sql-1"))),
+                                mapper.createObjectNode().put("eventId", "e1"), List.of("sql-1")),
+                        new KafkaExchange("kafka-order-events-missing", "kafka-order-events", "order.events",
+                                mapper.createObjectNode(), List.of(), true)),   // 변종 교환 round-trip
                 List.of());
 
         assertThat(roundTrip(asset, GraphAsset.class)).isEqualTo(asset);

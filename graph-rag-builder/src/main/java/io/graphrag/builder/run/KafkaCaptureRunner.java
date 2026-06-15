@@ -44,6 +44,8 @@ public class KafkaCaptureRunner {
     private static final Logger log = LoggerFactory.getLogger(KafkaCaptureRunner.class);
     private static final long AWAIT_MILLIS = 8000;
     private static final long POLL_MILLIS = 250;
+    // SQL을 안 만드는 변종(스킵/리턴 arm)은 완료 신호가 없어 고정 settle 후 dump (POLL_MILLIS×10).
+    private static final long VARIANT_SETTLE_MILLIS = 2500;
 
     public record KafkaResult(List<KafkaExchange> exchanges, List<CapturedSql> sql,
                               ExecutionDataStore cumulativeExec) {
@@ -81,28 +83,104 @@ public class KafkaCaptureRunner {
         List<CapturedSql> allSql = new ArrayList<>();
         ExecutionDataStore cumulativeExec = new ExecutionDataStore();
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(producerProps())) {
-            int sequence = 0;
             ObjectNode payload = happy.body();
-            sequence++;
-            String exchangeId = consumer.id() + "-x" + sequence;
-            coverage.dump(true);   // baseline: boot/seed 구간을 잘라내고 consumer delta만 측정
-            long logStart = sut.logOffset();
-
+            String exchangeId = consumer.id() + "-x1";
             String key = payload.has("userId") ? payload.get("userId").asText() : exchangeId;
-            producer.send(new ProducerRecord<>(consumer.topic(), key,
-                    Json.mapper().writeValueAsString(payload))).get();
+            // happy: SQL 출현까지 폴링 (consumer가 만든 행 캡처)
+            List<CapturedSql> happySql = publishAndCapture(producer, consumer, exchangeId, payload, key,
+                    false, true, exchanges, allSql, cumulativeExec);
 
-            awaitConsumerSql(logStart);
-            long logEnd = sut.logOffset();
-            // consumer 실행 커버리지 delta (SQL 없는 Redis consumer도 핸들러 분기 포함)
-            coverage.dump(true).accept(cumulativeExec);
-            List<CapturedSql> sql = captureSql(exchangeId, payload, sut.readLogRange(logStart, logEnd));
-            allSql.addAll(sql);
-            exchanges.add(new KafkaExchange(exchangeId, consumer.id(), consumer.topic(), payload,
-                    sql.stream().map(CapturedSql::id).toList()));
-            log.info("kafka published {} -> topic {} ({} sql)", exchangeId, consumer.topic(), sql.size());
+            // 반대-arm 변종(결측-필드 / 중복) — GRB_KAFKA_VARIANTS=off면 skip.
+            if (!"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_VARIANTS"))) {
+                // missing-field(결정적, 하드): 빈 payload → required-필드 null-guard early-return arm.
+                publishAndCapture(producer, consumer, consumer.id() + "-missing",
+                        Json.mapper().createObjectNode(), variantKey(consumer, "missing"),
+                        true, false, exchanges, allSql, cumulativeExec);
+                // duplicate(best-effort): happy 행 커밋 가시성 확인 후 동일 payload 재발행 → dedup-skip arm.
+                if (awaitHappyRowCommitted(happySql, tables)) {
+                    publishAndCapture(producer, consumer, consumer.id() + "-dup",
+                            payload.deepCopy(), key, true, false, exchanges, allSql, cumulativeExec);
+                }
+            }
         }
         return new KafkaResult(exchanges, allSql, cumulativeExec);
+    }
+
+    /** 1회 발행 + (SQL await | 고정 settle) + 커버리지 delta + SQL/교환 캡처. */
+    private List<CapturedSql> publishAndCapture(KafkaProducer<String, String> producer,
+            KafkaConsumer consumer, String exchangeId, ObjectNode payload, String key, boolean variant,
+            boolean awaitSql, List<KafkaExchange> exchanges, List<CapturedSql> allSql,
+            ExecutionDataStore cumulativeExec) throws Exception {
+        coverage.dump(true);   // baseline: 직전 구간 컷, 이 발행의 delta만 측정
+        long logStart = sut.logOffset();
+        producer.send(new ProducerRecord<>(consumer.topic(), key,
+                Json.mapper().writeValueAsString(payload))).get();
+        if (awaitSql) {
+            awaitConsumerSql(logStart);
+        } else {
+            Thread.sleep(VARIANT_SETTLE_MILLIS);   // SQL 없는 변종: 고정 settle
+        }
+        long logEnd = sut.logOffset();
+        coverage.dump(true).accept(cumulativeExec);   // consumer 실행 커버 delta
+        List<CapturedSql> sql = captureSql(exchangeId, payload, sut.readLogRange(logStart, logEnd));
+        allSql.addAll(sql);
+        exchanges.add(new KafkaExchange(exchangeId, consumer.id(), consumer.topic(), payload,
+                sql.stream().map(CapturedSql::id).toList(), variant));
+        log.info("kafka published {} -> topic {} ({} sql, variant={})",
+                exchangeId, consumer.topic(), sql.size(), variant);
+        return sql;
+    }
+
+    /** 결측 변종 합성: 전 필드 null인 빈 payload (역직렬화 시 required-필드 null-guard arm). */
+    static ObjectNode missingFieldPayload() {
+        return Json.mapper().createObjectNode();
+    }
+
+    /** 변종별 비충돌 합성 key. */
+    static String variantKey(KafkaConsumer consumer, String kind) {
+        return "variant-" + kind + "-" + consumer.id();
+    }
+
+    /**
+     * happy consumer가 쓴 행의 커밋 가시성을 빌더 connection으로 확인(중복 변종이 dedup arm을 타도록).
+     * happy가 INSERT를 캡처했고 그 테이블 PK 값으로 폴링 가능할 때만 true. INSERT 미캡처(Redis 등)면 false
+     * → 중복 변종 best-effort 생략.
+     */
+    private boolean awaitHappyRowCommitted(List<CapturedSql> happySql, List<TableSchema> tables) {
+        CapturedSql insert = happySql.stream().filter(s -> "INSERT".equals(s.sqlKind())).findFirst().orElse(null);
+        if (insert == null) {
+            return false;
+        }
+        String pk = tables.stream().filter(t -> t.name().equals(insert.tableName()))
+                .flatMap(t -> t.columns().stream())
+                .filter(io.graphrag.model.ColumnSchema::primaryKey)
+                .map(io.graphrag.model.ColumnSchema::name).findFirst().orElse(null);
+        SqlBinding pkBind = pk == null ? null
+                : insert.bindings().stream().filter(b -> pk.equals(b.column())).findFirst().orElse(null);
+        if (pkBind == null) {
+            return false;
+        }
+        String sql = "SELECT count(*) FROM " + insert.tableName() + " WHERE " + pk + " = ?";
+        long deadline = System.nanoTime() + AWAIT_MILLIS * 1_000_000L;
+        while (System.nanoTime() < deadline) {
+            try (java.sql.PreparedStatement ps = connection.prepareStatement(sql)) {
+                ps.setString(1, pkBind.value());
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getLong(1) >= 1) {
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                return false;   // 폴링 불가(타입 불일치 등) → best-effort 생략
+            }
+            try {
+                Thread.sleep(POLL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
     }
 
     /** consumer가 만든 SQL이 로그에 나타날 때까지 폴링(최대 AWAIT). 없으면(Redis 등) 타임아웃 후 진행. */

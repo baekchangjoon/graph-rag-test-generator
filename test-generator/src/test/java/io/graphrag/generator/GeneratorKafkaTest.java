@@ -76,4 +76,36 @@ class GeneratorKafkaTest {
         assertThat(result.parallelSafety().serialRequired())
                 .extracting(io.graphrag.model.SerialRequired::test).contains("OrderEventConsumerTest_X1");
     }
+
+    @Test
+    void generateKafka_skipsVariantExchanges() {
+        // happy(variant=false, INSERT) + 변종 2개(variant=true, 0 SQL)를 제공해도 happy만 생성된다.
+        GraphRagClient base = client();
+        KafkaExchange happy = base.kafkaExchangesFor("kafka-order-events").get(0);
+        KafkaExchange dup = new KafkaExchange("kafka-order-events-dup", "kafka-order-events", "order.events",
+                Json.mapper().createObjectNode().put("eventId", "e1").put("userId", "u1"), List.of(), true);
+        KafkaExchange missing = new KafkaExchange("kafka-order-events-missing", "kafka-order-events",
+                "order.events", Json.mapper().createObjectNode(), List.of(), true);
+        GraphRagClient withVariants = new GraphRagClient() {
+            public io.graphrag.model.Endpoint endpoint(String id) { return base.endpoint(id); }
+            public io.graphrag.model.ExploredPath path(String id) { return base.path(id); }
+            public List<io.graphrag.model.ExploredPath> pathsForEndpoint(String e) { return base.pathsForEndpoint(e); }
+            public List<CapturedSql> sqlForPath(String p) { return base.sqlForPath(p); }
+            public List<io.graphrag.model.CapturedHttpCall> httpCallsForPath(String p) { return base.httpCallsForPath(p); }
+            public boolean hasWsEndpoint(String id) { return false; }
+            public io.graphrag.model.WsEndpoint wsEndpoint(String id) { return base.wsEndpoint(id); }
+            public List<io.graphrag.model.WsExchange> wsExchangesFor(String w) { return List.of(); }
+            public io.graphrag.model.WsExchange wsExchange(String id) { return base.wsExchange(id); }
+            public boolean hasKafkaConsumer(String id) { return base.hasKafkaConsumer(id); }
+            public KafkaConsumer kafkaConsumer(String id) { return base.kafkaConsumer(id); }
+            public List<KafkaExchange> kafkaExchangesFor(String c) { return List.of(happy, dup, missing); }
+            public List<io.graphrag.model.TableSchema> tables() { return base.tables(); }
+            public List<io.graphrag.model.RequiredSeed> seedsForPath(String p) { return base.seedsForPath(p); }
+        };
+        GenerationResult result = new Generator(withVariants).generate(
+                new GenerationRequest("kafka-order-events", null, "OrderEventConsumerTest", "io.x",
+                        io.graphrag.model.AuthMode.REAL));
+        assertThat(result.files()).hasSize(1);   // 변종 2개는 생성에서 제외
+        assertThat(result.files().get(0).relativePath()).isEqualTo("io/x/OrderEventConsumerTest_X1.java");
+    }
 }
