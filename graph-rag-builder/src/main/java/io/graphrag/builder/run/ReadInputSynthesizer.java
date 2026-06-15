@@ -1,6 +1,7 @@
 package io.graphrag.builder.run;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
@@ -120,6 +121,136 @@ public class ReadInputSynthesizer {
             seeds = allSeeds;
         }
         return new SynthesizedInput(input, seeds);
+    }
+
+    /**
+     * 상태 의존 가드(TEMPORAL/ENUM)별 대체 시드 변종 합성 (Stage 4 양-arm 시드).
+     * 반환: [base happy] + 적용 가드별 변종 1개. 변종은 (i) 타깃 행만 클론(FK 부모는 공유),
+     * (ii) columns[0]=PK 유지하되 offset PK로 충돌 회피, (iii) 가드 컬럼만 결정적 flip 값으로 덮어쓰고
+     * 그 변종의 path PK param을 offset PK로 갱신한다. 적용 가드 없으면 singleton [base].
+     */
+    public List<SynthesizedInput> synthesizeVariants(Endpoint endpoint, List<TableSchema> tables,
+                                                     List<ConstraintExtractor.StateGuard> guards) {
+        SynthesizedInput base = synthesize(endpoint, tables);
+        if (guards == null || guards.isEmpty() || base.seeds().isEmpty()) {
+            return List.of(base);
+        }
+        TableSchema target = resolveTargetTable(endpoint, tables, null);
+        if (target == null) {
+            return List.of(base);
+        }
+        int targetIdx = -1;
+        for (int i = 0; i < base.seeds().size(); i++) {
+            if (base.seeds().get(i).table().equals(target.name())) {
+                targetIdx = i;
+                break;
+            }
+        }
+        if (targetIdx < 0) {
+            return List.of(base);
+        }
+
+        String pkColumn = target.columns().stream().filter(ColumnSchema::primaryKey)
+                .map(ColumnSchema::name).findFirst().orElse(null);
+        List<SynthesizedInput> out = new ArrayList<>();
+        out.add(base);
+        int variantIdx = 0;
+        for (ConstraintExtractor.StateGuard guard : guards) {
+            ColumnSchema col = target.columns().stream()
+                    .filter(c -> c.name().equalsIgnoreCase(guard.column())).findFirst().orElse(null);
+            if (col == null) {
+                continue;   // 가드 컬럼이 타깃 테이블에 없으면 skip (스키마 가드, 보수적)
+            }
+            Object flip = flipValue(guard, col);
+            if (flip == null) {
+                continue;   // flip 미해석(enum 상수 미발견 등) → skip
+            }
+            variantIdx++;
+            SynthesizedInput.SeedRow targetRow = base.seeds().get(targetIdx);
+            List<String> cols = new ArrayList<>(targetRow.columns());
+            List<Object> vals = new ArrayList<>(targetRow.values());
+            Object variantPk = offsetPk(vals.get(0), variantIdx);
+            vals.set(0, variantPk);
+            int gi = indexOfIgnoreCase(cols, guard.column());
+            if (gi >= 0) {
+                vals.set(gi, flip);
+            } else {
+                cols.add(col.name());   // base seed에 없던(nullable) 가드 컬럼 추가 → arm을 연다
+                vals.add(flip);
+            }
+            List<SynthesizedInput.SeedRow> variantSeeds = new ArrayList<>();
+            for (int i = 0; i < base.seeds().size(); i++) {
+                variantSeeds.add(i == targetIdx
+                        ? new SynthesizedInput.SeedRow(targetRow.table(), cols, vals)
+                        : base.seeds().get(i));   // FK 부모 공유(동일 PK)
+            }
+            ObjectNode vbody = base.body().deepCopy();
+            if (pkColumn != null) {
+                for (EndpointParam param : endpoint.params()) {
+                    if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
+                            && pkColumn.equalsIgnoreCase(mapParamToColumn(param, target, null))) {
+                        vbody.put(param.name(), String.valueOf(variantPk));
+                    }
+                }
+            }
+            out.add(new SynthesizedInput(vbody, variantSeeds));
+        }
+        return out;
+    }
+
+    /** 가드별 결정적 flip 값. TEMPORAL=과거 날짜(1900-01-01), ENUM=부정집합 밖 사전순 첫 상수. */
+    private Object flipValue(ConstraintExtractor.StateGuard guard, ColumnSchema col) {
+        if (guard.kind() == ConstraintExtractor.GuardKind.TEMPORAL) {
+            String type = col.jdbcType().toUpperCase();
+            if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
+                return java.time.LocalDateTime.of(1900, 1, 1, 0, 0);
+            }
+            return java.time.LocalDate.of(1900, 1, 1);
+        }
+        List<String> all = enumConstantsForType(guard.enumType());
+        if (all == null) {
+            return null;
+        }
+        return all.stream().filter(c -> !guard.negatedConstants().contains(c))
+                .sorted().findFirst().orElse(null);
+    }
+
+    /** enumConstants를 FQN 직접 조회 후 simple-name 폴백(scalarFor와 동일 규칙). */
+    private List<String> enumConstantsForType(String typeName) {
+        if (typeName == null) {
+            return null;
+        }
+        List<String> consts = enumConstants.get(typeName);
+        if (consts == null) {
+            String simple = typeName.substring(typeName.lastIndexOf('.') + 1);
+            consts = enumConstants.entrySet().stream()
+                    .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
+        }
+        return consts;
+    }
+
+    /** PK 값을 변종 인덱스만큼 오프셋(정수=+idx, 문자열="_idx") — 두 행 공존·dedup 회피. */
+    private static Object offsetPk(Object base, int idx) {
+        if (base instanceof Long l) {
+            return l + idx;
+        }
+        if (base instanceof Integer i) {
+            return i + idx;
+        }
+        if (base instanceof String s) {
+            return s + "_" + idx;
+        }
+        return base;
+    }
+
+    private static int indexOfIgnoreCase(List<String> cols, String name) {
+        for (int i = 0; i < cols.size(); i++) {
+            if (cols.get(i).equalsIgnoreCase(name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** parentTable을 재귀적으로 시드하여 allSeeds에 추가 (사이클 방지: visited). */

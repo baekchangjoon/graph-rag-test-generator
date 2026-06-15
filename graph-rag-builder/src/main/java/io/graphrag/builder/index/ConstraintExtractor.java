@@ -57,6 +57,23 @@ public class ConstraintExtractor {
         public enum Kind { NUMERIC, ENUM_EQ, STRING_EQ }
     }
 
+    /** 상태 의존 가드의 종류 (Stage 4 StateGuardOracle). */
+    public enum GuardKind { TEMPORAL, ENUM }
+
+    /**
+     * 저장된(시드된) 단일 행 상태로 분기하는 가드. by-id 엔드포인트의 양 arm을 열기 위한 대체 시드
+     * 변종 합성의 근거 (docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md).
+     * <ul>
+     *   <li>TEMPORAL: {@code row.getX().isBefore/isAfter(LocalDate(Time).now())} → column=snake(X),
+     *       enumType=null, negatedConstants=[]. 대체 시드는 과거(1900-01-01) 날짜로 반대 arm을 연다.</li>
+     *   <li>ENUM: {@code row.getStatus() != A && != B}(NE) → column, enumType(상수 타입 simpleName),
+     *       negatedConstants={A,B}(정렬). 대체 시드는 negatedConstants 밖 첫 상수로 반대 arm을 연다.</li>
+     * </ul>
+     */
+    public record StateGuard(String classFqn, String method, int line, String column,
+                             GuardKind kind, String enumType, List<String> negatedConstants) {
+    }
+
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
             BinaryOperatorKind.GT, ">", BinaryOperatorKind.GE, ">=",
             BinaryOperatorKind.LT, "<", BinaryOperatorKind.LE, "<=",
@@ -329,6 +346,121 @@ public class ConstraintExtractor {
         Map<String, List<String>> out = new java.util.TreeMap<>();
         acc.forEach((k, v) -> out.put(k, List.copyOf(v)));
         return out;
+    }
+
+    /**
+     * 상태 의존 가드(저장 행 상태로 분기)를 전 계층에서 추출 (Stage 4). 보수적 — 인식 못하면 emit 안 함
+     * (false negative만). TEMPORAL: {@code getter().isBefore/isAfter(LocalDate(Time).now())}.
+     * ENUM: {@code getter() != A && != B} (NE만; == 가드는 반대-arm 의미가 달라 v1 제외). 1회 빌드.
+     */
+    public List<StateGuard> extractStateGuards(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        List<StateGuard> out = new ArrayList<>();
+
+        // TEMPORAL: row.getX().isBefore/isAfter(LocalDate(Time).now())
+        for (CtInvocation<?> inv : model.getElements(new TypeFilter<>(CtInvocation.class))) {
+            String name = inv.getExecutable().getSimpleName();
+            if (!name.equals("isBefore") && !name.equals("isAfter")) {
+                continue;
+            }
+            if (inv.getArguments().size() != 1 || !isNowCall(inv.getArguments().get(0))) {
+                continue;
+            }
+            CtExpression<?> target = inv.getTarget();   // 컬럼은 isBefore의 target getter에서 유도(‘before’ 아님)
+            String ref = target == null ? null : fieldRef(target);
+            CtMethod<?> method = inv.getParent(CtMethod.class);
+            CtType<?> type = inv.getParent(CtType.class);
+            if (ref == null || method == null || type == null) {
+                continue;
+            }
+            out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                    inv.getPosition().getLine(), snake(ref), GuardKind.TEMPORAL, null, List.of()));
+        }
+
+        // ENUM: getter() != CONST (NE). (class|method|column)별로 부정 상수를 모아 한 가드로.
+        java.util.LinkedHashMap<String, EnumGuardAcc> enumAcc = new java.util.LinkedHashMap<>();
+        for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
+            if (op.getKind() != BinaryOperatorKind.NE) {
+                continue;
+            }
+            String constName = enumConstant(op.getRightHandOperand());
+            String enumType = enumTypeAccess(op.getRightHandOperand());
+            String field = constName != null ? fieldRef(op.getLeftHandOperand()) : null;
+            if (field == null) {
+                constName = enumConstant(op.getLeftHandOperand());
+                enumType = enumTypeAccess(op.getLeftHandOperand());
+                field = constName != null ? fieldRef(op.getRightHandOperand()) : null;
+            }
+            if (field == null || constName == null) {
+                continue;
+            }
+            CtMethod<?> method = op.getParent(CtMethod.class);
+            CtType<?> type = op.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            final String classFqn = type.getQualifiedName().replace('$', '.');
+            final String column = snake(field);
+            final String enumTypeF = enumType;
+            final String methodName = method.getSimpleName();
+            final int line = op.getPosition().getLine();
+            String key = classFqn + '|' + methodName + '|' + column;
+            EnumGuardAcc acc = enumAcc.computeIfAbsent(key, k ->
+                    new EnumGuardAcc(classFqn, methodName, line, column, enumTypeF));
+            acc.constants.add(constName);
+            acc.line = Math.min(acc.line, line);
+        }
+        enumAcc.values().forEach(a -> out.add(new StateGuard(a.classFqn, a.method, a.line,
+                a.column, GuardKind.ENUM, a.enumType, List.copyOf(a.constants))));
+
+        out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
+                .thenComparingInt(StateGuard::line));
+        return out;
+    }
+
+    /** ENUM NE 가드 누적기: (class,method,column)별 부정 상수 집합(정렬). */
+    private static final class EnumGuardAcc {
+        final String classFqn;
+        final String method;
+        int line;
+        final String column;
+        final String enumType;
+        final java.util.TreeSet<String> constants = new java.util.TreeSet<>();
+
+        EnumGuardAcc(String classFqn, String method, int line, String column, String enumType) {
+            this.classFqn = classFqn;
+            this.method = method;
+            this.line = line;
+            this.column = column;
+            this.enumType = enumType;
+        }
+    }
+
+    /** {@code LocalDate.now()} / {@code LocalDateTime.now()} 호출이면 true. */
+    private static boolean isNowCall(CtExpression<?> expr) {
+        if (!(expr instanceof CtInvocation<?> inv) || !inv.getExecutable().getSimpleName().equals("now")) {
+            return false;
+        }
+        if (inv.getTarget() instanceof CtTypeAccess<?> ta && ta.getAccessedType() != null) {
+            String t = ta.getAccessedType().getSimpleName();
+            return t.equals("LocalDate") || t.equals("LocalDateTime");
+        }
+        return false;
+    }
+
+    /** {@code Type.CONST} enum 상수 읽기의 선언 타입 simpleName(예: BookingStatus), 아니면 null. */
+    private static String enumTypeAccess(CtExpression<?> expr) {
+        if (expr instanceof CtFieldRead<?> fr && fr.getTarget() instanceof CtTypeAccess<?> ta
+                && ta.getAccessedType() != null) {
+            return ta.getAccessedType().getSimpleName();
+        }
+        return null;
     }
 
     private static String snake(String name) {
