@@ -49,8 +49,12 @@ public class ReadInputSynthesizer {
     private static final int PROBE_ID_BASE = 90001;
 
     public SynthesizedInput synthesize(Endpoint endpoint, List<TableSchema> tables) {
+        return synthesize(endpoint, tables, null);
+    }
+
+    public SynthesizedInput synthesize(Endpoint endpoint, List<TableSchema> tables, ResolutionHint hint) {
         ObjectNode input = Json.mapper().createObjectNode();
-        TableSchema target = resolveTargetTable(endpoint, tables);
+        TableSchema target = resolveTargetTable(endpoint, tables, hint);
         int probeId = probeIdFor(endpoint);
 
         // PK/FK 키 컬럼은 비충돌 probe 값, 일반 NOT NULL 컬럼은 타입 기본값
@@ -79,7 +83,7 @@ public class ReadInputSynthesizer {
             }
             String value = scalarFor(param, probeId);
             input.put(param.name(), value);
-            String column = mapParamToColumn(param, target);
+            String column = mapParamToColumn(param, target, hint);
             if (column != null) {
                 // seed 값은 컬럼 JDBC 타입에 맞춰야 한다. 입력 JSON엔 문자열로 두되
                 // (path/query는 어차피 텍스트), seed row에는 타입 일치 값을 넣는다
@@ -163,8 +167,19 @@ public class ReadInputSynthesizer {
                 .orElse(null);
     }
 
-    /** path 세그먼트/스키마로 타깃 테이블 추론: 경로에 테이블명(또는 단수형)이 등장하는 첫 매칭. */
-    private TableSchema resolveTargetTable(Endpoint endpoint, List<TableSchema> tables) {
+    /**
+     * 타깃 테이블 추론. hint(SQL FROM 절)가 있으면 그 테이블을 우선,
+     * 없으면 path-string 휴리스틱(경로에 테이블명/단수형이 등장하는 첫 매칭).
+     */
+    private TableSchema resolveTargetTable(Endpoint endpoint, List<TableSchema> tables, ResolutionHint hint) {
+        if (hint != null && hint.table() != null) {
+            TableSchema hinted = tables.stream()
+                    .filter(t -> t.name().equals(hint.table()))
+                    .findFirst().orElse(null);
+            if (hinted != null) {
+                return hinted;
+            }
+        }
         String path = endpoint.path().toLowerCase();
         for (TableSchema table : tables) {
             String name = table.name().toLowerCase();
@@ -181,9 +196,16 @@ public class ReadInputSynthesizer {
      * - QUERY param은 필터이므로 snake_case 동일 컬럼(FK 또는 일반 컬럼)에 매핑한다.
      *   (QUERY xxxId를 PK로 보면 varchar param을 정수 PK에 넣어 INSERT가 깨진다.)
      */
-    private String mapParamToColumn(EndpointParam param, TableSchema target) {
+    private String mapParamToColumn(EndpointParam param, TableSchema target, ResolutionHint hint) {
         if (target == null) {
             return null;
+        }
+        if (hint != null && hint.paramColumn().containsKey(param.name())) {
+            String hinted = hint.paramColumn().get(param.name());
+            // hint 컬럼이 실제 target 컬럼일 때만 채택 (스키마 부정합 방어)
+            if (target.columns().stream().anyMatch(c -> c.name().equals(hinted))) {
+                return hinted;
+            }
         }
         if (param.kind() == ParamKind.PATH) {
             return target.columns().stream().filter(ColumnSchema::primaryKey)
@@ -276,6 +298,25 @@ public class ReadInputSynthesizer {
         if (type.contains("INT")) return probeId;
         if (type.contains("BOOL")) return true;
         return "probe-" + keyColumn.name() + "-" + probeId;
+    }
+
+    /**
+     * hint 없는 path-string 휴리스틱 해석 결과를 ResolutionHint 형태로 노출.
+     * runner의 pass-2 필요 판정(hint != 휴리스틱)에 쓴다.
+     */
+    ResolutionHint heuristicResolution(Endpoint endpoint, List<TableSchema> tables) {
+        TableSchema target = resolveTargetTable(endpoint, tables, null);
+        java.util.Map<String, String> map = new java.util.LinkedHashMap<>();
+        for (EndpointParam param : endpoint.params()) {
+            if (param.kind() != ParamKind.PATH && param.kind() != ParamKind.QUERY) {
+                continue;
+            }
+            String column = mapParamToColumn(param, target, null);
+            if (column != null) {
+                map.put(param.name(), column);
+            }
+        }
+        return new ResolutionHint(target == null ? null : target.name(), map);
     }
 
     private static String singular(String name) {

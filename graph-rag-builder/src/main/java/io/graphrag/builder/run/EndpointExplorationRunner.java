@@ -138,21 +138,7 @@ public class EndpointExplorationRunner {
                 mergeComparisonBounds(fieldConstraints, comparisons, shape);
         SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints);
 
-        List<RequiredSeed> requiredSeeds = new ArrayList<>();
-        int seedSeq = 0;
-        for (SynthesizedInput.SeedRow seed : happy.seeds()) {
-            Seeds.insert(connection, dbType, seed);
-            if (seedResource) {
-                // read-path seed는 IDENTITY PK에 명시 id를 넣는다. 이러면 시퀀스가
-                // 전진하지 않아 이후 POST 탐색의 auto-INSERT가 같은 id로 충돌(500)한다.
-                // 같은 공유 탐색 DB이므로 seed 직후 시퀀스를 재동기화한다.
-                resyncIdentitySequence(seed.table(), tables);
-                seedSeq++;
-                requiredSeeds.add(new RequiredSeed(
-                        "seed-" + endpoint.id() + "-" + seedSeq, null, seed.table(),
-                        seed.columns(), seed.values().stream().map(String::valueOf).toList()));
-            }
-        }
+        List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
 
@@ -170,11 +156,131 @@ public class EndpointExplorationRunner {
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
-        // mutating by-id(PUT/DELETE /{id})는 탐색 중 공유 시드 행을 변이·누적한다 → 각 요청 전에
-        // 리소스를 fresh 시드로 리셋해 각 path 응답을 (fresh 시드, 그 요청)의 순수 함수로 만든다
-        // (생성 테스트가 fresh DB에서 재현 가능). HeuristicExplorer/Fuzzer 둘 다 이 invoker를 쓴다.
-        boolean mutatingById = !readPath && hasPathParam && !happy.seeds().isEmpty();
+        EndpointInvoker invoker = buildInvoker(endpoint, readPath, hasPathParam, happy);
+        EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
+                invoker, literalCandidates,
+                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
+        ExplorationOutcome outcome = orchestrator.explore(target);
+        log.info("explored {}: {} path(s), {} branch(es) covered",
+                endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
+
+        PathsBundle bundle = buildPaths(outcome, endpoint, conditions);
+
+        // ---- SQL-기반 보정 2-pass ----
+        // pass-1 캡처 SQL이 휴리스틱이 놓친 시드 타깃(FROM 테이블/WHERE 컬럼)을 드러내면
+        // hint로 재시드하고 재탐색한다. 정상 해석 엔드포인트(hint==휴리스틱)는 no-op(회귀 0).
+        if (seedResource) {
+            ResolutionHint hint = SqlSeedResolver.resolve(bundle.allSql(),
+                    sentParamValues(endpoint, happy.body()), endpoint, tables);
+            ResolutionHint heuristic = new ReadInputSynthesizer(enumConstants, enumColumns)
+                    .heuristicResolution(endpoint, tables);
+            if (hint != null && hint.table() != null && !hint.equals(heuristic)) {
+                SynthesizedInput pass1Happy = happy;
+                List<RequiredSeed> pass1Seeds = requiredSeeds;
+                PathsBundle pass1Bundle = bundle;
+                ExecutionDataStore pass1Cumulative = cumulativeCoverage;
+                ExplorationOutcome pass1Outcome = outcome;
+                try {
+                    deleteSeeds(pass1Happy);
+                    SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
+                            enumConstants, enumColumns, happyConstraints, hint);
+                    requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
+                    coverage.dump(true);                          // baseline: 부팅+pass-1+시드 구간 컷
+                    cumulativeCoverage = new ExecutionDataStore(); // 리포트를 pass-2(시드된 run)만 반영
+                    EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
+                    EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
+                            tables, invoker2, literalCandidates,
+                            fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
+                    outcome = orchestrator.explore(target2);
+                    log.info("re-explored {} (SQL hint table={}): {} path(s)",
+                            endpoint.id(), hint.table(), outcome.paths().size());
+                    bundle = buildPaths(outcome, endpoint, conditions);
+                    happy = happy2;
+                } catch (Exception e) {
+                    log.warn("SQL-driven re-seed failed for {} (table={}), keeping pass-1: {}",
+                            endpoint.id(), hint.table(), e.getMessage());
+                    requiredSeeds = pass1Seeds;
+                    bundle = pass1Bundle;
+                    cumulativeCoverage = pass1Cumulative;
+                    outcome = pass1Outcome;
+                    reinsertSeeds(pass1Happy);
+                }
+            }
+        }
+
+        AttachResult attached = attachSeeds(endpoint, readPath, bundle.paths(), requiredSeeds);
+
+        // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
+        // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거).
+        return new EndpointResult(attached.paths(), bundle.allSql(), bundle.httpCalls(),
+                attached.requiredSeeds(),
+                report(endpoint, outcome, comparisons), cumulativeCoverage);
+    }
+
+    private record PathsBundle(List<ExploredPath> paths, List<CapturedSql> allSql,
+                               List<io.graphrag.model.CapturedHttpCall> httpCalls) {
+    }
+
+    private record AttachResult(List<ExploredPath> paths, List<RequiredSeed> requiredSeeds) {
+    }
+
+    /** PATH/QUERY param 이름 → pass-1에서 보낸 문자열 값 (SqlSeedResolver의 값 매칭용). */
+    private static Map<String, String> sentParamValues(Endpoint endpoint, JsonNode body) {
+        Map<String, String> values = new java.util.LinkedHashMap<>();
+        for (EndpointParam param : endpoint.params()) {
+            if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
+                    && body.has(param.name())) {
+                values.put(param.name(), body.get(param.name()).asText());
+            }
+        }
+        return values;
+    }
+
+    /** 시드 INSERT + (read/by-id) IDENTITY 시퀀스 재동기화 + RequiredSeed 구성. */
+    private List<RequiredSeed> insertSeeds(SynthesizedInput happy, Endpoint endpoint,
+                                           boolean seedResource, List<TableSchema> tables) throws Exception {
+        List<RequiredSeed> requiredSeeds = new ArrayList<>();
+        int seedSeq = 0;
+        for (SynthesizedInput.SeedRow seed : happy.seeds()) {
+            Seeds.insert(connection, dbType, seed);
+            if (seedResource) {
+                // read-path seed는 IDENTITY PK에 명시 id를 넣는다. 시퀀스가 전진하지 않아
+                // 이후 POST 탐색의 auto-INSERT가 같은 id로 충돌(500)하므로 재동기화한다.
+                resyncIdentitySequence(seed.table(), tables);
+                seedSeq++;
+                requiredSeeds.add(new RequiredSeed(
+                        "seed-" + endpoint.id() + "-" + seedSeq, null, seed.table(),
+                        seed.columns(), seed.values().stream().map(String::valueOf).toList()));
+            }
+        }
+        return requiredSeeds;
+    }
+
+    /** pass-1 시드를 역순(child→parent) DELETE. 시드 없으면 no-op. */
+    private void deleteSeeds(SynthesizedInput happy) {
+        List<SynthesizedInput.SeedRow> seeds = happy.seeds();
+        for (int i = seeds.size() - 1; i >= 0; i--) {
+            Seeds.delete(connection, seeds.get(i));
+        }
+    }
+
+    /** pass-2 실패 시 pass-1 시드를 best-effort로 복원(다운스트림 생성 테스트 정합). */
+    private void reinsertSeeds(SynthesizedInput happy) {
+        for (SynthesizedInput.SeedRow row : happy.seeds()) {
+            try {
+                Seeds.insert(connection, dbType, row);
+            } catch (Exception e) {
+                log.warn("pass-1 seed restore failed for {}: {}", row.table(), e.getMessage());
+            }
+        }
+    }
+
+    private EndpointInvoker buildInvoker(Endpoint endpoint, boolean readPath,
+                                         boolean hasPathParam, SynthesizedInput happy) {
         EndpointInvoker invoker = httpInvoker(endpoint);
+        // mutating by-id(PUT/DELETE /{id})는 탐색 중 공유 시드 행을 변이·누적한다 → 각 요청 전에
+        // 리소스를 fresh 시드로 리셋해 각 path 응답을 (fresh 시드, 그 요청)의 순수 함수로 만든다.
+        boolean mutatingById = !readPath && hasPathParam && !happy.seeds().isEmpty();
         if (mutatingById) {
             EndpointInvoker base = invoker;
             List<SynthesizedInput.SeedRow> resetRows = happy.seeds();
@@ -183,13 +289,12 @@ public class EndpointExplorationRunner {
                 return base.invoke(body);
             };
         }
-        EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
-                invoker, literalCandidates,
-                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions);
-        ExplorationOutcome outcome = orchestrator.explore(target);
-        log.info("explored {}: {} path(s), {} branch(es) covered",
-                endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
+        return invoker;
+    }
 
+    /** outcome → ExploredPath/CapturedSql/CapturedHttpCall 묶음. */
+    private PathsBundle buildPaths(ExplorationOutcome outcome, Endpoint endpoint,
+                                  List<ConstraintExtractor.ConditionSpan> conditions) {
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
         List<io.graphrag.model.CapturedHttpCall> allHttpCalls = new ArrayList<>();
@@ -198,7 +303,7 @@ public class EndpointExplorationRunner {
             allSql.addAll(sql);
             List<io.graphrag.model.CapturedHttpCall> httpCalls = captureHttpCalls(candidate);
             allHttpCalls.addAll(httpCalls);
-            // seed는 성공(2xx) path에만 연결 — 아래 후처리 블록에서 채운다
+            // seed는 성공(2xx) path에만 연결 — attachSeeds에서 채운다
             paths.add(new ExploredPath(
                     candidate.pathId(),
                     endpoint.id(),
@@ -213,77 +318,78 @@ public class EndpointExplorationRunner {
                     validate(sql),
                     List.of()));
         }
+        return new PathsBundle(paths, allSql, allHttpCalls);
+    }
 
-        if (seedResource && !requiredSeeds.isEmpty()) {
-            if (readPath) {
-                // GET: id가 변이되므로(404/400 path 존재) seed는 첫 2xx(존재하는 id) path에만 연결.
-                int successIdx = -1;
-                for (int i = 0; i < paths.size(); i++) {
-                    if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
-                }
-                if (successIdx >= 0) {
-                    ExploredPath p = paths.get(successIdx);
-                    List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
-                    paths.set(successIdx, withSeedIds(p, seedIds));
-                    String pid = p.id();
-                    requiredSeeds = requiredSeeds.stream()
-                            .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
-                            .toList();
-                }
-            } else {
-                // 비-GET by-id: id를 변이하지 않으므로 모든 path가 대상 리소스에 의존한다.
-                // path마다 리소스 시드를 고유 PK로 복제(병렬 테스트 PK 충돌 방지)하고, 그 path의
-                // url path-id를 같은 값으로 재기록한다(응답 단언은 notNullValue라 값 변경 안전).
-                String pathParam = endpoint.params().stream()
-                        .filter(pp -> pp.kind() == ParamKind.PATH)
-                        .map(io.graphrag.model.EndpointParam::name).findFirst().orElse(null);
-                List<RequiredSeed> perPath = new ArrayList<>();
-                for (int i = 0; i < paths.size(); i++) {
-                    ExploredPath p = paths.get(i);
-                    List<String> seedIds = new ArrayList<>();
-                    String newPk = null;
-                    for (int j = 0; j < requiredSeeds.size(); j++) {
-                        RequiredSeed base = requiredSeeds.get(j);
-                        List<String> vals = new ArrayList<>(base.values());
-                        String pk = offsetId(vals.get(0), i);
-                        vals.set(0, pk);
-                        if (j == 0) {
-                            newPk = pk;
-                        }
-                        String sid = "seed-" + endpoint.id() + "-p" + i + "-" + j;
-                        perPath.add(new RequiredSeed(sid, p.id(), base.table(), base.columns(), vals));
-                        seedIds.add(sid);
-                    }
-                    ExploredPath np = withSeedIds(p, seedIds);
-                    if (pathParam != null && newPk != null && np.sampleInput() instanceof ObjectNode body) {
-                        ObjectNode nb = body.deepCopy();
-                        nb.put(pathParam, newPk);
-                        // 응답에 같은 id가 실리므로(구체값 단언과 정합) sampleResponse의 PK 필드도 갱신.
-                        JsonNode resp = np.sampleResponse();
-                        if (resp instanceof ObjectNode ro && ro.has(pathParam)) {
-                            ObjectNode rc = ro.deepCopy();
-                            try {
-                                rc.put(pathParam, Long.parseLong(newPk));   // 응답 id는 숫자 노드(어설션 정합)
-                            } catch (NumberFormatException e) {
-                                rc.put(pathParam, newPk);
-                            }
-                            resp = rc;
-                        }
-                        np = new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
-                                resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
-                                np.branchesTaken(), np.discoveredBy(), np.constraints(),
-                                np.validationWarnings(), np.requiredSeedIds());
-                    }
-                    paths.set(i, np);
-                }
-                requiredSeeds = perPath;
-            }
+    /** 시드를 path에 연결: GET은 첫 2xx path, 비-GET by-id는 path별 고유 PK 복제. */
+    private AttachResult attachSeeds(Endpoint endpoint, boolean readPath,
+                                     List<ExploredPath> paths, List<RequiredSeed> requiredSeeds) {
+        if (!(requiredSeeds != null && !requiredSeeds.isEmpty())) {
+            return new AttachResult(paths, requiredSeeds);
         }
-
-        // app 분기 집계는 BuilderCli가 전 루프 종료 후 runWideExec(이 cumulativeExec들의 합집합 +
-        // Kafka/WS)로 1회 산출한다. 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거).
-        return new EndpointResult(paths, allSql, allHttpCalls, requiredSeeds,
-                report(endpoint, outcome, comparisons), cumulativeCoverage);
+        if (readPath) {
+            // GET: id가 변이되므로(404/400 path 존재) seed는 첫 2xx(존재하는 id) path에만 연결.
+            int successIdx = -1;
+            for (int i = 0; i < paths.size(); i++) {
+                if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
+            }
+            if (successIdx >= 0) {
+                ExploredPath p = paths.get(successIdx);
+                List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
+                paths.set(successIdx, withSeedIds(p, seedIds));
+                String pid = p.id();
+                requiredSeeds = requiredSeeds.stream()
+                        .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
+                        .toList();
+            }
+            return new AttachResult(paths, requiredSeeds);
+        }
+        // 비-GET by-id: id를 변이하지 않으므로 모든 path가 대상 리소스에 의존한다.
+        // path마다 리소스 시드를 고유 PK로 복제(병렬 테스트 PK 충돌 방지)하고, 그 path의
+        // url path-id를 같은 값으로 재기록한다(응답 단언은 notNullValue라 값 변경 안전).
+        String pathParam = endpoint.params().stream()
+                .filter(pp -> pp.kind() == ParamKind.PATH)
+                .map(io.graphrag.model.EndpointParam::name).findFirst().orElse(null);
+        List<RequiredSeed> perPath = new ArrayList<>();
+        for (int i = 0; i < paths.size(); i++) {
+            ExploredPath p = paths.get(i);
+            List<String> seedIds = new ArrayList<>();
+            String newPk = null;
+            for (int j = 0; j < requiredSeeds.size(); j++) {
+                RequiredSeed base = requiredSeeds.get(j);
+                List<String> vals = new ArrayList<>(base.values());
+                String pk = offsetId(vals.get(0), i);
+                vals.set(0, pk);
+                if (j == 0) {
+                    newPk = pk;
+                }
+                String sid = "seed-" + endpoint.id() + "-p" + i + "-" + j;
+                perPath.add(new RequiredSeed(sid, p.id(), base.table(), base.columns(), vals));
+                seedIds.add(sid);
+            }
+            ExploredPath np = withSeedIds(p, seedIds);
+            if (pathParam != null && newPk != null && np.sampleInput() instanceof ObjectNode body) {
+                ObjectNode nb = body.deepCopy();
+                nb.put(pathParam, newPk);
+                // 응답에 같은 id가 실리므로(구체값 단언과 정합) sampleResponse의 PK 필드도 갱신.
+                JsonNode resp = np.sampleResponse();
+                if (resp instanceof ObjectNode ro && ro.has(pathParam)) {
+                    ObjectNode rc = ro.deepCopy();
+                    try {
+                        rc.put(pathParam, Long.parseLong(newPk));   // 응답 id는 숫자 노드(어설션 정합)
+                    } catch (NumberFormatException e) {
+                        rc.put(pathParam, newPk);
+                    }
+                    resp = rc;
+                }
+                np = new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
+                        resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
+                        np.branchesTaken(), np.discoveredBy(), np.constraints(),
+                        np.validationWarnings(), np.requiredSeedIds());
+            }
+            paths.set(i, np);
+        }
+        return new AttachResult(paths, perPath);
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -431,11 +537,20 @@ public class EndpointExplorationRunner {
                                        Map<String, List<String>> enumConstants,
                                        Map<String, List<String>> enumColumns,
                                        Map<String, List<FieldConstraint>> fieldConstraints) {
+        return happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints, null);
+    }
+
+    // 제약-aware happy(Feature A: fieldConstraints) + SQL-driven seed 보정(hint)을 모두 받는 정본.
+    static SynthesizedInput happyInput(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
+                                       Map<String, List<String>> enumConstants,
+                                       Map<String, List<String>> enumColumns,
+                                       Map<String, List<FieldConstraint>> fieldConstraints,
+                                       ResolutionHint hint) {
         boolean get = endpoint.httpMethod().equals("GET");
         boolean hasPath = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
         if (get || hasPath) {
             SynthesizedInput pathPart =
-                    new ReadInputSynthesizer(enumConstants, enumColumns).synthesize(endpoint, tables);
+                    new ReadInputSynthesizer(enumConstants, enumColumns).synthesize(endpoint, tables, hint);
             if (get || shape == null) {
                 return pathPart;
             }
