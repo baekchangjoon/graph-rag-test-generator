@@ -26,7 +26,7 @@ Phase 7의 입력 생성을 "더 흔한 분기 종류"로 넓히는 단계별 �
 | 1/2 | 메서드 내 `&&` conjunction 추출 + joint/enum 변이 | 완료 (47→69, VIP arm 도달) |
 | 3 | by-id 진입(PUT/DELETE path-id 시드, boolean, enum 컬럼 시드) | 완료 (69→113) |
 | 3b | mutating by-id 요청별 시드 리셋 + 결정성 구체 어설션 | 완료 (생성 by-id 빈 DB 재현, 16/16) |
-| — | CI 회귀 보호: order-service Booking 리소스로 Stage 0–3b 라이브 검증 | 완료 (e2e 22→45) |
+| — | CI 회귀 보호: order-service Booking 리소스로 Stage 0–3b 라이브 검증 | 완료 (e2e 22→53) |
 | 4(예정) | 상태 의존 가드 양 arm concolic 시드 변종(stale 과거날짜, capacity 다중행) | 미착수 |
 
 ## 권장 순서 원칙
