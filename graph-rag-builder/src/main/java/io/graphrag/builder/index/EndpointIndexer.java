@@ -162,7 +162,9 @@ public class EndpointIndexer {
     private List<EndpointParam> extractParams(CtMethod<?> method, CtModel model,
                                               Map<String, BodyShape> bodyShapes, boolean formMode) {
         List<EndpointParam> params = new ArrayList<>();
-        boolean formAdded = false;   // 단일 커맨드 객체로 스코프 — 첫 FORM 파라미터만
+        // 폼 커맨드 객체는 단일로 스코프하되, 다중 커맨드 핸들러(예: (HelperObj, @Valid Cmd))에선 첫 후보가 아니라
+        // @Valid/@Validated 붙은 후보를 커맨드로 선택한다(없으면 첫 후보 폴백 — 무회귀).
+        CtParameter<?> formCommand = formMode ? selectFormCommand(method, model) : null;
         for (CtParameter<?> parameter : method.getParameters()) {
             if (findAnnotation(parameter, REQUEST_BODY) != null) {
                 String bodyType = BodyShapeExtractor.bodyTypeKey(parameter.getType());
@@ -180,21 +182,45 @@ public class EndpointIndexer {
                         parameter.getSimpleName(),
                         parameter.getType().getQualifiedName(),
                         ParamKind.QUERY));
-            } else if (formMode && !formAdded) {
+            } else if (formMode && parameter == formCommand) {
                 // @Controller 폼 커맨드 객체: @ModelAttribute 또는 SUT 클래스(필드 해석)인 unannotated POJO.
-                // BindingResult/Model 등 프레임워크 타입은 bodyShape 미해석 → 자동 제외.
+                // BindingResult/Model 등 프레임워크 타입은 bodyShape 미해석 → selectFormCommand에서 자동 제외.
                 String formType = BodyShapeExtractor.bodyTypeKey(parameter.getType());
-                java.util.Optional<BodyShape> shape =
-                        BodyShapeExtractor.extractFromType(model, parameter.getType());
-                boolean modelAttr = findAnnotation(parameter, MODEL_ATTRIBUTE) != null;
-                if (shape.isPresent() && (modelAttr || !shape.get().fields().isEmpty())) {
-                    shape.ifPresent(s -> bodyShapes.put(formType, s));
-                    params.add(new EndpointParam(parameter.getSimpleName(), formType, ParamKind.FORM));
-                    formAdded = true;
-                }
+                BodyShapeExtractor.extractFromType(model, parameter.getType())
+                        .ifPresent(s -> bodyShapes.put(formType, s));
+                params.add(new EndpointParam(parameter.getSimpleName(), formType, ParamKind.FORM));
             }
         }
         return params;
+    }
+
+    /**
+     * @Controller 폼 커맨드 객체 1개 선택: 폼 후보(REQUEST_BODY/PATH/QUERY 미부착 + bodyShape 해석되는 POJO,
+     * @ModelAttribute거나 필드 보유) 중 @Valid/@Validated 붙은 것을 우선, 없으면 첫 후보. 후보 없으면 null.
+     * BindingResult/Model 등 프레임워크 타입은 bodyShape 미해석 → 자동 제외.
+     */
+    private CtParameter<?> selectFormCommand(CtMethod<?> method, CtModel model) {
+        CtParameter<?> firstEligible = null;
+        for (CtParameter<?> parameter : method.getParameters()) {
+            if (findAnnotation(parameter, REQUEST_BODY) != null
+                    || findAnnotation(parameter, PATH_VARIABLE) != null
+                    || findAnnotation(parameter, REQUEST_PARAM) != null) {
+                continue;
+            }
+            java.util.Optional<BodyShape> shape =
+                    BodyShapeExtractor.extractFromType(model, parameter.getType());
+            boolean modelAttr = findAnnotation(parameter, MODEL_ATTRIBUTE) != null;
+            if (shape.isEmpty() || !(modelAttr || !shape.get().fields().isEmpty())) {
+                continue;
+            }
+            if (firstEligible == null) {
+                firstEligible = parameter;
+            }
+            if (findAnnotation(parameter, VALID) != null || findAnnotation(parameter, VALIDATED) != null) {
+                return parameter;   // 검증 애너테이션 붙은 커맨드 우선
+            }
+        }
+        return firstEligible;
     }
 
     private static CtAnnotation<?> findAnnotation(CtElement element, String qualifiedName) {
