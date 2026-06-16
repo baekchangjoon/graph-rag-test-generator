@@ -87,6 +87,86 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void selectFormCommand_prefersValidatedCommandOverFirstCandidate(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // 다중 커맨드: 첫 후보(helper)가 아니라 @Valid 붙은 커맨드(cmd)를 폼 커맨드로 선택해야 한다.
+        java.nio.file.Path src = dir.resolve("M.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import jakarta.validation.Valid;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/web/multi")
+                class M {
+                    static class HelperForm { private String note;
+                        public String getNote(){return note;} public void setNote(String n){this.note=n;} }
+                    static class CmdForm { private Integer quantity;
+                        public Integer getQuantity(){return quantity;} public void setQuantity(Integer q){this.quantity=q;} }
+                    @PostMapping
+                    String submit(HelperForm helper, @Valid CmdForm cmd) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.httpMethod().equals("POST") && e.path().equals("/web/multi"))
+                .findFirst().orElseThrow();
+        // FORM 커맨드는 정확히 1개, @Valid 붙은 CmdForm 이어야 한다.
+        assertThat(post.params()).filteredOn(p -> p.kind() == ParamKind.FORM)
+                .extracting(EndpointParam::javaType).containsExactly("x.M$CmdForm");
+    }
+
+    @Test
+    void selectFormCommand_validatedAnnotationAlsoSelected(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path src = dir.resolve("V.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.validation.annotation.Validated;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/web/v")
+                class V {
+                    static class A { private String a; public String getA(){return a;} public void setA(String x){this.a=x;} }
+                    static class B { private String b; public String getB(){return b;} public void setB(String x){this.b=x;} }
+                    @PostMapping
+                    String submit(A a, @Validated B b) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/v")).findFirst().orElseThrow();
+        assertThat(post.params()).filteredOn(p -> p.kind() == ParamKind.FORM)
+                .extracting(EndpointParam::javaType).containsExactly("x.V$B");
+    }
+
+    @Test
+    void selectFormCommand_noValidation_fallsBackToFirstCandidate(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path src = dir.resolve("F.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/web/f")
+                class F {
+                    static class P { private String p; public String getP(){return p;} public void setP(String x){this.p=x;} }
+                    static class Q { private String q; public String getQ(){return q;} public void setQ(String x){this.q=x;} }
+                    @PostMapping
+                    String submit(P p, Q q) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/f")).findFirst().orElseThrow();
+        assertThat(post.params()).filteredOn(p -> p.kind() == ParamKind.FORM)
+                .extracting(EndpointParam::javaType).containsExactly("x.F$P");
+    }
+
+    @Test
     void detectsValidRequestBody_onlyForAnnotatedBody(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
             throws Exception {
         java.nio.file.Path src = dir.resolve("S.java");
