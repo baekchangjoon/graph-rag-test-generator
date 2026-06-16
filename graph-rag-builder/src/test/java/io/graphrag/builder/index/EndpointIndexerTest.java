@@ -87,6 +87,31 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void detectsValidRequestBody_onlyForAnnotatedBody(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        java.nio.file.Path src = dir.resolve("S.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import jakarta.validation.Valid;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                @RequestMapping("/api/sign")
+                class S {
+                    record Req(String name) {}
+                    @PostMapping("/valid")
+                    String withValid(@Valid @RequestBody Req req) { return "ok"; }
+                    @PostMapping("/plain")
+                    String withoutValid(@RequestBody Req req) { return "ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        // @Valid @RequestBody 엔드포인트만 negative-validation 대상으로 surface된다.
+        assertThat(result.validBodyEndpointIds()).contains("post-api-sign-valid");
+        assertThat(result.validBodyEndpointIds()).doesNotContain("post-api-sign-plain");
+    }
+
+    @Test
     void authRequiredTrueForNonLoginPathsWhenAuthConfigured(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
             throws Exception {
         java.nio.file.Path src = dir.resolve("C.java");

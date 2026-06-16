@@ -112,6 +112,18 @@ auth-user 5개 어노테이션. REST/폼 무관하게 모든 검증 DTO에 적�
   근거는 외부 SUT 관측(명령형이라 B1 비목표 — 어노테이션 검증만 B1).
 
 ## 9. 상태
-설계 + 3-모델 리뷰 + triage **완성**. 구현 보류(다음 세션) — 이번 세션이 매우 길어(3 PR 머지 + #4 설계 + B1
-설계) 컨텍스트 한계. 브랜치 `worktree-feat-negative-validation-arms`에 설계 보존, 다음 세션에서 즉시 구현 착수
-가능(#4 `Rational` 보존과 동일 방식). 다음: B1 구현 → (b) 폼 커맨드 선택 + entity-Formatter.
+설계 + 3-모델 리뷰 + triage + **구현 완료**(2026-06-16). triage critical/important/recommended 전부 반영:
+- `EndpointIndexer`가 `@Valid`/`@Validated` JSON `@RequestBody`(FORM 제외)를 `IndexResult.validBodyEndpointIds`로 surface.
+- `NegativeValidationSynthesizer.synthesizeNegativeValidationVariants`(단일필드 격리, field·kind 정렬, cap=4 드롭+log,
+  PATTERN은 `Pattern.matches` 검증·불가 시 skip)가 happy body를 복제해 위반 변종 합성.
+- `EndpointExplorationRunner.exploreNegativeValidationVariants`가 orchestrator 우회로 각 변종을 valid 토큰으로 1회
+  발행, path-id=`<id>-negval-<field>-<kind>`, `discoveredBy="negative-validation"`, `GRB_NEGATIVE_VALIDATION=off` 게이트,
+  4xx 아님/필드 누락 시 log.warn(R1).
+- `Generator`가 negative-validation path 생성 제외.
+- **부수 수정**: `SutProcess.readLogRange/readLogFrom` byte 정합(멀티바이트 검증 메시지로 인한 WS/Kafka SQL 캡처
+  유실 회귀 차단 — `SutProcessLogSliceTest`로 가드).
+
+검증: 단위(`NegativeValidationSynthesizerTest` 15, `EndpointIndexerTest` @Valid 감지, `GeneratorNegativeValidationTest`,
+`SutProcessLogSliceTest`) + E2E(`BuilderE2eTest` signups reject 4종 + happy 201) + 전체 회귀 GREEN.
+
+다음: (b) 폼 커맨드 선택 + entity-Formatter. (잔여: B1-imperative — 명령형 if-throw 검증 추출 확장.)

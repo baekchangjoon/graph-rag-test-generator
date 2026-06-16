@@ -127,6 +127,21 @@ out-of-process 관측이 HTTP 엔드포인트에만 머물지 않는다. 이벤�
   크레딧한다. 결과는 `discoveredBy="negative-auth"` 4xx ExploredPath로 캡처하되 **`Generator`가 생성에서 제외**(B2 무영향).
   `GRB_NEGATIVE_AUTH=off`로 ablation. 실증: order-service 전 auth 엔드포인트 403 거부 arm 커버
   (`docs/superpowers/plans/2026-06-15-negative-auth-paths.md`).
+- **부정-검증 경로(2026-06-16, B1)** — happy 합성은 Bean Validation 제약을 모두 통과시키므로 선언적
+  검증(`@Valid @RequestBody`)의 reject arm(4xx)이 미커버였다. `EndpointIndexer`가 `@Valid`/`@Validated`가
+  붙은 JSON `@RequestBody`(FORM 제외) 엔드포인트를 `validBodyEndpointIds`로 surface하면, happy 탐색 후
+  `NegativeValidationSynthesizer`가 happy body를 복제해 **제약 1개를 한 필드만** 위반시킨 변종(엔드포인트당
+  최대 4, field·kind 정렬)을 합성하고, 각각을 valid 토큰으로 1회 발행(negative-auth와 동일 `doSend` 코어)해
+  `MethodArgumentNotValidException` 거부 arm을 cumulativeCoverage에 크레딧한다. 위반값: `@NotNull`→필드 제거,
+  `@NotBlank`(=`@NotEmpty` collapse)→빈 문자열 `""`/빈 배열, `@Size`→경계±1 길이, `@Min/@Max`→경계±1,
+  `@Positive/@Negative`→0 등, `@Email`→무효,
+  `@Pattern`→`Pattern.matches`로 검증한 불일치값. 결과는 `discoveredBy="negative-validation"` path로 캡처하되
+  **`Generator`가 생성에서 제외**(커버리지 전용). `GRB_NEGATIVE_VALIDATION=off`로 ablation. 명령형 if-throw 검증은
+  비목표(별도 후속). 실증: order-service `SignupController`(`@NotBlank`/`@Email`/`@Min`/`@Size`) 400 reject arm 4종 커버
+  (`docs/superpowers/plans/2026-06-16-negative-validation-arms.md`).
+- **로그 구간 byte 정합** — `logOffset()`은 byte 길이(`Files.size`)를 주므로 `readLogRange`/`readLogFrom`는
+  byte 단위로 잘라 UTF-8 디코드한다. char 인덱스로 자르면 비-ASCII 로그(예: 비영문 로케일의 검증 메시지)에서
+  오프셋이 어긋나 이후 WS/Kafka/HTTP SQL 캡처 구간이 비거나 밀린다(B1에서 발현·수정).
 - **집계** — Kafka/WS/HTTP의 누적 exec를 모두 `runWideExec`에 OR-병합하고, exploration 커버리지
   지표는 **전 루프 종료 후 1회** 산출한다. `exploration-report.json`의 `coveredAppClasses`(≥1 분기
   covered된 app 클래스)에 consumer/WS 핸들러 클래스가 포함된다.

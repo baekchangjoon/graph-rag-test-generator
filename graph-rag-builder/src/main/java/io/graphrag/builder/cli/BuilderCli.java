@@ -278,7 +278,8 @@ public final class BuilderCli {
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                    endpointStateGuards);
+                                    endpointStateGuards,
+                                    index.validBodyEndpointIds().contains(endpoint.id()));
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());

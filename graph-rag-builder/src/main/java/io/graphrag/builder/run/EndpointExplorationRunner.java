@@ -64,6 +64,7 @@ public class EndpointExplorationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(EndpointExplorationRunner.class);
     private static final int FUZZER_SATURATION = 2;   // 연속 dry 시드 패스 수
+    private static final int VARIANT_CAP = 4;          // 엔드포인트당 negative-validation 변종 상한(ReadInputSynthesizer와 일치)
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
@@ -125,7 +126,8 @@ public class EndpointExplorationRunner {
                               InputCandidates candidates,
                               Map<String, List<FieldConstraint>> fieldConstraints,
                               List<ConstraintExtractor.Conjunction> conjunctions,
-                              List<ConstraintExtractor.StateGuard> stateGuards) throws Exception {
+                              List<ConstraintExtractor.StateGuard> stateGuards,
+                              boolean validBody) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
@@ -250,11 +252,70 @@ public class EndpointExplorationRunner {
             }
         }
 
+        // 부정-검증 패스(B1): @Valid @RequestBody(JSON BODY) 엔드포인트에 어노테이션 제약 위반 변종을 발행 →
+        // Spring MethodArgumentNotValidException 거부 arm(4xx) 커버. doSend의 per-request dump가
+        // cumulativeCoverage에 크레딧. negative-validation path는 생성 제외(discoveredBy 마커).
+        // orchestrator 우회(검증 실패는 컨트롤러 진입 전 동일 400이라 status+coverageKey로 1 path 병합됨).
+        // baseInput은 pass-1 happy body다(SQL 2-pass 재시드가 happy를 happy2로 바꿔도 유지 — negative-auth와 동일).
+        // 어노테이션 검증엔 무해: 어떤 valid happy 값이든 단일필드 위반이 reject arm을 연다.
+        if (validBody && baseInput != null && shape != null
+                && !"off".equalsIgnoreCase(System.getenv("GRB_NEGATIVE_VALIDATION"))) {
+            finalPaths.addAll(exploreNegativeValidationVariants(endpoint, shape, fieldConstraints, baseInput));
+        }
+
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
         return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
                 finalSeeds, report(endpoint, outcome, comparisons), cumulativeCoverage);
+    }
+
+    /**
+     * 부정-검증 변종 pass(B1): happy body를 복제해 어노테이션 제약을 한 필드만 위반시킨 변종을 각각 1회
+     * 발행한다(orchestrator 밖 — negative-auth와 동일). 검증은 컨트롤러 진입 전이라 valid 토큰으로 보낸다.
+     * doSend가 per-request 커버리지를 cumulativeCoverage에 OR-병합해 reject arm을 크레딧. 각 변종을
+     * 고유·결정적 path-id의 ExploredPath로 등록(생성 제외 마커 discoveredBy="negative-validation").
+     */
+    private List<ExploredPath> exploreNegativeValidationVariants(
+            Endpoint endpoint, BodyShape shape,
+            Map<String, List<FieldConstraint>> fieldConstraints, ObjectNode happyBody) {
+        List<ExploredPath> paths = new ArrayList<>();
+        List<NegativeValidationSynthesizer.NegativeVariant> variants =
+                NegativeValidationSynthesizer.synthesizeNegativeValidationVariants(
+                        shape, fieldConstraints, happyBody, VARIANT_CAP);
+        if (variants.isEmpty()) {
+            return paths;
+        }
+        HttpClient http = HttpClient.newHttpClient();
+        String authHeader = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        for (NegativeValidationSynthesizer.NegativeVariant variant : variants) {
+            String pathId = endpoint.id() + "-negval-" + variant.field() + "-"
+                    + variant.kind().name().toLowerCase();
+            try {
+                InvocationOutcome out = doSend(http, endpoint, variant.body(), authHeader);
+                if (out.status() / 100 != 4) {
+                    // 선행 가드 throw 등으로 4xx가 아니면 reject arm 귀속 불확실(R1) — 캡처하되 경고.
+                    log.warn("negative-validation {} ({}={}) -> status {} (expected 4xx, attribution uncertain)",
+                            endpoint.id(), variant.field(), variant.kind(), out.status());
+                } else if (out.response() != null && !out.response().toString().contains(variant.field())) {
+                    // 4xx여도 응답에 기대 필드명이 없으면 귀속 불확실(R1 recommended).
+                    log.warn("negative-validation {} -> {} but response omits field '{}' (attribution uncertain)",
+                            endpoint.id(), out.status(), variant.field());
+                }
+                paths.add(new ExploredPath(pathId, endpoint.id(), variant.body(), out.status(),
+                        out.response(), List.of(), List.of(),
+                        List.copyOf(out.coveredBranches()), "negative-validation",
+                        List.of("negative-validation:" + variant.field() + ":" + variant.kind()),
+                        List.of(), List.of()));
+                log.info("negative-validation {} ({}={}) -> status {}",
+                        endpoint.id(), variant.field(), variant.kind(), out.status());
+            } catch (Exception e) {   // best-effort: 부정 패스 실패는 회귀 아님
+                log.warn("negative-validation variant failed for {} ({}): {}",
+                        endpoint.id(), variant.field(), e.getMessage());
+            }
+        }
+        return paths;
     }
 
     private record VariantResult(List<ExploredPath> paths, List<RequiredSeed> seeds,
