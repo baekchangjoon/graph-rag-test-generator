@@ -2,7 +2,19 @@
 
 Java/Spring 애플리케이션의 블랙박스 REST 테스트 자산(테스트 코드 + DB 픽스처 +
 mock 데이터)을 **결정적으로 생성**하는 시스템.
-요구사항: `docs/01-overview.md`, 아키텍처: `docs/02-architecture.md`.
+
+도구 두 개로 동작한다. **graph-rag-builder**(도구 1)가 대상 앱을 외부 프로세스로 띄워
+호출해 보며 코드의 사실(엔드포인트·분기·발행 SQL·외부 호출·DB 스키마)을 `graph.json`으로
+캡처하고, **test-generator**(도구 2)가 그 `graph.json`으로 RestAssured 테스트를 합성한다.
+두 도구 안에 LLM은 없다.
+
+## 처음이신가요?
+
+→ **[docs/00-시작하기](docs/00-getting-started.md)** 부터 본다. 데모를 한 번 돌려보고
+(`./e2e/run-e2e.sh`) 자기 앱에 적용하는 순서다. 전체 문서 지도는
+[docs/README.md](docs/README.md), 용어는 [docs/glossary.md](docs/glossary.md).
+요구사항은 [docs/01-overview](docs/01-overview.md), 아키텍처는
+[docs/02-architecture](docs/02-architecture.md).
 
 ## 모듈
 
@@ -78,6 +90,7 @@ git diff --name-only main > changed.txt
 
 ## 문서
 
+- **전체 지도: [docs/README.md](docs/README.md)** · 시작하기 [docs/00](docs/00-getting-started.md) · 용어 [docs/glossary.md](docs/glossary.md)
 - 아키텍처: `docs/02-architecture.md` · 빌더 `docs/03` · 제너레이터 `docs/04`
 - 입력 생성·탐색 원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`
 - 정적 분석 한계 + concolic 적용 범위: `docs/22-static-discovery-limits.md`
@@ -117,6 +130,6 @@ git diff --name-only main > changed.txt
 - **입력 발견 Stage 0–3b 완료** (2026-06-15): 유효 happy 합성(enum/날짜/이메일) → 다필드 `&&`
   conjunction joint/enum 변이 → by-id(PUT/DELETE/{id}) 진입(path-id 시드·boolean·enum 컬럼) →
   mutating by-id 시드 리셋·구체 어설션. 외부 spring-petclinic 적용 실측(coveredAppBranches 33→113/253,
-  by-id 생성 테스트 fresh DB 16/16). order-service에 **Booking** 추가로 CI 회귀화 → **e2e 45 테스트 GREEN**.
+  by-id 생성 테스트 fresh DB 16/16). order-service에 **Booking** 추가로 CI 회귀화 → **e2e 53 테스트 GREEN**.
 - 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
   Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
