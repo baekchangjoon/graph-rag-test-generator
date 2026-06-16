@@ -125,16 +125,31 @@ public final class SutProcess {
     }
 
     public String readLogFrom(long offset) {
-        String all = readLog();
-        return offset >= all.length() ? "" : all.substring((int) offset);
+        return sliceUtf8(readLogBytes(), offset, Long.MAX_VALUE);
     }
 
-    /** [start, end) 바이트 구간의 로그. 입력별 캡처 구간 분리용. */
+    /**
+     * [start, end) 바이트 구간의 로그(UTF-8). 입력별 캡처 구간 분리용. logOffset()이 byte 길이를
+     * 주므로 byte 단위로 잘라야 한다 — char 인덱스로 자르면 멀티바이트 로그(예: 비-ASCII 검증 메시지)에서
+     * 오프셋이 어긋나 구간이 비거나 밀린다(예: WS/Kafka SQL 캡처 유실).
+     */
     public String readLogRange(long start, long end) {
-        String all = readLog();
-        int from = (int) Math.min(start, all.length());
-        int to = (int) Math.min(end, all.length());
-        return from >= to ? "" : all.substring(from, to);
+        return sliceUtf8(readLogBytes(), start, end);
+    }
+
+    /** byte[start,end) 구간을 UTF-8로 디코드. 범위는 [0, len]으로 클램프. */
+    static String sliceUtf8(byte[] bytes, long start, long end) {
+        int from = (int) Math.min(Math.max(start, 0), bytes.length);
+        int to = (int) Math.min(Math.max(end, 0), bytes.length);
+        return from >= to ? "" : new String(bytes, from, to - from, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private byte[] readLogBytes() {
+        try {
+            return Files.exists(logFile) ? Files.readAllBytes(logFile) : new byte[0];
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     public void stop() {

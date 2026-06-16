@@ -32,6 +32,8 @@ public class EndpointIndexer {
     private static final String CONTROLLER       = "org.springframework.stereotype.Controller";
     private static final String REQUEST_MAPPING  = "org.springframework.web.bind.annotation.RequestMapping";
     private static final String REQUEST_BODY     = "org.springframework.web.bind.annotation.RequestBody";
+    private static final String VALID            = "jakarta.validation.Valid";
+    private static final String VALIDATED        = "org.springframework.validation.annotation.Validated";
     private static final String PATH_VARIABLE    = "org.springframework.web.bind.annotation.PathVariable";
     private static final String REQUEST_PARAM    = "org.springframework.web.bind.annotation.RequestParam";
     private static final String MODEL_ATTRIBUTE  = "org.springframework.web.bind.annotation.ModelAttribute";
@@ -61,6 +63,7 @@ public class EndpointIndexer {
 
         List<Endpoint> endpoints = new ArrayList<>();
         Map<String, BodyShape> bodyShapes = new HashMap<>();
+        java.util.Set<String> validBodyEndpointIds = new java.util.LinkedHashSet<>();
 
         for (CtType<?> type : model.getAllTypes()) {
             boolean rest = findAnnotation(type, REST_CONTROLLER) != null;
@@ -108,8 +111,14 @@ public class EndpointIndexer {
                 if (!rest && params.stream().noneMatch(p -> p.kind() == ParamKind.FORM)) {
                     continue;
                 }
+                String id = endpointId(httpMethod, fullPath);
+                // JSON @RequestBody에 @Valid/@Validated가 붙은 경우만 Spring이 검증 위반을 400으로 거부 →
+                // negative-validation pass 대상(B1). FORM(@ModelAttribute)은 비목표라 자동 제외.
+                if (rest && hasValidRequestBody(method)) {
+                    validBodyEndpointIds.add(id);
+                }
                 endpoints.add(new Endpoint(
-                        endpointId(httpMethod, fullPath),
+                        id,
                         httpMethod,
                         fullPath,
                         type.getQualifiedName().replace('$', '.'),
@@ -119,13 +128,25 @@ public class EndpointIndexer {
             }
         }
         endpoints.sort((a, b) -> a.id().compareTo(b.id()));
-        return new IndexResult(endpoints, bodyShapes);
+        return new IndexResult(endpoints, bodyShapes, validBodyEndpointIds);
     }
 
     private static boolean authRequired(String path, AuthConfig authConfig) {
         return authConfig != null
                 && !path.equals(authConfig.loginPath())
                 && !authConfig.publicPaths().contains(path);
+    }
+
+    /** @RequestBody 파라미터에 @Valid/@Validated가 함께 붙었는지(Spring 검증 트리거 조건). */
+    private static boolean hasValidRequestBody(CtMethod<?> method) {
+        for (CtParameter<?> parameter : method.getParameters()) {
+            if (findAnnotation(parameter, REQUEST_BODY) != null
+                    && (findAnnotation(parameter, VALID) != null
+                        || findAnnotation(parameter, VALIDATED) != null)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<EndpointParam> extractParams(CtMethod<?> method, CtModel model,

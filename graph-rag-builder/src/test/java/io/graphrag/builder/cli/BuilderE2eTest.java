@@ -54,7 +54,8 @@ class BuilderE2eTest {
                         "post-api-auth-login", "post-api-bookings",
                         "post-api-bookings-id-advance",
                         "post-api-orders",
-                        "post-api-orders-search", "post-api-promo", "post-web-orders",
+                        "post-api-orders-search", "post-api-promo", "post-api-signups",
+                        "post-web-orders",
                         "post-web-users-userid-submit",
                         "put-api-bookings-id");
 
@@ -242,6 +243,24 @@ class BuilderE2eTest {
         ExploredPath negAuthPath = pathsOf(asset, "get-api-orders").stream()
                 .filter(p -> p.discoveredBy().equals("negative-auth")).findFirst().orElseThrow();
         assertThat(negAuthPath.expectedStatus()).isIn(401, 403);
+
+        // 부정-검증 경로(B1): @Valid @RequestBody(SignupRequest)의 각 제약(@NotBlank/@Email/@Min/@Size)을
+        // 한 필드만 위반시킨 변종을 발행 → MethodArgumentNotValidException 400. discoveredBy="negative-validation".
+        // 되돌리면(어노테이션 위반 변종 미발행) happy 201만 → reject path 0 → FAIL. (생성 제외라 B2 무영향.)
+        List<ExploredPath> signupPaths = pathsOf(asset, "post-api-signups");
+        List<ExploredPath> negValPaths = signupPaths.stream()
+                .filter(p -> p.discoveredBy().equals("negative-validation")).toList();
+        // 필드별(name/email/age/password) 위반 path가 ≥4개, 모두 400.
+        assertThat(negValPaths).hasSizeGreaterThanOrEqualTo(4);
+        assertThat(negValPaths).allSatisfy(p -> assertThat(p.expectedStatus()).isEqualTo(400));
+        // path-id가 필드+제약종류로 결정적으로 식별된다(고유·결정적).
+        assertThat(negValPaths).extracting(ExploredPath::id)
+                .contains("post-api-signups-negval-name-not_blank",
+                        "post-api-signups-negval-email-email",
+                        "post-api-signups-negval-age-min",
+                        "post-api-signups-negval-password-size_min");
+        // happy 201 path도 함께 존재(어노테이션-aware happy 합성이 모든 제약을 통과).
+        assertThat(signupPaths).anyMatch(p -> p.expectedStatus() == 201);
 
         // @Controller 폼 인덱싱 회귀 가드: OrderWebController(@Controller, @RestController 아님)의
         // POST /web/orders가 form-urlencoded 커맨드 객체(OrderForm)로 인덱싱되고, 빌더가 폼 인코딩으로
