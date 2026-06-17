@@ -203,8 +203,10 @@ CLI만으로는 생성된 테스트를 **돌릴 수 없다**. 다음을 prebuilt
 4. **Phase D-2** ✅ 완료: `docker/graph-rag-builder.Dockerfile` + release 잡이 builder 이미지도 GHCR push.
    수용 `e2e/run-docker-builder-e2e.sh`(Linux 전용, `--network host` + docker.sock) → ci.yml
    `docker-builder-e2e` 잡(PR에서 ubuntu 러너로 D-E2E-2 실측). 로컬(macOS)은 --network host 미지원.
-5. **Phase D-3**: 실행 환경 이미지(socket-mock·dashboard) + OTEL 자산 + compose 참조 전환.
-   수용: D-E2E-3.
+5. **Phase D-3** ✅ 완료: release 잡이 실행 환경 서비스 이미지(test-state-dashboard·socket-mock-server,
+   기존 Dockerfile 재사용)를 GHCR push + `otel-javaagent.jar`를 Release 자산으로 첨부. docs/06에
+   prebuilt 이미지 참조 안내. 수용 `e2e/run-docker-services-e2e.sh`(이미지 부팅·응답) → ci.yml
+   `docker-services-e2e` 잡. (e2e compose의 `build:`→`image:` 완전 전환은 run-e2e와 공유돼 비목표로 둠.)
 
 각 Phase는 별도 worktree + PR, 전 게이트(리뷰·회귀 green·문서 동기화) 적용.
 
