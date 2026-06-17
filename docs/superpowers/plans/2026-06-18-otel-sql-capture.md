@@ -1253,7 +1253,7 @@ producer.send(record).get();
 
 - [x] Phase 1 PoC 게이트 결과 기록 + 경로별 go/no-go 확정. (PoC① HTTP GO/0-based; PoC② Kafka GO/CHILD)
 - [x] 단위 테스트(TraceParent, LogParserCapture, OtlpTraceReceiver, OtelSpanCapture[+legacy db.statement], OtelAgent) green.
-- [x] 수용-1(parity, `OtelHttpCaptureAcceptanceTest`), 수용-2(동시성, 同), 수용-3(Kafka, `OtelKafkaBuildAcceptanceTest`) green. — [ ] 수용-4(attach) 미착수(Phase 6).
+- [x] 수용-1(parity, `OtelHttpCaptureAcceptanceTest`), 수용-2(동시성, 同), 수용-3(Kafka, `OtelKafkaBuildAcceptanceTest`), 수용-4(attach, `e2e/run-attach-otel-e2e.sh`) green.
 - [ ] 전체 회귀(`./gradlew test` + e2e) green.
 - [ ] docs/06·26·27 갱신.
 - [ ] PR 전: spec-compliance 리뷰 + 코드 품질 리뷰(pr-review-toolkit:code-reviewer) 트리아지 완료.
@@ -1262,4 +1262,5 @@ producer.send(record).get();
 - **중대 수정**: agent 2.16.0이 SQL을 구 semconv `db.statement`로 내보냄(신규 `db.query.text` 아님). 기존 코드가 `db.query.text`만 읽어 OTEL 경로가 SQL 0건→항상 log-parser 폴백이었음. `OtelSpanCapture.sqlText()`를 신규→구 이중 읽기로 수정(commit 60c4c96). PoC②/수용 테스트로 폴백 0 검증.
 - **PoC②**: Kafka 상관 = CHILD (consumer `order.events process` span parent==주입 spanId, DB span 동일 trace). `awaitEntrySpan(child)` 그대로.
 - **Phase 4.6/5 완료**: 수용-1/2(HTTP parity·동시성 격리), Task 5.1(KafkaCaptureRunner scope 배선: 레코드 헤더 traceparent 주입+drain), 수용-3(전체 빌드 OTEL kafka INSERT 폴백0).
-- **다음**: 전체 회귀 → Phase 6(attach) → Phase 7(기본전환+docs+PR).
+- **Phase 6 완료**: attach OTEL — 리시버 `start(bindHost, authToken)`(attach=0.0.0.0+per-run 256-bit secret, constant-time 검증, 401), `OtelAgent.otlpEnv(...,secret)`(OTEL_EXPORTER_OTLP_HEADERS), `OverrideComposeGenerator.Spec`(addHostGateway→extra_hosts, disableBatch→batch_size=0), `AttachedComposeEnvironment`가 리시버 소유, `runAttached` 배선 + Docker<20.10 host-gateway 경고. 수용-4(`e2e/run-attach-otel-e2e.sh`): 컨테이너→호스트 OTLP 도달 확인(timeout 0, 실제 bind 귀속 SQL, teardown clean). attach 스크립트는 auth 미설정이라 커버리지는 낮음(기존 log-mode attach e2e와 동일 특성).
+- **다음**: 전체 회귀 → Phase 7(기본값 otel 전환+docs/06·26·27+PR 리뷰).
