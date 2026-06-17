@@ -1200,9 +1200,13 @@ producer.send(record).get();
 - `Map<String,String> extraAppEnv`(OTEL env 주입용) — 또는 기존 env 주입 경로 재사용.
 `generate(Spec)`에서 `spec.addHostGateway()`면 app 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]` 배열 추가, `extraAppEnv`를 app `environment`에 병합. `Spec`의 모든 생성 호출부(BuilderCli line 304~307)에 새 인자 전달.
 
-- [ ] **Step 2: override OTEL env 주입**
+- [ ] **Step 2: override OTEL env 주입 + 리시버 bind/인증 (보안 — Phase 4 하드닝 반영)**
 
-`runAttached`(BuilderCli line 287~)에서 OTEL 모드일 때 호스트 `OtlpTraceReceiver`를 띄우고(이 환경이 소유·stop), `Spec.extraAppEnv`에 `otel.otlpEnv(sutId, receiver.hostEndpoint())`를 실어 app 서비스에 주입(`hostEndpoint()` = `http://host.docker.internal:<port>`), `addHostGateway=true`.
+현재 `OtlpTraceReceiver`는 **loopback 전용 바인드**다(analysis 보안). attach는 컨테이너→호스트 도달이 필요하므로 Phase 6에서:
+- 리시버 바인드를 **bridge-reachable 주소**로 전환(생성자/start에 bind 주소 옵션 추가; 기본은 loopback 유지, attach만 `0.0.0.0` 또는 docker-bridge gateway).
+- 노출이 넓어지므로 **per-run shared-secret 헤더 인증** 추가: 빌더가 런당 시크릿 생성 → `otlpEnv`에 `OTEL_EXPORTER_OTLP_HEADERS=x-graphrag-token=<secret>` 주입, 리시버가 `/v1/traces`에서 그 헤더를 검증(불일치 401). loopback-인접 프로세스의 span 주입 차단.
+
+`runAttached`(BuilderCli line 287~)에서 OTEL 모드일 때 호스트 `OtlpTraceReceiver`를 띄우고(이 환경이 소유·stop), `Spec.extraAppEnv`에 `otel.otlpEnv(sutId, receiver.hostEndpoint(), secret)`를 실어 app 서비스에 주입(`hostEndpoint()` = `http://host.docker.internal:<port>`), `addHostGateway=true`. **`otlpEnv` 오버로드에 `OTEL_EXPORTER_OTLP_HEADERS` 추가 필요.**
 
 - [ ] **Step 3: batch_size=0 병합 (attach)** — `OverrideComposeGenerator`가 app `SPRING_APPLICATION_JSON`을 만들/병합할 때 Task 4.2처럼 batch_size=0을 같은 JSON object에 병합(별도 키로 넣어 치환 충돌 금지).
 
