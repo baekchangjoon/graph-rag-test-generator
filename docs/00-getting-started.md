@@ -60,7 +60,20 @@
 
 ## 트랙 B — 내 Spring 앱에 적용
 
-데모는 위 스크립트가 인자를 다 채워 주지만, 자기 앱에는 도구 1·2를 직접 호출한다.
+자기 앱에는 도구 1·2를 직접 호출한다. **권장: [Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)에서
+prebuilt zip을 받아** 압축을 푼다(소스 빌드 불필요). 요구사항은 도구별로 다르다:
+
+- **test-generator**(테스트 생성): **JRE 17만**. Docker 불필요.
+- **graph-rag-builder**(사실 캡처): **JRE 17 + Docker 데몬** + 분석할 SUT의 소스·boot jar·docker-compose.
+
+```bash
+# Releases에서 받기 (예: v0.1.0)
+unzip graph-rag-builder-<v>.zip   # → graph-rag-builder-<v>/bin/graph-rag-builder
+unzip test-generator-<v>.zip      # → test-generator-<v>/bin/test-generator
+```
+
+> 소스에서 빌드해 쓰려면(advanced): 저장소에서 `./gradlew :graph-rag-builder:run --args="build ..."`,
+> `./gradlew :test-generator:run --args="generate ..."`. 아래 예시의 `bin/...`를 이걸로 바꾸면 된다.
 
 ### 1. SUT 준비
 
@@ -71,12 +84,12 @@
 ### 2. 도구 1 — 사실 캡처
 
 ```bash
-./gradlew :graph-rag-builder:run --args="build \
+./graph-rag-builder-<v>/bin/graph-rag-builder build \
   --sut-src   <앱>/src/main/java \
   --sut-resources <앱>/src/main/resources \
   --sut-jar   <앱>/build/libs/<app>.jar \
   --sut-compose <앱>/docker-compose.yml \
-  --out       ./out/graph"
+  --out       ./out/graph
 ```
 
 자주 쓰는 옵션:
@@ -118,19 +131,23 @@
 ### 5. 도구 2 — 테스트 생성
 
 ```bash
-./gradlew :test-generator:run --args="generate \
+./test-generator-<v>/bin/test-generator generate \
   --request ./request-orders.json \
   --graph   ./out/graph \
-  --out     ./out/generated"
+  --out     ./out/generated
 ```
 
 `./out/generated`에 테스트 `.java`가 생긴다.
 
 ### 6. 생성된 테스트 실행
 
-생성된 테스트는 운영과 같은 DBMS·WireMock·socket-mock·대시보드가 떠 있는 실행 환경을
-전제로 한다. 그 환경 구성은 [06-test-environment](06-test-environment.md)를 따른다.
-데모(`e2e/`)의 `docker-compose.yml`과 `build.gradle.kts`가 그 구성의 동작 예시다.
+생성된 테스트는 `io.graphrag.testlib.*`를 import하므로, 컴파일하려면 Releases의
+**`testlib-<v>.jar`** 를 자기 테스트 프로젝트의 의존성에 더한다(RestAssured·JUnit 등 표준 테스트
+의존은 평소처럼 추가).
+
+실행하려면 운영과 같은 DBMS·WireMock·socket-mock·대시보드가 떠 있는 실행 환경이 필요하다. 그 구성은
+[06-test-environment](06-test-environment.md)를 따른다. 데모(`e2e/`)의 `docker-compose.yml`과
+`build.gradle.kts`가 그 구성의 동작 예시다.
 
 ## 막히면
 
