@@ -96,6 +96,12 @@ path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트
 git diff --name-only main > changed.txt
 ./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
 
+# 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개)
+#   스펙은 id(post-api-orders) 또는 "METHOD /path"; --incremental-base 동반 시 나머지는
+#   base에서 이월, 없으면 선택 단위만 담은 부분 그래프(정적 엔드포인트 목록은 풀 유지)
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
+  --endpoint 'POST /api/orders'"
+
 # 도구 2 단독
 ./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
 ```
