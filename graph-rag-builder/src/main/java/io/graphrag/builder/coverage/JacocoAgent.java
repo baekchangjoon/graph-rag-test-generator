@@ -38,4 +38,13 @@ public final class JacocoAgent {
     public int tcpPort() {
         return tcpPort;
     }
+
+    /** 컨테이너 내부 SUT 부착용. 호스트 published 포트로 dump하려면 컨테이너 안에서 모든 IF에 bind(=*). */
+    public static String containerJavaToolOptions(String agentMountPath, int port) {
+        return "-javaagent:" + agentMountPath
+                + "=output=tcpserver,address=*,port=" + port;
+    }
+
+    /** 추출된 jacoco agent jar 경로 (override가 volume mount 소스로 사용). */
+    public Path agentJar() { return agentJar; }
 }
