@@ -196,7 +196,10 @@ CLI만으로는 생성된 테스트를 **돌릴 수 없다**. 다음을 prebuilt
 2. **Phase A-2** ✅ 완료: README·getting-started 트랙 B가 Releases prebuilt를 권장 경로로 선두 배치,
    요구사항 도구별 분리(generator JRE만/builder +Docker), 소스 빌드는 advanced. testlib jar 컴파일
    안내 추가. docs/06 OTEL 명칭 `otel-javaagent.jar`로 통일.
-3. **Phase D-1**: generator 이미지 + push 잡(installDist 선행). 수용: D-E2E-1.
+3. **Phase D-1** ✅ 완료: `docker/test-generator.Dockerfile`(temurin:17-jre + installDist COPY) +
+   ci.yml release 잡이 GHCR(`ghcr.io/<owner>/test-generator:<v>`,`:latest`)로 push(`packages: write`).
+   수용 `e2e/run-docker-e2e.sh`(D-E2E-1 GREEN — 이미지가 호스트 Java 없이 graph.json→.java). 실제
+   push는 다음 릴리스 태그에서 검증.
 4. **Phase D-2**: builder 이미지(Linux 우선) + 네트워킹 문서. 수용: D-E2E-2(Linux).
 5. **Phase D-3**: 실행 환경 이미지(socket-mock·dashboard) + OTEL 자산 + compose 참조 전환.
    수용: D-E2E-3.
