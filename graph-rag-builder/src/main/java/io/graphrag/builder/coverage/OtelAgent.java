@@ -50,4 +50,17 @@ public final class OtelAgent {
                 "OTEL_PROPAGATORS", "tracecontext,baggage",
                 "OTEL_SERVICE_NAME", serviceName);
     }
+
+    public java.util.Map<String, String> otlpEnv(String serviceName, String otlpEndpoint) {
+        return java.util.Map.of(
+                "OTEL_TRACES_EXPORTER", "otlp",
+                "OTEL_METRICS_EXPORTER", "none",
+                "OTEL_LOGS_EXPORTER", "none",
+                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/json",
+                "OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint,
+                "OTEL_BSP_SCHEDULE_DELAY", "100",
+                "OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true",
+                "OTEL_PROPAGATORS", "tracecontext,baggage",
+                "OTEL_SERVICE_NAME", serviceName);
+    }
 }
