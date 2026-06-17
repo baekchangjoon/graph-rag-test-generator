@@ -170,6 +170,16 @@ public final class OtlpTraceReceiver implements AutoCloseable {
         return List.copyOf(byTrace.getOrDefault(traceId, List.of()));
     }
 
+    /**
+     * 진단용: 현재 누적된 모든 trace의 불변 스냅샷(traceId → spans).
+     * Kafka 상관 방식(child vs link) 실측·동시성 귀속 검증에 쓴다(읽기 전용 복사본).
+     */
+    public Map<String, List<SpanRecord>> snapshot() {
+        Map<String, List<SpanRecord>> copy = new LinkedHashMap<>();
+        byTrace.forEach((k, v) -> copy.put(k, List.copyOf(v)));
+        return copy;
+    }
+
     public boolean awaitEntrySpan(String traceId, String injectedSpanId, long timeoutMillis) {
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
         while (System.nanoTime() < deadline) {
