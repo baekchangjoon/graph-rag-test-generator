@@ -9,7 +9,7 @@ import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.CoverageFingerprint;
 import io.graphrag.builder.env.DbConfig;
-import io.graphrag.builder.env.SutProcess;
+import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
 import io.graphrag.builder.explore.EndpointInvoker;
 import io.graphrag.builder.explore.EndpointTarget;
@@ -73,7 +73,7 @@ public class EndpointExplorationRunner {
                                  ExecutionDataStore cumulativeExec) {
     }
 
-    private final SutProcess sut;
+    private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
     private final CoverageClient coverage;
@@ -91,7 +91,7 @@ public class EndpointExplorationRunner {
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
     private Set<String> appClasses = Set.of();   // path 지문을 SUT 자체 클래스로 한정
 
-    public EndpointExplorationRunner(SutProcess sut, Connection connection,
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,

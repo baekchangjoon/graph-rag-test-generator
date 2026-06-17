@@ -6,7 +6,7 @@ import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.env.DbConfig;
-import io.graphrag.builder.env.SutProcess;
+import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
@@ -44,12 +44,12 @@ public class WsCaptureRunner {
                            ExecutionDataStore cumulativeExec) {
     }
 
-    private final SutProcess sut;
+    private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
     private final CoverageClient coverage;
 
-    public WsCaptureRunner(SutProcess sut, Connection connection, DbConfig.Type dbType,
+    public WsCaptureRunner(SutHandle sut, Connection connection, DbConfig.Type dbType,
                            CoverageClient coverage) {
         this.sut = sut;
         this.connection = connection;

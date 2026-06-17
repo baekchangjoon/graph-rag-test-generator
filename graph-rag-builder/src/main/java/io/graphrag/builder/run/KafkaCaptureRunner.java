@@ -6,7 +6,7 @@ import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlLogParser;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.env.DbConfig;
-import io.graphrag.builder.env.SutProcess;
+import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
@@ -51,13 +51,13 @@ public class KafkaCaptureRunner {
                               ExecutionDataStore cumulativeExec) {
     }
 
-    private final SutProcess sut;
+    private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
     private final String bootstrapServers;
     private final CoverageClient coverage;
 
-    public KafkaCaptureRunner(SutProcess sut, Connection connection, DbConfig.Type dbType,
+    public KafkaCaptureRunner(SutHandle sut, Connection connection, DbConfig.Type dbType,
                               String bootstrapServers, CoverageClient coverage) {
         this.sut = sut;
         this.connection = connection;
