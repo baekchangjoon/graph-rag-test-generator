@@ -78,8 +78,6 @@ docker pull ghcr.io/baekchangjoon/test-generator:0.2.0
 docker pull ghcr.io/baekchangjoon/graph-rag-builder:0.2.0
 ```
 
-> GHCR 패키지가 **public**이면 위 `docker pull`이 익명으로 된다(private면 먼저 `docker login ghcr.io`).
-
 분석 대상 SUT의 **소스·boot jar·docker-compose**는 어느 방법이든 도구 입력으로 필요하다(§1).
 
 아래 예시는 A(zip 런처) 기준이다. B(이미지)로 실행하려면 `bin/...`을 `docker run`으로 바꾼다:
