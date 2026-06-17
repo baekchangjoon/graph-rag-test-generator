@@ -1251,9 +1251,15 @@ producer.send(record).get();
 
 ## Definition of Done
 
-- [ ] Phase 1 PoC 게이트 결과 기록 + 경로별 go/no-go 확정.
-- [ ] 단위 테스트(TraceParent, LogParserCapture, OtlpTraceReceiver, OtelSpanCapture, OtelAgent) green.
-- [ ] 수용-1(parity), 수용-2(동시성), 수용-3(Kafka), 수용-4(attach) green — PoC 통과 경로 한정.
+- [x] Phase 1 PoC 게이트 결과 기록 + 경로별 go/no-go 확정. (PoC① HTTP GO/0-based; PoC② Kafka GO/CHILD)
+- [x] 단위 테스트(TraceParent, LogParserCapture, OtlpTraceReceiver, OtelSpanCapture[+legacy db.statement], OtelAgent) green.
+- [x] 수용-1(parity, `OtelHttpCaptureAcceptanceTest`), 수용-2(동시성, 同), 수용-3(Kafka, `OtelKafkaBuildAcceptanceTest`) green. — [ ] 수용-4(attach) 미착수(Phase 6).
 - [ ] 전체 회귀(`./gradlew test` + e2e) green.
 - [ ] docs/06·26·27 갱신.
 - [ ] PR 전: spec-compliance 리뷰 + 코드 품질 리뷰(pr-review-toolkit:code-reviewer) 트리아지 완료.
+
+### 진행 메모 (2026-06-18, 이 세션)
+- **중대 수정**: agent 2.16.0이 SQL을 구 semconv `db.statement`로 내보냄(신규 `db.query.text` 아님). 기존 코드가 `db.query.text`만 읽어 OTEL 경로가 SQL 0건→항상 log-parser 폴백이었음. `OtelSpanCapture.sqlText()`를 신규→구 이중 읽기로 수정(commit 60c4c96). PoC②/수용 테스트로 폴백 0 검증.
+- **PoC②**: Kafka 상관 = CHILD (consumer `order.events process` span parent==주입 spanId, DB span 동일 trace). `awaitEntrySpan(child)` 그대로.
+- **Phase 4.6/5 완료**: 수용-1/2(HTTP parity·동시성 격리), Task 5.1(KafkaCaptureRunner scope 배선: 레코드 헤더 traceparent 주입+drain), 수용-3(전체 빌드 OTEL kafka INSERT 폴백0).
+- **다음**: 전체 회귀 → Phase 6(attach) → Phase 7(기본전환+docs+PR).
