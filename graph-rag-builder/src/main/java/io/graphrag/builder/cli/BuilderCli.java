@@ -5,8 +5,11 @@ import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.JacocoAgent;
 import io.graphrag.builder.coverage.OtelAgent;
 import io.graphrag.builder.env.AnalysisEnvironment;
+import io.graphrag.builder.env.AttachedComposeEnvironment;
 import io.graphrag.builder.env.ComposeInspector;
 import io.graphrag.builder.env.DbConfig;
+import io.graphrag.builder.env.ExplorationEnvironment;
+import io.graphrag.builder.env.OverrideComposeGenerator;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
@@ -82,6 +85,19 @@ public final class BuilderCli {
                     dbConfig.dbName(), dbConfig.user(), dbConfig.password());
         }
 
+        AttachConfig attach = options.containsKey("--attach")
+                ? new AttachConfig(
+                        Path.of(sutComposeStr),
+                        required(options, "--app-service"),
+                        Integer.parseInt(options.getOrDefault("--app-container-port", "8080")),
+                        Integer.parseInt(required(options, "--app-port")),
+                        Integer.parseInt(required(options, "--jacoco-port")),
+                        required(options, "--jdbc-url"),
+                        options.get("--kafka-bootstrap"),
+                        options.getOrDefault("--health-path", "/actuator/health"),
+                        Integer.parseInt(options.getOrDefault("--ready-timeout", "120")))
+                : null;
+
         AuthConfig authConfig = options.containsKey("--auth-login-path")
                 ? new AuthConfig(options.get("--auth-login-path"),
                         options.getOrDefault("--auth-user", "admin"),
@@ -112,7 +128,9 @@ public final class BuilderCli {
                 authConfig,
                 options.containsKey("--with-redis"),
                 options.containsKey("--with-kafka"),
-                options.get("--sut-java-home"));
+                options.get("--sut-java-home"),
+                attach,
+                io.graphrag.model.RequestHeaders.empty());
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -156,10 +174,12 @@ public final class BuilderCli {
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
         Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
-        int totalAppBranches = 0;
+        int totalAppBranches;
         // 탐색 전체의 line+branch 집계용: 엔드포인트별 누적 exec를 OR 병합한 run-wide 스토어.
         org.jacoco.core.data.ExecutionDataStore runWideExec = new org.jacoco.core.data.ExecutionDataStore();
-        List<TableSchema> tables;
+        ExplorationAccumulators acc = new ExplorationAccumulators(
+                paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
+                coveredAppBranches, runWideExec);
 
         // enum 상수 맵: 순수 소스 파싱(SUT/Docker 불요) → 분석 환경 기동 전 1회.
         Map<String, List<String>> enumConstants =
@@ -168,157 +188,27 @@ public final class BuilderCli {
         Path workDir = Files.createDirectories(config.out().resolve("work"));
         JacocoAgent jacoco = JacocoAgent.prepare(workDir);
         OtelAgent otel = OtelAgent.prepare(workDir);
-        SutOptions sutOptions = new SutOptions(
-                jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
-                mybatisLogLevels,
-                otel.env(config.sutId()),
-                config.sutJavaHome());
 
-        try (AnalysisEnvironment env =
-                new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
-            env.start(config.sutJar(), workDir, sutOptions,
-                    config.externalStubsDir(), config.sutEnv());
-            env.coverageEndpoint("localhost", jacoco.tcpPort());
-
-            AuthTokenProvider authProvider = config.authConfig() == null ? null
-                    : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
-
-            try (Connection connection = env.openConnection()) {
-                tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
-                log.info("extracted schema: {} table(s)", tables.size());
-
-                CoverageClient coverageClient = new CoverageClient(env.coverageHost(), env.coveragePort());
-                BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
-                // BOOT-INF/classes 전체 분기 = app 커버리지 분모 (1회 산출)
-                totalAppBranches = analyzer.analyze(
-                        new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
-                ConstraintExtractor constraintExtractor = new ConstraintExtractor();
-                LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
-                // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
-                List<ConstraintExtractor.Comparison> allComparisons =
-                        constraintExtractor.extractComparisons(config.sutSrc());
-                // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
-                List<ConstraintExtractor.Conjunction> allConjunctions =
-                        constraintExtractor.extractConjunctions(config.sutSrc());
-                // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
-                Map<String, List<String>> enumColumns =
-                        constraintExtractor.extractEnumColumns(config.sutSrc());
-                // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
-                // GRB_STATE_GUARDS=off 면 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control).
-                List<ConstraintExtractor.StateGuard> allStateGuards =
-                        "off".equalsIgnoreCase(System.getenv("GRB_STATE_GUARDS"))
-                                ? List.of() : constraintExtractor.extractStateGuards(config.sutSrc());
-                // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
-                // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
-                io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
-                        new io.graphrag.builder.oracle.InputOracle.SutCode(config.sutSrc(), config.sutJar());
-                boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
-                io.graphrag.builder.oracle.InputCandidates inputCandidates =
-                        new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode);
-                if (useConcolic) {
-                    inputCandidates = inputCandidates.merge(
-                            new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
-                }
-                log.info("input oracles (concolic={}) → {} numeric field(s), {} string field(s)",
-                        useConcolic, inputCandidates.numeric().size(), inputCandidates.strings().size());
-
-                // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
-                // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
-                // runWideExec에 병합돼 exploration 지표에 반영된다. baseline dump가 boot 구간을
-                // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
-                String kafkaBootstrap = env.kafkaBootstrapServers();
-                if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
-                    io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
-                            new io.graphrag.builder.run.KafkaCaptureRunner(
-                                    env.sut(), connection, env.dbType(), kafkaBootstrap, coverageClient);
-                    for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
-                        if (!plan.shouldExplore(kafkaConsumer.id())) {
-                            continue;
-                        }
-                        BodyShape kShape = kafkaIndex.payloadShapes().get(kafkaConsumer.payloadType());
-                        io.graphrag.builder.run.KafkaCaptureRunner.KafkaResult kResult =
-                                kafkaRunner.run(kafkaConsumer, kShape, tables);
-                        kafkaExchanges.addAll(kResult.exchanges());
-                        sql.addAll(kResult.sql());
-                        kResult.cumulativeExec().accept(runWideExec);   // consumer 커버 병합
-                    }
-                }
-
-                for (Endpoint endpoint : index.endpoints()) {
-                    if (!plan.shouldExplore(endpoint.id())) {
-                        log.info("skip {} (partition clean; carrying over)", endpoint.id());
-                        continue;
-                    }
-                    BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
-                    boolean hasPathParam = endpoint.params().stream()
-                            .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
-                    // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
-                    // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
-                    if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
-                        log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
-                        continue;
-                    }
-                    var conditions = constraintExtractor.extract(
-                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
-                    var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
-                    Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
-                            shape == null ? Map.of()
-                                    : new ValidationConstraintExtractor()
-                                            .extract(config.sutSrc(), shape.javaType());
-                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                            env.sut(), connection, env.dbType(),
-                            coverageClient, analyzer,
-                            config.budgetRequests(), env.httpCapture(),
-                            responseDtoFieldSets, literals,
-                            authProvider, config.authConfig(), enumConstants, enumColumns);
-                    // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
-                    List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
-                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
-                                    && g.method().equals(endpoint.handlerMethod()))
-                            .toList();
-                    EndpointExplorationRunner.EndpointResult result =
-                            runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                    endpointStateGuards,
-                                    index.validBodyEndpointIds().contains(endpoint.id()));
-                    paths.addAll(result.paths());
-                    sql.addAll(result.sql());
-                    httpCalls.addAll(result.httpCalls());
-                    allSeeds.addAll(result.seeds());
-                    reportEntries.add(result.report());
-                    result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
-                }
-
-                io.graphrag.builder.run.WsCaptureRunner wsRunner =
-                        new io.graphrag.builder.run.WsCaptureRunner(
-                                env.sut(), connection, env.dbType(), coverageClient);
-                for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
-                    if (!plan.shouldExplore(wsEndpoint.id())) {
-                        log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
-                        continue;
-                    }
-                    BodyShape shape = wsIndex.payloadShapes().get(wsEndpoint.payloadType());
-                    if (shape == null) {
-                        log.warn("skip {} (no payload shape)", wsEndpoint.id());
-                        continue;
-                    }
-                    io.graphrag.builder.run.WsCaptureRunner.WsResult result =
-                            wsRunner.run(wsEndpoint, shape, tables);
-                    wsExchanges.addAll(result.exchanges());
-                    sql.addAll(result.sql());
-                    result.cumulativeExec().accept(runWideExec);   // WS 핸들러 커버 병합
-                }
-
-                // 전 루프(Kafka + HTTP + WS) 종료 후 1회 집계 — consumer/WS 커버까지 지표에 반영된다.
-                var explCov = analyzer.analyze(runWideExec);
-                coveredAppBranches.addAll(explCov.covered());
-                log.info("exploration coverage [{}]: line {}/{} ({}%), branch {}/{} ({}%)",
-                        config.sutId(), explCov.coveredLines(), explCov.totalLines(),
-                        explCov.totalLines() == 0 ? 0 : 100 * explCov.coveredLines() / explCov.totalLines(),
-                        explCov.covered().size(), explCov.totalBranches(),
-                        explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
+        if (config.attach() != null) {
+            totalAppBranches = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
+                    index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants, acc);
+        } else {
+            SutOptions sutOptions = new SutOptions(
+                    jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
+                    mybatisLogLevels,
+                    otel.env(config.sutId()),
+                    config.sutJavaHome());
+            try (AnalysisEnvironment env =
+                    new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
+                env.start(config.sutJar(), workDir, sutOptions,
+                        config.externalStubsDir(), config.sutEnv());
+                env.coverageEndpoint("localhost", jacoco.tcpPort());
+                totalAppBranches = explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                        responseDtoFieldSets, plan, enumConstants, acc).totalAppBranches();
             }
         }
+
+        List<TableSchema> tables = acc.tables();
 
         paths.addAll(plan.carriedPaths());
         sql.addAll(plan.carriedSql());
@@ -346,6 +236,247 @@ public final class BuilderCli {
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
     }
+
+    /** explore()가 채우는 mutable 누적기. tables는 explore() 내부에서 set 후 build()가 읽는다. */
+    private record ExplorationAccumulators(
+            List<ExploredPath> paths,
+            List<CapturedSql> sql,
+            List<CapturedHttpCall> httpCalls,
+            List<io.graphrag.model.WsExchange> wsExchanges,
+            List<io.graphrag.model.KafkaExchange> kafkaExchanges,
+            List<RequiredSeed> allSeeds,
+            List<ExplorationReport.EndpointExploration> reportEntries,
+            Set<io.graphrag.model.BranchRef> coveredAppBranches,
+            org.jacoco.core.data.ExecutionDataStore runWideExec,
+            java.util.concurrent.atomic.AtomicReference<List<TableSchema>> tablesRef) {
+
+        ExplorationAccumulators(
+                List<ExploredPath> paths, List<CapturedSql> sql, List<CapturedHttpCall> httpCalls,
+                List<io.graphrag.model.WsExchange> wsExchanges,
+                List<io.graphrag.model.KafkaExchange> kafkaExchanges, List<RequiredSeed> allSeeds,
+                List<ExplorationReport.EndpointExploration> reportEntries,
+                Set<io.graphrag.model.BranchRef> coveredAppBranches,
+                org.jacoco.core.data.ExecutionDataStore runWideExec) {
+            this(paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
+                    coveredAppBranches, runWideExec,
+                    new java.util.concurrent.atomic.AtomicReference<>(List.of()));
+        }
+
+        List<TableSchema> tables() { return tablesRef.get(); }
+    }
+
+    /** attach 모드: 사용자 compose + 생성 override 로 SUT를 띄우고 동일한 explore()를 돌린다. */
+    private static int runAttached(BuildConfig config, JacocoAgent jacoco, OtelAgent otel, Path workDir,
+            Map<String, String> mybatisLogLevels, IndexResult index,
+            io.graphrag.builder.index.WsIndexResult wsIndex,
+            io.graphrag.builder.index.KafkaIndexResult kafkaIndex, List<MapperStatement> mappers,
+            List<Set<String>> responseDtoFieldSets, IncrementalPlan plan,
+            Map<String, List<String>> enumConstants, ExplorationAccumulators acc) throws Exception {
+        AttachConfig at = config.attach();
+        Path agentsDir = Files.createDirectories(workDir.resolve("agents"));
+        // jacoco/otel jar 를 컨테이너로 mount 할 호스트 디렉터리로 모은다
+        Files.copy(jacoco.agentJar(), agentsDir.resolve("jacocoagent.jar"),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(otel.agentJar(), agentsDir.resolve("otel-javaagent.jar"),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+        int jacocoContainerPort = 6300;
+        String jto = JacocoAgent.containerJavaToolOptions("/grb-agents/jacocoagent.jar", jacocoContainerPort)
+                + " -javaagent:/grb-agents/otel-javaagent.jar";
+        String overrideYaml = new OverrideComposeGenerator().generate(
+                new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
+                        at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
+                        jto, mybatisLogLevels, otel.env(config.sutId())));   // OTEL env 동등 주입
+        Path overridePath = workDir.resolve("attach-override.yml");
+        Files.writeString(overridePath, overrideYaml);
+
+        var envCfg = new AttachedComposeEnvironment.Config(at.userCompose(), overridePath,
+                at.appService(), "grb-attach-" + config.sutId(),
+                "http://localhost:" + at.appHostPort(),
+                at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
+                "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
+                at.healthPath(), at.readyTimeoutSeconds());
+        try (AttachedComposeEnvironment env = new AttachedComposeEnvironment(envCfg, config.dbConfig().type())) {
+            env.start(workDir);
+            return explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                    responseDtoFieldSets, plan, enumConstants, acc).totalAppBranches();
+        }
+    }
+
+    private record ExplorationResult(int totalAppBranches) {}
+
+    /** SUT 환경(env) 위에서 Kafka/HTTP/WS 탐색을 돌리고 acc를 채운다. analysis/attach 공통. */
+    private static ExplorationResult explore(ExplorationEnvironment env, BuildConfig config,
+                                             IndexResult index,
+                                             io.graphrag.builder.index.WsIndexResult wsIndex,
+                                             io.graphrag.builder.index.KafkaIndexResult kafkaIndex,
+                                             List<MapperStatement> mappers,
+                                             List<Set<String>> responseDtoFieldSets,
+                                             IncrementalPlan plan,
+                                             Map<String, List<String>> enumConstants,
+                                             ExplorationAccumulators acc) throws Exception {
+        List<ExploredPath> paths = acc.paths();
+        List<CapturedSql> sql = acc.sql();
+        List<CapturedHttpCall> httpCalls = acc.httpCalls();
+        List<io.graphrag.model.WsExchange> wsExchanges = acc.wsExchanges();
+        List<io.graphrag.model.KafkaExchange> kafkaExchanges = acc.kafkaExchanges();
+        List<RequiredSeed> allSeeds = acc.allSeeds();
+        List<ExplorationReport.EndpointExploration> reportEntries = acc.reportEntries();
+        Set<io.graphrag.model.BranchRef> coveredAppBranches = acc.coveredAppBranches();
+        org.jacoco.core.data.ExecutionDataStore runWideExec = acc.runWideExec();
+        int totalAppBranches;
+
+        AuthTokenProvider authProvider = config.authConfig() == null ? null
+                : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
+
+        try (Connection connection = env.openConnection()) {
+            List<TableSchema> tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
+            acc.tablesRef().set(tables);
+            log.info("extracted schema: {} table(s)", tables.size());
+
+            CoverageClient coverageClient = new CoverageClient(env.coverageHost(), env.coveragePort());
+            BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
+            // BOOT-INF/classes 전체 분기 = app 커버리지 분모 (1회 산출)
+            totalAppBranches = analyzer.analyze(
+                    new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
+            ConstraintExtractor constraintExtractor = new ConstraintExtractor();
+            LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
+            // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
+            List<ConstraintExtractor.Comparison> allComparisons =
+                    constraintExtractor.extractComparisons(config.sutSrc());
+            // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
+            List<ConstraintExtractor.Conjunction> allConjunctions =
+                    constraintExtractor.extractConjunctions(config.sutSrc());
+            // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
+            Map<String, List<String>> enumColumns =
+                    constraintExtractor.extractEnumColumns(config.sutSrc());
+            // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
+            // GRB_STATE_GUARDS=off 면 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control).
+            List<ConstraintExtractor.StateGuard> allStateGuards =
+                    "off".equalsIgnoreCase(System.getenv("GRB_STATE_GUARDS"))
+                            ? List.of() : constraintExtractor.extractStateGuards(config.sutSrc());
+            // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
+            // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
+            io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
+                    new io.graphrag.builder.oracle.InputOracle.SutCode(config.sutSrc(), config.sutJar());
+            boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
+            io.graphrag.builder.oracle.InputCandidates inputCandidates =
+                    new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode);
+            if (useConcolic) {
+                inputCandidates = inputCandidates.merge(
+                        new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
+            }
+            log.info("input oracles (concolic={}) → {} numeric field(s), {} string field(s)",
+                    useConcolic, inputCandidates.numeric().size(), inputCandidates.strings().size());
+
+            // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
+            // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
+            // runWideExec에 병합돼 exploration 지표에 반영된다. baseline dump가 boot 구간을
+            // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
+            String kafkaBootstrap = env.kafkaBootstrapServers();
+            if (kafkaBootstrap == null && !kafkaIndex.consumers().isEmpty()) {
+                log.warn("attach mode: {} kafka consumer(s) skipped (no --kafka-bootstrap)",
+                        kafkaIndex.consumers().size());
+            }
+            if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
+                io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
+                        new io.graphrag.builder.run.KafkaCaptureRunner(
+                                env.sut(), connection, env.dbType(), kafkaBootstrap, coverageClient);
+                for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
+                    if (!plan.shouldExplore(kafkaConsumer.id())) {
+                        continue;
+                    }
+                    BodyShape kShape = kafkaIndex.payloadShapes().get(kafkaConsumer.payloadType());
+                    io.graphrag.builder.run.KafkaCaptureRunner.KafkaResult kResult =
+                            kafkaRunner.run(kafkaConsumer, kShape, tables);
+                    kafkaExchanges.addAll(kResult.exchanges());
+                    sql.addAll(kResult.sql());
+                    kResult.cumulativeExec().accept(runWideExec);   // consumer 커버 병합
+                }
+            }
+
+            for (Endpoint endpoint : index.endpoints()) {
+                if (!plan.shouldExplore(endpoint.id())) {
+                    log.info("skip {} (partition clean; carrying over)", endpoint.id());
+                    continue;
+                }
+                BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
+                boolean hasPathParam = endpoint.params().stream()
+                        .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+                // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
+                // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
+                if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+                    log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
+                    continue;
+                }
+                var conditions = constraintExtractor.extract(
+                        config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
+                var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
+                Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
+                        shape == null ? Map.of()
+                                : new ValidationConstraintExtractor()
+                                        .extract(config.sutSrc(), shape.javaType());
+                EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                        env.sut(), connection, env.dbType(),
+                        coverageClient, analyzer,
+                        config.budgetRequests(), env.httpCapture(),
+                        responseDtoFieldSets, literals,
+                        authProvider, config.authConfig(), enumConstants, enumColumns);
+                // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
+                List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
+                        .filter(g -> g.classFqn().equals(endpoint.handlerClass())
+                                && g.method().equals(endpoint.handlerMethod()))
+                        .toList();
+                EndpointExplorationRunner.EndpointResult result =
+                        runner.run(endpoint, shape, tables, conditions,
+                                allComparisons, inputCandidates, fieldConstraints, allConjunctions,
+                                endpointStateGuards,
+                                index.validBodyEndpointIds().contains(endpoint.id()));
+                paths.addAll(result.paths());
+                sql.addAll(result.sql());
+                httpCalls.addAll(result.httpCalls());
+                allSeeds.addAll(result.seeds());
+                reportEntries.add(result.report());
+                result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
+            }
+
+            io.graphrag.builder.run.WsCaptureRunner wsRunner =
+                    new io.graphrag.builder.run.WsCaptureRunner(
+                            env.sut(), connection, env.dbType(), coverageClient);
+            for (io.graphrag.model.WsEndpoint wsEndpoint : wsIndex.endpoints()) {
+                if (!plan.shouldExplore(wsEndpoint.id())) {
+                    log.info("skip {} (partition clean; carrying over)", wsEndpoint.id());
+                    continue;
+                }
+                BodyShape shape = wsIndex.payloadShapes().get(wsEndpoint.payloadType());
+                if (shape == null) {
+                    log.warn("skip {} (no payload shape)", wsEndpoint.id());
+                    continue;
+                }
+                io.graphrag.builder.run.WsCaptureRunner.WsResult result =
+                        wsRunner.run(wsEndpoint, shape, tables);
+                wsExchanges.addAll(result.exchanges());
+                sql.addAll(result.sql());
+                result.cumulativeExec().accept(runWideExec);   // WS 핸들러 커버 병합
+            }
+
+            // 전 루프(Kafka + HTTP + WS) 종료 후 1회 집계 — consumer/WS 커버까지 지표에 반영된다.
+            var explCov = analyzer.analyze(runWideExec);
+            coveredAppBranches.addAll(explCov.covered());
+            log.info("exploration coverage [{}]: line {}/{} ({}%), branch {}/{} ({}%)",
+                    config.sutId(), explCov.coveredLines(), explCov.totalLines(),
+                    explCov.totalLines() == 0 ? 0 : 100 * explCov.coveredLines() / explCov.totalLines(),
+                    explCov.covered().size(), explCov.totalBranches(),
+                    explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
+        }
+        return new ExplorationResult(totalAppBranches);
+    }
+
+    /** attach 모드 CLI 설정 (사용자 compose + 생성 override). */
+    public record AttachConfig(Path userCompose, String appService,
+                               int appContainerPort, int appHostPort, int jacocoHostPort,
+                               String jdbcUrl, String kafkaBootstrap,
+                               String healthPath, int readyTimeoutSeconds) {}
 
     /** docs/22 Manual-Archive Seed: 수동 작성 ExploredPath 병합 (id 충돌 시 수동본 우선). */
     private static void mergeManualPaths(Path dir, List<ExploredPath> paths) throws Exception {
@@ -417,7 +548,7 @@ public final class BuilderCli {
         }
     }
 
-    private static Map<String, String> parseArgs(String[] args) {
+    static Map<String, String> parseArgs(String[] args) {
         Map<String, String> options = new HashMap<>();
         int start = args.length > 0 && !args[0].startsWith("--") ? 1 : 0;  // "build" 서브커맨드 허용
         for (int i = start; i < args.length; i++) {
