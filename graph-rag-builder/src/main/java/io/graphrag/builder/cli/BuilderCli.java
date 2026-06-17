@@ -146,7 +146,8 @@ public final class BuilderCli {
                 options.get("--sut-java-home"),
                 attach,
                 requestHeaders,
-                endpointSelectors);
+                endpointSelectors,
+                sqlCaptureMode(options.get("--sql-capture")));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -231,8 +232,10 @@ public final class BuilderCli {
                     config.sutJavaHome());
             try (AnalysisEnvironment env =
                     new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
+                boolean otelSqlCapture = "otel".equals(config.sqlCapture());
                 env.start(config.sutJar(), workDir, sutOptions,
-                        config.externalStubsDir(), config.sutEnv());
+                        config.externalStubsDir(), config.sutEnv(),
+                        otelSqlCapture ? otel : null, config.sutId());
                 env.coverageEndpoint("localhost", jacoco.tcpPort());
                 result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
                         responseDtoFieldSets, plan, enumConstants, acc);
@@ -413,6 +416,14 @@ public final class BuilderCli {
                 }
             }
 
+            // SQL 캡처 backend는 env.start() 이후(sut() non-null)에 구성한다. OTEL 모드면 Environment가
+            // 소유한 OTLP receiver로 span 캡처, 아니면 로그 파싱 폴백(기존 동작 동일).
+            io.graphrag.builder.capture.SqlCaptureBackend sqlCapture =
+                    "otel".equals(config.sqlCapture()) && env.otlpReceiver() != null
+                            ? new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
+                                    new io.graphrag.builder.capture.TraceParent(config.sutId()))
+                            : new io.graphrag.builder.capture.LogParserCapture(env.sut());
+
             for (Endpoint endpoint : index.endpoints()) {
                 if (!plan.shouldExplore(endpoint.id())) {
                     log.info("skip {} (partition clean; carrying over)", endpoint.id());
@@ -440,7 +451,7 @@ public final class BuilderCli {
                         config.budgetRequests(), env.httpCapture(),
                         responseDtoFieldSets, literals,
                         authProvider, config.authConfig(), enumConstants, enumColumns,
-                        config.requestHeaders());
+                        config.requestHeaders(), sqlCapture);
                 // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
                 List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
                         .filter(g -> g.classFqn().equals(endpoint.handlerClass())
@@ -589,6 +600,17 @@ public final class BuilderCli {
         String value = options.get(key);
         if (value == null || value.isEmpty()) {
             throw new IllegalArgumentException("missing required option: " + key);
+        }
+        return value;
+    }
+
+    /** --sql-capture otel|log (기본 log). 그 외 값은 거부. */
+    private static String sqlCaptureMode(String value) {
+        if (value == null) {
+            return "log";
+        }
+        if (!value.equals("otel") && !value.equals("log")) {
+            throw new IllegalArgumentException("--sql-capture must be 'otel' or 'log', got: " + value);
         }
         return value;
     }

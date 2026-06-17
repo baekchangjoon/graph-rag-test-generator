@@ -33,6 +33,7 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
     private SutProcess sut;
     private String coverageHost = "localhost";
     private int coveragePort;
+    private io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver;   // OTEL SQL 캡처 모드에서만
 
     public AnalysisEnvironment(DbConfig dbConfig) {
         this(dbConfig, false, false);
@@ -70,12 +71,21 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         start(sutJar, workDir, options, null, Map.of());
     }
 
+    public void start(Path sutJar, Path workDir, SutOptions options,
+                      Path externalStubsDir, Map<String, String> sutEnvTemplate) {
+        start(sutJar, workDir, options, externalStubsDir, sutEnvTemplate, null, null);
+    }
+
     /**
      * @param externalStubsDir 외부 시스템의 minimal valid 응답 (WireMock mapping JSON)
      * @param sutEnvTemplate   SUT 외부 의존 redirect용 env. 값의 {{wiremock}}은 치환된다.
+     * @param otelAgent        non-null이면 OTEL SQL 캡처 모드 — OTLP receiver를 띄우고 SUT에 otlp export env를
+     *                         주입하며 hibernate batch_size=0 으로 SUT를 기동한다. null이면 기존 동작(log 폴백).
+     * @param otelServiceName  OTEL_SERVICE_NAME (otelAgent non-null일 때만 사용).
      */
     public void start(Path sutJar, Path workDir, SutOptions options,
-                      Path externalStubsDir, Map<String, String> sutEnvTemplate) {
+                      Path externalStubsDir, Map<String, String> sutEnvTemplate,
+                      io.graphrag.builder.coverage.OtelAgent otelAgent, String otelServiceName) {
         log.info("starting analysis db ({})...", dbConfig.type());
         db.start();
         httpCapture.start(externalStubsDir);
@@ -83,6 +93,15 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         Map<String, String> extraEnv = new LinkedHashMap<>(options.extraEnv());
         sutEnvTemplate.forEach((key, value) -> extraEnv.put(key,
                 value.replace(WIREMOCK_PLACEHOLDER, httpCapture.baseUrl())));
+
+        boolean otelSqlCapture = otelAgent != null;
+        if (otelSqlCapture) {
+            otlpReceiver = new io.graphrag.builder.capture.otlp.OtlpTraceReceiver();
+            otlpReceiver.start();
+            // SUT는 호스트 자식 프로세스(java -jar)이므로 127.0.0.1 endpoint로 export한다.
+            extraEnv.putAll(otelAgent.otlpEnv(otelServiceName, otlpReceiver.endpoint()));
+            log.info("OTEL SQL capture: otlp receiver at {}", otlpReceiver.endpoint());
+        }
 
         if (redis != null) {
             redis.start();
@@ -103,7 +122,12 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         log.info("starting SUT process: {}", sutJar);
         sut = SutProcess.start(sutJar, workDir, jdbcUrl(), db.getUsername(), db.getPassword(),
                 new SutOptions(options.javaToolOptions(), options.extraLogLevels(), extraEnv,
-                        options.javaHome()));
+                        options.javaHome(), otelSqlCapture));
+    }
+
+    @Override
+    public io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver() {
+        return otlpReceiver;
     }
 
     public String jdbcUrl() {
@@ -151,6 +175,9 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         try {
             if (sut != null) {
                 sut.stop();
+            }
+            if (otlpReceiver != null) {
+                otlpReceiver.stop();
             }
             httpCapture.close();
             if (redis != null) {
