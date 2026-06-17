@@ -30,6 +30,7 @@ dependencies {
     implementation(libs.wiremock)
     implementation(libs.slf4j.api)
     implementation(libs.jackson.dataformat.yaml)
+    implementation(libs.opentelemetry.proto)
     runtimeOnly(libs.slf4j.simple)
     otelAgent(libs.otel.javaagent)
 

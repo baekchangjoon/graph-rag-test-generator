@@ -1,8 +1,13 @@
 package io.graphrag.builder.capture.otlp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpServer;
-import io.graphrag.model.Json;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
+import io.opentelemetry.proto.common.v1.AnyValue;
+import io.opentelemetry.proto.common.v1.KeyValue;
+import io.opentelemetry.proto.trace.v1.ResourceSpans;
+import io.opentelemetry.proto.trace.v1.ScopeSpans;
+import io.opentelemetry.proto.trace.v1.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,8 +24,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
 /**
- * In-process OTLP/JSON 트레이스 수신기. SUT의 OTEL agent가 POST /v1/traces 로 보내는
- * ExportTraceServiceRequest(JSON)를 디코드해 traceId별로 span을 누적한다. (JDK 내장 HttpServer)
+ * In-process OTLP/protobuf 트레이스 수신기. SUT의 OTEL agent가 POST /v1/traces 로 보내는
+ * ExportTraceServiceRequest(protobuf)를 디코드해 traceId별로 span을 누적한다. (JDK 내장 HttpServer)
+ * agent의 OTLP exporter는 http/json을 지원하지 않으므로 http/protobuf 와이어를 사용한다.
  *
  * 신뢰 경계: 빌더가 분석 런 동안만 띄우고 자신이 기동한 SUT의 span만 받는 단기 서버다.
  * loopback에만 바인드해 다른 로컬 프로세스의 span 주입을 막고, 오동작/악성 입력 대비로
@@ -52,7 +58,7 @@ public final class OtlpTraceReceiver implements AutoCloseable {
                         exchange.sendResponseHeaders(413, -1);
                         return;
                     }
-                    ingest(Json.mapper().readTree(body));
+                    ingest(body);
                     exchange.sendResponseHeaders(200, 0);
                 } catch (Exception e) {
                     log.warn("otlp ingest failed", e);
@@ -80,10 +86,11 @@ public final class OtlpTraceReceiver implements AutoCloseable {
         return server.getAddress().getPort();
     }
 
-    private void ingest(JsonNode root) {
-        for (JsonNode rs : root.path("resourceSpans")) {
-            for (JsonNode ss : rs.path("scopeSpans")) {
-                for (JsonNode span : ss.path("spans")) {
+    private void ingest(byte[] body) throws Exception {
+        ExportTraceServiceRequest req = ExportTraceServiceRequest.parseFrom(body);
+        for (ResourceSpans rs : req.getResourceSpansList()) {
+            for (ScopeSpans ss : rs.getScopeSpansList()) {
+                for (Span span : ss.getSpansList()) {
                     record(toRecord(span));
                 }
             }
@@ -120,36 +127,43 @@ public final class OtlpTraceReceiver implements AutoCloseable {
                 .ifPresent(oldest -> remove(oldest.getKey()));
     }
 
-    private static SpanRecord toRecord(JsonNode span) {
+    private static SpanRecord toRecord(Span span) {
         Map<String, String> attrs = new LinkedHashMap<>();
-        for (JsonNode a : span.path("attributes")) {
-            attrs.put(a.path("key").asText(), anyValueToString(a.path("value")));
+        for (KeyValue kv : span.getAttributesList()) {
+            attrs.put(kv.getKey(), anyValueToString(kv.getValue()));
         }
         List<String> linkedTraces = new ArrayList<>();
-        for (JsonNode link : span.path("links")) {
-            linkedTraces.add(link.path("traceId").asText());
+        for (Span.Link link : span.getLinksList()) {
+            linkedTraces.add(hex(link.getTraceId()));
         }
         return new SpanRecord(
-                span.path("traceId").asText(),
-                span.path("spanId").asText(),
-                span.path("parentSpanId").asText(),
-                span.path("name").asText(),
-                span.path("kind").asText(),
-                parseNano(span.path("startTimeUnixNano").asText()),
+                hex(span.getTraceId()),
+                hex(span.getSpanId()),
+                hex(span.getParentSpanId()),
+                span.getName(),
+                span.getKind().name(),
+                span.getStartTimeUnixNano(),
                 attrs,
                 linkedTraces);
     }
 
-    private static long parseNano(String s) {
-        try { return s.isEmpty() ? 0 : Long.parseLong(s); } catch (NumberFormatException e) { return 0; }
+    private static String hex(ByteString bytes) {
+        StringBuilder sb = new StringBuilder(bytes.size() * 2);
+        for (byte b : bytes.toByteArray()) {
+            sb.append(Character.forDigit((b >> 4) & 0xf, 16));
+            sb.append(Character.forDigit(b & 0xf, 16));
+        }
+        return sb.toString();
     }
 
-    private static String anyValueToString(JsonNode value) {
-        if (value.has("stringValue")) { return value.path("stringValue").asText(); }
-        if (value.has("intValue")) { return value.path("intValue").asText(); }
-        if (value.has("doubleValue")) { return value.path("doubleValue").asText(); }
-        if (value.has("boolValue")) { return value.path("boolValue").asText(); }
-        return value.path("stringValue").asText();
+    private static String anyValueToString(AnyValue v) {
+        return switch (v.getValueCase()) {
+            case STRING_VALUE -> v.getStringValue();
+            case INT_VALUE -> Long.toString(v.getIntValue());
+            case DOUBLE_VALUE -> Double.toString(v.getDoubleValue());
+            case BOOL_VALUE -> Boolean.toString(v.getBoolValue());
+            default -> "";
+        };
     }
 
     public List<SpanRecord> spans(String traceId) {

@@ -56,7 +56,7 @@ public final class OtelAgent {
                 "OTEL_TRACES_EXPORTER", "otlp",
                 "OTEL_METRICS_EXPORTER", "none",
                 "OTEL_LOGS_EXPORTER", "none",
-                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/json",
+                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf",
                 "OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint,
                 "OTEL_BSP_SCHEDULE_DELAY", "100",
                 "OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true",
