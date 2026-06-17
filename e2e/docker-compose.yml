@@ -45,6 +45,8 @@ services:
       # 테스트 발행이 consumer 파티션 할당보다 빨라도 누락 안 되게(offset race 예방)
       SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET: earliest
       DDL_AUTO: create
+      # 헤더 강제 SUT(B6) 회귀용. 미설정이면 false → 인터셉터 비활성(기존 동작 불변).
+      REQUIRE_AUTH_TIME: ${REQUIRE_AUTH_TIME:-false}
       # 외부 의존은 mock 컨테이너로 redirect (docs/06)
       EXTERNAL_INVENTORY_URL: http://wiremock:8080
       # OTEL javaagent: baggage propagation만 사용 (트레이스 저장 없음)
