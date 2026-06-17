@@ -4,7 +4,7 @@
 
 **Goal:** SUT 로그 byte-offset 기반 SQL 캡처를 교체 가능한 `SqlCaptureBackend` 뒤로 추상화하고, OTEL Java agent의 DB span을 trace-id로 요청에 귀속하는 `OtelSpanCapture`(HTTP+Kafka, analysis+attach)를 1순위 backend로 도입한다.
 
-**Architecture:** 빌더가 in-process OTLP/JSON 리시버를 띄우고, SUT의 OTEL agent v2.16.0이 보내는 DB span(`db.query.text` + `db.query.parameter.*`)을 수신한다. 요청마다 고유 `traceparent`를 outbound(HTTP 헤더 / Kafka 레코드 헤더)로 주입해 그 trace의 DB span만 묶는다. 컬럼/테이블 매핑은 기존 `ParsedSql` 텍스트 파싱을 재사용하고, OTEL은 bind 값 소스 + 귀속만 대체한다. 기존 `SqlLogParser` 경로는 `LogParserCapture` 폴백으로 보존한다.
+**Architecture:** 빌더가 in-process OTLP/protobuf 리시버를 띄우고, SUT의 OTEL agent v2.16.0이 보내는 DB span(`db.query.text` + `db.query.parameter.*`)을 수신한다. 요청마다 고유 `traceparent`를 outbound(HTTP 헤더 / Kafka 레코드 헤더)로 주입해 그 trace의 DB span만 묶는다. 컬럼/테이블 매핑은 기존 `ParsedSql` 텍스트 파싱을 재사용하고, OTEL은 bind 값 소스 + 귀속만 대체한다. 기존 `SqlLogParser` 경로는 `LogParserCapture` 폴백으로 보존한다.
 
 **Tech Stack:** Java 17, Gradle, JUnit 5, Testcontainers, OpenTelemetry Java agent 2.16.0, Jackson, `com.sun.net.httpserver.HttpServer`(JDK 내장 — 신규 의존성 없음).
 
@@ -19,7 +19,7 @@
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/SqlCaptureBackend.java` — backend 인터페이스 + 내부 `Scope` 인터페이스.
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/LogParserCapture.java` — 기존 로그 파서 경로를 인터페이스 뒤로(폴백/기본).
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/TraceParent.java` — 결정적 W3C `traceparent` 생성기(runId prefix + 단조 카운터).
-- **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiver.java` — OTLP/JSON HTTP 수신기 + traceId→span 누적 + await/quiescence/remove.
+- **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiver.java` — OTLP/protobuf HTTP 수신기 + traceId→span 누적 + await/quiescence/remove.
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/SpanRecord.java` — 디코드된 span 1건(불변 record).
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/OtelSpanCapture.java` — OTEL backend(상관/await/ParsedSql 환원/폴백).
 - **Modify** `gradle/libs.versions.toml` — `otelAgent` 2.14.0 → 2.16.0.
@@ -446,7 +446,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * OTLP/JSON에서 디코드된 span 1건 (필요한 필드만).
+ * OTLP/protobuf에서 디코드된 span 1건 (필요한 필드만).
  * attributes는 평탄화된 문자열 맵(예: "db.query.text", "db.query.parameter.0").
  * links는 이 span이 참조하는 traceId 목록.
  */
@@ -469,13 +469,13 @@ git add graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/SpanRec
 git commit -m "feat(capture): SpanRecord model for decoded OTLP spans"
 ```
 
-### Task 3.3: OtlpTraceReceiver (OTLP/JSON 디코드 + 누적 + await/remove)
+### Task 3.3: OtlpTraceReceiver (OTLP/protobuf 디코드 + 누적 + await/remove)
 
 **Files:**
 - Create: `graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiver.java`
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiverTest.java`
 
-- [ ] **Step 1: 실패 테스트 (실제 HTTP POST로 OTLP/JSON 전송)**
+- [ ] **Step 1: 실패 테스트 (실제 HTTP POST로 OTLP/protobuf 전송)**
 
 ```java
 package io.graphrag.builder.capture.otlp;
@@ -497,7 +497,7 @@ class OtlpTraceReceiverTest {
     @AfterEach
     void tearDown() { if (receiver != null) receiver.stop(); }
 
-    /** 최소 OTLP/JSON ExportTraceServiceRequest: 1 resourceSpan → 1 scopeSpan → 1 span. */
+    /** 최소 OTLP/protobuf ExportTraceServiceRequest: 1 resourceSpan → 1 scopeSpan → 1 span. */
     private static String otlpJson(String traceId, String spanId, String parentSpanId,
                                    String kind, String sql, String param0) {
         return """
@@ -596,7 +596,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-process OTLP/JSON 트레이스 수신기. SUT의 OTEL agent가 POST /v1/traces 로 보내는
+ * In-process OTLP/protobuf 트레이스 수신기. SUT의 OTEL agent가 POST /v1/traces 로 보내는
  * ExportTraceServiceRequest(JSON)를 디코드해 traceId별로 span을 누적한다. (JDK 내장 HttpServer)
  */
 public final class OtlpTraceReceiver implements AutoCloseable {
@@ -747,7 +747,7 @@ Expected: PASS (4 tests).
 ```bash
 git add graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiver.java \
         graph-rag-builder/src/test/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiverTest.java
-git commit -m "feat(capture): in-process OTLP/JSON trace receiver (await/quiescence/remove)"
+git commit -m "feat(capture): in-process OTLP/protobuf trace receiver (await/quiescence/remove)"
 ```
 
 ### Task 3.4: OtelSpanCapture (상관 + DB span → ParsedSql + 폴백)
@@ -993,7 +993,7 @@ class OtelAgentTest {
     void otlpEnv_hasExporterAndEndpoint(@org.junit.jupiter.api.io.TempDir Path dir) {
         var env = OtelAgent.prepare(dir).otlpEnv("svc", "http://127.0.0.1:4318");
         assertThat(env).containsEntry("OTEL_TRACES_EXPORTER", "otlp")
-                .containsEntry("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json")
+                .containsEntry("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
                 .containsEntry("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
                 .containsEntry("OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true");
         assertThat(env.get("OTEL_PROPAGATORS")).contains("tracecontext");
@@ -1010,7 +1010,7 @@ class OtelAgentTest {
                 "OTEL_TRACES_EXPORTER", "otlp",
                 "OTEL_METRICS_EXPORTER", "none",
                 "OTEL_LOGS_EXPORTER", "none",
-                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/json",
+                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf",
                 "OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint,
                 "OTEL_BSP_SCHEDULE_DELAY", "100",
                 "OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true",

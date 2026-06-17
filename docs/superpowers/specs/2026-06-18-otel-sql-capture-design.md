@@ -44,7 +44,7 @@
 | 범위 | 풀 구현(인터페이스 + OTEL backend + 리시버 + 귀속 + 기본전환), analysis+attach | 사용자 합의 |
 | 귀속 | **trace-id 상관** — 빌더가 요청별 고유 trace 생성 → W3C `traceparent`를 outbound 주입 | 커스텀 baggage 키 의존 제거, 표준 전파만 |
 | 결정성 | **entry span 완료 await + 짧은 quiescence + timeout** (고정 sleep 제거) | span은 OTLP로 비동기 도착 → flaky 회피 |
-| transport | **OTLP HTTP/JSON** (agent `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`) | 빌더는 작은 HTTP 서버 + Jackson 파싱. protobuf/gRPC 의존 불필요 |
+| transport | **OTLP HTTP/protobuf** (agent `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`) | 빌더는 작은 HTTP 서버 + opentelemetry-proto 디코드. (PoC 실측: agent가 http/json 미지원 → http/protobuf로 정정) |
 | 컬럼 매핑 | **기존 SQL 텍스트 파싱 재사용** (`ParsedSql.columnForPosition` 등) | OTEL은 **bind 값 소스 + 귀속만** 대체 |
 | batch 완화 | 분석 기동 시 `hibernate.jdbc.batch_size=0` 주입 | semconv상 batch 연산엔 파라미터 미수집 → batch 비활성으로 회피, 그래도 빈 경우 폴백 |
 | PoC 게이트 | Phase 1을 게이트로 — 실패 시 해당 경로만 폴백 유지·기본전환 보류 | 로드맵 명시 |
@@ -98,7 +98,7 @@ SqlCaptureBackend ┤        ├ requestHeaders(): Map<String,String>   (주입�
       그래도 비면 빈 리스트 + 경고 로그.
 
 - **`OtlpTraceReceiver`** (신규 `io.graphrag.builder.capture.otlp`)
-  - 동적 포트 HTTP 서버. `POST /v1/traces` 수신, `Content-Type: application/json`(OTLP/JSON
+  - 동적 포트 HTTP 서버. `POST /v1/traces` 수신, `Content-Type: application/json`(OTLP/protobuf
     `ExportTraceServiceRequest`)을 Jackson으로 디코드.
   - 누적: `Map<traceId, List<SpanRecord>>` (thread-safe). `spanId`, `parentSpanId`, `name`,
     `kind`, `startNanos`, `links`, attributes(특히 `db.*`) 보존.
@@ -166,7 +166,7 @@ OTEL 경로에서 full 8s timeout을 기다리면 탐색 시간이 늘어나므�
   반영)**. 따라서 시그니처를 **`env(String serviceName, String otlpEndpoint)`** 로 확장(또는 별도
   `otlpEnv(...)`)하고, 리시버가 start되어 포트가 확정된 **이후** `AnalysisEnvironment.start`/
   `runAttached`에서 호출/주입한다. OTEL 모드 env: `OTEL_TRACES_EXPORTER=otlp`,
-  `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=<확정된 리시버 URL>`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_EXPORTER_OTLP_ENDPOINT=<확정된 리시버 URL>`,
   `OTEL_BSP_SCHEDULE_DELAY`(짧게), JDBC `capture-query-parameters` 활성
   (`OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS=true`).
   log-parser 모드: 기존 `none` 유지(baggage 전파만).
@@ -228,7 +228,7 @@ CLAUDE.md 의무: 아래 수용 테스트는 **구현 전에 먼저 작성**(out
   ②Kafka trace 상관 방식 확인. 실패 시 해당 경로 폴백·기본전환 보류.
 
 ### 내부 루프 단위 테스트 (대표)
-- `OtlpTraceReceiver` — OTLP/JSON `ExportTraceServiceRequest` 디코드(중첩 resource/scope/span,
+- `OtlpTraceReceiver` — OTLP/protobuf `ExportTraceServiceRequest` 디코드(중첩 resource/scope/span,
   `db.query.parameter.*` 속성 추출), traceId 누적, `awaitEntrySpan`/quiescence 판정, **`remove`
   eager cleanup**(drain 후 trace 잔류 없음).
 - `OtelSpanCapture` — fake 리시버로 trace-id 상관, entry span(parent=spanId) await, DB span →
