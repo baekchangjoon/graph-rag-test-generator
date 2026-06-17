@@ -25,12 +25,29 @@ public final class OverrideComposeGenerator {
      * @param javaToolOptions     주입할 JAVA_TOOL_OPTIONS (jacoco container opts + otel)
      * @param mybatisNamespaces   mapper namespace → "TRACE"
      * @param extraEnv            OTEL 등 추가 환경변수
+     * @param addHostGateway      true면 {@code extra_hosts: [host.docker.internal:host-gateway]} 추가
+     *                            (OTEL attach: 컨테이너→호스트 OTLP 리시버 도달)
+     * @param disableBatch        true면 SPRING_APPLICATION_JSON에 hibernate.jdbc.batch_size=0 병합
+     *                            (OTEL bind 캡처가 batch insert에서 누락되지 않도록)
      */
     public record Spec(String appService, String hostAgentsDir,
                        int appContainerPort, int appHostPort,
                        int jacocoContainerPort, int jacocoHostPort,
                        String javaToolOptions, Map<String, String> mybatisNamespaces,
-                       Map<String, String> extraEnv) {}
+                       Map<String, String> extraEnv,
+                       boolean addHostGateway, boolean disableBatch) {
+
+        /** 기존 호출부 호환 편의 생성자 (host-gateway/batch 비활성). */
+        public Spec(String appService, String hostAgentsDir,
+                    int appContainerPort, int appHostPort,
+                    int jacocoContainerPort, int jacocoHostPort,
+                    String javaToolOptions, Map<String, String> mybatisNamespaces,
+                    Map<String, String> extraEnv) {
+            this(appService, hostAgentsDir, appContainerPort, appHostPort,
+                    jacocoContainerPort, jacocoHostPort, javaToolOptions, mybatisNamespaces,
+                    extraEnv, false, false);
+        }
+    }
 
     private static final YAMLMapper YAML = new YAMLMapper();
 
@@ -42,8 +59,8 @@ public final class OverrideComposeGenerator {
 
             ObjectNode env = app.putObject("environment");
             env.put("JAVA_TOOL_OPTIONS", spec.javaToolOptions());
-            env.put("SPRING_APPLICATION_JSON", springApplicationJson(spec.mybatisNamespaces()));
-            // OTEL 전파 env (analysis 모드의 otel.env와 동등: exporter none + baggage)
+            env.put("SPRING_APPLICATION_JSON", springApplicationJson(spec.mybatisNamespaces(), spec.disableBatch()));
+            // OTEL 전파 env (analysis 모드의 otel.env와 동등: exporter none + baggage / otel 모드: otlp export)
             new TreeMap<>(spec.extraEnv()).forEach(env::put);
 
             ArrayNode volumes = app.putArray("volumes");
@@ -53,6 +70,11 @@ public final class OverrideComposeGenerator {
             ports.add(spec.appHostPort() + ":" + spec.appContainerPort());
             ports.add(spec.jacocoHostPort() + ":" + spec.jacocoContainerPort());
 
+            // OTEL attach: 컨테이너가 host.docker.internal로 호스트 OTLP 리시버에 도달(Docker 20.10+).
+            if (spec.addHostGateway()) {
+                app.putArray("extra_hosts").add("host.docker.internal:host-gateway");
+            }
+
             return YAML.writeValueAsString(root);
         } catch (Exception e) {
             throw new IllegalStateException("override compose 생성 실패", e);
@@ -60,13 +82,16 @@ public final class OverrideComposeGenerator {
     }
 
     /** Hibernate SQL+bind DEBUG/TRACE + MyBatis namespace TRACE 를 한 JSON 문자열로(SUT 로그에 SQL 노출). */
-    private static String springApplicationJson(Map<String, String> mybatisNamespaces) {
+    private static String springApplicationJson(Map<String, String> mybatisNamespaces, boolean disableBatch) {
         try {
             ObjectNode node = Json.mapper().createObjectNode();
             node.put("logging.level.org.hibernate.SQL", "DEBUG");
             node.put("logging.level.org.hibernate.orm.jdbc.bind", "TRACE");
             new TreeMap<>(mybatisNamespaces).forEach(
                     (ns, level) -> node.put("logging.level." + ns, level));
+            if (disableBatch) {
+                node.put("spring.jpa.properties.hibernate.jdbc.batch_size", "0");
+            }
             return Json.mapper().writeValueAsString(node);
         } catch (Exception e) {
             throw new IllegalStateException(e);

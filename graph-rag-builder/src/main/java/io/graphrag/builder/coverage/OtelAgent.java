@@ -52,15 +52,28 @@ public final class OtelAgent {
     }
 
     public java.util.Map<String, String> otlpEnv(String serviceName, String otlpEndpoint) {
-        return java.util.Map.of(
-                "OTEL_TRACES_EXPORTER", "otlp",
-                "OTEL_METRICS_EXPORTER", "none",
-                "OTEL_LOGS_EXPORTER", "none",
-                "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf",
-                "OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint,
-                "OTEL_BSP_SCHEDULE_DELAY", "100",
-                "OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true",
-                "OTEL_PROPAGATORS", "tracecontext,baggage",
-                "OTEL_SERVICE_NAME", serviceName);
+        return otlpEnv(serviceName, otlpEndpoint, null);
+    }
+
+    /**
+     * @param otlpSecret null이 아니면 {@code OTEL_EXPORTER_OTLP_HEADERS=x-graphrag-token=<secret>}를 추가해
+     *                   attach 모드 리시버(wildcard bind)의 per-run shared-secret 인증을 통과시킨다.
+     */
+    public java.util.Map<String, String> otlpEnv(String serviceName, String otlpEndpoint, String otlpSecret) {
+        java.util.Map<String, String> env = new java.util.LinkedHashMap<>();
+        env.put("OTEL_TRACES_EXPORTER", "otlp");
+        env.put("OTEL_METRICS_EXPORTER", "none");
+        env.put("OTEL_LOGS_EXPORTER", "none");
+        env.put("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        env.put("OTEL_EXPORTER_OTLP_ENDPOINT", otlpEndpoint);
+        env.put("OTEL_BSP_SCHEDULE_DELAY", "100");
+        env.put("OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS", "true");
+        env.put("OTEL_PROPAGATORS", "tracecontext,baggage");
+        env.put("OTEL_SERVICE_NAME", serviceName);
+        if (otlpSecret != null) {
+            env.put("OTEL_EXPORTER_OTLP_HEADERS",
+                    io.graphrag.builder.capture.otlp.OtlpTraceReceiver.AUTH_HEADER + "=" + otlpSecret);
+        }
+        return env;
     }
 }

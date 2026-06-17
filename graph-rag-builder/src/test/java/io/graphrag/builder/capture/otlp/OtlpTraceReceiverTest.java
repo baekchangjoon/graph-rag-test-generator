@@ -56,12 +56,23 @@ class OtlpTraceReceiverTest {
     }
 
     private int post(byte[] body) throws Exception {
-        HttpResponse<String> r = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(receiver.endpoint() + "/v1/traces"))
-                        .header("Content-Type", "application/x-protobuf")
-                        .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
-                HttpResponse.BodyHandlers.ofString());
-        return r.statusCode();
+        return post(body, null);
+    }
+
+    private int post(byte[] body, String token) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(receiver.endpoint() + "/v1/traces"))
+                .header("Content-Type", "application/x-protobuf")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(body));
+        if (token != null) {
+            b.header("x-graphrag-token", token);
+        }
+        return HttpClient.newHttpClient().send(b.build(), HttpResponse.BodyHandlers.ofString())
+                .statusCode();
+    }
+
+    private static byte[] sampleBody(byte[] traceId) {
+        return otlp(traceId, fill(8, 0x0a), fill(8, 0x0b), Span.SpanKind.SPAN_KIND_CLIENT,
+                "select 1", AnyValue.newBuilder().setStringValue("x").build());
     }
 
     @Test
@@ -117,6 +128,29 @@ class OtlpTraceReceiverTest {
                 "select 1", AnyValue.newBuilder().setIntValue(7).build()));
         assertThat(receiver.spans(hexOf(traceId)).get(0).attributes())
                 .containsEntry("db.query.parameter.0", "7");
+    }
+
+    @Test
+    void auth_rejectsMissingOrWrongTokenAndAcceptsCorrect() throws Exception {
+        receiver = new OtlpTraceReceiver();
+        receiver.start("127.0.0.1", "s3cr3t-token");   // attach 모드: bind + per-run secret
+        byte[] traceId = fill(16, 0x06);
+
+        assertThat(post(sampleBody(traceId), null)).isEqualTo(401);          // 헤더 없음
+        assertThat(post(sampleBody(traceId), "wrong")).isEqualTo(401);       // 불일치
+        assertThat(receiver.spans(hexOf(traceId))).isEmpty();               // 거부된 span은 미기록
+
+        assertThat(post(sampleBody(traceId), "s3cr3t-token")).isEqualTo(200);
+        assertThat(receiver.spans(hexOf(traceId))).hasSize(1);
+    }
+
+    @Test
+    void noAuth_whenStartedWithoutToken() throws Exception {
+        receiver = new OtlpTraceReceiver();
+        receiver.start();   // analysis 모드: loopback + 무인증
+        byte[] traceId = fill(16, 0x07);
+        assertThat(post(sampleBody(traceId), null)).isEqualTo(200);
+        assertThat(receiver.spans(hexOf(traceId))).hasSize(1);
     }
 
     @Test

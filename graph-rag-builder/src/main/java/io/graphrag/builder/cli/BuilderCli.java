@@ -304,10 +304,29 @@ public final class BuilderCli {
         int jacocoContainerPort = 6300;
         String jto = JacocoAgent.containerJavaToolOptions("/grb-agents/jacocoagent.jar", jacocoContainerPort)
                 + " -javaagent:/grb-agents/otel-javaagent.jar";
+
+        // OTEL SQL 캡처(attach): 호스트 OTLP 리시버를 wildcard bind + per-run secret으로 띄우고,
+        // 컨테이너가 host.docker.internal:<port>로 도달하도록 override에 otlp export env + extra_hosts 주입.
+        // log 모드면 기존 동작(exporter none + baggage, host-gateway/batch 미주입).
+        boolean otelSqlCapture = "otel".equals(config.sqlCapture());
+        io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver = null;
+        Map<String, String> otelEnv;
+        if (otelSqlCapture) {
+            String secret = newOtlpSecret();
+            otlpReceiver = new io.graphrag.builder.capture.otlp.OtlpTraceReceiver();
+            otlpReceiver.start("0.0.0.0", secret);
+            warnIfHostGatewayUnsupported();
+            otelEnv = otel.otlpEnv(config.sutId(), otlpReceiver.hostEndpoint(), secret);
+            log.info("OTEL SQL capture (attach): otlp receiver {} (container reaches via {})",
+                    otlpReceiver.endpoint(), otlpReceiver.hostEndpoint());
+        } else {
+            otelEnv = otel.env(config.sutId());   // OTEL env 동등 주입(exporter none + baggage)
+        }
+
         String overrideYaml = new OverrideComposeGenerator().generate(
                 new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
                         at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
-                        jto, mybatisLogLevels, otel.env(config.sutId())));   // OTEL env 동등 주입
+                        jto, mybatisLogLevels, otelEnv, otelSqlCapture, otelSqlCapture));
         Path overridePath = workDir.resolve("attach-override.yml");
         Files.writeString(overridePath, overrideYaml);
 
@@ -317,10 +336,44 @@ public final class BuilderCli {
                 at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
                 "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
                 at.healthPath(), at.readyTimeoutSeconds());
-        try (AttachedComposeEnvironment env = new AttachedComposeEnvironment(envCfg, config.dbConfig().type())) {
+        try (AttachedComposeEnvironment env =
+                     new AttachedComposeEnvironment(envCfg, config.dbConfig().type(), otlpReceiver)) {
             env.start(workDir);
             return explore(env, config, index, wsIndex, kafkaIndex, mappers,
                     responseDtoFieldSets, plan, enumConstants, acc);
+        }
+    }
+
+    /** attach OTLP 리시버용 per-run 256-bit shared secret (hex). */
+    private static String newOtlpSecret() {
+        byte[] b = new byte[32];
+        new java.security.SecureRandom().nextBytes(b);
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) {
+            sb.append(Character.forDigit((x >> 4) & 0xf, 16)).append(Character.forDigit(x & 0xf, 16));
+        }
+        return sb.toString();
+    }
+
+    /** host.docker.internal:host-gateway 는 Docker 20.10+ 필요. 미만이면 경고(best-effort 감지). */
+    private static void warnIfHostGatewayUnsupported() {
+        try {
+            Process p = new ProcessBuilder("docker", "version", "--format", "{{.Server.Version}}")
+                    .redirectErrorStream(true).start();
+            String v = new String(p.getInputStream().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8).trim();
+            p.waitFor();
+            String[] parts = v.split("\\.");
+            if (parts.length >= 2) {
+                int major = Integer.parseInt(parts[0]);
+                int minor = Integer.parseInt(parts[1].replaceAll("\\D.*$", ""));
+                if (major < 20 || (major == 20 && minor < 10)) {
+                    log.warn("Docker {} < 20.10: host.docker.internal:host-gateway may be unsupported; "
+                            + "attach OTEL capture could fail to reach the host receiver", v);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("docker version check skipped: {}", e.toString());
         }
     }
 

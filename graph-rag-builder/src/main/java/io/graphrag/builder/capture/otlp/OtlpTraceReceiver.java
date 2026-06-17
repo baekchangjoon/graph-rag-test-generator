@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,16 +43,39 @@ public final class OtlpTraceReceiver implements AutoCloseable {
     private static final int MAX_SPANS_PER_TRACE = 10_000;
     private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
 
+    /** 인증 헤더 이름 (attach 모드 per-run shared secret). */
+    public static final String AUTH_HEADER = "x-graphrag-token";
+
     private final Map<String, List<SpanRecord>> byTrace = new ConcurrentHashMap<>();
     private final Map<String, Long> lastArrivalNanos = new ConcurrentHashMap<>();
     private HttpServer server;
+    private byte[] authToken;   // null이면 무인증(loopback analysis 모드)
 
+    /** analysis 모드: loopback 전용 바인드 + 무인증(호스트 로컬만 도달 가능). */
     public void start() {
+        start(null, null);
+    }
+
+    /**
+     * @param bindHost  바인드 주소. null/blank면 loopback. attach 모드는 컨테이너가 host-gateway로
+     *                  도달해야 하므로 {@code "0.0.0.0"}(wildcard)로 넓힌다.
+     * @param authToken null이 아니면 모든 POST에 {@code x-graphrag-token: <authToken>}를 요구(불일치 401).
+     *                  wildcard 바인드로 넓어진 노출을 per-run shared secret으로 보상한다.
+     */
+    public void start(String bindHost, String authToken) {
+        this.authToken = authToken == null ? null : authToken.getBytes(StandardCharsets.UTF_8);
+        InetAddress addr = (bindHost == null || bindHost.isBlank())
+                ? InetAddress.getLoopbackAddress()
+                : resolve(bindHost);
         try {
-            // loopback 전용 바인드 — 다른 로컬 프로세스/네트워크의 span 주입 차단.
-            server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server = HttpServer.create(new InetSocketAddress(addr, 0), 0);
             server.createContext("/v1/traces", exchange -> {
                 try {
+                    if (!authorized(exchange)) {
+                        log.warn("otlp request rejected: missing/invalid {} header", AUTH_HEADER);
+                        exchange.sendResponseHeaders(401, -1);
+                        return;
+                    }
                     byte[] body = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
                     if (body.length > MAX_BODY_BYTES) {
                         log.warn("otlp body exceeds {} bytes — rejected", MAX_BODY_BYTES);
@@ -68,10 +92,28 @@ public final class OtlpTraceReceiver implements AutoCloseable {
                 }
             });
             server.start();
-            log.info("otlp receiver on {}", endpoint());
+            log.info("otlp receiver on {} (auth={})", endpoint(), authToken != null);
         } catch (IOException e) {
             throw new UncheckedIOException("failed to start otlp receiver", e);
         }
+    }
+
+    private static InetAddress resolve(String host) {
+        try {
+            return InetAddress.getByName(host);
+        } catch (IOException e) {
+            throw new UncheckedIOException("invalid otlp bind host: " + host, e);
+        }
+    }
+
+    /** authToken 미설정이면 항상 허용. 설정 시 헤더 값이 constant-time 비교로 일치해야 한다. */
+    private boolean authorized(com.sun.net.httpserver.HttpExchange exchange) {
+        if (authToken == null) {
+            return true;
+        }
+        String provided = exchange.getRequestHeaders().getFirst(AUTH_HEADER);
+        return provided != null
+                && java.security.MessageDigest.isEqual(authToken, provided.getBytes(StandardCharsets.UTF_8));
     }
 
     public String endpoint() {
