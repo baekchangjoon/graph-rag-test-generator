@@ -2,6 +2,11 @@
 
 생성된 테스트가 실행되는 환경. 도구 1의 분석 환경과는 별개다.
 
+> **Prebuilt(소스 빌드 불필요)**: 이 환경의 보조 서비스는 릴리스 시 GHCR 이미지로 발행된다 —
+> `ghcr.io/<owner>/test-state-dashboard`, `ghcr.io/<owner>/socket-mock-server`(둘 다 `:<version>`,`:latest`).
+> SUT에 붙이는 OTEL agent(`otel-javaagent.jar`)는 GitHub Release 자산으로 제공된다. compose에서 아래
+> `build:` 대신 이 `image:`를 가리키면 빌드 없이 실행 환경을 띄울 수 있다.
+
 ## 전체 구성
 
 ```yaml
