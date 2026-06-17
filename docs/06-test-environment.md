@@ -83,6 +83,21 @@ services:
 
 baggage propagator 활성 시 inbound 헤더 `baggage: test-id=...` 가 모든 outbound HTTP 호출에 자동 복사된다. 이게 WireMock 격리의 기반.
 
+## SQL 캡처 모드 (`--sql-capture`)
+
+빌더(도구 1)가 요청별로 어떤 SQL·바인딩이 실행됐는지 수집하는 방식이다. `--sql-capture <mode>` 로 고른다.
+
+- **`otel` (기본)** — SUT의 OTEL agent가 내보내는 DB span에서 SQL과 바인딩 값을 받는다. 빌더가 요청마다
+  고유 `traceparent` 를 발급해(HTTP 헤더 / Kafka 레코드 헤더) 그 trace의 DB span만 묶으므로, 동시·비동기
+  요청도 서로 섞이지 않고 정확히 귀속된다. 빌더는 분석 동안만 OTLP 리시버를 띄워 SUT의 span을 받는다.
+- **`log`** — SUT stdout의 Hibernate/MyBatis 로그를 파싱하는 폴백 경로. byte-offset 구간으로 귀속하므로
+  단일 직렬 실행을 전제한다. agent의 DB span에서 SQL을 못 받는 환경에서 명시적으로 쓴다.
+
+`otel` 모드에서도 어떤 요청의 trace에 DB span이 비면 그 요청만 자동으로 로그 파싱으로 폴백한다.
+
+SQL 텍스트 속성은 OTEL agent 버전·설정에 따라 `db.query.text`(신규) 또는 `db.statement`(구) 중 하나로
+오므로 빌더는 둘 다 읽는다. 바인딩 값은 `db.query.parameter.<index>`(0-based)로 받는다.
+
 ## RestAssured 테스트 스타일
 
 ```java

@@ -10,6 +10,24 @@ seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.
 
 ## 1. OTEL Agent v2.16.0 기반 SQL/bind 캡처 + test-id 귀속 (교체 가능, 폴백 보유)
 
+> **상태: 구현 완료 (2026-06-18).** spec [docs/superpowers/specs/2026-06-18-otel-sql-capture-design.md],
+> plan [docs/superpowers/plans/2026-06-18-otel-sql-capture.md]. `SqlCaptureBackend`(`OtelSpanCapture`
+> 1순위 + `LogParserCapture` 폴백), in-process OTLP/protobuf 리시버, 요청별 `traceparent` 주입(HTTP 헤더 /
+> Kafka 레코드 헤더)으로 trace-id 귀속. 기본값을 `otel`로 전환했고 `--sql-capture log` 로 폴백한다
+> ([docs/06](06-test-environment.md) "SQL 캡처 모드" 절, [docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
+>
+> **PoC·구현에서 확정/정정된 사실:**
+> - **SQL 텍스트 속성** — agent 2.16.0은 stable DB semconv opt-in 없이는 SQL을 **`db.statement`(구 키)**로
+>   내보낸다(`db.system=postgresql/h2`, `db.operation` 등도 구 semconv). 아래 "검증된 사실"이 가정한
+>   `db.query.text`(신규 키)는 opt-in 시에만 나온다. 빌더는 **둘 다 읽는다**(신규→구). 바인딩만은 신규 키
+>   `db.query.parameter.<index>`(0-based)로 정상 노출된다.
+> - **상관 방식** — HTTP는 server-entry span, Kafka consumer는 process span이 **주입 span의 child**(같은
+>   trace-id)가 된다(link 아님). 빌더는 entry span(parent==주입 spanId) 도착을 await 후 그 trace의 DB span을
+>   환원한다. 동시 요청은 trace-id로 격리 귀속된다.
+> - **OTLP transport** — agent OTLP exporter는 `http/json` 미지원 → 리시버는 `http/protobuf` 로 수신.
+> - **attach 보안** — 컨테이너 도달을 위해 리시버를 `0.0.0.0` 에 bind하고, 넓어진 노출은 실행마다 1회용
+>   토큰 헤더 인증으로 보상한다([docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
+
 ### 문제
 
 현재 SQL/바인딩 캡처는 SUT가 stdout에 남기는 **Hibernate/MyBatis 로그 파싱**(`SqlLogParser` —

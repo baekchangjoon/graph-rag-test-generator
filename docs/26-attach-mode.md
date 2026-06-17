@@ -59,10 +59,25 @@ override는 사용자 compose의 **app 서비스에만** 다음을 더한다(`<o
   `/grb-agents:ro` 로 마운트한다.
 - **에이전트 활성화** — `JAVA_TOOL_OPTIONS` 로 jacoco tcpserver 에이전트(`address=*` 로 컨테이너의
   모든 인터페이스에 bind → published 포트로 호스트에서 dump 가능)와 OpenTelemetry javaagent를 켠다.
-- **OTEL 환경변수** — 분석 모드와 동일하게 트레이스 저장은 끄고 baggage 전파만 사용
-  (`OTEL_TRACES_EXPORTER=none`, `OTEL_METRICS_EXPORTER=none`, `OTEL_LOGS_EXPORTER=none`,
-  `OTEL_PROPAGATORS=tracecontext,baggage`, `OTEL_SERVICE_NAME=<sut-id>`).
+- **OTEL 환경변수** — SQL 캡처 모드([docs/06](06-test-environment.md) "SQL 캡처 모드" 절)에 따라 다르다.
+  `--sql-capture log` 면 트레이스 저장을 끄고 baggage 전파만 사용한다(`OTEL_TRACES_EXPORTER=none` …).
+  기본 `--sql-capture otel` 이면 아래 "attach OTEL 네트워킹" 대로 DB span을 호스트 리시버로 보낸다.
 - **포트 publish** — `<app-port>:<app-container-port>` 와 `<jacoco-port>:6300` 을 호스트로 연다.
+
+### attach OTEL 네트워킹
+
+기본 `otel` 모드에서 빌더는 분석 동안만 호스트에 OTLP 리시버를 띄우고, 컨테이너 SUT의 OTEL agent가
+거기로 DB span을 보내게 override를 구성한다.
+
+- 리시버는 컨테이너에서 도달해야 하므로 호스트의 모든 인터페이스(`0.0.0.0`)에 bind한다.
+- override가 app 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]` 를 추가하고
+  (Docker 20.10+ 필요), `OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:<port>` 로 보낸다.
+- 넓어진 노출을 막기 위해 빌더가 실행마다 1회용 토큰을 만들어 `OTEL_EXPORTER_OTLP_HEADERS` 로 전달하고,
+  리시버는 그 토큰이 맞는 요청만 받는다(불일치는 거부).
+- batch insert에서 바인딩이 누락되지 않도록 `hibernate.jdbc.batch_size=0` 을 함께 주입한다.
+
+Docker 20.10 미만이면 `host.docker.internal:host-gateway` 가 동작하지 않아 캡처가 호스트 리시버에
+도달하지 못할 수 있다(빌더가 경고를 남긴다). 이 경우 `--sql-capture log` 로 폴백한다.
 
 ### 사전 조건
 
