@@ -114,6 +114,15 @@ public final class BuilderCli {
                         options.containsKey("--request-headers-on-login"))
                 : io.graphrag.model.RequestHeaders.empty();
 
+        List<String> endpointSelectors = List.of();
+        if (options.containsKey("--endpoint")) {
+            endpointSelectors = java.util.Arrays.stream(options.get("--endpoint").split(","))
+                    .map(String::strip).filter(s -> !s.isEmpty()).toList();
+            if (endpointSelectors.isEmpty()) {
+                throw new IllegalArgumentException("--endpoint given but no non-blank spec(s) provided");
+            }
+        }
+
         BuildConfig config = new BuildConfig(
                 sutSrc,
                 Path.of(options.getOrDefault("--sut-resources",
@@ -136,7 +145,8 @@ public final class BuilderCli {
                 options.containsKey("--with-kafka"),
                 options.get("--sut-java-home"),
                 attach,
-                requestHeaders);
+                requestHeaders,
+                endpointSelectors);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -160,7 +170,22 @@ public final class BuilderCli {
                 index.endpoints().size(), mappers.size(), responseDtoFieldSets.size());
 
         IncrementalPlan plan = IncrementalPlan.exploreAll();
-        if (config.incrementalBase() != null) {
+        if (!config.endpointSelectors().isEmpty()) {
+            Set<String> ids = EndpointSelector.resolve(config.endpointSelectors(),
+                    index.endpoints(), wsIndex.endpoints(), kafkaIndex.consumers());
+            GraphAsset base = config.incrementalBase() != null
+                    ? new JsonFileGraphStore(config.incrementalBase()).load() : null;
+            plan = new IncrementalBuildPlanner().planForEndpoints(base, ids,
+                    index.endpoints(), wsIndex.endpoints(), kafkaIndex.consumers());
+            if (config.changedFiles() != null && !config.changedFiles().isEmpty()) {
+                log.warn("--endpoint overrides --changed-files (explicit endpoint selection)");
+            }
+            if (base == null) {
+                log.warn("partial graph: only endpoint(s) {} explored (no --incremental-base)", ids);
+            } else {
+                log.info("endpoint selection: re-explore {}, carry over the rest from base", ids);
+            }
+        } else if (config.incrementalBase() != null) {
             GraphAsset previous = new JsonFileGraphStore(config.incrementalBase()).load();
             plan = new IncrementalBuildPlanner().plan(previous, config.changedFiles(),
                     index.endpoints(), wsIndex.endpoints());
@@ -220,6 +245,8 @@ public final class BuilderCli {
         sql.addAll(plan.carriedSql());
         httpCalls.addAll(plan.carriedHttpCalls());
         wsExchanges.addAll(plan.carriedWsExchanges());
+        kafkaExchanges.addAll(plan.carriedKafkaExchanges());
+        allSeeds.addAll(plan.carriedSeeds());
 
         mergeManualPaths(config.manualPathsDir(), paths);
 
