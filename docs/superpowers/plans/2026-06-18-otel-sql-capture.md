@@ -1237,12 +1237,12 @@ producer.send(record).get();
 
 ---
 
-## PoC 결과 (Phase 1 완료 후 채움)
+## PoC 결과 (Phase 1)
 
-- **PoC①** `db.query.parameter.*` 노출: ☐ 예 / ☐ 아니오 — 인덱스 규약: ☐ 0-based / ☐ 1-based
-- **PoC①** batch_size=0 효과: ☐ 파라미터 복구됨 / ☐ 무관
-- **PoC②** Kafka 상관: ☐ child(같은 traceId) / ☐ link / ☐ 둘 다 불가(→Kafka log 유지)
-- 확정값을 Task 3.4 `PARAM_INDEX_BASE`, Task 5.1 매칭 전략에 반영.
+- **PoC①** `db.query.parameter.*` 노출: ☑ **예** — 인덱스 규약: ☑ **0-based** (2026-06-18 실측: petclinic 4.0 + agent 2.16.0, `db.system=h2`, jdbc instrumentation `2.16.0-alpha`. INSERT 5-param이 `db.query.parameter.0`~`.4`로 노출; SELECT bind도 `.0`부터). → `PARAM_INDEX_BASE = 0` 확정(draft 값 그대로). HTTP OTEL 경로 **GO**.
+- **PoC①** batch_size=0 효과: 단건 INSERT/SELECT는 batch 무관하게 노출됨 확인. batch 완화는 다건 batch insert 대비 예방책으로 유지(미측정).
+- **PoC②** Kafka 상관: ☐ **미측정 — Phase 5 착수 직전 실측 예정** (Kafka broker + consumer SUT 셋업 필요; Phase 2~4는 PoC②와 무관하므로 선진행). Phase 5에서 child/link/불가를 확정해 `awaitEntrySpan` 매칭·폴백 결정.
+- 확정값을 Task 3.4 `PARAM_INDEX_BASE`(=0), Task 5.1 매칭 전략(보류)에 반영.
 
 ## Definition of Done
 
