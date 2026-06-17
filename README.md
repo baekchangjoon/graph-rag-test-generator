@@ -13,8 +13,9 @@ mock 데이터)을 **결정적으로 생성**하는 시스템.
 → **[docs/00-시작하기](docs/00-getting-started.md)** 부터 본다. 데모를 한 번 돌려보고
 (`./e2e/run-e2e.sh`) 자기 앱에 적용하는 순서다.
 
-자기 앱에 쓰려면 소스 빌드 없이 **[Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)에서
-prebuilt zip을 받아** 실행한다(`test-generator`는 JRE 17만, `graph-rag-builder`는 +Docker). 상세는 시작하기의 트랙 B.
+자기 앱에 쓰려면 소스 빌드 없이 prebuilt를 받는다 — **[Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)의
+zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag-builder}`).
+`test-generator`는 JRE 17만, `graph-rag-builder`는 +Docker. 상세는 시작하기의 트랙 B.
 
 전체 문서 지도는 [docs/README.md](docs/README.md), 용어는 [docs/glossary.md](docs/glossary.md).
 요구사항은 [docs/01-overview](docs/01-overview.md), 아키텍처는

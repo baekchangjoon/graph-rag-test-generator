@@ -2,10 +2,12 @@
 
 생성된 테스트가 실행되는 환경. 도구 1의 분석 환경과는 별개다.
 
-> **Prebuilt(소스 빌드 불필요)**: 이 환경의 보조 서비스는 릴리스 시 GHCR 이미지로 발행된다 —
-> `ghcr.io/<owner>/test-state-dashboard`, `ghcr.io/<owner>/socket-mock-server`(둘 다 `:<version>`,`:latest`).
-> SUT에 붙이는 OTEL agent(`otel-javaagent.jar`)는 GitHub Release 자산으로 제공된다. compose에서 아래
-> `build:` 대신 이 `image:`를 가리키면 빌드 없이 실행 환경을 띄울 수 있다.
+> **Prebuilt(소스 빌드 불필요)**: 보조 서비스는 GHCR 이미지로 발행된다 —
+> `ghcr.io/baekchangjoon/test-state-dashboard`, `ghcr.io/baekchangjoon/socket-mock-server`(둘 다
+> `:<version>`,`:latest`). SUT에 붙이는 OTEL agent(`otel-javaagent.jar`)는 [Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases) 자산이다.
+> 아래 compose에서 `${SUT_IMAGE}`는 **테스트할 자기 앱의 컨테이너 이미지**, `${TEST_RUNNER_IMAGE}`는
+> 생성된 테스트를 실행할 러너 이미지(testlib + RestAssured/JUnit 포함)다. 데모(`e2e/docker-compose.yml`)는
+> 같은 구성을 `build:`로 만든 동작 예시다.
 
 ## 전체 구성
 
@@ -45,12 +47,12 @@ services:
     ports: ["9091:8080"]
     command: ["--global-response-templating"]
 
-  socket-mock:                      # 자체 Netty 기반 mock
-    image: graph-rag/socket-mock-server:latest
+  socket-mock:                      # 자체 Netty 기반 mock (prebuilt GHCR 이미지)
+    image: ghcr.io/baekchangjoon/socket-mock-server:latest
     ports: ["9000:9000", "9099:9099"]    # 9099 = admin
 
-  test-state-dashboard:             # 모니터링 (옵션)
-    image: graph-rag/test-state-dashboard:latest
+  test-state-dashboard:             # 모니터링 (옵션, prebuilt GHCR 이미지)
+    image: ghcr.io/baekchangjoon/test-state-dashboard:latest
     ports: ["8099:8080"]
     environment:
       DASHBOARD_TTL_SECONDS: 300
