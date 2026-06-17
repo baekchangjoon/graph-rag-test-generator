@@ -7,19 +7,25 @@ public record SutOptions(
         String javaToolOptions,
         Map<String, String> extraLogLevels,
         Map<String, String> extraEnv,
-        String javaHome) {
+        String javaHome,
+        boolean disableHibernateBatch) {
 
     /** javaHome 미지정 시 빌더 자신의 JDK로 SUT를 띄운다. */
     public SutOptions(String javaToolOptions, Map<String, String> extraLogLevels,
                       Map<String, String> extraEnv) {
-        this(javaToolOptions, extraLogLevels, extraEnv, null);
+        this(javaToolOptions, extraLogLevels, extraEnv, null, false);
     }
 
     public SutOptions(String javaToolOptions, Map<String, String> extraLogLevels) {
-        this(javaToolOptions, extraLogLevels, Map.of(), null);
+        this(javaToolOptions, extraLogLevels, Map.of(), null, false);
+    }
+
+    public SutOptions(String javaToolOptions, Map<String, String> extraLogLevels,
+                      Map<String, String> extraEnv, String javaHome) {
+        this(javaToolOptions, extraLogLevels, extraEnv, javaHome, false);
     }
 
     public static SutOptions none() {
-        return new SutOptions("", Map.of(), Map.of(), null);
+        return new SutOptions("", Map.of(), Map.of(), null, false);
     }
 }
