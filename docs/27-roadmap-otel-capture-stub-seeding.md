@@ -85,6 +85,11 @@ interface SqlCaptureBackend {
   전략 필요.
 - **결정성(async)** — span은 OTLP로 **비동기** 도착한다. 고정 sleep은 flaky → **test-id별 기대 span
   완료를 폴링/await**(타임아웃) 하는 동기화 전략을 spec에서 정한다.
+- **에이전트 오버헤드·런타임 토글** — Java 에이전트 attach는 JVM 시작 시점 결정이라 런타임 제거는
+  불가하다. 단 우리 설계에선 **빌더가 SUT를 띄울 때만** `JAVA_TOOL_OPTIONS` 로 주입하므로 분석 런에만
+  붙는다(평상시 부재). 떠 있는 JVM 내 **요청별 on/off** 는 **parent-based sampling + 빌더의 `traceparent`
+  주입**으로 — 추적된 요청만 span 생성·export, 그 외 트래픽은 0(오버헤드 무시 가능). exporter/instrumentation
+  설정 플립은 startup-read라 라이브 변경 불가(재시작 필요).
 - **v2.16.0 PoC** 가 1단계 게이트(버전 bump + driver별 값 노출 + batch). 실패 시 폴백 유지, 기본값 전환 보류.
 
 ---
