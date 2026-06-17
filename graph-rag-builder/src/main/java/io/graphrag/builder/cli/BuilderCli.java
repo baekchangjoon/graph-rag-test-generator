@@ -174,7 +174,6 @@ public final class BuilderCli {
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
         // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
         Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
-        int totalAppBranches;
         // 탐색 전체의 line+branch 집계용: 엔드포인트별 누적 exec를 OR 병합한 run-wide 스토어.
         org.jacoco.core.data.ExecutionDataStore runWideExec = new org.jacoco.core.data.ExecutionDataStore();
         ExplorationAccumulators acc = new ExplorationAccumulators(
@@ -189,8 +188,9 @@ public final class BuilderCli {
         JacocoAgent jacoco = JacocoAgent.prepare(workDir);
         OtelAgent otel = OtelAgent.prepare(workDir);
 
+        ExplorationResult result;
         if (config.attach() != null) {
-            totalAppBranches = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
+            result = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
                     index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants, acc);
         } else {
             SutOptions sutOptions = new SutOptions(
@@ -203,12 +203,12 @@ public final class BuilderCli {
                 env.start(config.sutJar(), workDir, sutOptions,
                         config.externalStubsDir(), config.sutEnv());
                 env.coverageEndpoint("localhost", jacoco.tcpPort());
-                totalAppBranches = explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, acc).totalAppBranches();
+                result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                        responseDtoFieldSets, plan, enumConstants, acc);
             }
         }
-
-        List<TableSchema> tables = acc.tables();
+        int totalAppBranches = result.totalAppBranches();
+        List<TableSchema> tables = result.tables();
 
         paths.addAll(plan.carriedPaths());
         sql.addAll(plan.carriedSql());
@@ -237,7 +237,7 @@ public final class BuilderCli {
         return asset;
     }
 
-    /** explore()가 채우는 mutable 누적기. tables는 explore() 내부에서 set 후 build()가 읽는다. */
+    /** explore()가 채우는 mutable 누적기. */
     private record ExplorationAccumulators(
             List<ExploredPath> paths,
             List<CapturedSql> sql,
@@ -247,26 +247,11 @@ public final class BuilderCli {
             List<RequiredSeed> allSeeds,
             List<ExplorationReport.EndpointExploration> reportEntries,
             Set<io.graphrag.model.BranchRef> coveredAppBranches,
-            org.jacoco.core.data.ExecutionDataStore runWideExec,
-            java.util.concurrent.atomic.AtomicReference<List<TableSchema>> tablesRef) {
-
-        ExplorationAccumulators(
-                List<ExploredPath> paths, List<CapturedSql> sql, List<CapturedHttpCall> httpCalls,
-                List<io.graphrag.model.WsExchange> wsExchanges,
-                List<io.graphrag.model.KafkaExchange> kafkaExchanges, List<RequiredSeed> allSeeds,
-                List<ExplorationReport.EndpointExploration> reportEntries,
-                Set<io.graphrag.model.BranchRef> coveredAppBranches,
-                org.jacoco.core.data.ExecutionDataStore runWideExec) {
-            this(paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
-                    coveredAppBranches, runWideExec,
-                    new java.util.concurrent.atomic.AtomicReference<>(List.of()));
-        }
-
-        List<TableSchema> tables() { return tablesRef.get(); }
+            org.jacoco.core.data.ExecutionDataStore runWideExec) {
     }
 
     /** attach 모드: 사용자 compose + 생성 override 로 SUT를 띄우고 동일한 explore()를 돌린다. */
-    private static int runAttached(BuildConfig config, JacocoAgent jacoco, OtelAgent otel, Path workDir,
+    private static ExplorationResult runAttached(BuildConfig config, JacocoAgent jacoco, OtelAgent otel, Path workDir,
             Map<String, String> mybatisLogLevels, IndexResult index,
             io.graphrag.builder.index.WsIndexResult wsIndex,
             io.graphrag.builder.index.KafkaIndexResult kafkaIndex, List<MapperStatement> mappers,
@@ -299,11 +284,11 @@ public final class BuilderCli {
         try (AttachedComposeEnvironment env = new AttachedComposeEnvironment(envCfg, config.dbConfig().type())) {
             env.start(workDir);
             return explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                    responseDtoFieldSets, plan, enumConstants, acc).totalAppBranches();
+                    responseDtoFieldSets, plan, enumConstants, acc);
         }
     }
 
-    private record ExplorationResult(int totalAppBranches) {}
+    private record ExplorationResult(int totalAppBranches, java.util.List<io.graphrag.model.TableSchema> tables) {}
 
     /** SUT 환경(env) 위에서 Kafka/HTTP/WS 탐색을 돌리고 acc를 채운다. analysis/attach 공통. */
     private static ExplorationResult explore(ExplorationEnvironment env, BuildConfig config,
@@ -325,13 +310,13 @@ public final class BuilderCli {
         Set<io.graphrag.model.BranchRef> coveredAppBranches = acc.coveredAppBranches();
         org.jacoco.core.data.ExecutionDataStore runWideExec = acc.runWideExec();
         int totalAppBranches;
+        List<TableSchema> tables;
 
         AuthTokenProvider authProvider = config.authConfig() == null ? null
                 : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
 
         try (Connection connection = env.openConnection()) {
-            List<TableSchema> tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
-            acc.tablesRef().set(tables);
+            tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
             log.info("extracted schema: {} table(s)", tables.size());
 
             CoverageClient coverageClient = new CoverageClient(env.coverageHost(), env.coveragePort());
@@ -375,7 +360,7 @@ public final class BuilderCli {
             // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
             String kafkaBootstrap = env.kafkaBootstrapServers();
             if (kafkaBootstrap == null && !kafkaIndex.consumers().isEmpty()) {
-                log.warn("attach mode: {} kafka consumer(s) skipped (no --kafka-bootstrap)",
+                log.warn("{} kafka consumer(s) skipped (no kafka bootstrap configured)",
                         kafkaIndex.consumers().size());
             }
             if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
@@ -469,7 +454,7 @@ public final class BuilderCli {
                     explCov.covered().size(), explCov.totalBranches(),
                     explCov.totalBranches() == 0 ? 0 : 100 * explCov.covered().size() / explCov.totalBranches());
         }
-        return new ExplorationResult(totalAppBranches);
+        return new ExplorationResult(totalAppBranches, tables);
     }
 
     /** attach 모드 CLI 설정 (사용자 compose + 생성 override). */
@@ -568,7 +553,7 @@ public final class BuilderCli {
 
     private static String required(Map<String, String> options, String key) {
         String value = options.get(key);
-        if (value == null) {
+        if (value == null || value.isEmpty()) {
             throw new IllegalArgumentException("missing required option: " + key);
         }
         return value;
