@@ -1,12 +1,14 @@
 package io.graphrag.testlib.adapter.real;
 
 import io.graphrag.model.Json;
+import io.graphrag.model.RequestHeaders;
 import io.graphrag.testlib.api.AuthClient;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
 import java.util.Map;
 
 /** petclinic ApiBlackBoxTestSupport.authToken() 패턴: login 1회 + volatile 캐싱. */
@@ -15,13 +17,16 @@ public final class JwtAuthClient implements AuthClient {
     private final String baseUri;
     private final String loginPath;
     private final String tokenField;
+    private final RequestHeaders requestHeaders;
     private final HttpClient http = HttpClient.newHttpClient();
     private volatile String cached;
 
-    public JwtAuthClient(String baseUri, String loginPath, String tokenField) {
+    public JwtAuthClient(String baseUri, String loginPath, String tokenField,
+                         RequestHeaders requestHeaders) {
         this.baseUri = baseUri;
         this.loginPath = loginPath;
         this.tokenField = tokenField;
+        this.requestHeaders = requestHeaders;
     }
 
     @Override
@@ -42,10 +47,13 @@ public final class JwtAuthClient implements AuthClient {
         try {
             String body = Json.mapper().writeValueAsString(
                     Map.of("username", username, "password", password));
+            HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(baseUri + loginPath))
+                    .header("Content-Type", "application/json");
+            if (requestHeaders != null && requestHeaders.onLogin()) {
+                requestHeaders.resolved(Instant.now()).forEach(req::header);
+            }
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(baseUri + loginPath))
-                            .header("Content-Type", "application/json")
-                            .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                    req.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
                     HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() / 100 != 2) {
                 throw new IllegalStateException("login failed: HTTP " + response.statusCode());
