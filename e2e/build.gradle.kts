@@ -28,3 +28,10 @@ tasks.test {
     onlyIf { System.getenv("APP_BASE_URI") != null }
     outputs.upToDateWhen { false }
 }
+
+// run-dist-e2e.sh(A-E2E-3)가 생성 테스트를 javac 컴파일할 때 쓰는 classpath
+// (testlib + restassured/junit/kafka 등 전이 의존). 소스 컴파일은 트리거하지 않는다.
+tasks.register("printTestRuntimeClasspath") {
+    val cp = configurations.named("testRuntimeClasspath")
+    doLast { println(cp.get().asPath) }
+}

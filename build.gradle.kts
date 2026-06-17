@@ -3,6 +3,16 @@ plugins {
     alias(libs.plugins.spring.dep.mgmt) apply false
 }
 
+// 릴리스 버전: git 태그가 주입하는 RELEASE_VERSION(예: v1.2.3 → 1.2.3). 미설정 시 스냅샷.
+// 배포 산출물 3종에만 적용한다 — 샘플/서비스 모듈에 적용하면 bootJar 이름이 바뀌어
+// (order-service-<v>.jar) run-e2e.sh·통합테스트가 참조하는 order-service.jar 등이 깨진다.
+val releaseVersion = providers.environmentVariable("RELEASE_VERSION").orElse("0.0.0-SNAPSHOT").get()
+subprojects {
+    if (name in setOf("graph-rag-builder", "test-generator", "testlib")) {
+        version = releaseVersion
+    }
+}
+
 subprojects {
     plugins.withType<JavaPlugin> {
         extensions.configure<JavaPluginExtension> {
