@@ -15,5 +15,17 @@ public record PathCandidate(
         String discoveredBy,
         long logStart,
         long logEnd,
-        List<RawHttpExchange> httpExchanges) {
+        List<RawHttpExchange> httpExchanges,
+        List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
+
+    public PathCandidate {
+        capturedSql = capturedSql == null ? List.of() : capturedSql;
+    }
+
+    public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
+                         List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
+                         List<RawHttpExchange> httpExchanges) {
+        this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
+                List.of());
+    }
 }
