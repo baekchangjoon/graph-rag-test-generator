@@ -18,13 +18,15 @@ public record IncrementalPlan(
         List<ExploredPath> carriedPaths,
         List<CapturedSql> carriedSql,
         List<CapturedHttpCall> carriedHttpCalls,
-        List<WsExchange> carriedWsExchanges) {
+        List<WsExchange> carriedWsExchanges,
+        List<io.graphrag.model.KafkaExchange> carriedKafkaExchanges,
+        List<io.graphrag.model.RequiredSeed> carriedSeeds) {
 
     public boolean shouldExplore(String id) {
         return exploreIds == null || exploreIds.contains(id);
     }
 
     public static IncrementalPlan exploreAll() {
-        return new IncrementalPlan(null, List.of(), List.of(), List.of(), List.of());
+        return new IncrementalPlan(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
     }
 }

@@ -63,6 +63,52 @@ public class IncrementalBuildPlanner {
                         .filter(s -> carriedPathIds.contains(s.pathId())).toList(),
                 previous.httpCalls().stream()
                         .filter(c -> carriedPathIds.contains(c.pathId())).toList(),
-                carriedWsExchanges);
+                carriedWsExchanges, List.of(), List.of());
+    }
+
+    /** --endpoint 전용: 주어진 id 집합만 탐색, 나머지는 base에서 전부 이월(Kafka·seed 포함). base=null이면 부분(이월 없음). */
+    public IncrementalPlan planForEndpoints(GraphAsset previous, Set<String> exploreIds,
+            List<Endpoint> endpoints, List<WsEndpoint> wsEndpoints,
+            List<io.graphrag.model.KafkaConsumer> kafkaConsumers) {
+        if (previous == null) {
+            return new IncrementalPlan(new LinkedHashSet<>(exploreIds),
+                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+        // carried unit ids = present in current index AND not selected
+        Set<String> carriedEndpointIds = new LinkedHashSet<>();
+        endpoints.forEach(e -> { if (!exploreIds.contains(e.id())) carriedEndpointIds.add(e.id()); });
+        Set<String> carriedWsIds = new LinkedHashSet<>();
+        wsEndpoints.forEach(w -> { if (!exploreIds.contains(w.id())) carriedWsIds.add(w.id()); });
+        Set<String> carriedKafkaConsumerIds = new LinkedHashSet<>();
+        kafkaConsumers.forEach(k -> { if (!exploreIds.contains(k.id())) carriedKafkaConsumerIds.add(k.id()); });
+
+        List<ExploredPath> carriedPaths = previous.paths().stream()
+                .filter(p -> carriedEndpointIds.contains(p.endpointId())).toList();
+        List<WsExchange> carriedWs = previous.wsExchanges().stream()
+                .filter(x -> carriedWsIds.contains(x.wsEndpointId())).toList();
+        List<io.graphrag.model.KafkaExchange> carriedKafka = previous.kafkaExchanges().stream()
+                .filter(x -> carriedKafkaConsumerIds.contains(x.kafkaConsumerId())).toList();
+
+        // SQL: pathId join for HTTP/WS; explicit capturedSqlIds for Kafka.
+        Set<String> carriedPathIds = new LinkedHashSet<>();
+        carriedPaths.forEach(p -> carriedPathIds.add(p.id()));
+        carriedWs.forEach(x -> carriedPathIds.add(x.id()));
+        Set<String> carriedKafkaSqlIds = new LinkedHashSet<>();
+        carriedKafka.forEach(x -> carriedKafkaSqlIds.addAll(x.capturedSqlIds()));
+        List<io.graphrag.model.CapturedSql> carriedSql = previous.sql().stream()
+                .filter(s -> carriedPathIds.contains(s.pathId()) || carriedKafkaSqlIds.contains(s.id()))
+                .toList();
+
+        // Seeds: by RequiredSeed.pathId == carried path id, OR id referenced by a carried path's requiredSeedIds.
+        Set<String> carriedSeedRefIds = new LinkedHashSet<>();
+        carriedPaths.forEach(p -> carriedSeedRefIds.addAll(p.requiredSeedIds()));
+        List<io.graphrag.model.RequiredSeed> carriedSeeds = previous.seeds().stream()
+                .filter(s -> carriedPathIds.contains(s.pathId()) || carriedSeedRefIds.contains(s.id()))
+                .toList();
+
+        return new IncrementalPlan(new LinkedHashSet<>(exploreIds), carriedPaths,
+                carriedSql,
+                previous.httpCalls().stream().filter(c -> carriedPathIds.contains(c.pathId())).toList(),
+                carriedWs, carriedKafka, carriedSeeds);
     }
 }
