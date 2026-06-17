@@ -17,7 +17,7 @@ awaitility = "4.2.2"
 mybatisStarter = "3.0.5"
 jacoco = "0.8.13"
 wiremock = "3.13.0"
-otelAgent = "2.14.0"
+otelAgent = "2.16.0"
 asm = "9.7"
 z3turnkey = "4.13.0.1"
 
