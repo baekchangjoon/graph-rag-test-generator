@@ -3,7 +3,7 @@ package io.graphrag.builder.run;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
-import io.graphrag.builder.capture.SqlLogParser;
+import io.graphrag.builder.capture.SqlCaptureBackend;
 import io.graphrag.builder.coverage.BranchCoverage;
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
 import io.graphrag.builder.coverage.CoverageClient;
@@ -89,6 +89,7 @@ public class EndpointExplorationRunner {
     private final Map<String, List<String>> enumConstants;  // enum FQN → 상수 (유효 happy 입력)
     private final Map<String, List<String>> enumColumns;    // 컬럼(snake) → 유효 enum 상수 (시드 읽기 500 방지)
     private final RequestHeaders extraHeaders;              // 사용자 지정 커스텀 헤더 (B3)
+    private final SqlCaptureBackend sqlCapture;             // 요청별 SQL 캡처 backend (log 폴백 / OTEL)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -105,7 +106,8 @@ public class EndpointExplorationRunner {
                                      AuthConfig authConfig,
                                      Map<String, List<String>> enumConstants,
                                      Map<String, List<String>> enumColumns,
-                                     RequestHeaders extraHeaders) {
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -123,6 +125,7 @@ public class EndpointExplorationRunner {
         this.enumConstants = enumConstants;
         this.enumColumns = enumColumns;
         this.extraHeaders = extraHeaders;
+        this.sqlCapture = sqlCapture;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -364,7 +367,7 @@ public class EndpointExplorationRunner {
                 }
                 InvocationOutcome out = invoker.invoke(body);
                 String pathId = endpoint.id() + "-sg" + vseq;
-                List<CapturedSql> sql = captureSqlForRange(pathId, body, out.logStart(), out.logEnd());
+                List<CapturedSql> sql = captureSqlFromParsed(pathId, body, out.capturedSql());
                 sqls.addAll(sql);
                 List<String> seedIds = new ArrayList<>();
                 int sj = 0;
@@ -392,10 +395,9 @@ public class EndpointExplorationRunner {
         return javaType.equals("boolean") || javaType.equals("java.lang.Boolean");
     }
 
-    /** captureSql(PathCandidate)의 임의 로그구간 버전 — 변종 요청의 SQL 캡처용. */
-    private List<CapturedSql> captureSqlForRange(String pathId, JsonNode body,
-                                                 long logStart, long logEnd) {
-        List<ParsedSql> parsed = SqlLogParser.parse(sut.readLogRange(logStart, logEnd));
+    /** backend가 drain한 ParsedSql를 CapturedSql로 환원 (모든 캡처 경로 공통). */
+    private List<CapturedSql> captureSqlFromParsed(String pathId, JsonNode body,
+                                                   List<ParsedSql> parsed) {
         Set<String> apiValues = bodyValues(body);
         List<CapturedSql> captured = new ArrayList<>();
         int sequence = 0;
@@ -653,6 +655,7 @@ public class EndpointExplorationRunner {
     private InvocationOutcome doSend(HttpClient http, Endpoint endpoint, JsonNode input,
                                     String authHeaderValue) throws Exception {
         long logStart = sut.logOffset();
+        SqlCaptureBackend.Scope sqlScope = sqlCapture.begin();
         String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
         // @Controller 폼 핸들러는 application/x-www-form-urlencoded, 그 외는 JSON.
         boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
@@ -665,6 +668,16 @@ public class EndpointExplorationRunner {
             builder.header(authConfig.headerName(), authHeaderValue);
         }
         for (Map.Entry<String, String> h : extraHeaders.resolved(Instant.now()).entrySet()) {
+            // backend의 traceparent가 이겨야 한다 (HttpRequest.Builder.header는 append만 하므로
+            // 사용자 traceparent를 그대로 두면 두 값이 보내져 상관관계가 깨진다) → 사용자 것 skip.
+            if (h.getKey().equalsIgnoreCase("traceparent")) {
+                log.warn("ignoring user-supplied 'traceparent' header (backend correlation header wins)");
+                continue;
+            }
+            builder.header(h.getKey(), h.getValue());
+        }
+        // SQL 캡처 backend의 상관 헤더 주입 (OTEL: traceparent, log-parser: 없음).
+        for (Map.Entry<String, String> h : sqlScope.requestHeaders().entrySet()) {
             builder.header(h.getKey(), h.getValue());
         }
         String method = endpoint.httpMethod();
@@ -678,7 +691,7 @@ public class EndpointExplorationRunner {
         }
         HttpResponse<String> response = http.send(builder.build(),
                 HttpResponse.BodyHandlers.ofString());
-        Thread.sleep(150);   // 콘솔 로그 flush 여유
+        List<ParsedSql> drained = sqlScope.drain();   // flush 여유는 backend.drain() 내부로 이동
         ExecutionDataStore delta = coverage.dump(true);
         String coverageKey = CoverageFingerprint.of(delta, appClasses);
         for (ExecutionData ed : delta.getContents()) {
@@ -690,7 +703,7 @@ public class EndpointExplorationRunner {
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
                 httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                coverageKey);
+                coverageKey, drained);
     }
 
     /**
@@ -934,8 +947,7 @@ public class EndpointExplorationRunner {
     }
 
     private List<CapturedSql> captureSql(PathCandidate candidate) {
-        return captureSqlForRange(candidate.pathId(), candidate.body(),
-                candidate.logStart(), candidate.logEnd());
+        return captureSqlFromParsed(candidate.pathId(), candidate.body(), candidate.capturedSql());
     }
 
     /** path의 도달 분기 라인과 겹치는 handler 분기 조건을 제약으로 첨부 (1.2). */
