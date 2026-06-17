@@ -89,7 +89,8 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
                 if (resp.statusCode() == 200 && resp.body().contains("UP")) { return; }
             } catch (Exception ignored) { /* 아직 부팅 중 */ }
             try { Thread.sleep(500); } catch (InterruptedException e) {
-                Thread.currentThread().interrupt(); break;
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("awaitAppReady 중단됨", e);
             }
         }
         throw new IllegalStateException("attach SUT가 " + config.readyTimeoutSeconds()
@@ -123,7 +124,10 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     }
 
     @Override public void close() {
-        if (logTail != null) { logTail.destroy(); }
-        run(downCommand(config), "compose down");
+        try {
+            if (sut != null) { sut.stop(); }   // ContainerSut.stop(): destroy → waitFor → destroyForcibly
+        } finally {
+            run(downCommand(config), "compose down");
+        }
     }
 }
