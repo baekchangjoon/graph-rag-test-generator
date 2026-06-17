@@ -40,13 +40,17 @@ assert r["coveredAppBranches"]>0, "no branches covered (jacoco attach broken)"
 print(f"OK endpoints={len(g['endpoints'])} sql={len(g['sql'])} coveredBranches={r['coveredAppBranches']}")
 PY
 
-# OTEL 경로가 실제로 동작했는지: 리시버 활성 로그 존재 + 폴백 경고 0.
+# OTEL 경로가 실제로 동작했는지: 리시버 활성 + OTEL-문제 신호 0.
+# - "entry span timeout": 컨테이너→호스트 OTLP 미도달(또는 agent 미export)
+# - "OTEL capture may be misconfigured": entry span은 왔지만 OTEL DB span 0인데 로그엔 SQL 있음
+#   (semconv 키 불일치 등 무음 폴백). SQL 없는 요청(403 등)은 둘 다 비어 신호 안 남음.
 grep -q "OTEL SQL capture (attach): otlp receiver" "$LOG" \
   || { echo "❌ OTLP 리시버 attach 로그 없음 (OTEL 모드 미동작)"; exit 1; }
-if grep -qE "fell back to log-parser|entry span timeout" "$LOG"; then
-  echo "❌ OTEL 폴백 발생 — 컨테이너→호스트 OTLP 도달 실패 가능"; grep -E "fell back to log-parser|entry span timeout" "$LOG"; exit 1
+if grep -qE "entry span timeout|OTEL capture may be misconfigured" "$LOG"; then
+  echo "❌ OTEL 캡처 문제 신호 발생 (컨테이너→호스트 미도달 또는 무음 폴백)"
+  grep -E "entry span timeout|OTEL capture may be misconfigured" "$LOG"; exit 1
 fi
-echo "✅ OTEL 경로 확인 (리시버 활성 + 폴백 0)"
+echo "✅ OTEL 경로 확인 (리시버 활성 + OTEL-문제 신호 0)"
 
 echo "=== [4/4] teardown 후 잔여 컨테이너 0 검증 ==="
 cleanup

@@ -451,10 +451,13 @@ public final class BuilderCli {
             // 소유한 OTLP receiver로 span 캡처(요청별 traceparent로 귀속), 아니면 로그 파싱 폴백(기존 동작 동일).
             // Kafka(레코드 헤더 주입)와 HTTP(요청 헤더 주입) 경로가 동일 backend를 공유 — 단조 traceId 카운터로
             // 모든 발행/요청이 고유 trace를 받는다. Kafka 블록보다 먼저 만들어 runner에 주입한다.
+            // 결정적 시드: 같은 commit 재분석은 동일 trace 시퀀스(재현성), 다른 SUT/commit은 충돌 없음.
+            String traceRunId = config.commitSha() == null
+                    ? config.sutId() : config.sutId() + ":" + config.commitSha();
             io.graphrag.builder.capture.SqlCaptureBackend sqlCapture =
                     "otel".equals(config.sqlCapture()) && env.otlpReceiver() != null
                             ? new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
-                                    new io.graphrag.builder.capture.TraceParent(config.sutId()))
+                                    new io.graphrag.builder.capture.TraceParent(traceRunId))
                             : new io.graphrag.builder.capture.LogParserCapture(env.sut());
 
             // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
@@ -663,7 +666,7 @@ public final class BuilderCli {
         return value;
     }
 
-    /** --sql-capture otel|log (기본 log). 그 외 값은 거부. */
+    /** --sql-capture otel|log (미지정 시 기본 otel). 그 외 값은 거부. */
     private static String sqlCaptureMode(String value) {
         if (value == null) {
             return "otel";   // PoC①②+수용1~4 green → OTEL이 기본. log는 --sql-capture log 폴백.
