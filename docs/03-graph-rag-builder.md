@@ -106,6 +106,12 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 이 분석 환경은 **테스트가 실행될 환경과는 별개**. 혼동하지 않도록 분리.
 
+### Attach 모드 (사용자 compose로 분석)
+
+위 기본 환경 대신, 사용자가 가진 `docker-compose.yml` 로 SUT를 띄워 분석할 수도 있다. 빌더가
+override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전트·포트 publish를 주입하고
+스택의 up/down을 소유한다. 플래그·생성 override·v1 한계는 [docs/26](26-attach-mode.md) 참조.
+
 ## 외부에서 가져오지 않는 데이터
 
 - 운영/스테이징 실 트래픽 로그
