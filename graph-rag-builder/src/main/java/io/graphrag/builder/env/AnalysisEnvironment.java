@@ -111,7 +111,7 @@ public class AnalysisEnvironment implements AutoCloseable {
         return DriverManager.getConnection(db.getJdbcUrl(), db.getUsername(), db.getPassword());
     }
 
-    public SutProcess sut() {
+    public SutHandle sut() {
         return sut;
     }
 
