@@ -49,7 +49,8 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
                 "-f", c.userCompose().toString(), "-f", c.overrideCompose().toString()));
     }
     static List<String> upCommand(Config c) {
-        List<String> cmd = baseCompose(c); cmd.addAll(List.of("up", "-d", "--wait")); return cmd;
+        // app 서비스(+ 그 depends_on)만 기동: 사용자 compose의 무관한 보조 서비스까지 빌드/기동하지 않는다.
+        List<String> cmd = baseCompose(c); cmd.addAll(List.of("up", "-d", "--wait", c.appService())); return cmd;
     }
     static List<String> downCommand(Config c) {
         List<String> cmd = baseCompose(c); cmd.addAll(List.of("down", "-v")); return cmd;

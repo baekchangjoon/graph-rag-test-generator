@@ -14,11 +14,11 @@ class AttachedComposeEnvironmentTest {
                 "jdbc:postgresql://localhost:55432/app", "app", "app",
                 "localhost", 16300, null, "/actuator/health", 120);
     }
-    @Test void upCommandUsesBothFilesAndProjectNameAndWait() {
+    @Test void upCommandUsesBothFilesAndProjectNameAndWaitForAppServiceOnly() {
         List<String> cmd = AttachedComposeEnvironment.upCommand(cfg());
         assertEquals(List.of("docker","compose","-p","grb-attach",
                 "-f","/p/docker-compose.yml","-f","/p/.grb/override.yml",
-                "up","-d","--wait"), cmd);
+                "up","-d","--wait","app"), cmd);
     }
     @Test void downCommandRemovesVolumes() {
         List<String> cmd = AttachedComposeEnvironment.downCommand(cfg());
