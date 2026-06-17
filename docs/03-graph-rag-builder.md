@@ -94,6 +94,14 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 --changed-files <list-file>` — 더티 파티션(패키지)만 재탐색, 클린 파티션의
 탐색 사실은 이전 그래프에서 이월. 정적 인덱싱은 항상 풀로 수행.
 
+- **엔드포인트 선택 (`--endpoint <spec[,spec]>`)**: 선택한 단위만 탐색한다.
+  스펙은 단위 id(`post-api-orders`) 또는 `METHOD /path`(`POST /api/orders`)이며
+  HTTP 엔드포인트·WS 엔드포인트·Kafka consumer 에 적용된다(WS/Kafka 는 id 만).
+  `--incremental-base` 동반 시 나머지 단위의 탐색 사실(path/sql/httpCall/wsExchange/
+  kafkaExchange/seed)은 base 에서 그대로 이월하고, base 없으면 선택 단위만 담은
+  **부분 그래프**가 된다. 어느 경우든 정적 엔드포인트 목록(`endpoints()` 등)은
+  필터링하지 않고 풀로 유지한다. `--changed-files` 와 함께 주면 `--endpoint` 가 우선.
+
 ## 분석 환경
 
 분석 시점에 도구가 직접 띄우는 환경:
