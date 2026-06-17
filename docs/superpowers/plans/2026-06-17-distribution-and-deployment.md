@@ -200,7 +200,9 @@ CLI만으로는 생성된 테스트를 **돌릴 수 없다**. 다음을 prebuilt
    ci.yml release 잡이 GHCR(`ghcr.io/<owner>/test-generator:<v>`,`:latest`)로 push(`packages: write`).
    수용 `e2e/run-docker-e2e.sh`(D-E2E-1 GREEN — 이미지가 호스트 Java 없이 graph.json→.java). 실제
    push는 다음 릴리스 태그에서 검증.
-4. **Phase D-2**: builder 이미지(Linux 우선) + 네트워킹 문서. 수용: D-E2E-2(Linux).
+4. **Phase D-2** ✅ 완료: `docker/graph-rag-builder.Dockerfile` + release 잡이 builder 이미지도 GHCR push.
+   수용 `e2e/run-docker-builder-e2e.sh`(Linux 전용, `--network host` + docker.sock) → ci.yml
+   `docker-builder-e2e` 잡(PR에서 ubuntu 러너로 D-E2E-2 실측). 로컬(macOS)은 --network host 미지원.
 5. **Phase D-3**: 실행 환경 이미지(socket-mock·dashboard) + OTEL 자산 + compose 참조 전환.
    수용: D-E2E-3.
 
