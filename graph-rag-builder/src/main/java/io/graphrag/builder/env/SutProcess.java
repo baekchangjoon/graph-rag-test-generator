@@ -19,7 +19,7 @@ import java.time.Instant;
  * SUT 운영 jar를 자식 프로세스로 기동 (SUT 소스 무수정 원칙, docs/01).
  * Hibernate SQL 로깅은 env 주입으로만 활성화하고 stdout을 파일로 캡처한다.
  */
-public final class SutProcess {
+public final class SutProcess implements SutHandle {
 
     private static final Logger log = LoggerFactory.getLogger(SutProcess.class);
     private static final Duration BOOT_TIMEOUT = Duration.ofSeconds(90);
