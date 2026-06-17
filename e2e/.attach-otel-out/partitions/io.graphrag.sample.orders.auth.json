@@ -1,0 +1,55 @@
+{
+  "sutId" : null,
+  "commitSha" : null,
+  "endpoints" : [ {
+    "id" : "post-api-auth-login",
+    "httpMethod" : "POST",
+    "path" : "/api/auth/login",
+    "handlerClass" : "io.graphrag.sample.orders.auth.AuthController",
+    "handlerMethod" : "login",
+    "params" : [ {
+      "name" : "request",
+      "javaType" : "io.graphrag.sample.orders.auth.AuthController$LoginRequest",
+      "kind" : "BODY"
+    } ],
+    "authRequired" : false
+  } ],
+  "paths" : [ {
+    "id" : "post-api-auth-login-s400-1",
+    "endpointId" : "post-api-auth-login",
+    "sampleInput" : {
+      "username" : "sample-username",
+      "password" : "sample-password"
+    },
+    "expectedStatus" : 400,
+    "sampleResponse" : {
+      "error" : "invalid credentials"
+    },
+    "capturedSqlIds" : [ ],
+    "capturedHttpCallIds" : [ ],
+    "branchesTaken" : [ {
+      "classFqn" : "io.graphrag.sample.orders.auth.AuthController",
+      "method" : "login",
+      "line" : 31,
+      "branchIndex" : 0
+    }, {
+      "classFqn" : "io.graphrag.sample.orders.auth.JwtAuthFilter",
+      "method" : "doFilterInternal",
+      "line" : 28,
+      "branchIndex" : 0
+    } ],
+    "discoveredBy" : "heuristic",
+    "constraints" : [ "(!io.graphrag.sample.orders.auth.AuthController.ADMIN_USER.equals(request.username())) || (!io.graphrag.sample.orders.auth.AuthController.ADMIN_PASS.equals(request.password()))" ],
+    "validationWarnings" : [ ],
+    "requiredSeedIds" : [ ]
+  } ],
+  "sql" : [ ],
+  "tables" : [ ],
+  "mappers" : [ ],
+  "httpCalls" : [ ],
+  "wsEndpoints" : [ ],
+  "wsExchanges" : [ ],
+  "kafkaConsumers" : [ ],
+  "kafkaExchanges" : [ ],
+  "seeds" : [ ]
+}

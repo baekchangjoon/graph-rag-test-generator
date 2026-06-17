@@ -36,7 +36,7 @@ public record BuildConfig(
         changedFiles = changedFiles == null ? List.of() : changedFiles;
         requestHeaders = requestHeaders == null ? io.graphrag.model.RequestHeaders.empty() : requestHeaders;
         endpointSelectors = endpointSelectors == null ? List.of() : endpointSelectors;
-        sqlCapture = sqlCapture == null ? "log" : sqlCapture;
+        sqlCapture = sqlCapture == null ? "otel" : sqlCapture;   // 기본 OTEL (log는 명시 폴백)
     }
 
     /** 풀빌드 설정 (증분 옵션 없음). */
@@ -46,7 +46,7 @@ public record BuildConfig(
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, false, null,
-                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "log");
+                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel");
     }
 
     /** attach/requestHeaders 를 생략하는 편의 생성자 (기존 17-arg 호출부 호환). */
@@ -58,6 +58,6 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, null, io.graphrag.model.RequestHeaders.empty(),
-                List.of(), "log");
+                List.of(), "otel");
     }
 }
