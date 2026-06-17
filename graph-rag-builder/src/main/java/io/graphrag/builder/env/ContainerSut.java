@@ -38,6 +38,15 @@ public final class ContainerSut implements SutHandle {
     }
 
     @Override public void stop() {
-        if (logTail != null) { logTail.destroy(); }
+        if (logTail == null) { return; }
+        logTail.destroy();
+        try {
+            if (!logTail.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                logTail.destroyForcibly();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logTail.destroyForcibly();
+        }
     }
 }
