@@ -34,5 +34,33 @@ class OverrideComposeGeneratorTest {
         }
         assertTrue(appPort && jacocoPort);
         assertEquals("/host/agents:/grb-agents:ro", app.path("volumes").get(0).asText());
+        // 기본(편의 생성자)은 extra_hosts/batch 무주입
+        assertTrue(app.path("extra_hosts").isMissingNode());
+        assertFalse(app.path("environment").path("SPRING_APPLICATION_JSON").asText()
+                .contains("batch_size"));
+    }
+
+    @Test
+    void otelAttachMode_addsHostGatewayAndDisablesBatch() throws Exception {
+        var spec = new OverrideComposeGenerator.Spec(
+                "app", "/host/agents", 8080, 58080, 6300, 16300,
+                "-javaagent:/grb-agents/otel-javaagent.jar",
+                Map.of(),
+                Map.of("OTEL_EXPORTER_OTLP_ENDPOINT", "http://host.docker.internal:64048",
+                        "OTEL_EXPORTER_OTLP_HEADERS", "x-graphrag-token=s3cr3t"),
+                true, true);   // addHostGateway, disableBatch
+        String yaml = new OverrideComposeGenerator().generate(spec);
+        JsonNode app = new YAMLMapper().readTree(yaml).path("services").path("app");
+
+        boolean hostGateway = false;
+        for (JsonNode h : app.path("extra_hosts")) {
+            if (h.asText().equals("host.docker.internal:host-gateway")) hostGateway = true;
+        }
+        assertTrue(hostGateway, "extra_hosts host-gateway 주입");
+        assertEquals("http://host.docker.internal:64048",
+                app.path("environment").path("OTEL_EXPORTER_OTLP_ENDPOINT").asText());
+        String saj = app.path("environment").path("SPRING_APPLICATION_JSON").asText();
+        assertTrue(saj.contains("spring.jpa.properties.hibernate.jdbc.batch_size"), "batch_size=0 병합");
+        assertTrue(saj.contains("logging.level.org.hibernate.SQL"), "기존 로깅 유지");
     }
 }

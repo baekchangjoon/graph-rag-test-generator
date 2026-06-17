@@ -36,12 +36,21 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
 
     private final Config config;
     private final DbConfig.Type dbType;
+    // OTEL SQL 캡처 모드에서만 non-null. 호스트에 떠 있는 리시버를 runAttached가 만들어 주입하며,
+    // 이 환경이 생명주기를 소유(close 시 stop)한다. log 모드면 null → explore()가 LogParserCapture 폴백.
+    private final io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver;
     private ContainerSut sut;
     private Process logTail;
 
     public AttachedComposeEnvironment(Config config, DbConfig.Type dbType) {
+        this(config, dbType, null);
+    }
+
+    public AttachedComposeEnvironment(Config config, DbConfig.Type dbType,
+                                      io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver) {
         this.config = config;
         this.dbType = dbType;
+        this.otlpReceiver = otlpReceiver;
     }
 
     static List<String> baseCompose(Config c) {
@@ -114,6 +123,7 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     }
 
     @Override public SutHandle sut() { return sut; }
+    @Override public io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver() { return otlpReceiver; }
     @Override public DbConfig.Type dbType() { return dbType; }
     @Override public HttpCaptureServer httpCapture() { return null; }   // attach v1: 외부 HTTP 캡처 미지원
     @Override public String kafkaBootstrapServers() { return config.kafkaBootstrap(); }
@@ -127,6 +137,7 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     @Override public void close() {
         try {
             if (sut != null) { sut.stop(); }   // ContainerSut.stop(): destroy → waitFor → destroyForcibly
+            if (otlpReceiver != null) { otlpReceiver.stop(); }
         } finally {
             run(downCommand(config), "compose down");
         }
