@@ -178,6 +178,7 @@ public final class BuilderCli {
                 new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
             env.start(config.sutJar(), workDir, sutOptions,
                     config.externalStubsDir(), config.sutEnv());
+            env.coverageEndpoint("localhost", jacoco.tcpPort());
 
             AuthTokenProvider authProvider = config.authConfig() == null ? null
                     : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
@@ -186,7 +187,7 @@ public final class BuilderCli {
                 tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
                 log.info("extracted schema: {} table(s)", tables.size());
 
-                CoverageClient coverageClient = new CoverageClient("localhost", jacoco.tcpPort());
+                CoverageClient coverageClient = new CoverageClient(env.coverageHost(), env.coveragePort());
                 BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
                 // BOOT-INF/classes 전체 분기 = app 커버리지 분모 (1회 산출)
                 totalAppBranches = analyzer.analyze(

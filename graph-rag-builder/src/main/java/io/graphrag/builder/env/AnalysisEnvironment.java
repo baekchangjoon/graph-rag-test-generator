@@ -18,7 +18,7 @@ import java.util.Map;
  * 도구 1의 분석 환경 (docs/03): Testcontainers DB + 임베디드 WireMock +
  * SUT 운영 jar 외부 프로세스. 테스트 실행 환경(docs/06)과는 별개다.
  */
-public class AnalysisEnvironment implements AutoCloseable {
+public class AnalysisEnvironment implements ExplorationEnvironment {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisEnvironment.class);
 
@@ -31,6 +31,8 @@ public class AnalysisEnvironment implements AutoCloseable {
     private final KafkaContainer kafka;        // nullable — Kafka 의존 SUT(예: diary, mindgraph)용
     private final HttpCaptureServer httpCapture = new HttpCaptureServer();
     private SutProcess sut;
+    private String coverageHost = "localhost";
+    private int coveragePort;
 
     public AnalysisEnvironment(DbConfig dbConfig) {
         this(dbConfig, false, false);
@@ -55,6 +57,7 @@ public class AnalysisEnvironment implements AutoCloseable {
                 : null;
     }
 
+    @Override
     public DbConfig.Type dbType() {
         return dbConfig.type();
     }
@@ -107,21 +110,40 @@ public class AnalysisEnvironment implements AutoCloseable {
         return db.getJdbcUrl();
     }
 
+    @Override
     public Connection openConnection() throws SQLException {
         return DriverManager.getConnection(db.getJdbcUrl(), db.getUsername(), db.getPassword());
     }
 
+    @Override
     public SutHandle sut() {
         return sut;
     }
 
+    @Override
     public HttpCaptureServer httpCapture() {
         return httpCapture;
     }
 
     /** Kafka 부트스트랩 서버 (--with-kafka 일 때). 빌더의 KafkaProducer 발행용. null이면 미기동. */
+    @Override
     public String kafkaBootstrapServers() {
         return kafka == null ? null : kafka.getBootstrapServers();
+    }
+
+    public void coverageEndpoint(String host, int port) {
+        this.coverageHost = host;
+        this.coveragePort = port;
+    }
+
+    @Override
+    public String coverageHost() {
+        return coverageHost;
+    }
+
+    @Override
+    public int coveragePort() {
+        return coveragePort;
     }
 
     @Override
