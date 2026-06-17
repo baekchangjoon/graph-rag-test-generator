@@ -2,7 +2,7 @@
 
 - 작성일: 2026-06-18
 - 상위 로드맵: [docs/27 — 항목 1](../../27-roadmap-otel-capture-stub-seeding.md)
-- 관련 문서: [docs/06 OTEL isolation](../../06-otel-isolation.md), [docs/24 exploration backends & InputOracle](../../24-exploration-backends-and-input-oracle.md), [docs/26 attach mode](../../26-attach-mode.md)
+- 관련 문서: [docs/06 테스트 환경(OTEL propagation/isolation)](../../06-test-environment.md), [docs/24 exploration backends & InputOracle](../../24-exploration-backends-and-input-oracle.md), [docs/26 attach mode](../../26-attach-mode.md)
 
 ---
 
@@ -76,24 +76,41 @@ SqlCaptureBackend ┤        ├ requestHeaders(): Map<String,String>   (주입�
   - 기존 `SqlLogParser`는 그대로 유지(이 backend가 위임).
 
 - **`OtelSpanCapture implements SqlCaptureBackend`**
-  - 생성자에 `OtlpTraceReceiver` 주입.
-  - `begin()` → 16-byte traceId + 8-byte spanId 생성(빌더가 trace 생산자). `requestHeaders()` =
-    `{"traceparent": "00-<traceId>-<spanId>-01"}`. (no `Math.random` — 단조 카운터 + 고정 시드
-    파생으로 프로젝트의 재현성 원칙 준수. 구현은 plan에서.)
+  - 생성자에 `OtlpTraceReceiver` + **`SutHandle`(폴백용 로그 접근)** + `runId` 주입.
+  - `begin()` → traceId/spanId 생성 + **`logStart = sut.logOffset()` 동시 기록**(빈 캡처 시
+    per-request log-parser 폴백용 — 리뷰 반영). `requestHeaders()` = `{"traceparent":
+    "00-<traceId>-<spanId>-01"}`.
+    - **traceId 생성(재현성 vs 유일성)**: `runId`(런당 1회 결정적 16-byte 시드) prefix + 요청별
+      **단조 카운터**로 16-byte traceId, spanId는 카운터 파생 8-byte. `Math.random`/`new Date`
+      미사용. 같은 runId·시드로 재실행 시 동일 traceId 시퀀스(재현성), 서로 다른 런은 runId가
+      달라 충돌 없음(유일성). W3C 포맷 검증 단위 테스트.
   - `drain()` → 리시버에서 **"injected spanId를 부모로 가지는 entry span"** 도착까지 await
-    (timeout 보유) + quiescence drain. 그 trace의 DB span(`db.system`/`db.query.text`/
-    `db.query.parameter.N`)을 span start 시각 순으로 `ParsedSql`로 환원.
+    + quiescence drain. 그 trace의 DB span(`db.system`/`db.query.text`/`db.query.parameter.*`)을
+    span start 시각 순으로 `ParsedSql`로 환원. drain 후 해당 traceId를 **즉시 리시버에서 제거**.
     - `db.query.text`(placeholder `?`)는 그대로 `ParsedSql.sql`로 → 기존 컬럼 매핑 재사용.
-    - `db.query.parameter.N`(0-based, String) → `ParsedSql.Binding(N+1, value)` (기존 1-based
-      position 규약에 맞춰 +1 정규화).
+    - **파라미터 인덱스 키 규약은 PoC(Phase 1)에서 실측 확정** — semconv/문헌이 0-based(로드맵
+      인용)와 1-based(JDBC index)로 엇갈림. `ParsedSql.Binding`은 **1-based position 규약**이므로
+      PoC 실측 결과에 맞춰 매핑(0-based면 +1, 1-based면 그대로). spec은 어느 쪽도 단정하지 않음.
+    - **timeout/quiescence/폴백 기본값**: entry span await timeout 8s(Kafka `AWAIT_MILLIS`와 정렬),
+      quiescence 무-신규-span 임계 250ms(`lastArrivalNanos` 기반), poll 50ms. 또한 에이전트
+      `OTEL_BSP_SCHEDULE_DELAY`를 짧게(예: 100ms) 설정해 배치 export 지연을 quiescence 창보다
+      작게 한다(false-quiescent 방지). **timeout 시**: `logStart` 기준 log-parser 폴백 1회 시도 후,
+      그래도 비면 빈 리스트 + 경고 로그.
 
-- **`OtlpTraceReceiver`** (`io.graphrag.builder.coverage` 또는 신규 `…capture.otlp`)
+- **`OtlpTraceReceiver`** (신규 `io.graphrag.builder.capture.otlp`)
   - 동적 포트 HTTP 서버. `POST /v1/traces` 수신, `Content-Type: application/json`(OTLP/JSON
     `ExportTraceServiceRequest`)을 Jackson으로 디코드.
   - 누적: `Map<traceId, List<SpanRecord>>` (thread-safe). `spanId`, `parentSpanId`, `name`,
-    `kind`, `startNanos`, attributes(특히 `db.*`) 보존.
-  - `awaitEntrySpan(traceId, parentSpanId, timeout)`, `spans(traceId)`, 그리고 quiescence 판정용
-    `lastArrivalNanos(traceId)` 제공.
+    `kind`, `startNanos`, `links`, attributes(특히 `db.*`) 보존.
+  - API: `awaitEntrySpan(traceId, parentSpanId, timeout)`, `spans(traceId)`, quiescence용
+    `lastArrivalNanos(traceId)`, **`remove(traceId)`(drain 후 eager cleanup)**.
+  - **Kafka link 분기(조건부, Phase 1 결과 반영)**: PoC②에서 consumer span이 자식(같은 traceId)이
+    아니라 **span link**(다른 traceId + injected traceId로의 link)로 판명되면, 리시버에 **링크
+    역인덱스** `Map<injectedTraceId, List<SpanRecord>>`를 추가하고 `awaitEntrySpan`이 trace-id 직접
+    매칭 **또는** link 보유 span을 함께 본다. 자식이면 이 인덱스 불필요. Phase 5 착수 시 이 섹션을
+    Phase 1 결과로 확정.
+  - 메모리: 정상/timeout 불문 `drain()`에서 `remove(traceId)` 호출(eager). 장시간 분석에서 누적
+    방지. `OtlpTraceReceiver` 단위 테스트에 cleanup 검증 포함.
   - Environment가 소유(start/stop).
 
 ### 4.2 데이터 흐름 (HTTP 1요청)
@@ -110,8 +127,21 @@ EndpointExplorationRunner.doSend
   → captureSqlForRange의 후처리(컬럼 매핑 + API_PARAM/LITERAL 분류 + CapturedSql 조립) 재사용
 ```
 
-`InvocationOutcome`의 `logStart`/`logEnd`는 **drain된 SQL(또는 raw `ParsedSql`)** 로 대체한다.
-log-parser 경로도 동일 인터페이스를 타므로 byte-offset 필드는 backend 내부 구현 디테일로 숨는다.
+**`InvocationOutcome` 리팩토링(비파괴적 — 리뷰 반영)**: `logStart`/`logEnd` 필드는 `PathCandidate`·
+`ExplorationOrchestrator`·`WsCaptureRunner`(WS는 이번에 log-parser 유지)·Kafka 등 6개 사이트가
+참조하므로 **제거하지 않는다**. 대신:
+- `doSend`가 `scope.drain()` 결과(`List<ParsedSql>`)를 직접 후처리에 넘긴다. 즉 캡처의 진입점이
+  "log 범위"에서 "backend가 drain한 `ParsedSql` 목록"으로 바뀐다.
+- `captureSqlForRange(pathId, body, logStart, logEnd)` → `captureSql(pathId, body, List<ParsedSql>)`
+  로 시그니처 변경(컬럼 매핑·origin 분류·CapturedSql 조립 로직은 동일, 입력 소스만 교체).
+- `InvocationOutcome`의 `logStart`/`logEnd`는 **log-parser 경로 호환을 위해 보존**(OTEL 경로는
+  0/0 또는 미사용). 향후 정리는 별도 — 이번엔 외과적 변경만.
+- **`Thread.sleep(150)`(콘솔 flush 여유)은 `doSend`에서 제거**하고 `LogParserCapture.Scope.drain()`
+  내부의 짧은 settle로 이동한다(OTEL 경로는 await가 대체하므로 sleep 불필요 — 리뷰 반영).
+
+**상관 헤더 우선순위(리뷰 반영)**: `traceparent`는 OTEL backend가 **예약**한다. 사용자
+`RequestHeaders`(`--request-headers-file`)가 동일 이름을 지정하면 빌더가 backend 값으로 **override
++ 경고 로그**(HTTP/Kafka 동일 정책). 기존 `baggage` 헤더는 그대로 유지.
 
 ### 4.3 데이터 흐름 (Kafka 1발행)
 
@@ -125,34 +155,48 @@ KafkaCaptureRunner.publishAndCapture
 ```
 
 기존 `awaitConsumerSql`(로그 폴링)은 OTEL 경로에서 `scope.drain()`의 span await로 대체. log-parser
-경로에선 유지.
+경로에선 유지. **variant 발행(missing-field/duplicate — early-return으로 DB span 없음, 리뷰 반영)**:
+OTEL 경로에서 full 8s timeout을 기다리면 탐색 시간이 늘어나므로, variant drain은 **단축 timeout**
+(예: `VARIANT_SETTLE_MILLIS`=2.5s 정렬)로 호출한다. timeout 후 빈 SQL은 기대 동작(early-return arm).
 
 ### 4.4 통합 지점 (변경 파일)
 
 - `gradle/libs.versions.toml` — `otelAgent` `2.14.0` → **`2.16.0`** (Phase 1 선행).
-- `OtelAgent.env(serviceName)` — OTEL 모드: `OTEL_TRACES_EXPORTER=otlp`,
-  `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=<리시버 URL>`,
-  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`(필요 시), JDBC `capture-query-parameters=true` 활성.
+- `OtelAgent` env 확장 — **리시버 포트가 동적이라 `env(serviceName)` 호출 시점엔 URL을 모른다(리뷰
+  반영)**. 따라서 시그니처를 **`env(String serviceName, String otlpEndpoint)`** 로 확장(또는 별도
+  `otlpEnv(...)`)하고, 리시버가 start되어 포트가 확정된 **이후** `AnalysisEnvironment.start`/
+  `runAttached`에서 호출/주입한다. OTEL 모드 env: `OTEL_TRACES_EXPORTER=otlp`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=<확정된 리시버 URL>`,
+  `OTEL_BSP_SCHEDULE_DELAY`(짧게), JDBC `capture-query-parameters` 활성
+  (`OTEL_INSTRUMENTATION_JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS=true`).
   log-parser 모드: 기존 `none` 유지(baggage 전파만).
-- `OtelAgent` — `capture-query-parameters` 플래그를 `otel.instrumentation.jdbc.experimental.
-  capture-query-parameters=true`로 system property/JAVA_TOOL_OPTIONS 또는 `OTEL_INSTRUMENTATION_
-  JDBC_EXPERIMENTAL_CAPTURE_QUERY_PARAMETERS=true` env로 주입.
-- `EndpointExplorationRunner` — `doSend`에 `scope` 배선(위 4.2). 고정 150ms sleep 제거(OTEL은
-  await, log-parser는 drain 시 짧은 settle).
+- `EndpointExplorationRunner` — `doSend`에 `scope` 배선(위 4.2). 150ms sleep 제거.
 - `KafkaCaptureRunner` — `publishAndCapture`에 `scope` 배선(위 4.3). 레코드 헤더 주입.
-- `SutProcess.start` — analysis OTEL 모드 시 `SPRING_APPLICATION_JSON`에
-  `spring.jpa.properties.hibernate.jdbc.batch_size=0` 추가(batch 완화).
-- `AnalysisEnvironment` — `OtlpTraceReceiver` + 선택된 `SqlCaptureBackend` 배선. backend 선택은
-  `--sql-capture otel|log` (기본 `otel`, PoC 통과 전엔 `log`).
+- **batch 완화 — Spring JSON 단일 병합(리뷰 반영)**: `hibernate.jdbc.batch_size=0`을 기존 logging
+  JSON과 **같은 `SPRING_APPLICATION_JSON` object에 병합**한다(별도 env로 넣으면 logging JSON을
+  치환해 SQL 로그 폴백과 충돌). **analysis(`SutProcess.loggingJson`)와 attach
+  (`OverrideComposeGenerator`) 양쪽 모두** 적용 — Spring JSON 추가 속성을 한 곳에서 merge하도록
+  `SutOptions`/override `Spec`에 추가 속성 필드를 둔다.
+- `BuilderCli` + `BuildConfig` — **`--sql-capture otel|log` 플래그 + `BuildConfig` 필드 신설**
+  (현재 없음, 리뷰 반영).
+- `AnalysisEnvironment` — `OtlpTraceReceiver` start → URL 확정 → `OtelAgent` env 주입 → 선택된
+  `SqlCaptureBackend` 배선.
 - `AttachedComposeEnvironment` + `OverrideComposeGenerator` — 호스트 리시버 기동 + app 서비스에
   OTEL env 주입. 엔드포인트는 컨테이너→호스트 도달용으로 **`http://host.docker.internal:<port>`**
-  (Mac/Win), Linux는 override에 `extra_hosts: ["host.docker.internal:host-gateway"]` 주입.
-  backend는 동일 `OtelSpanCapture` 재사용.
+  (Mac/Win), Linux는 override에 `extra_hosts: ["host.docker.internal:host-gateway"]` 주입
+  (**Docker Engine 20.10+ 필요** — 미만 환경 감지 시 경고). backend는 동일 `OtelSpanCapture` 재사용.
+
+### CLI 계약 (`--sql-capture`)
+- **Phase 2–6**: 기본 `log`, `otel`은 opt-in(`--sql-capture otel`).
+- **Phase 7**: PoC 게이트 + 수용 테스트 green 확인 후 기본을 `otel`로 전환.
+- 명시 값(`--sql-capture …`)은 단계와 무관하게 **항상 우선**.
 
 ## 5. 리스크 / 오픈 질문
 
-1. **드라이버별 bind 값 노출** — `capture-query-parameters`가 petclinic 드라이버(MySQL/H2)에서
-   실제 `db.query.parameter.N`을 내보내는지. → **Phase 1 PoC 게이트①**.
+1. **드라이버별 bind 값 노출** — `capture-query-parameters`가 실제 `db.query.parameter.*`를
+   내보내는지 + **파라미터 키 인덱스 규약(0-based vs 1-based)** 실측. 빌더 지원 dialect는
+   **Postgres/MySQL/MariaDB**(`DbConfig.Type`; H2 미지원 — petclinic은 MySQL Testcontainer로 분석).
+   PoC는 e2e가 쓰는 dialect로 검증하고, 가능하면 Postgres·MySQL 둘 다 확인. → **Phase 1 PoC 게이트①**.
 2. **Kafka context 전파 방식** — consumer process span이 주입 context의 **자식(같은 trace-id)**
    인지 **span link(다른 trace-id + 우리 trace 링크)** 인지가 agent 설정/버전에 따라 갈림.
    - 자식이면 trace-id 동등 매칭으로 끝.
@@ -162,8 +206,11 @@ KafkaCaptureRunner.publishAndCapture
 3. **batch 미수집** — `batch_size=0`로 회피하되, 그래도 빈 SQL이면 해당 요청만 log-parser 폴백.
 4. **async 결정성** — entry span 완료 신호 + quiescence 창 크기 튜닝. timeout 시 폴백 또는 경고.
 5. **attach 네트워킹** — Linux `host-gateway`는 Docker 20.10+ 필요. 미지원 환경 감지 시 경고.
-6. **리시버 동시성** — 동일 SUT에 여러 trace가 동시 흐를 수 있음(향후 병렬 탐색). traceId 키
-   분리로 격리되지만, drain 후 메모리 정리(완료 trace 제거) 정책 필요.
+   수용-4(docker e2e)는 Linux CI에서 `extra_hosts: host-gateway` 경로로 검증하므로 CI가 Docker
+   20.10+인지 Phase 6 착수 전 확인(아니면 컨테이너 네트워크 내 리시버 주소 주입으로 대체).
+6. **리시버 동시성·메모리** — 동일 SUT에 여러 trace 동시 흐름(향후 병렬 탐색)은 traceId 키로 격리.
+   메모리 누적은 **`drain()` 시 eager `remove(traceId)`** 로 해소(4.1) — 정상·timeout 불문 정리,
+   단위 테스트로 검증. (리스크 1·2와 달리 해결책 확정.)
 
 ## 6. E2E / 수용 테스트 (정의된 완료 조건)
 
@@ -182,9 +229,10 @@ CLAUDE.md 의무: 아래 수용 테스트는 **구현 전에 먼저 작성**(out
 
 ### 내부 루프 단위 테스트 (대표)
 - `OtlpTraceReceiver` — OTLP/JSON `ExportTraceServiceRequest` 디코드(중첩 resource/scope/span,
-  `db.query.parameter.N` 속성 추출), traceId 누적, `awaitEntrySpan`/quiescence 판정.
+  `db.query.parameter.*` 속성 추출), traceId 누적, `awaitEntrySpan`/quiescence 판정, **`remove`
+  eager cleanup**(drain 후 trace 잔류 없음).
 - `OtelSpanCapture` — fake 리시버로 trace-id 상관, entry span(parent=spanId) await, DB span →
-  `ParsedSql` 환원(parameter index +1 정규화, 순서), timeout 동작.
+  `ParsedSql` 환원(parameter index 규약은 PoC 확정값 적용, 순서 보존), timeout 시 log-parser 폴백.
 - `traceparent` 생성 — W3C 포맷(`00-<32hex>-<16hex>-01`), 결정적 생성.
 - `LogParserCapture` — 기존 `SqlLogParser` 위임이 byte-offset 동작과 동일함을 회귀로 고정.
 
