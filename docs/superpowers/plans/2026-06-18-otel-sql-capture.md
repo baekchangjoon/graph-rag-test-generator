@@ -24,13 +24,16 @@
 - **Create** `graph-rag-builder/src/main/java/io/graphrag/builder/capture/OtelSpanCapture.java` — OTEL backend(상관/await/ParsedSql 환원/폴백).
 - **Modify** `gradle/libs.versions.toml` — `otelAgent` 2.14.0 → 2.16.0.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/coverage/OtelAgent.java` — OTLP export env 추가(`otlpEnv` 오버로드).
-- **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java` — `SqlCaptureBackend` 주입 + `doSend` scope 배선 + `captureSql(List<ParsedSql>)` 시그니처.
+- **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java` — `SqlCaptureBackend` 주입 + `doSend` scope 배선 + `captureSqlFromParsed(List<ParsedSql>)` 시그니처 + state-guard variant 경로(line 367).
+- **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/explore/InvocationOutcome.java` — `List<ParsedSql> capturedSql` 필드 추가(drain 결과 운반; `logStart/logEnd` 보존).
+- **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/explore/PathCandidate.java` — `List<ParsedSql> capturedSql` 필드 추가.
+- **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationOrchestrator.java` — `toOutcome`(line 75~93)에서 `capturedSql`을 outcome→candidate로 복사.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/run/KafkaCaptureRunner.java` — scope 배선 + 레코드 헤더 주입.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/env/SutProcess.java` — OTEL 모드 시 `hibernate.jdbc.batch_size=0` 병합.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/env/AnalysisEnvironment.java` — 리시버 start → URL 확정 → OTEL env 주입 + backend 노출.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/env/AttachedComposeEnvironment.java` + `OverrideComposeGenerator.java` — 호스트 리시버 + override OTEL env + host-gateway.
 - **Modify** `graph-rag-builder/src/main/java/io/graphrag/builder/cli/BuilderCli.java` + `BuildConfig.java` — `--sql-capture otel|log` 플래그.
-- **Tests** 각 신규 클래스별 단위 테스트 + 수용 테스트(graph-rag-e2e / BuilderE2eTest).
+- **Tests** 각 신규 클래스별 단위 테스트 + 수용 테스트(e2e / BuilderE2eTest).
 
 ---
 
@@ -566,6 +569,11 @@ class OtlpTraceReceiverTest {
 Run: `./gradlew :graph-rag-builder:test --tests '*OtlpTraceReceiverTest*'`
 Expected: FAIL — 클래스 없음.
 
+> **추가 테스트(리뷰 반영)** — 같은 클래스에 더 작성:
+> - `anyValue_intAndBoolNormalized`: `db.query.parameter.0`을 `{"intValue":"7"}`, `.1`을 `{"boolValue":true}`로 보낸 OTLP를 POST → `attributes`가 `"7"`, `"true"`로 정규화됨.
+> - `concurrentPosts_noLoss`: 2개 스레드가 서로 다른 traceId로 동시에 N건 POST → 각 traceId의 `spans()` 크기가 정확(thread-safe 검증).
+> - `addForTest_seedsWithoutHttp`: `receiver.addForTest(span)` 후 `spans(traceId)`에 보임(start() 불필요).
+
 - [ ] **Step 3: 구현**
 
 ```java
@@ -595,13 +603,15 @@ public final class OtlpTraceReceiver implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(OtlpTraceReceiver.class);
 
+    // 값은 thread-safe 리스트 — HttpServer 워커 스레드가 add하고 main 스레드가 읽는다 (리뷰 반영).
     private final Map<String, List<SpanRecord>> byTrace = new ConcurrentHashMap<>();
     private final Map<String, Long> lastArrivalNanos = new ConcurrentHashMap<>();
     private HttpServer server;
 
     public void start() {
         try {
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            // 0.0.0.0 바인드 — attach 모드에서 컨테이너가 host.docker.internal로 도달해야 함 (리뷰 반영).
+            server = HttpServer.create(new InetSocketAddress("0.0.0.0", 0), 0);
             server.createContext("/v1/traces", exchange -> {
                 try {
                     byte[] body = exchange.getRequestBody().readAllBytes();
@@ -621,9 +631,14 @@ public final class OtlpTraceReceiver implements AutoCloseable {
         }
     }
 
-    /** SUT가 도달할 수 있는 base URL (analysis: localhost). */
+    /** analysis: SUT(호스트 프로세스)가 도달할 base URL (loopback). */
     public String endpoint() {
-        return "http://127.0.0.1:" + server.getAddress().getPort();
+        return "http://127.0.0.1:" + port();
+    }
+
+    /** attach: 컨테이너 SUT가 도달할 base URL (host-gateway). */
+    public String hostEndpoint() {
+        return "http://host.docker.internal:" + port();
     }
 
     public int port() {
@@ -634,18 +649,26 @@ public final class OtlpTraceReceiver implements AutoCloseable {
         for (JsonNode rs : root.path("resourceSpans")) {
             for (JsonNode ss : rs.path("scopeSpans")) {
                 for (JsonNode span : ss.path("spans")) {
-                    SpanRecord record = toRecord(span);
-                    byTrace.computeIfAbsent(record.traceId(), k -> new ArrayList<>()).add(record);
-                    lastArrivalNanos.put(record.traceId(), System.nanoTime());
+                    record(toRecord(span));
                 }
             }
         }
     }
 
+    /** 단위 테스트용 시드 훅 (HTTP 없이 span 주입). final class 유지를 위해 상속 대신 이 메서드 사용 (리뷰 반영). */
+    void addForTest(SpanRecord span) {
+        record(span);
+    }
+
+    private void record(SpanRecord span) {
+        byTrace.computeIfAbsent(span.traceId(), k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(span);
+        lastArrivalNanos.put(span.traceId(), System.nanoTime());
+    }
+
     private static SpanRecord toRecord(JsonNode span) {
         Map<String, String> attrs = new LinkedHashMap<>();
         for (JsonNode a : span.path("attributes")) {
-            attrs.put(a.path("key").asText(), a.path("value").path("stringValue").asText());
+            attrs.put(a.path("key").asText(), anyValueToString(a.path("value")));
         }
         List<String> linkedTraces = new ArrayList<>();
         for (JsonNode link : span.path("links")) {
@@ -664,6 +687,15 @@ public final class OtlpTraceReceiver implements AutoCloseable {
 
     private static long parseNano(String s) {
         try { return s.isEmpty() ? 0 : Long.parseLong(s); } catch (NumberFormatException e) { return 0; }
+    }
+
+    /** OTLP AnyValue → 문자열. stringValue 외 int/double/bool도 정규화 (bind 값은 숫자/불리언 가능, 리뷰 반영). */
+    private static String anyValueToString(JsonNode value) {
+        if (value.has("stringValue")) { return value.path("stringValue").asText(); }
+        if (value.has("intValue")) { return value.path("intValue").asText(); }
+        if (value.has("doubleValue")) { return value.path("doubleValue").asText(); }
+        if (value.has("boolValue")) { return value.path("boolValue").asText(); }
+        return value.path("stringValue").asText();   // 그 외(bytes/array)는 best-effort 빈 문자열
     }
 
     public List<SpanRecord> spans(String traceId) {
@@ -736,6 +768,7 @@ import io.graphrag.builder.capture.otlp.SpanRecord;
 import io.graphrag.builder.env.SutHandle;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -743,42 +776,35 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class OtelSpanCaptureTest {
 
-    /** 리시버를 메모리로 흉내내는 대신 실제 OtlpTraceReceiver에 HTTP로 주입하는 헬퍼가 없으므로,
-     *  여기서는 OtlpTraceReceiver의 ingest 경로를 통합 테스트(3.3)로 커버하고,
-     *  이 테스트는 환원 로직을 직접 검증하기 위해 TestReceiver 서브클래스를 쓴다. */
+    /** 실제 OtlpTraceReceiver(미기동)에 addForTest로 시드. TraceParent가 결정적이라
+     *  begin()이 만들 traceId/spanId를 OtelScope getter로 얻어 시드 — 상속/rebind 불필요 (리뷰 반영). */
     @Test
     void drain_mapsDbSpansToParsedSqlInStartOrder() {
-        String tid = "a".repeat(32);
-        String injected = "b".repeat(16);
-        TestReceiver receiver = new TestReceiver(List.of(
-                dbSpan(tid, injected, 200, "update owners set city=? where id=?", "Seoul", "7"),
-                dbSpan(tid, injected, 100, "insert into owners (first_name) values (?)", "Alice"),
-                entrySpan(tid, injected, 50)));   // entry span (parent=injected)
-
+        OtlpTraceReceiver receiver = new OtlpTraceReceiver();   // start() 호출 안 함 (HTTP 불필요)
         OtelSpanCapture capture = new OtelSpanCapture(receiver, noopSut(), new TraceParent("run-1"));
-        // begin()이 injected span을 발급하도록 TestReceiver가 그 값을 쓰게 한다
-        OtelSpanCapture.OtelScope scope = (OtelSpanCapture.OtelScope) capture.begin();
-        receiver.rebind(scope.traceId(), scope.spanId());
+        OtelSpanCapture.OtelScope scope = (OtelSpanCapture.OtelScope) capture.begin();  // 같은 패키지
+        String tid = scope.traceId();
+        String injected = scope.spanId();
+
+        receiver.addForTest(dbSpan(tid, "s1", 200, "update owners set city=? where id=?", "Seoul", "7"));
+        receiver.addForTest(dbSpan(tid, "s2", 100, "insert into owners (first_name) values (?)", "Alice"));
+        receiver.addForTest(entrySpan(tid, injected, 50));   // entry span: parent == injected spanId
 
         List<ParsedSql> sql = scope.drain();
-        // start 순서: insert(100) → update(200)
+        // start 시각 순서: insert(100) → update(200)
         assertThat(sql).extracting(ParsedSql::sql)
                 .containsExactly("insert into owners (first_name) values (?)",
                                  "update owners set city=? where id=?");
         assertThat(sql.get(0).bindings()).extracting(ParsedSql.Binding::value).containsExactly("Alice");
-        // 1-based position 규약 (PoC 확정값에 맞춰 조정)
+        // PARAM_INDEX_BASE 적용 후 1-based position 규약 (PoC 확정값에 맞춰 상수 조정)
         assertThat(sql.get(0).bindings().get(0).position()).isEqualTo(1);
     }
 
-    // --- helpers (실제 구현 시 TestReceiver는 OtlpTraceReceiver를 상속해 spans/await/quiescent override) ---
-    // 구현 단계에서 OtlpTraceReceiver에 보호 생성자/시드 메서드를 추가하거나,
-    // OtelSpanCapture가 받는 receiver를 인터페이스로 분리한다(아래 Step 3 참고).
-    private static SpanRecord dbSpan(String tid, String parent, long start, String sql, String... params) {
-        var attrs = new java.util.LinkedHashMap<String, String>();
+    private static SpanRecord dbSpan(String tid, String spanId, long start, String sql, String... params) {
+        Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("db.query.text", sql);
         for (int i = 0; i < params.length; i++) attrs.put("db.query.parameter." + i, params[i]);
-        return new SpanRecord(tid, java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16),
-                parent, "db", "SPAN_KIND_CLIENT", start, attrs, List.of());
+        return new SpanRecord(tid, spanId, "root", "db", "SPAN_KIND_CLIENT", start, attrs, List.of());
     }
     private static SpanRecord entrySpan(String tid, String injected, long start) {
         return new SpanRecord(tid, "f".repeat(16), injected, "GET /x", "SPAN_KIND_SERVER", start, Map.of(), List.of());
@@ -803,7 +829,7 @@ Expected: FAIL — `OtelSpanCapture` 없음.
 
 - [ ] **Step 3: 구현**
 
-> 테스트 용이성을 위해 `OtelSpanCapture`는 `OtlpTraceReceiver`를 직접 받되, 테스트가 span을 시드할 수 있도록 `OtlpTraceReceiver`에 패키지-가시 시드 훅(`addForTest`)을 추가하거나, 위 테스트의 `TestReceiver`처럼 상속으로 `spans/awaitEntrySpan/isQuiescent`를 override한다. 아래 구현은 public 메서드만 사용하므로 상속 override로 충분하다.
+> `OtelSpanCapture`는 `OtlpTraceReceiver`를 직접 받는다(public 메서드 + 패키지-가시 `addForTest`만 사용 — `OtlpTraceReceiver`는 `final` 유지). 테스트는 위처럼 `addForTest`로 시드한다.
 
 ```java
 package io.graphrag.builder.capture;
@@ -1013,7 +1039,7 @@ void loggingJson_includesBatchSizeZeroWhenRequested() {
 
 - [ ] **Step 2: 실패 확인** → FAIL.
 
-- [ ] **Step 3: 구현** — `loggingJson`을 `springApplicationJson(Map extraLevels, boolean disableBatch)`로 일반화하고, `disableBatch`면 `"spring.jpa.properties.hibernate.jdbc.batch_size":"0"`를 같은 JSON object에 추가. `SutOptions`에 `boolean disableHibernateBatch` 필드 추가(기본 false). `start()`가 `options.disableHibernateBatch()`를 넘김.
+- [ ] **Step 3: 구현** — 기존 `private static String loggingJson(Map<String,String> extraLevels)`를 **`static String springApplicationJson(Map<String,String> extraLevels, boolean disableBatch)`로 개명**(`private` 제거 → 패키지-가시, 테스트 접근). 옛 `loggingJson` 메서드는 제거하고 `start()`의 호출부(`SPRING_APPLICATION_JSON` 주입)를 새 이름으로 교체. `disableBatch`면 `"spring.jpa.properties.hibernate.jdbc.batch_size":"0"`를 같은 JSON object에 추가. `SutOptions`에 `boolean disableHibernateBatch` 필드 추가(기본 false; 호출부는 Task 4.5 Step 4에서 일괄 갱신). `start()`가 `options.disableHibernateBatch()`를 넘김.
 
 - [ ] **Step 4: 통과 확인** → PASS.
 - [ ] **Step 5: Commit** → `feat(env): merge hibernate.jdbc.batch_size=0 into SPRING_APPLICATION_JSON (OTEL mode)`
@@ -1022,76 +1048,101 @@ void loggingJson_includesBatchSizeZeroWhenRequested() {
 
 **Files:** Modify `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java`
 
-- [ ] **Step 1: 생성자에 `SqlCaptureBackend sqlCapture` 추가**
+- [ ] **Step 1: InvocationOutcome / PathCandidate에 capturedSql 필드 추가 (전파 통로 — 리뷰 반영)**
 
-`EndpointExplorationRunner` 생성자(line 97~)에 파라미터 추가, 필드 보관. 모든 호출 사이트(BuilderCli, 테스트)에 `new LogParserCapture(sut)` 또는 선택된 backend 전달.
+`doSend`의 drain 결과는 나중에 `buildPaths`(line 500)와 state-guard 경로(line 367)에서 SQL을 조립할 때 필요하다. 현재 흐름은 `InvocationOutcome(logStart,logEnd)` → `ExplorationOrchestrator.toOutcome`(line 75~93)이 `PathCandidate(logStart,logEnd)`로 복사 → `buildPaths`가 `captureSql(candidate)` → `captureSqlForRange(candidate.logStart(), candidate.logEnd())`로 **재파싱**한다. 이 통로에 `List<ParsedSql> capturedSql`을 추가한다.
 
-- [ ] **Step 2: `doSend` 배선** (line 653~694)
+- `InvocationOutcome`(record)에 마지막 컴포넌트로 `List<ParsedSql> capturedSql` 추가. 기존 편의 생성자들은 `List.of()`로 채워 호환 유지(`logStart/logEnd`도 그대로 둠).
+- `PathCandidate`(record, line 9~)에 `List<ParsedSql> capturedSql` 추가(편의 생성자 `List.of()` 기본).
+- `ExplorationOrchestrator.toOutcome`(line 75~93)에서 `proto.input().outcome().capturedSql()`을 candidate/outcome으로 복사.
+
+- [ ] **Step 2: 생성자에 `SqlCaptureBackend sqlCapture` 추가**
+
+`EndpointExplorationRunner` 생성자(line 97~)에 파라미터 추가, 필드 보관. 유일한 production 호출 사이트는 `BuilderCli` line 437(`new EndpointExplorationRunner(...)`) — 여기에 선택된 backend 전달(Task 4.5). 직접 인스턴스화하는 단위 테스트는 없음(grep `new EndpointExplorationRunner`로 확인 — BuilderCli 1곳).
+
+- [ ] **Step 3: `doSend` 배선** (line 653~694)
 
 - `long logStart = sut.logOffset();` 다음에 `SqlCaptureBackend.Scope sqlScope = sqlCapture.begin();` 추가.
-- `.header("baggage", "test-id=explore")` 유지하고, 그 뒤에 backend 헤더 주입(사용자 헤더 override + 경고):
+- `.header("baggage", "test-id=explore")` 유지. **traceparent override 시맨틱(리뷰 반영)**: Java `HttpRequest.Builder.header`는 같은 이름을 *추가*만 한다(치환 아님). 따라서 사용자 `extraHeaders.resolved(...)`를 적용할 때 **예약 키(`traceparent`, case-insensitive)를 건너뛰고**, backend 헤더를 마지막에 1회만 주입한다:
 ```java
+for (Map.Entry<String, String> h : extraHeaders.resolved(Instant.now()).entrySet()) {
+    if (h.getKey().equalsIgnoreCase("traceparent")) {
+        log.warn("user header 'traceparent' ignored — reserved by SQL capture backend");
+        continue;
+    }
+    builder.header(h.getKey(), h.getValue());
+}
 for (Map.Entry<String, String> h : sqlScope.requestHeaders().entrySet()) {
     builder.header(h.getKey(), h.getValue());   // traceparent (OTEL) / 없음 (log)
 }
 ```
-- `Thread.sleep(150);` **제거**.
-- `long logEnd = sut.logOffset();` 유지(InvocationOutcome 호환).
-- `InvocationOutcome` 생성에 drain 결과를 실어야 하므로, `captureSqlForRange` 호출부가 `sqlScope.drain()`을 쓰도록 흐름 변경(아래 4.4).
+- `Thread.sleep(150);` **제거**(LogParserCapture.drain 내부 settle이 대체).
+- `long logEnd = sut.logOffset();` 유지(호환). `List<ParsedSql> drained = sqlScope.drain();`.
+- `InvocationOutcome` 생성에 `drained`를 `capturedSql` 인자로 전달.
 
 > 주의: 부정-인증 패스 등 `doSend`를 재사용하는 모든 경로가 같은 scope 흐름을 타도록 한다.
 
-- [ ] **Step 3: 컴파일/기존 테스트** → Run: `./gradlew :graph-rag-builder:test` (log backend 기본이므로 동작 동일해야 함).
-- [ ] **Step 4: Commit** → `feat(run): wire SqlCaptureBackend scope into doSend (header inject, drop fixed sleep)`
+- [ ] **Step 4: 컴파일/기존 테스트** → Run: `./gradlew :graph-rag-builder:test` (log backend 기본이므로 동작 동일).
+- [ ] **Step 5: Commit** → `feat(run): carry per-request ParsedSql through InvocationOutcome/PathCandidate; wire scope into doSend`
 
-### Task 4.4: captureSql(List<ParsedSql>) 시그니처 전환
+### Task 4.4: captureSqlFromParsed 시그니처 전환 + 모든 캡처 경로 사용
 
-**Files:** Modify `EndpointExplorationRunner.java` (line 395~416 `captureSqlForRange`)
+**Files:** Modify `EndpointExplorationRunner.java`
 
-- [ ] **Step 1: 시그니처 변경**
+- [ ] **Step 1: 메서드 개명·전환 (이름 충돌 회피 — 리뷰 반영)**
 
-`captureSqlForRange(pathId, body, logStart, logEnd)` → `captureSql(pathId, body, List<ParsedSql> parsed)`. 본문에서 `SqlLogParser.parse(sut.readLogRange(...))` 줄을 제거하고 파라미터 `parsed`를 직접 사용(나머지 컬럼 매핑·origin 분류·CapturedSql 조립 동일). 모든 호출부가 `sqlScope.drain()` 결과를 넘기도록 수정.
+`captureSqlForRange(pathId, body, logStart, logEnd)`(line 395~416)을 **`captureSqlFromParsed(String pathId, JsonNode body, List<ParsedSql> parsed)`** 로 개명한다(기존 private `captureSql(PathCandidate)` line 936과의 충돌 회피). 본문에서 `SqlLogParser.parse(sut.readLogRange(...))` 줄 제거, 파라미터 `parsed` 직접 사용(컬럼 매핑·origin 분류·CapturedSql 조립 동일).
 
-- [ ] **Step 2: 기존 테스트 green** → Run: `./gradlew :graph-rag-builder:test`
-- [ ] **Step 3: Commit** → `refactor(run): captureSql takes List<ParsedSql> from backend instead of log range`
+- [ ] **Step 2: 세 캡처 경로를 capturedSql 기반으로 전환**
+
+1. `captureSql(PathCandidate candidate)`(line 936~937): `return captureSqlFromParsed(candidate.pathId(), candidate.body(), candidate.capturedSql());`
+2. state-guard variant(line 367): `captureSqlForRange(pathId, body, out.logStart(), out.logEnd())` → `captureSqlFromParsed(pathId, body, out.capturedSql())`.
+3. 그 외 `captureSqlForRange` 잔여 호출부가 있으면 동일 전환(grep `captureSqlForRange`로 0건 확인).
+
+- [ ] **Step 3: 기존 테스트 green** → Run: `./gradlew :graph-rag-builder:test`
+- [ ] **Step 4: Commit** → `refactor(run): captureSqlFromParsed uses backend-drained ParsedSql across all paths`
 
 ### Task 4.5: AnalysisEnvironment 리시버 + backend 배선
 
 **Files:** Modify `graph-rag-builder/src/main/java/io/graphrag/builder/env/AnalysisEnvironment.java`, `BuilderCli.java`, `BuildConfig.java`
 
-- [ ] **Step 1: `--sql-capture` 플래그**
+- [ ] **Step 1: `--sql-capture` 플래그 (record 생성자 호출부 주의 — 리뷰 반영)**
 
-`BuildConfig`에 `String sqlCapture`(기본 `"log"`) 필드 추가. `BuilderCli` 인자 파싱에 `--sql-capture otel|log` 추가(미지정 시 `log`).
+`BuildConfig`(record)에 `String sqlCapture` 필드 추가. `BuildConfig`는 편의 생성자가 여럿이므로(canonical + 편의 2개) **모든 편의 생성자에 기본값 `"log"`를 전달**하고, 카노니컬 생성자 호출 테스트가 있으면 인자를 추가한다(grep `new BuildConfig(`로 호출부 열거). `BuilderCli` 인자 파싱에 `--sql-capture otel|log` 추가(미지정 시 `"log"`).
 
-- [ ] **Step 2: AnalysisEnvironment에 리시버 소유 + getter**
+- [ ] **Step 2: 리시버 소유(Environment) + backend는 start 이후 생성 (null sut 회피 — 리뷰 반영)**
 
-`OtlpTraceReceiver otlpReceiver = new OtlpTraceReceiver();` 필드. `start(...)`에서 OTEL 모드일 때:
-- `otlpReceiver.start();`
-- `extraEnv.putAll(otel.otlpEnv(sutId, otlpReceiver.endpoint()));` (OTEL env를 SUT env에 주입)
-- `options`에 `disableHibernateBatch=true`
-`close()`에서 `otlpReceiver.stop()`.
+spec대로 **`OtlpTraceReceiver`는 `AnalysisEnvironment`가 소유**(필드 + `start()`에서 `otlpReceiver.start()`, `close()`에서 stop). OTEL 모드일 때 `start(...)` 내부에서 `extraEnv.putAll(otelOtlpEnv)` (BuilderCli가 `otel.otlpEnv(sutId, otlpReceiver.endpoint())`를 만들어 전달하거나, Environment가 `OtelAgent` 참조를 받아 직접) + `options.disableHibernateBatch=true`. getter `otlpReceiver()` 노출.
 
-> 현재 `AnalysisEnvironment`는 `OtelAgent`를 직접 모른다(BuilderCli가 env를 주입). 따라서 OTEL 모드 배선은 `BuilderCli.runAnalysis`에서 리시버를 만들고 `otel.otlpEnv(...)`를 `sutEnvTemplate`/`extraEnv`로 넘기는 방식이 더 외과적이다. 택일: **(권장)** 리시버를 `BuilderCli`가 생성·소유하고 `AnalysisEnvironment.start`에 `Map<String,String> extraOtelEnv` + backend를 전달. backend는 `config.sqlCapture().equals("otel") ? new OtelSpanCapture(receiver, sut, new TraceParent(runId)) : new LogParserCapture(sut)`.
+**backend는 `env.start()` 이후 생성**한다 — `begin()/drain()`이 `sut.logOffset()`을 쓰므로 `sut`가 null이면 NPE. 따라서 `BuilderCli`가 `env.start(...)` 직후:
+```java
+SqlCaptureBackend sqlCapture = "otel".equals(config.sqlCapture())
+        ? new OtelSpanCapture(env.otlpReceiver(), env.sut(), new TraceParent(runId(config)))
+        : new LogParserCapture(env.sut());
+```
+`runId`는 결정적 시드: `config.sutId() + ":" + config.commitSha()`(둘 다 BuildConfig에 존재) — 같은 commit 재분석 시 동일 trace 시퀀스(재현성), 다른 SUT/commit은 충돌 없음. commitSha가 없으면 `sutId`만.
 
-- [ ] **Step 3: 빌더가 backend를 runner에 주입** — `EndpointExplorationRunner` 생성 시 선택된 backend 전달.
+- [ ] **Step 3: 빌더가 backend를 runner에 주입** — `BuilderCli` line 437 `new EndpointExplorationRunner(...)`에 `sqlCapture` 인자 추가. (Kafka는 Task 5.1.)
 
-- [ ] **Step 4: 기존 e2e green** → Run: `./gradlew :graph-rag-builder:test` + 분석 e2e.
-- [ ] **Step 5: Commit** → `feat(cli,env): --sql-capture flag + OTLP receiver wiring (analysis)`
+- [ ] **Step 4: SutOptions 필드 추가 호출부** — `SutOptions`에 `boolean disableHibernateBatch`(기본 false) 추가 시 카노니컬/편의 생성자와 호출부(`AnalysisEnvironment` line 105, `BuilderCli`, 테스트)를 grep `new SutOptions(`로 열거해 갱신. (또는 `SutOptions`에 `withDisableHibernateBatch()` fluent 추가로 생성자 변경 최소화.)
+
+- [ ] **Step 5: 기존 e2e green** → Run: `./gradlew :graph-rag-builder:test` + `./gradlew :e2e:test`.
+- [ ] **Step 6: Commit** → `feat(cli,env): --sql-capture flag + Environment-owned OTLP receiver, backend built post-start`
 
 ### Task 4.6: 수용-1 (parity) + 수용-2 (동시성 귀속)
 
-**Files:** Test in `graph-rag-e2e` (또는 `BuilderE2eTest`)
+**Files:** Test in `e2e` (또는 `BuilderE2eTest`)
 
 - [ ] **Step 1: 수용-1 — petclinic OTEL parity**
 
 petclinic을 `--sql-capture otel`로 분석 → 생성 e2e 45개 green 유지 + 캡처된 SQL bindings가 `log` 모드 산출과 동등함을 비교하는 테스트. (두 모드로 분석 후 그래프의 CapturedSql 집합 비교, 또는 기존 e2e가 두 모드 모두 green.)
 
-Run: `./gradlew :graph-rag-e2e:test`
+Run: `./gradlew :e2e:test`
 Expected: PASS, 기존 45 + 신규.
 
-- [ ] **Step 2: 수용-2 — 인터리브 귀속**
+- [ ] **Step 2: 수용-2 — 인터리브 귀속 (구체화 — 리뷰 반영)**
 
-비동기/2요청 인터리브 시나리오에서 trace-id 분리를 검증하는 테스트(byte-offset이 섞이던 케이스). 가능한 최소 SUT로 구성.
+기존 분석 SUT(예: order-service 샘플) 대상으로, 빌더가 **서로 다른 traceparent를 가진 2개 요청을 2개 스레드에서 동시 발행**한다. 각 요청의 `OtelScope.drain()` 결과가 **자신의 trace-id에 속한 SQL만** 포함하고 상대 요청의 SQL이 섞이지 않음을 단언한다(byte-offset 경로가 섞이던 케이스 대비). 동시성 재현을 위해 한 요청은 의도적으로 느린 경로(또는 sleep 유발 입력)로 인터리브를 만든다.
 
 - [ ] **Step 3: Commit** → `test(e2e): OTEL SQL capture parity + concurrent attribution acceptance`
 
@@ -1112,8 +1163,10 @@ Expected: PASS, 기존 45 + 신규.
 ```java
 ProducerRecord<String, String> record =
         new ProducerRecord<>(consumer.topic(), key, Json.mapper().writeValueAsString(payload));
-scope.requestHeaders().forEach((k, v) ->
-        record.headers().add(k, v.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+scope.requestHeaders().forEach((k, v) -> {
+    record.headers().remove(k);   // 중복 헤더 방지 (리뷰 반영 — add는 누적)
+    record.headers().add(k, v.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+});
 producer.send(record).get();
 ```
 - happy(`awaitSql=true`): `List<ParsedSql> parsed = scope.drain();` (OTEL await; log 모드는 `drain(AWAIT_MILLIS)`).
@@ -1140,16 +1193,23 @@ producer.send(record).get();
 
 **Files:** Modify `AttachedComposeEnvironment.java`, `OverrideComposeGenerator.java`, `BuilderCli.runAttached`
 
-- [ ] **Step 1: override OTEL env 주입**
+- [ ] **Step 1: OverrideComposeGenerator.Spec 확장 (필드 없음 — 리뷰 반영)**
 
-`runAttached`(BuilderCli line 287~)에서 OTEL 모드일 때 호스트 `OtlpTraceReceiver`를 띄우고, app 서비스 override env에 `otel.otlpEnv(sutId, "http://host.docker.internal:<receiverPort>")`를 주입. `OverrideComposeGenerator`가 app 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]`를 추가(Linux 도달용).
+`OverrideComposeGenerator.Spec`(record)에는 현재 `extra_hosts`/OTEL env를 실을 필드가 없다. 추가:
+- `boolean addHostGateway`(Linux host-gateway 주입 여부)
+- `Map<String,String> extraAppEnv`(OTEL env 주입용) — 또는 기존 env 주입 경로 재사용.
+`generate(Spec)`에서 `spec.addHostGateway()`면 app 서비스에 `extra_hosts: ["host.docker.internal:host-gateway"]` 배열 추가, `extraAppEnv`를 app `environment`에 병합. `Spec`의 모든 생성 호출부(BuilderCli line 304~307)에 새 인자 전달.
 
-- [ ] **Step 2: batch_size=0 병합 (attach)** — `OverrideComposeGenerator`의 `SPRING_APPLICATION_JSON` 생성도 4.2처럼 batch_size=0을 같은 JSON에 병합.
+- [ ] **Step 2: override OTEL env 주입**
 
-- [ ] **Step 3: Docker 버전 가드** — host-gateway 미지원(Docker <20.10) 감지 시 경고 로그.
+`runAttached`(BuilderCli line 287~)에서 OTEL 모드일 때 호스트 `OtlpTraceReceiver`를 띄우고(이 환경이 소유·stop), `Spec.extraAppEnv`에 `otel.otlpEnv(sutId, receiver.hostEndpoint())`를 실어 app 서비스에 주입(`hostEndpoint()` = `http://host.docker.internal:<port>`), `addHostGateway=true`.
 
-- [ ] **Step 4: 기존 attach 테스트 green** → Run: `./gradlew :graph-rag-builder:test --tests '*Attach*'`
-- [ ] **Step 5: Commit** → `feat(env): attach-mode OTLP receiver via host.docker.internal + extra_hosts`
+- [ ] **Step 3: batch_size=0 병합 (attach)** — `OverrideComposeGenerator`가 app `SPRING_APPLICATION_JSON`을 만들/병합할 때 Task 4.2처럼 batch_size=0을 같은 JSON object에 병합(별도 키로 넣어 치환 충돌 금지).
+
+- [ ] **Step 4: Docker 버전 가드** — host-gateway 미지원(Docker <20.10) 감지 시 경고 로그.
+
+- [ ] **Step 5: 기존 attach 테스트 green** → Run: `./gradlew :graph-rag-builder:test --tests '*Attach*'`
+- [ ] **Step 6: Commit** → `feat(env): attach-mode OTLP receiver via host.docker.internal + extra_hosts`
 
 ### Task 6.2: 수용-4 (attach docker e2e)
 
@@ -1165,7 +1225,7 @@ producer.send(record).get();
 **Files:** Modify `BuildConfig.java`(`sqlCapture` 기본 `"otel"`) / `BuilderCli`
 
 - [ ] **Step 1:** PoC 게이트 + 수용 1~4 green 확인 후 기본 `otel`. 경로별 PoC 실패가 있으면 그 경로만 `log` 유지(조건부 기본).
-- [ ] **Step 2: 전체 회귀** → Run: `./gradlew test` (unit + integration) + `./gradlew :graph-rag-e2e:test`
+- [ ] **Step 2: 전체 회귀** → Run: `./gradlew test` (unit + integration) + `./gradlew :e2e:test`
 - [ ] **Step 3: Commit** → `feat: default SQL capture to OTEL after PoC + acceptance green`
 
 ### Task 7.2: 문서 갱신
