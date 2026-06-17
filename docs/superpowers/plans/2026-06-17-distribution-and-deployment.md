@@ -193,7 +193,9 @@ CLI만으로는 생성된 테스트를 **돌릴 수 없다**. 다음을 prebuilt
 1. **Phase A-1** ✅ 완료(PR #44): `version` 주입(배포 3종) + `ci.yml` 게이트된 release 잡
    (distZip + `testlib:jar` → Release) + 수용 테스트 `e2e/run-dist-e2e.sh`(A-E2E-1/2/3 GREEN).
    잔여: A-CI(실제 태그 push로 자산 첨부 검증).
-2. **Phase A-2**: 문서 권장 경로 재배치·요구사항 분리(§6).
+2. **Phase A-2** ✅ 완료: README·getting-started 트랙 B가 Releases prebuilt를 권장 경로로 선두 배치,
+   요구사항 도구별 분리(generator JRE만/builder +Docker), 소스 빌드는 advanced. testlib jar 컴파일
+   안내 추가. docs/06 OTEL 명칭 `otel-javaagent.jar`로 통일.
 3. **Phase D-1**: generator 이미지 + push 잡(installDist 선행). 수용: D-E2E-1.
 4. **Phase D-2**: builder 이미지(Linux 우선) + 네트워킹 문서. 수용: D-E2E-2(Linux).
 5. **Phase D-3**: 실행 환경 이미지(socket-mock·dashboard) + OTEL 자산 + compose 참조 전환.

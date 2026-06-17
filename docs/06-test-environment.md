@@ -10,7 +10,7 @@ services:
   app:                              # SUT (실 운영 빌드)
     image: ${SUT_IMAGE}
     environment:
-      JAVA_TOOL_OPTIONS: "-javaagent:/agents/opentelemetry-javaagent.jar"
+      JAVA_TOOL_OPTIONS: "-javaagent:/agents/otel-javaagent.jar"
       OTEL_TRACES_EXPORTER: none
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
