@@ -85,6 +85,13 @@ path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
   --sut-java-home /path/to/jdkXX --external-stubs <dir> --sut-env KEY=VAL --out <dir>"
 
+# 도구 1 — attach 모드: 사용자 docker-compose로 SUT를 띄워 분석 (docs/26)
+#   빌더가 override compose를 생성해 로깅·에이전트·포트를 주입하고 up/down을 소유
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres"
+
 # 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
 git diff --name-only main > changed.txt
 ./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
@@ -97,6 +104,7 @@ git diff --name-only main > changed.txt
 
 - **전체 지도: [docs/README.md](docs/README.md)** · 시작하기 [docs/00](docs/00-getting-started.md) · 용어 [docs/glossary.md](docs/glossary.md)
 - 아키텍처: `docs/02-architecture.md` · 빌더 `docs/03` · 제너레이터 `docs/04`
+- attach 모드(사용자 compose로 분석) + 커스텀 요청 헤더: `docs/26-attach-mode.md`
 - 입력 생성·탐색 원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`
 - 정적 분석 한계 + concolic 적용 범위: `docs/22-static-discovery-limits.md`
 - 기능 단위 의사결정: `docs/decisions/`
