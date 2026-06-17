@@ -955,7 +955,7 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
 }
 ```
 
-테스트의 `TestReceiver`는 `OtlpTraceReceiver`를 상속해 `spans/awaitEntrySpan/isQuiescent`를 시드 데이터로 override(`rebind(traceId, spanId)`로 begin()이 만든 id에 맞춰 시드 재바인딩). `start()`는 호출하지 않는다(HTTP 불필요).
+> 주: `drain()`의 quiescence 대기로 테스트는 ~250ms(`QUIESCENCE_MILLIS`) 소요. 시드를 `drain()` 호출 전에 넣으므로 첫 폴에서 quiescent 판정된다. `OtlpTraceReceiver`는 `start()` 없이 `addForTest`만으로 시드 가능(HTTP 불필요).
 
 - [ ] **Step 4: 통과 확인**
 
