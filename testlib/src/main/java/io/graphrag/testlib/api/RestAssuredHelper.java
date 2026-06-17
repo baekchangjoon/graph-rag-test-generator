@@ -13,9 +13,11 @@ public final class RestAssuredHelper {
     private final String scheme;
     private final String username;
     private final String password;
+    private final io.graphrag.model.RequestHeaders extraHeaders;
 
     RestAssuredHelper(String baseUri, String testId, AuthClient auth,
-                      String headerName, String scheme, String username, String password) {
+                      String headerName, String scheme, String username, String password,
+                      io.graphrag.model.RequestHeaders extraHeaders) {
         this.baseUri = baseUri;
         this.testId = testId;
         this.auth = auth;
@@ -23,12 +25,19 @@ public final class RestAssuredHelper {
         this.scheme = scheme;
         this.username = username;
         this.password = password;
+        this.extraHeaders = extraHeaders;
+    }
+
+    public java.util.Map<String, String> customHeaders(java.time.Instant now) {
+        return extraHeaders == null ? java.util.Map.of() : extraHeaders.resolved(now);
     }
 
     public RequestSpecification given() {
-        return RestAssured.given()
+        RequestSpecification spec = RestAssured.given()
                 .baseUri(baseUri)
                 .header("baggage", baggageHeaderValue());
+        customHeaders(java.time.Instant.now()).forEach(spec::header);
+        return spec;
     }
 
     public RequestSpecification authenticated() {

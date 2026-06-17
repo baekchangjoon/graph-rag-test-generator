@@ -73,6 +73,12 @@ public final class TestScope {
         AuthAdapter authAdapter = Adapters.select(AuthAdapter.class, "AUTH_ADAPTER", "noop", env);
 
         AuthClient authClient = authAdapter.create(env);
+        String headerLines = env.getOrDefault("REQUEST_HEADERS", "");
+        io.graphrag.model.RequestHeaders requestHeaders = headerLines.isBlank()
+                ? io.graphrag.model.RequestHeaders.empty()
+                : io.graphrag.model.RequestHeaders.parse(
+                        java.util.List.of(headerLines.split("\\R")),
+                        env.get("REQUEST_HEADERS_ON_LOGIN") != null);
         TestScope scope = new TestScope(
                 testId,
                 new JdbcHelper(jdbcAdapter, env, testId, runId, dashboard),
@@ -80,7 +86,8 @@ public final class TestScope {
                         env.getOrDefault("AUTH_HEADER", "Authorization"),
                         env.getOrDefault("AUTH_SCHEME", "Bearer"),
                         env.getOrDefault("AUTH_USER", "admin"),
-                        env.getOrDefault("AUTH_PASS", "password")),
+                        env.getOrDefault("AUTH_PASS", "password"),
+                        requestHeaders),
                 httpAdapter.create(env, testId),
                 socketAdapter.create(env, testId),
                 authClient,
