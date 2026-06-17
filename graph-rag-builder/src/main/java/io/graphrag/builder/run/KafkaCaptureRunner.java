@@ -3,10 +3,9 @@ package io.graphrag.builder.run;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
-import io.graphrag.builder.capture.SqlLogParser;
+import io.graphrag.builder.capture.SqlCaptureBackend;
 import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.env.DbConfig;
-import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.CapturedSql;
@@ -23,6 +22,7 @@ import org.jacoco.core.data.ExecutionDataStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -51,19 +51,20 @@ public class KafkaCaptureRunner {
                               ExecutionDataStore cumulativeExec) {
     }
 
-    private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
     private final String bootstrapServers;
     private final CoverageClient coverage;
+    private final SqlCaptureBackend sqlCapture;
 
-    public KafkaCaptureRunner(SutHandle sut, Connection connection, DbConfig.Type dbType,
-                              String bootstrapServers, CoverageClient coverage) {
-        this.sut = sut;
+    public KafkaCaptureRunner(Connection connection, DbConfig.Type dbType,
+                              String bootstrapServers, CoverageClient coverage,
+                              SqlCaptureBackend sqlCapture) {
         this.connection = connection;
         this.dbType = dbType;
         this.bootstrapServers = bootstrapServers;
         this.coverage = coverage;
+        this.sqlCapture = sqlCapture;
     }
 
     public KafkaResult run(KafkaConsumer consumer, BodyShape shape, List<TableSchema> tables)
@@ -112,17 +113,19 @@ public class KafkaCaptureRunner {
             boolean awaitSql, List<KafkaExchange> exchanges, List<CapturedSql> allSql,
             ExecutionDataStore cumulativeExec) throws Exception {
         coverage.dump(true);   // baseline: 직전 구간 컷, 이 발행의 delta만 측정
-        long logStart = sut.logOffset();
-        producer.send(new ProducerRecord<>(consumer.topic(), key,
-                Json.mapper().writeValueAsString(payload))).get();
-        if (awaitSql) {
-            awaitConsumerSql(logStart);
-        } else {
-            Thread.sleep(VARIANT_SETTLE_MILLIS);   // SQL 없는 변종: 고정 settle
-        }
-        long logEnd = sut.logOffset();
+        SqlCaptureBackend.Scope scope = sqlCapture.begin();
+        ProducerRecord<String, String> record = new ProducerRecord<>(consumer.topic(), key,
+                Json.mapper().writeValueAsString(payload));
+        // 상관 헤더(OTEL: traceparent / log: 없음)를 레코드 헤더로 주입. add는 누적이라 remove 후 add.
+        scope.requestHeaders().forEach((k, v) -> {
+            record.headers().remove(k);
+            record.headers().add(k, v.getBytes(StandardCharsets.UTF_8));
+        });
+        producer.send(record).get();
+        // happy: SQL/entry span 출현까지 await. variant: 단축 settle(early-return arm은 빈 SQL 기대).
+        List<ParsedSql> parsed = awaitSql ? scope.drain(AWAIT_MILLIS) : scope.drain(VARIANT_SETTLE_MILLIS);
         coverage.dump(true).accept(cumulativeExec);   // consumer 실행 커버 delta
-        List<CapturedSql> sql = captureSql(exchangeId, payload, sut.readLogRange(logStart, logEnd));
+        List<CapturedSql> sql = captureSql(exchangeId, payload, parsed);
         allSql.addAll(sql);
         exchanges.add(new KafkaExchange(exchangeId, consumer.id(), consumer.topic(), payload,
                 sql.stream().map(CapturedSql::id).toList(), variant));
@@ -183,18 +186,6 @@ public class KafkaCaptureRunner {
         return false;
     }
 
-    /** consumer가 만든 SQL이 로그에 나타날 때까지 폴링(최대 AWAIT). 없으면(Redis 등) 타임아웃 후 진행. */
-    private void awaitConsumerSql(long logStart) throws Exception {
-        long deadline = System.nanoTime() + AWAIT_MILLIS * 1_000_000L;
-        while (System.nanoTime() < deadline) {
-            Thread.sleep(POLL_MILLIS);
-            if (!SqlLogParser.parse(sut.readLogRange(logStart, sut.logOffset())).isEmpty()) {
-                Thread.sleep(POLL_MILLIS);   // settle: 후속 SQL flush 여유
-                return;
-            }
-        }
-    }
-
     private Properties producerProps() {
         Properties props = new Properties();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
@@ -204,7 +195,7 @@ public class KafkaCaptureRunner {
         return props;
     }
 
-    private List<CapturedSql> captureSql(String exchangeId, JsonNode payload, String logSegment) {
+    private List<CapturedSql> captureSql(String exchangeId, JsonNode payload, List<ParsedSql> parsed) {
         Set<String> payloadValues = new HashSet<>();
         payload.fields().forEachRemaining(entry -> {
             if (!entry.getValue().isNull()) {
@@ -213,7 +204,7 @@ public class KafkaCaptureRunner {
         });
         List<CapturedSql> captured = new ArrayList<>();
         int sequence = 0;
-        for (ParsedSql statement : SqlLogParser.parse(logSegment)) {
+        for (ParsedSql statement : parsed) {
             sequence++;
             List<SqlBinding> bindings = new ArrayList<>();
             for (ParsedSql.Binding binding : statement.bindings()) {
