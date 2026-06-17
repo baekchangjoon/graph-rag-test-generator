@@ -103,10 +103,12 @@ public final class SutProcess implements SutHandle {
         throw new IllegalStateException("SUT did not become healthy in " + BOOT_TIMEOUT);
     }
 
+    @Override
     public String baseUri() {
         return "http://localhost:" + port;
     }
 
+    @Override
     public String readLog() {
         try {
             return Files.readString(logFile);
@@ -116,6 +118,7 @@ public final class SutProcess implements SutHandle {
     }
 
     /** 현재 로그 길이. 캡처 구간 마커로 사용. */
+    @Override
     public long logOffset() {
         try {
             return Files.exists(logFile) ? Files.size(logFile) : 0;
@@ -124,6 +127,7 @@ public final class SutProcess implements SutHandle {
         }
     }
 
+    @Override
     public String readLogFrom(long offset) {
         return sliceUtf8(readLogBytes(), offset, Long.MAX_VALUE);
     }
@@ -133,6 +137,7 @@ public final class SutProcess implements SutHandle {
      * 주므로 byte 단위로 잘라야 한다 — char 인덱스로 자르면 멀티바이트 로그(예: 비-ASCII 검증 메시지)에서
      * 오프셋이 어긋나 구간이 비거나 밀린다(예: WS/Kafka SQL 캡처 유실).
      */
+    @Override
     public String readLogRange(long start, long end) {
         return sliceUtf8(readLogBytes(), start, end);
     }
@@ -152,6 +157,7 @@ public final class SutProcess implements SutHandle {
         }
     }
 
+    @Override
     public void stop() {
         process.destroy();
         try {
