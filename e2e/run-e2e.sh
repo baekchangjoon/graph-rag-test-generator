@@ -8,6 +8,26 @@ E2E="$ROOT/e2e"
 OUT="$E2E/out"
 GW="$ROOT/gradlew"
 
+# 선택 인자: --request-headers-file <path>
+#  (a) 빌더 탐색(:graph-rag-builder:run --args)에 --request-headers-file 전달
+#  (b) 생성 테스트 실행용 REQUEST_HEADERS export (미설정 시 파일 내용으로 채움)
+# 인자가 없으면 완전 no-op — 기존 동작 그대로.
+REQUEST_HEADERS_FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --request-headers-file) REQUEST_HEADERS_FILE="$2"; shift 2 ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+BUILDER_HEADER_ARG=""
+if [ -n "$REQUEST_HEADERS_FILE" ]; then
+  BUILDER_HEADER_ARG="--request-headers-file $REQUEST_HEADERS_FILE"
+  if [ -z "${REQUEST_HEADERS:-}" ]; then
+    export REQUEST_HEADERS="$(grep -v '^[[:space:]]*#' "$REQUEST_HEADERS_FILE" | grep -v '^[[:space:]]*$')"
+  fi
+fi
+
 echo "=== [1/5] SUT/서비스 jar 빌드 ==="
 "$GW" -q :samples:order-service:bootJar :test-state-dashboard:bootJar :socket-mock-server:bootJar \
   :e2e:copyOtelAgent
@@ -28,6 +48,7 @@ rm -rf "$OUT"
   --auth-login-path /api/auth/login \
   --auth-user admin \
   --auth-pass password \
+  $BUILDER_HEADER_ARG \
   --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
@@ -80,6 +101,7 @@ AUTH_ADAPTER=real \
 AUTH_LOGIN_PATH=/api/auth/login \
 AUTH_USER=admin \
 AUTH_PASS=password \
+REQUEST_HEADERS="${REQUEST_HEADERS:-}" \
 "$GW" :e2e:test
 TEST_EXIT=$?
 set -e
