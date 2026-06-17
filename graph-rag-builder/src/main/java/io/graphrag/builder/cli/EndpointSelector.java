@@ -32,6 +32,9 @@ public final class EndpointSelector {
                     "no explorable unit matches --endpoint '" + spec + "'. candidates: "
                             + candidates(endpoints, wsEndpoints, kafkaConsumers));
         }
+        if (resolved.isEmpty()) {
+            throw new IllegalArgumentException("--endpoint had no resolvable (non-blank) spec");
+        }
         return resolved;
     }
 
