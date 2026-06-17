@@ -1,0 +1,233 @@
+{
+  "sutId" : "order-otel",
+  "commitSha" : "unknown",
+  "endpoints" : [ ],
+  "paths" : [ ],
+  "sql" : [ ],
+  "tables" : [ {
+    "name" : "bookings",
+    "columns" : [ {
+      "name" : "check_in_date",
+      "jdbcType" : "DATE",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "loyalty_points",
+      "jdbcType" : "INT4",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "nights",
+      "jdbcType" : "INT4",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "id",
+      "jdbcType" : "INT8",
+      "nullable" : false,
+      "primaryKey" : true,
+      "autoIncrement" : true
+    }, {
+      "name" : "customer_email",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "status",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "tier",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    } ],
+    "foreignKeys" : [ ],
+    "uniqueKeys" : [ [ "id" ] ]
+  }, {
+    "name" : "order_events",
+    "columns" : [ {
+      "name" : "id",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : true,
+      "autoIncrement" : false
+    }, {
+      "name" : "type",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "user_id",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    } ],
+    "foreignKeys" : [ ],
+    "uniqueKeys" : [ [ "id" ] ]
+  }, {
+    "name" : "orders",
+    "columns" : [ {
+      "name" : "amount",
+      "jdbcType" : "INT4",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "id",
+      "jdbcType" : "INT8",
+      "nullable" : false,
+      "primaryKey" : true,
+      "autoIncrement" : true
+    }, {
+      "name" : "status",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "type",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    }, {
+      "name" : "user_id",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    } ],
+    "foreignKeys" : [ {
+      "column" : "user_id",
+      "referencedTable" : "users",
+      "referencedColumn" : "id"
+    } ],
+    "uniqueKeys" : [ [ "id" ] ]
+  }, {
+    "name" : "users",
+    "columns" : [ {
+      "name" : "id",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : true,
+      "autoIncrement" : false
+    }, {
+      "name" : "name",
+      "jdbcType" : "VARCHAR",
+      "nullable" : false,
+      "primaryKey" : false,
+      "autoIncrement" : false
+    } ],
+    "foreignKeys" : [ ],
+    "uniqueKeys" : [ [ "id" ] ]
+  } ],
+  "mappers" : [ {
+    "id" : "mapper-ordersearchmapper-search",
+    "namespace" : "io.graphrag.sample.orders.OrderSearchMapper",
+    "statementId" : "search",
+    "sqlKind" : "SELECT",
+    "dynamic" : true,
+    "sourceXml" : "<select id=\"search\" resultType=\"map\">\n        select id, user_id, amount, type, status\n        from orders\n        <where>\n            <if test=\"userId != null\">and user_id = #{userId}</if>\n            <if test=\"type != null\">and type = #{type}</if>\n            <if test=\"minAmount != null\">and amount &gt;= #{minAmount}</if>\n        </where>\n        order by id\n    </select>"
+  } ],
+  "httpCalls" : [ ],
+  "wsEndpoints" : [ ],
+  "wsExchanges" : [ ],
+  "kafkaConsumers" : [ {
+    "id" : "kafka-order-events",
+    "topic" : "order.events",
+    "groupId" : "order-service",
+    "handlerClass" : "io.graphrag.sample.orders.OrderEventConsumer",
+    "handlerMethod" : "onOrderEvent",
+    "payloadType" : "io.graphrag.sample.orders.OrderEventConsumer$OrderEventPayload"
+  } ],
+  "kafkaExchanges" : [ ],
+  "seeds" : [ {
+    "id" : "seed-delete-api-bookings-id-p0-0",
+    "pathId" : "delete-api-bookings-id-s403-1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "97338", "2037-01-01", "1", "1", "probe", "CANCELLED", "VIP" ]
+  }, {
+    "id" : "seed-delete-api-bookings-id-sg1-1",
+    "pathId" : "delete-api-bookings-id-sg1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "97339", "2037-01-01", "1", "1", "probe", "CONFIRMED", "VIP" ]
+  }, {
+    "id" : "seed-get-api-bookings-id-1",
+    "pathId" : null,
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "95277", "2037-01-01", "1", "1", "probe", "CANCELLED", "VIP" ]
+  }, {
+    "id" : "seed-get-api-bookings-id-sg1-1",
+    "pathId" : "get-api-bookings-id-sg1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "95278", "1900-01-01", "1", "1", "probe", "CANCELLED", "VIP" ]
+  }, {
+    "id" : "seed-get-api-orders-1",
+    "pathId" : null,
+    "table" : "users",
+    "columns" : [ "id", "name" ],
+    "values" : [ "probe-userId-91880", "probe" ]
+  }, {
+    "id" : "seed-get-api-orders-2",
+    "pathId" : null,
+    "table" : "orders",
+    "columns" : [ "id", "amount", "status", "type", "user_id" ],
+    "values" : [ "91880", "1", "CANCELLED", "probe", "probe-userId-91880" ]
+  }, {
+    "id" : "seed-get-api-orders-id-1",
+    "pathId" : null,
+    "table" : "users",
+    "columns" : [ "id", "name" ],
+    "values" : [ "probe-user_id-96882", "probe" ]
+  }, {
+    "id" : "seed-get-api-orders-id-2",
+    "pathId" : null,
+    "table" : "orders",
+    "columns" : [ "id", "amount", "status", "type", "user_id" ],
+    "values" : [ "96882", "1", "CANCELLED", "probe", "probe-user_id-96882" ]
+  }, {
+    "id" : "seed-post-api-bookings-id-advance-p0-0",
+    "pathId" : "post-api-bookings-id-advance-s403-1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "96828", "2037-01-01", "1", "1", "probe", "CANCELLED", "VIP" ]
+  }, {
+    "id" : "seed-post-api-bookings-id-advance-sg1-1",
+    "pathId" : "post-api-bookings-id-advance-sg1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "96829", "2037-01-01", "1", "1", "probe", "CONFIRMED", "VIP" ]
+  }, {
+    "id" : "seed-post-api-bookings-id-advance-sg2-1",
+    "pathId" : "post-api-bookings-id-advance-sg2",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "96830", "2037-01-01", "1", "1", "probe", "PENDING", "VIP" ]
+  }, {
+    "id" : "seed-post-web-users-userid-submit-p0-0",
+    "pathId" : "post-web-users-userid-submit-s403-1",
+    "table" : "users",
+    "columns" : [ "id", "name" ],
+    "values" : [ "probe-userId-98061", "probe" ]
+  }, {
+    "id" : "seed-put-api-bookings-id-p0-0",
+    "pathId" : "put-api-bookings-id-s403-1",
+    "table" : "bookings",
+    "columns" : [ "id", "check_in_date", "loyalty_points", "nights", "customer_email", "status", "tier" ],
+    "values" : [ "91566", "2037-01-01", "1", "1", "probe", "CANCELLED", "VIP" ]
+  } ]
+}

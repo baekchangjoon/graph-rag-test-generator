@@ -44,7 +44,10 @@ class BuilderE2eTest {
                 60, null,
                 Path.of(System.getProperty("external.stubs")),
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
-                null, null, authConfig, false, true, null));   // withKafka=true (consumer 회귀 가드)
+                null, null, authConfig, false, true, null,
+                // 기본값은 otel로 전환됨(OtelKafkaBuildAcceptanceTest가 otel full-build 커버).
+                // 이 테스트는 log-parser 폴백 경로의 full-build 회귀 가드로 명시 고정한다.
+                null, io.graphrag.model.RequestHeaders.empty(), java.util.List.of(), "log"));
 
         // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())

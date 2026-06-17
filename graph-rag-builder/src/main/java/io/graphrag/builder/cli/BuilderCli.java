@@ -666,7 +666,7 @@ public final class BuilderCli {
     /** --sql-capture otel|log (기본 log). 그 외 값은 거부. */
     private static String sqlCaptureMode(String value) {
         if (value == null) {
-            return "log";
+            return "otel";   // PoC①②+수용1~4 green → OTEL이 기본. log는 --sql-capture log 폴백.
         }
         if (!value.equals("otel") && !value.equals("log")) {
             throw new IllegalArgumentException("--sql-capture must be 'otel' or 'log', got: " + value);
