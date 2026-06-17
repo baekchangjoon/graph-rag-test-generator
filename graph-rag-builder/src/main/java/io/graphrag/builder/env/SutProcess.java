@@ -62,7 +62,8 @@ public final class SutProcess implements SutHandle {
                     "DDL_AUTO", "create",
                     // LOGGING_LEVEL_* env는 로거 이름의 대소문자를 잃는다
                     // (org.hibernate.SQL은 case-sensitive) → JSON으로 주입
-                    "SPRING_APPLICATION_JSON", loggingJson(options.extraLogLevels())));
+                    "SPRING_APPLICATION_JSON",
+                    springApplicationJson(options.extraLogLevels(), options.disableHibernateBatch())));
             if (!options.javaToolOptions().isBlank()) {
                 builder.environment().put("JAVA_TOOL_OPTIONS", options.javaToolOptions());
             }
@@ -170,13 +171,16 @@ public final class SutProcess implements SutHandle {
         }
     }
 
-    private static String loggingJson(java.util.Map<String, String> extraLevels) {
+    static String springApplicationJson(java.util.Map<String, String> extraLevels, boolean disableBatch) {
         StringBuilder json = new StringBuilder("{\"logging.level.org.hibernate.SQL\":\"DEBUG\",")
                 .append("\"logging.level.org.hibernate.orm.jdbc.bind\":\"TRACE\"");
         extraLevels.entrySet().stream()
                 .sorted(java.util.Map.Entry.comparingByKey())
                 .forEach(e -> json.append(",\"logging.level.").append(e.getKey())
                         .append("\":\"").append(e.getValue()).append("\""));
+        if (disableBatch) {
+            json.append(",\"spring.jpa.properties.hibernate.jdbc.batch_size\":\"0\"");
+        }
         return json.append("}").toString();
     }
 
