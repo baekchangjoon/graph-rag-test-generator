@@ -72,7 +72,7 @@ public final class OtlpTraceReceiver implements AutoCloseable {
         }
     }
 
-    void addForTest(SpanRecord span) {
+    public void addForTest(SpanRecord span) {
         record(span);
     }
 
