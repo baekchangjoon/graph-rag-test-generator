@@ -1245,8 +1245,9 @@ producer.send(record).get();
 
 - **PoC①** `db.query.parameter.*` 노출: ☑ **예** — 인덱스 규약: ☑ **0-based** (2026-06-18 실측: petclinic 4.0 + agent 2.16.0, `db.system=h2`, jdbc instrumentation `2.16.0-alpha`. INSERT 5-param이 `db.query.parameter.0`~`.4`로 노출; SELECT bind도 `.0`부터). → `PARAM_INDEX_BASE = 0` 확정(draft 값 그대로). HTTP OTEL 경로 **GO**.
 - **PoC①** batch_size=0 효과: 단건 INSERT/SELECT는 batch 무관하게 노출됨 확인. batch 완화는 다건 batch insert 대비 예방책으로 유지(미측정).
-- **PoC②** Kafka 상관: ☐ **미측정 — Phase 5 착수 직전 실측 예정** (Kafka broker + consumer SUT 셋업 필요; Phase 2~4는 PoC②와 무관하므로 선진행). Phase 5에서 child/link/불가를 확정해 `awaitEntrySpan` 매칭·폴백 결정.
-- 확정값을 Task 3.4 `PARAM_INDEX_BASE`(=0), Task 5.1 매칭 전략(보류)에 반영.
+- **PoC②** Kafka 상관: ☑ **CHILD 확정** (2026-06-18 실측: order-service `@KafkaListener("order.events")` + agent 2.16.0, `OtelKafkaCorrelationPocTest`). 레코드 헤더 `traceparent`를 주입하면 consumer `order.events process` span(SPAN_KIND_CONSUMER)의 `parentSpanId`가 **주입 spanId와 일치**하고, 그 아래 DB span(SELECT/INSERT `order_events`)이 **주입 traceId와 같은 trace**에 들어온다. → `awaitEntrySpan(traceId, injectedSpanId)`(parent==injected) 전략 **변경 불필요**. link 처리 불필요. Task 5.1 매칭 전략 = **child(현행 그대로)** 확정.
+- **PoC②에서 발견한 중대 버그(수정 완료)**: agent 2.16.0은 stable DB semconv opt-in 없이는 SQL 텍스트를 **`db.statement`(구 키)**로 내보낸다(`db.query.text` 아님; `db.system=postgresql`, `db.operation`, `db.sql.table`, `db.name` 모두 구 semconv). PoC①의 `db.system=h2`도 동일하게 구 키였다 — 즉 기존 `OtelSpanCapture.toParsedSql`이 `db.query.text`만 읽어 **OTEL 경로가 SQL 텍스트를 0건 환원하고 항상 log-parser로 폴백**하고 있었다(Phase 4 "47 SQL OTEL"은 사실상 폴백). bind 파라미터만은 신규 키 `db.query.parameter.N`(0-based)로 정상 노출됨. **수정**: `sqlText()`가 `db.query.text`(신규)→`db.statement`(구) 순으로 읽고 빈 문자열(드라이버 잡음)은 제외. `OtelKafkaCorrelationPocTest`가 실제 `OtelSpanCapture.drain()`으로 consumer trace를 3개 ParsedSql(select count/select/insert, bind 정확)로 환원함을 검증(폴백 아님).
+- 확정값을 Task 3.4 `PARAM_INDEX_BASE`(=0) + `sqlText` 이중-semconv, Task 5.1 매칭 전략(**child**)에 반영.
 
 ## Definition of Done
 

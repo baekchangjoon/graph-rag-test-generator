@@ -92,13 +92,26 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
         }
     }
 
+    /**
+     * SQL 텍스트 속성 키. agent 2.16.0은 stable DB semconv opt-in 없이는 구 키 {@code db.statement}로,
+     * opt-in 시 신규 키 {@code db.query.text}로 내보낸다(PoC②: order-service/Postgres·PoC①/H2 모두 구 키).
+     * 두 컨벤션 모두 지원하도록 신규→구 순으로 읽는다.
+     */
+    private static final String SQL_TEXT_NEW = "db.query.text";
+    private static final String SQL_TEXT_OLD = "db.statement";
+
+    private static String sqlText(Map<String, String> attrs) {
+        String sql = attrs.getOrDefault(SQL_TEXT_NEW, attrs.get(SQL_TEXT_OLD));
+        return sql == null || sql.isBlank() ? null : sql;
+    }
+
     private static List<ParsedSql> toParsedSql(List<SpanRecord> spans) {
         List<ParsedSql> result = new ArrayList<>();
         List<SpanRecord> dbSpans = new ArrayList<>(spans.stream()
-                .filter(s -> s.attributes().containsKey("db.query.text")).toList());
+                .filter(s -> sqlText(s.attributes()) != null).toList());
         dbSpans.sort(Comparator.comparingLong(SpanRecord::startUnixNano));
         for (SpanRecord span : dbSpans) {
-            String sql = span.attributes().get("db.query.text");
+            String sql = sqlText(span.attributes());
             TreeMap<Integer, String> ordered = new TreeMap<>();
             span.attributes().forEach((k, v) -> {
                 if (k.startsWith("db.query.parameter.")) {

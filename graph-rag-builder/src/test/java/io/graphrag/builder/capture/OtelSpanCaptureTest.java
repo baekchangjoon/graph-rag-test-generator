@@ -33,10 +33,44 @@ class OtelSpanCaptureTest {
         assertThat(sql.get(0).bindings().get(0).position()).isEqualTo(1);
     }
 
+    /** PoC②: agent 2.16.0이 stable semconv opt-in 없이 쓰는 구 키 db.statement도 읽어야 한다. */
+    @Test
+    void drain_readsLegacyDbStatementAttribute() {
+        OtlpTraceReceiver receiver = new OtlpTraceReceiver();
+        OtelSpanCapture capture = new OtelSpanCapture(receiver, noopSut(), new TraceParent("run-legacy"));
+        OtelSpanCapture.OtelScope scope = (OtelSpanCapture.OtelScope) capture.begin();
+        String tid = scope.traceId();
+        String injected = scope.spanId();
+
+        receiver.addForTest(legacyDbSpan(tid, "s1", 100,
+                "insert into order_events (type,user_id,id) values (?,?,?)", "CREATED", "poc-user-1", "poc-evt-1"));
+        receiver.addForTest(blankDbSpan(tid, "s0", 90));   // 드라이버 잡음(빈 db.statement) — 제외돼야 함
+        receiver.addForTest(entrySpan(tid, injected, 50));
+
+        List<ParsedSql> sql = scope.drain();
+        assertThat(sql).extracting(ParsedSql::sql)
+                .containsExactly("insert into order_events (type,user_id,id) values (?,?,?)");
+        assertThat(sql.get(0).bindings()).extracting(ParsedSql.Binding::value)
+                .containsExactly("CREATED", "poc-user-1", "poc-evt-1");
+    }
+
     private static SpanRecord dbSpan(String tid, String spanId, long start, String sql, String... params) {
         Map<String, String> attrs = new LinkedHashMap<>();
         attrs.put("db.query.text", sql);
         for (int i = 0; i < params.length; i++) attrs.put("db.query.parameter." + i, params[i]);
+        return new SpanRecord(tid, spanId, "root", "db", "SPAN_KIND_CLIENT", start, attrs, List.of());
+    }
+    private static SpanRecord legacyDbSpan(String tid, String spanId, long start, String sql, String... params) {
+        Map<String, String> attrs = new LinkedHashMap<>();
+        attrs.put("db.statement", sql);
+        attrs.put("db.system", "postgresql");
+        for (int i = 0; i < params.length; i++) attrs.put("db.query.parameter." + i, params[i]);
+        return new SpanRecord(tid, spanId, "root", "db", "SPAN_KIND_CLIENT", start, attrs, List.of());
+    }
+    private static SpanRecord blankDbSpan(String tid, String spanId, long start) {
+        Map<String, String> attrs = new LinkedHashMap<>();
+        attrs.put("db.statement", "");
+        attrs.put("db.system", "postgresql");
         return new SpanRecord(tid, spanId, "root", "db", "SPAN_KIND_CLIENT", start, attrs, List.of());
     }
     private static SpanRecord entrySpan(String tid, String injected, long start) {
