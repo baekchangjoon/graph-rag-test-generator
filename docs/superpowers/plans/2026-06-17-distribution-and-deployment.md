@@ -1,7 +1,8 @@
 # 배포 계획 — prebuilt 산출물로 "직접 빌드" 제거 (옵션 A + D)
 
 - 작성: 2026-06-17 · 개정: 2026-06-17 (3-모델 리뷰 triage 반영)
-- 상태: 계획(plan only) — 구현 미착수.
+- 상태: **Phase A-1 구현 완료**(PR #44, main 머지) — distZip 버전화 + 태그 릴리스 + 수용 테스트.
+  Phase A-2·D는 미착수.
 - 범위: 사용자가 **도구 저장소를 소스에서 빌드하지 않고도** 두 CLI를 받아 실행하고, 생성된
   테스트를 **컴파일·실행**까지 하게 한다. 선택된 방식: **A) distZip + GitHub Release** +
   **D) Docker 이미지**. 생성 테스트를 실제로 돌리려면 CLI 외에 실행 자산(testlib·mock 서비스·
@@ -47,9 +48,12 @@
 ## 3. 버전 정책
 
 - 버전 출처 = git 태그. 형식 **`vX.Y.Z`** 또는 pre-release `vX.Y.Z-<id>`.
-- 루트 `build.gradle.kts`의 **`allprojects` 블록**에 다음을 둔다(없으면 distZip 산출물명에 버전이
-  안 붙는다 — version은 루트→서브프로젝트로 자동 전파되지 않고 각 서브프로젝트 version이 산출물명에 쓰임):
-  `version = providers.environmentVariable("RELEASE_VERSION").orElse("0.0.0-SNAPSHOT").get()`.
+- 루트 `build.gradle.kts`의 `subprojects` 블록에서 **배포 3종(graph-rag-builder/test-generator/
+  testlib)에만** version을 설정한다(구현됨):
+  `if (name in setOf("graph-rag-builder","test-generator","testlib")) version = providers.environmentVariable("RELEASE_VERSION").orElse("0.0.0-SNAPSHOT").get()`.
+  전 모듈(allprojects)에 적용하면 샘플/서비스 bootJar 이름이 `order-service-<v>.jar`로 바뀌어
+  `run-e2e.sh`·통합테스트가 참조하는 `order-service.jar` 등이 깨진다. version은 루트→서브프로젝트로
+  자동 전파되지 않고 각 서브프로젝트 version이 산출물명에 쓰인다.
 - release 워크플로가 태그명을 `RELEASE_VERSION=${GITHUB_REF_NAME#v}`로 주입.
 - 산출물명은 `application` 규칙에 따라 `<module>-<version>.zip`.
 
@@ -186,8 +190,9 @@ CLI만으로는 생성된 테스트를 **돌릴 수 없다**. 다음을 prebuilt
 
 ## 8. 단계 순서 (제안)
 
-1. **Phase A-1**: 루트 `version` 주입 + `release.yml`(distZip + `testlib:jar` → Release) + CI 게이트.
-   수용: A-E2E-1/2/3 + A-CI.
+1. **Phase A-1** ✅ 완료(PR #44): `version` 주입(배포 3종) + `ci.yml` 게이트된 release 잡
+   (distZip + `testlib:jar` → Release) + 수용 테스트 `e2e/run-dist-e2e.sh`(A-E2E-1/2/3 GREEN).
+   잔여: A-CI(실제 태그 push로 자산 첨부 검증).
 2. **Phase A-2**: 문서 권장 경로 재배치·요구사항 분리(§6).
 3. **Phase D-1**: generator 이미지 + push 잡(installDist 선행). 수용: D-E2E-1.
 4. **Phase D-2**: builder 이미지(Linux 우선) + 네트워킹 문서. 수용: D-E2E-2(Linux).
