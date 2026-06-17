@@ -32,6 +32,7 @@ import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.Json;
 import io.graphrag.model.ParamKind;
+import io.graphrag.model.RequestHeaders;
 import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.SqlBinding;
 import io.graphrag.model.TableSchema;
@@ -47,6 +48,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -86,6 +88,7 @@ public class EndpointExplorationRunner {
     private final AuthConfig authConfig;           // nullable — authProvider와 쌍
     private final Map<String, List<String>> enumConstants;  // enum FQN → 상수 (유효 happy 입력)
     private final Map<String, List<String>> enumColumns;    // 컬럼(snake) → 유효 enum 상수 (시드 읽기 500 방지)
+    private final RequestHeaders extraHeaders;              // 사용자 지정 커스텀 헤더 (B3)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -101,7 +104,8 @@ public class EndpointExplorationRunner {
                                      AuthTokenProvider authProvider,
                                      AuthConfig authConfig,
                                      Map<String, List<String>> enumConstants,
-                                     Map<String, List<String>> enumColumns) {
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -118,6 +122,7 @@ public class EndpointExplorationRunner {
         this.authConfig = authConfig;
         this.enumConstants = enumConstants;
         this.enumColumns = enumColumns;
+        this.extraHeaders = extraHeaders;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -658,6 +663,9 @@ public class EndpointExplorationRunner {
                 .header("baggage", "test-id=explore");
         if (authHeaderValue != null) {
             builder.header(authConfig.headerName(), authHeaderValue);
+        }
+        for (Map.Entry<String, String> h : extraHeaders.resolved(Instant.now()).entrySet()) {
+            builder.header(h.getKey(), h.getValue());
         }
         String method = endpoint.httpMethod();
         if (method.equals("GET") || method.equals("DELETE")) {

@@ -24,7 +24,8 @@ class AuthTokenProviderTest {
             String base = "http://localhost:" + server.getAddress().getPort();
             AuthConfig config = new AuthConfig("/api/auth/login", "admin", "password",
                     "token", "Authorization", "Bearer", List.of());
-            AuthTokenProvider provider = new AuthTokenProvider(base, config);
+            AuthTokenProvider provider = new AuthTokenProvider(base, config,
+                    io.graphrag.model.RequestHeaders.empty());
             assertThat(provider.token()).isEqualTo("jwt-abc");
             assertThat(provider.token()).isEqualTo("jwt-abc");
             assertThat(hits[0]).isEqualTo(1);

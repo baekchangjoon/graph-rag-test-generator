@@ -108,6 +108,12 @@ public final class BuilderCli {
                         java.util.List.of())
                 : null;
 
+        io.graphrag.model.RequestHeaders requestHeaders = options.containsKey("--request-headers-file")
+                ? io.graphrag.model.RequestHeaders.parse(
+                        Files.readAllLines(Path.of(options.get("--request-headers-file"))),
+                        options.containsKey("--request-headers-on-login"))
+                : io.graphrag.model.RequestHeaders.empty();
+
         BuildConfig config = new BuildConfig(
                 sutSrc,
                 Path.of(options.getOrDefault("--sut-resources",
@@ -130,7 +136,7 @@ public final class BuilderCli {
                 options.containsKey("--with-kafka"),
                 options.get("--sut-java-home"),
                 attach,
-                io.graphrag.model.RequestHeaders.empty());
+                requestHeaders);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -313,7 +319,7 @@ public final class BuilderCli {
         List<TableSchema> tables;
 
         AuthTokenProvider authProvider = config.authConfig() == null ? null
-                : new AuthTokenProvider(env.sut().baseUri(), config.authConfig());
+                : new AuthTokenProvider(env.sut().baseUri(), config.authConfig(), config.requestHeaders());
 
         try (Connection connection = env.openConnection()) {
             tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
@@ -406,7 +412,8 @@ public final class BuilderCli {
                         coverageClient, analyzer,
                         config.budgetRequests(), env.httpCapture(),
                         responseDtoFieldSets, literals,
-                        authProvider, config.authConfig(), enumConstants, enumColumns);
+                        authProvider, config.authConfig(), enumConstants, enumColumns,
+                        config.requestHeaders());
                 // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
                 List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
                         .filter(g -> g.classFqn().equals(endpoint.handlerClass())
