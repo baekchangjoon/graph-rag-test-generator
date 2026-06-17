@@ -154,6 +154,34 @@ class OtlpTraceReceiverTest {
     }
 
     @Test
+    void concurrentPosts_noLoss() throws Exception {
+        receiver = new OtlpTraceReceiver();
+        receiver.start();
+        int perTrace = 40;
+        byte[] tidA = fill(16, 0x10);
+        byte[] tidB = fill(16, 0x11);
+        Runnable a = () -> postN(tidA, perTrace);
+        Runnable b = () -> postN(tidB, perTrace);
+        Thread ta = new Thread(a);
+        Thread tb = new Thread(b);
+        ta.start(); tb.start(); ta.join(); tb.join();
+        assertThat(receiver.spans(hexOf(tidA))).hasSize(perTrace);
+        assertThat(receiver.spans(hexOf(tidB))).hasSize(perTrace);
+    }
+
+    private void postN(byte[] traceId, int n) {
+        try {
+            for (int i = 0; i < n; i++) {
+                post(otlp(traceId, fill(8, i % 251 + 1), fill(8, 0x0b),
+                        Span.SpanKind.SPAN_KIND_CLIENT, "select 1",
+                        AnyValue.newBuilder().setStringValue("x").build()));
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Test
     void addForTest_seedsWithoutHttp() {
         receiver = new OtlpTraceReceiver();
         String tid = "5".repeat(32);

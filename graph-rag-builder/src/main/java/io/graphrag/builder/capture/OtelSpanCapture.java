@@ -24,6 +24,9 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
     /** PoC①에서 확정: db.query.parameter.N의 N이 0-based. */
     static final int PARAM_INDEX_BASE = 0;
 
+    private static final String PARAM_PREFIX = "db.query.parameter.";
+    private static final java.util.regex.Pattern DIGITS = java.util.regex.Pattern.compile("\\d+");
+
     static final long AWAIT_TIMEOUT_MILLIS = 8_000;
     static final long QUIESCENCE_MILLIS = 250;
     private static final long POLL_MILLIS = 50;
@@ -77,6 +80,11 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
                 if (!arrived) {
                     log.warn("otel entry span timeout (trace={}), fell back to log-parser ({} sql)",
                             ids.traceId(), fallback.size());
+                } else if (!fallback.isEmpty()) {
+                    // entry span은 왔는데 OTEL DB span이 0이고 로그엔 SQL이 있다 → OTEL 캡처 오설정 신호
+                    // (semconv 키 불일치/batch collapse 등). 요청이 실제로 SQL이 없으면(403 등) 둘 다 비어 무경고.
+                    log.warn("otel yielded 0 db spans but log-parser found {} (trace={}); "
+                            + "OTEL capture may be misconfigured", fallback.size(), ids.traceId());
                 }
                 return fallback;
             } finally {
@@ -114,8 +122,13 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
             String sql = sqlText(span.attributes());
             TreeMap<Integer, String> ordered = new TreeMap<>();
             span.attributes().forEach((k, v) -> {
-                if (k.startsWith("db.query.parameter.")) {
-                    ordered.put(Integer.parseInt(k.substring("db.query.parameter.".length())), v);
+                if (k.startsWith(PARAM_PREFIX)) {
+                    // 정수 인덱스 suffix만 바인딩으로. 비정수(예: 향후 db.query.parameter.count)는 건너뛴다
+                    // (parseInt가 drain 전체를 깨뜨리지 않도록 — 리시버의 방어적 입력 처리와 일관).
+                    String suffix = k.substring(PARAM_PREFIX.length());
+                    if (DIGITS.matcher(suffix).matches()) {
+                        ordered.put(Integer.parseInt(suffix), v);
+                    }
                 }
             });
             List<ParsedSql.Binding> bindings = new ArrayList<>();
