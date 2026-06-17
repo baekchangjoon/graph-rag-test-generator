@@ -60,25 +60,45 @@
 
 ## 트랙 B — 내 Spring 앱에 적용
 
-자기 앱에는 도구 1·2를 직접 호출한다. **권장: [Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)에서
-prebuilt zip을 받아** 압축을 푼다(소스 빌드 불필요). 요구사항은 도구별로 다르다:
+자기 앱에는 도구 1·2를 직접 호출한다. 받는 방법은 두 가지이고 **둘 다 소스 빌드가 필요 없다**.
+요구사항은 도구별로 다르다 — **test-generator는 Docker 불필요**, **graph-rag-builder는 Docker 데몬 필요**.
 
-- **test-generator**(테스트 생성): **JRE 17만**. Docker 불필요.
-- **graph-rag-builder**(사실 캡처): **JRE 17 + Docker 데몬** + 분석할 SUT의 소스·boot jar·docker-compose.
+**A. Release zip (권장).** [Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)에서
+받아 압축을 푼다. `test-generator`는 **JRE 17만**, `graph-rag-builder`는 **JRE 17 + Docker**.
 
 ```bash
-# Releases에서 받기 (예: v0.1.0)
-unzip graph-rag-builder-<v>.zip   # → graph-rag-builder-<v>/bin/graph-rag-builder
-unzip test-generator-<v>.zip      # → test-generator-<v>/bin/test-generator
+unzip test-generator-0.2.0.zip      # → test-generator-0.2.0/bin/test-generator
+unzip graph-rag-builder-0.2.0.zip   # → graph-rag-builder-0.2.0/bin/graph-rag-builder
 ```
 
-> 소스에서 빌드해 쓰려면(advanced): 저장소에서 `./gradlew :graph-rag-builder:run --args="build ..."`,
-> `./gradlew :test-generator:run --args="generate ..."`. 아래 예시의 `bin/...`를 이걸로 바꾸면 된다.
+**B. 컨테이너 이미지 (Java 설치도 불필요).** GHCR에서 pull한다.
+
+```bash
+docker pull ghcr.io/baekchangjoon/test-generator:0.2.0
+docker pull ghcr.io/baekchangjoon/graph-rag-builder:0.2.0
+```
+
+> GHCR 패키지가 **public**이면 위 `docker pull`이 익명으로 된다(private면 먼저 `docker login ghcr.io`).
+
+분석 대상 SUT의 **소스·boot jar·docker-compose**는 어느 방법이든 도구 입력으로 필요하다(§1).
+
+아래 예시는 A(zip 런처) 기준이다. B(이미지)로 실행하려면 `bin/...`을 `docker run`으로 바꾼다:
+
+```bash
+# generator
+docker run --rm -v "$PWD:/w" -w /w ghcr.io/baekchangjoon/test-generator:0.2.0 generate ...
+# builder (Linux: docker.sock + --network host)
+docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$SUT:/sut" -v "$PWD/out:/out" ghcr.io/baekchangjoon/graph-rag-builder:0.2.0 build ...
+```
+
+> 소스에서 빌드해 쓰려면(advanced): `./gradlew :graph-rag-builder:run --args="build ..."`,
+> `./gradlew :test-generator:run --args="generate ..."`.
 
 ### 1. SUT 준비
 
 - 운영과 같은 방식으로 만든 **boot jar** (`./gradlew bootJar` 또는 `mvn package`)
-- **소스 디렉터리**(`src/main/java`)와 **리소스 디렉터리**(`src/main/resources`)
+- **소스 디렉터리**(`src/main/java`). 리소스는 생략 시 소스 옆 `src/main/resources`로 가정한다(`--sut-resources`로 지정).
 - 앱이 쓰는 DB를 정의한 **docker-compose.yml** (도구 1이 여기서 DB 종류를 감지한다)
 
 ### 2. 도구 1 — 사실 캡처
