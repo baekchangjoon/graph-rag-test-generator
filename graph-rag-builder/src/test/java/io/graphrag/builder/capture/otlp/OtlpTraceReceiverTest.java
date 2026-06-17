@@ -1,5 +1,12 @@
 package io.graphrag.builder.capture.otlp;
 
+import com.google.protobuf.ByteString;
+import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
+import io.opentelemetry.proto.common.v1.AnyValue;
+import io.opentelemetry.proto.common.v1.KeyValue;
+import io.opentelemetry.proto.trace.v1.ResourceSpans;
+import io.opentelemetry.proto.trace.v1.ScopeSpans;
+import io.opentelemetry.proto.trace.v1.Span;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -17,24 +24,42 @@ class OtlpTraceReceiverTest {
     @AfterEach
     void tearDown() { if (receiver != null) receiver.stop(); }
 
-    private static String otlpJson(String traceId, String spanId, String parentSpanId,
-                                   String kind, String sql, String param0) {
-        return """
-            {"resourceSpans":[{"scopeSpans":[{"spans":[{
-              "traceId":"%s","spanId":"%s","parentSpanId":"%s",
-              "name":"INSERT owners","kind":%s,"startTimeUnixNano":"1000",
-              "attributes":[
-                {"key":"db.query.text","value":{"stringValue":"%s"}},
-                {"key":"db.query.parameter.0","value":{"stringValue":"%s"}}
-              ]
-            }]}]}]}""".formatted(traceId, spanId, parentSpanId, kind, sql, param0);
+    private static byte[] otlp(byte[] traceId, byte[] spanId, byte[] parentSpanId, Span.SpanKind kind,
+                              String sqlText, AnyValue param0) {
+        Span.Builder span = Span.newBuilder()
+                .setTraceId(ByteString.copyFrom(traceId))
+                .setSpanId(ByteString.copyFrom(spanId))
+                .setParentSpanId(ByteString.copyFrom(parentSpanId))
+                .setName("q").setKind(kind).setStartTimeUnixNano(1000L)
+                .addAttributes(KeyValue.newBuilder().setKey("db.query.text")
+                        .setValue(AnyValue.newBuilder().setStringValue(sqlText)).build())
+                .addAttributes(KeyValue.newBuilder().setKey("db.query.parameter.0")
+                        .setValue(param0).build());
+        return ExportTraceServiceRequest.newBuilder()
+                .addResourceSpans(ResourceSpans.newBuilder()
+                        .addScopeSpans(ScopeSpans.newBuilder().addSpans(span))).build().toByteArray();
     }
 
-    private int post(String body) throws Exception {
+    private static String hexOf(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(Character.forDigit((b >> 4) & 0xf, 16));
+            sb.append(Character.forDigit(b & 0xf, 16));
+        }
+        return sb.toString();
+    }
+
+    private static byte[] fill(int len, int value) {
+        byte[] b = new byte[len];
+        java.util.Arrays.fill(b, (byte) value);
+        return b;
+    }
+
+    private int post(byte[] body) throws Exception {
         HttpResponse<String> r = HttpClient.newHttpClient().send(
                 HttpRequest.newBuilder(URI.create(receiver.endpoint() + "/v1/traces"))
-                        .header("Content-Type", "application/json")
-                        .POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                        .header("Content-Type", "application/x-protobuf")
+                        .POST(HttpRequest.BodyPublishers.ofByteArray(body)).build(),
                 HttpResponse.BodyHandlers.ofString());
         return r.statusCode();
     }
@@ -43,23 +68,25 @@ class OtlpTraceReceiverTest {
     void receivesAndIndexesSpansByTrace() throws Exception {
         receiver = new OtlpTraceReceiver();
         receiver.start();
-        String tid = "0".repeat(31) + "1";
-        int status = post(otlpJson(tid, "a".repeat(16), "b".repeat(16),
-                "\"SPAN_KIND_CLIENT\"", "insert into owners (first_name) values (?)", "Alice"));
+        byte[] traceId = fill(16, 0x01);
+        int status = post(otlp(traceId, fill(8, 0x0a), fill(8, 0x0b), Span.SpanKind.SPAN_KIND_CLIENT,
+                "insert into owners (first_name) values (?)",
+                AnyValue.newBuilder().setStringValue("Alice").build()));
         assertThat(status).isEqualTo(200);
-        assertThat(receiver.spans(tid)).hasSize(1);
-        assertThat(receiver.spans(tid).get(0).attributes()).containsEntry("db.query.parameter.0", "Alice");
+        assertThat(receiver.spans(hexOf(traceId))).hasSize(1);
+        assertThat(receiver.spans(hexOf(traceId)).get(0).attributes())
+                .containsEntry("db.query.parameter.0", "Alice");
     }
 
     @Test
     void awaitEntrySpan_returnsWhenChildOfInjectedSpan() throws Exception {
         receiver = new OtlpTraceReceiver();
         receiver.start();
-        String tid = "1".repeat(32);
-        String injectedSpanId = "c".repeat(16);
-        post(otlpJson(tid, "d".repeat(16), injectedSpanId,
-                "\"SPAN_KIND_SERVER\"", "select 1", "x"));
-        assertThat(receiver.awaitEntrySpan(tid, injectedSpanId, 1000)).isTrue();
+        byte[] traceId = fill(16, 0x02);
+        byte[] injectedSpanId = fill(8, 0x0c);
+        post(otlp(traceId, fill(8, 0x0d), injectedSpanId, Span.SpanKind.SPAN_KIND_SERVER,
+                "select 1", AnyValue.newBuilder().setStringValue("x").build()));
+        assertThat(receiver.awaitEntrySpan(hexOf(traceId), hexOf(injectedSpanId), 1000)).isTrue();
     }
 
     @Test
@@ -73,24 +100,23 @@ class OtlpTraceReceiverTest {
     void remove_clearsTrace() throws Exception {
         receiver = new OtlpTraceReceiver();
         receiver.start();
-        String tid = "3".repeat(32);
-        post(otlpJson(tid, "a".repeat(16), "b".repeat(16), "\"SPAN_KIND_CLIENT\"", "select 1", "x"));
-        assertThat(receiver.spans(tid)).isNotEmpty();
-        receiver.remove(tid);
-        assertThat(receiver.spans(tid)).isEmpty();
+        byte[] traceId = fill(16, 0x03);
+        post(otlp(traceId, fill(8, 0x0a), fill(8, 0x0b), Span.SpanKind.SPAN_KIND_CLIENT,
+                "select 1", AnyValue.newBuilder().setStringValue("x").build()));
+        assertThat(receiver.spans(hexOf(traceId))).isNotEmpty();
+        receiver.remove(hexOf(traceId));
+        assertThat(receiver.spans(hexOf(traceId))).isEmpty();
     }
 
     @Test
     void anyValue_intNormalized() throws Exception {
         receiver = new OtlpTraceReceiver();
         receiver.start();
-        String tid = "4".repeat(32);
-        String json = ("{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{"
-                + "\"traceId\":\"%s\",\"spanId\":\"%s\",\"parentSpanId\":\"%s\",\"name\":\"q\",\"kind\":\"SPAN_KIND_CLIENT\",\"startTimeUnixNano\":\"1\","
-                + "\"attributes\":[{\"key\":\"db.query.parameter.0\",\"value\":{\"intValue\":\"7\"}}]"
-                + "}]}]}]}").formatted(tid, "a".repeat(16), "b".repeat(16));
-        post(json);
-        assertThat(receiver.spans(tid).get(0).attributes()).containsEntry("db.query.parameter.0", "7");
+        byte[] traceId = fill(16, 0x04);
+        post(otlp(traceId, fill(8, 0x0a), fill(8, 0x0b), Span.SpanKind.SPAN_KIND_CLIENT,
+                "select 1", AnyValue.newBuilder().setIntValue(7).build()));
+        assertThat(receiver.spans(hexOf(traceId)).get(0).attributes())
+                .containsEntry("db.query.parameter.0", "7");
     }
 
     @Test
