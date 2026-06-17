@@ -171,3 +171,9 @@ OPEN-DECISIONS.md 항목 중 일부는 phase 진입을 막을 수 있음:
 | SUT 외부 프로세스 부팅 시간 | jar 재사용 / 공유 탐색 환경 전략 |
 | Testcontainers 비용 | suite 단위 컨테이너 재사용 |
 | 민감 정보 캡처 누출 | 패턴 마스킹 + 캡처 직후 sanitize |
+
+## 구체화된 앞으로 할 일
+
+착수 전 방향·통합 지점·리스크를 못 박은 3건(OTEL 기반 SQL/bind 캡처·OpenAPI 외부 stub seeding·override
+키 치환 경고)은 [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) 참조. 각 항목은
+착수 시 각자 spec→plan으로 확장한다.
