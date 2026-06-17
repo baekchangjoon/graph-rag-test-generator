@@ -394,6 +394,20 @@ public final class BuilderCli {
             // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
             // runWideExec에 병합돼 exploration 지표에 반영된다. baseline dump가 boot 구간을
             // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
+            // SQL 캡처 backend는 env.start() 이후(sut() non-null)에 구성한다. OTEL 모드면 Environment가
+            // 소유한 OTLP receiver로 span 캡처(요청별 traceparent로 귀속), 아니면 로그 파싱 폴백(기존 동작 동일).
+            // Kafka(레코드 헤더 주입)와 HTTP(요청 헤더 주입) 경로가 동일 backend를 공유 — 단조 traceId 카운터로
+            // 모든 발행/요청이 고유 trace를 받는다. Kafka 블록보다 먼저 만들어 runner에 주입한다.
+            io.graphrag.builder.capture.SqlCaptureBackend sqlCapture =
+                    "otel".equals(config.sqlCapture()) && env.otlpReceiver() != null
+                            ? new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
+                                    new io.graphrag.builder.capture.TraceParent(config.sutId()))
+                            : new io.graphrag.builder.capture.LogParserCapture(env.sut());
+
+            // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
+            // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
+            // runWideExec에 병합돼 exploration 지표에 반영된다. baseline dump가 boot 구간을
+            // 잘라내므로 뒤따르는 HTTP baseline에 새는 것 없음.
             String kafkaBootstrap = env.kafkaBootstrapServers();
             if (kafkaBootstrap == null && !kafkaIndex.consumers().isEmpty()) {
                 log.warn("{} kafka consumer(s) skipped (no kafka bootstrap configured)",
@@ -402,7 +416,7 @@ public final class BuilderCli {
             if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
                 io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
                         new io.graphrag.builder.run.KafkaCaptureRunner(
-                                env.sut(), connection, env.dbType(), kafkaBootstrap, coverageClient);
+                                connection, env.dbType(), kafkaBootstrap, coverageClient, sqlCapture);
                 for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
                     if (!plan.shouldExplore(kafkaConsumer.id())) {
                         continue;
@@ -415,14 +429,6 @@ public final class BuilderCli {
                     kResult.cumulativeExec().accept(runWideExec);   // consumer 커버 병합
                 }
             }
-
-            // SQL 캡처 backend는 env.start() 이후(sut() non-null)에 구성한다. OTEL 모드면 Environment가
-            // 소유한 OTLP receiver로 span 캡처, 아니면 로그 파싱 폴백(기존 동작 동일).
-            io.graphrag.builder.capture.SqlCaptureBackend sqlCapture =
-                    "otel".equals(config.sqlCapture()) && env.otlpReceiver() != null
-                            ? new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
-                                    new io.graphrag.builder.capture.TraceParent(config.sutId()))
-                            : new io.graphrag.builder.capture.LogParserCapture(env.sut());
 
             for (Endpoint endpoint : index.endpoints()) {
                 if (!plan.shouldExplore(endpoint.id())) {
