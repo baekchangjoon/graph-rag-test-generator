@@ -92,7 +92,13 @@ public class HttpCaptureServer implements AutoCloseable {
         return "http://host.docker.internal:" + port() + (authToken == null ? "" : "/" + authToken);
     }
 
-    /** 마지막 호출 이후 SUT가 발행한 외부 HTTP 교환 (발생 순서). */
+    /**
+     * 마지막 호출 이후 SUT가 발행한 외부 HTTP 교환 (발생 순서).
+     *
+     * <p>전제: 탐색 루프가 SUT 요청을 완전히 끝낸 뒤(동기) 호출한다 — 진행 중(in-flight)인 outbound
+     * 호출이 없다고 가정한다. count-delta 슬라이싱은 {@code getAllServeEvents()}의 최신순 안정 정렬에
+     * 의존한다. outbound 호출이 비동기가 되면 count 대신 마지막 event id 추적으로 바꿔야 한다.
+     */
     public List<RawHttpExchange> drainNewExchanges() {
         List<ServeEvent> all = server.getAllServeEvents();   // 최신순
         int fresh = all.size() - drainedCount;
@@ -160,6 +166,10 @@ public class HttpCaptureServer implements AutoCloseable {
         @Override
         public RequestFilterAction filter(Request request, ServeEvent serveEvent) {
             String url = request.getUrl();
+            // 단순 String 비교(상수시간 아님)로 충분: 토큰은 256-bit per-run secret이라 추측 불가하고,
+            // loopback/host-gateway에 노출되는 짧은 분석 구간 동안만 유효하다(startsWith 타이밍 공격은
+            // JIT 노이즈로 비현실적). OTLP 리시버는 헤더 토큰이라 MessageDigest.isEqual을 쓰지만,
+            // 여기선 경로 prefix 매칭이라 동일 기법을 적용하기 어렵고 위협 모델상 불필요하다.
             boolean authorised = url.equals(prefix)
                     || url.startsWith(prefix + "/")
                     || url.startsWith(prefix + "?");
@@ -177,8 +187,12 @@ public class HttpCaptureServer implements AutoCloseable {
             String strippedPathAndQuery = stripped;
             Request wrapped = RequestWrapper.create()
                     .transformAbsoluteUrl(absUrl -> {
-                        int p = absUrl.indexOf('/', absUrl.indexOf("//") + 2);
-                        return p < 0 ? absUrl : absUrl.substring(0, p) + strippedPathAndQuery;
+                        // scheme://authority 까지만 보존하고 그 뒤(토큰 포함 path+query)는 stripped로 교체.
+                        // authorityEnd<0 이면 absUrl에 path가 없다는 뜻이므로 stripped를 그대로 덧붙인다.
+                        // 어느 분기든 토큰을 포함한 원본 path를 되돌려주지 않는다(토큰 누출 방지).
+                        int authorityEnd = absUrl.indexOf('/', absUrl.indexOf("//") + 2);
+                        String base = authorityEnd < 0 ? absUrl : absUrl.substring(0, authorityEnd);
+                        return base + strippedPathAndQuery;
                     })
                     .wrap(request);
             return RequestFilterAction.continueWith(wrapped);
