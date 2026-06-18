@@ -16,7 +16,8 @@ public record GraphAsset(
         List<WsExchange> wsExchanges,
         List<KafkaConsumer> kafkaConsumers,
         List<KafkaExchange> kafkaExchanges,
-        List<RequiredSeed> seeds) {
+        List<RequiredSeed> seeds,
+        List<CapturedEventEmit> capturedEventEmits) {
 
     /** 이전 Phase 그래프(누락 필드)와의 후방 호환. */
     public GraphAsset {
@@ -27,5 +28,15 @@ public record GraphAsset(
         kafkaConsumers = kafkaConsumers == null ? List.of() : kafkaConsumers;
         kafkaExchanges = kafkaExchanges == null ? List.of() : kafkaExchanges;
         seeds = seeds == null ? List.of() : seeds;
+        capturedEventEmits = capturedEventEmits == null ? List.of() : capturedEventEmits;
+    }
+
+    /** 13-argument compatibility constructor */
+    public GraphAsset(String sutId, String commitSha, List<Endpoint> endpoints, List<ExploredPath> paths,
+                      List<CapturedSql> sql, List<TableSchema> tables, List<MapperStatement> mappers,
+                      List<CapturedHttpCall> httpCalls, List<WsEndpoint> wsEndpoints, List<WsExchange> wsExchanges,
+                      List<KafkaConsumer> kafkaConsumers, List<KafkaExchange> kafkaExchanges, List<RequiredSeed> seeds) {
+        this(sutId, commitSha, endpoints, paths, sql, tables, mappers, httpCalls, wsEndpoints, wsExchanges,
+             kafkaConsumers, kafkaExchanges, seeds, List.of());
     }
 }
