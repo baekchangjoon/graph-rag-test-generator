@@ -86,7 +86,12 @@ public class FixtureComposer {
 
         // 1. 치환 변수: body 필드 값이 PK/FK 컬럼의 API_PARAM 바인딩과 일치
         Map<String, ComposedFixture.Var> varsByFieldValue = new LinkedHashMap<>();
-        path.sampleInput().fields().forEachRemaining(entry -> {
+        // collection body(JSON 배열)면 원소 객체에서 vars/cleanup을 도출한다. scalar 배열/빈 배열은
+        // 필드가 없어 vars 없음(정상). 객체면 그대로 사용.
+        JsonNode sampleInput = path.sampleInput();
+        JsonNode varSrc = (sampleInput != null && sampleInput.isArray() && sampleInput.size() > 0)
+                ? sampleInput.get(0) : sampleInput;
+        varSrc.fields().forEachRemaining(entry -> {
             String field = entry.getKey();
             if (!entry.getValue().isTextual()) {
                 return;
@@ -137,10 +142,39 @@ public class FixtureComposer {
                         List.of(t.varName())))
                 .toList();
 
-        // 4. body 포맷: 치환 필드는 %s, 나머지는 sample 값 보존
-        StringBuilder bodyFormat = new StringBuilder("{");
+        // 4. body 포맷: 치환 필드는 %s, 나머지는 sample 값 보존. collection body(배열)는 리터럴.
         List<String> bodyArgs = new ArrayList<>();
-        var fields = path.sampleInput().fields();
+        String bodyFormat = (sampleInput != null && sampleInput.isArray())
+                ? bodyFormatFor(sampleInput)
+                : objectBodyFormat(sampleInput, varsByFieldValue, bodyArgs);
+
+        return new ComposedFixture(
+                new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
+                inserts, deletes, bodyFormat, bodyArgs,
+                assertionsFromResponse(path, sqlList, knownByField));
+    }
+
+    /**
+     * sampleInput → 요청 body 포맷(String.format 템플릿). 배열(collection body)이면 배열을 그대로
+     * 리터럴 body로 직렬화한다(치환 슬롯/bodyArgs 없음 → '%'를 '%%'로 이스케이프). 객체면 기존
+     * {...} 템플릿(치환 변수 없이)을 만든다.
+     */
+    public static String bodyFormatFor(JsonNode sampleInput) {
+        if (sampleInput != null && sampleInput.isArray()) {
+            return sampleInput.toString().replace("%", "%%");
+        }
+        return objectBodyFormat(sampleInput, java.util.Map.of(), new ArrayList<>());
+    }
+
+    /**
+     * 객체 sampleInput → {...} body 템플릿. varsByFieldValue에 잡힌 필드는 "%s"로 치환 슬롯을 만들고
+     * 해당 var 이름을 bodyArgs에 추가(out 파라미터), 나머지는 sample 값을 그대로 보존한다.
+     */
+    private static String objectBodyFormat(JsonNode sampleInput,
+                                           Map<String, ComposedFixture.Var> varsByFieldValue,
+                                           List<String> bodyArgs) {
+        StringBuilder bodyFormat = new StringBuilder("{");
+        var fields = sampleInput.fields();
         boolean first = true;
         while (fields.hasNext()) {
             var entry = fields.next();
@@ -161,11 +195,7 @@ public class FixtureComposer {
             }
         }
         bodyFormat.append("}");
-
-        return new ComposedFixture(
-                new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
-                inserts, deletes, bodyFormat.toString(), bodyArgs,
-                assertionsFromResponse(path, sqlList, knownByField));
+        return bodyFormat.toString();
     }
 
     private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
