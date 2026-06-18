@@ -1,5 +1,6 @@
 package sample.order;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -16,8 +17,7 @@ public class OrderController {
     private final String reservationUrl;
 
     public OrderController(OrderRepository orders, RestTemplate http,
-                           @org.springframework.beans.factory.annotation.Value(
-                                   "${reservation.url:http://reservation:8080}") String reservationUrl) {
+                           @Value("${reservation.url:http://reservation:8080}") String reservationUrl) {
         this.orders = orders; this.http = http; this.reservationUrl = reservationUrl;
     }
 
