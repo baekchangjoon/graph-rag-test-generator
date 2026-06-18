@@ -1,14 +1,13 @@
-# E2E overlay: publishes host ports for direct verification / builder attach.
+# E2E overlay: publishes additional host ports for direct verification / builder attach.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build --wait
 #
-# Exposed:
+# Exposed via this overlay:
 #   order-web  → localhost:58080  (HTTP entry point for E2E POST /orders)
+#
+# Already published in base docker-compose.yml:
 #   mysql      → localhost:53306  (JDBC from host / SchemaExtractor)
-#   kafka      → localhost:59092  (already published in base compose)
+#   kafka      → localhost:59092
 services:
   order-web:
     ports:
       - "58080:8080"
-  mysql:
-    ports:
-      - "53306:3306"

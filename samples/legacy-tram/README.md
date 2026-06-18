@@ -128,6 +128,35 @@ docker compose down -v   # removes containers + volumes (clean state for next ru
 See `VERSIONS.md` for the full version matrix (Boot 2.7.18, Tram 0.35.0.RELEASE,
 CDC 0.17.0.RELEASE, MySQL 8.0, Kafka/ZooKeeper 7.5.0).
 
+## E2E / R1 result
+
+**Date:** 2026-06-19  
+**R1 verdict: PASS-primary** (Sleuth native integration, no fallback required)
+
+Matching log line from ledger service:
+
+```
+2026-06-18 16:28:58.558 DEBUG [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,a49a33c78b95d55b]
+  org.hibernate.SQL : insert into ledger_entries (amount, created_at, order_id, user_id) values (?, ?, ?, ?)
+```
+
+The injected B3 trace-id `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` propagated across the full
+async boundary (order-web A → HTTP → reservation B → Eventuate Tram outbox → Kafka/CDC →
+ledger C) and appeared in C's Hibernate SQL log line for the `ledger_entries` insert
+within the same trace context. Spring Cloud Sleuth's native Eventuate Tram integration
+(`eventuate-tram-spring-cloud-sleuth-tram-starter:0.5.0.RELEASE`) carried the B3 context
+through the Tram messaging layer without needing the manual `B3MessageInterceptor` fallback.
+
+**CAP verdict: NOT-DETERMINED** — the builder's exploration engine skips endpoints with
+`@RequestBody Map<String, Object>` (untyped body), so no exploration occurred and no SQL
+was written to `graph.json`. The Sleuth log-correlation mechanism itself is confirmed
+working by R1; the CAP/NOISE gate requires a typed DTO on the order endpoint.
+
+**NOISE verdict: PASS** — `graph.json` contains no `from received_messages` or
+`from message where` entries (trivially, since graph has 0 SQL rows).
+
+Run: `bash e2e/run-legacy-tram-sleuth-e2e.sh` from the repo root.
+
 ## Notes on Eventuate CDC 0.17.0
 
 CDC 0.17.0.RELEASE requires ZooKeeper for Kafka leadership election (it bundles a
