@@ -20,16 +20,20 @@ public class B3MessageInterceptor implements MessageInterceptor {
         String traceId = message.getHeader("X-B3-TraceId").orElse(null);
         String spanId = message.getHeader("X-B3-SpanId").orElse(null);
         if (traceId == null || spanId == null) return;
-        // 128-bit traceId 보존(리뷰 GPT I7): 32-hex면 상위 64-bit를 traceIdHigh로.
-        String hex = traceId.length() == 32 ? traceId : ("0000000000000000" + traceId);
-        long high = Long.parseUnsignedLong(hex.substring(0, 16), 16);
-        long low = Long.parseUnsignedLong(hex.substring(16), 16);
-        brave.propagation.TraceContext ctx = brave.propagation.TraceContext.newBuilder()
-                .traceIdHigh(high).traceId(low)
-                .spanId(Long.parseUnsignedLong(spanId, 16))
-                .sampled(true).build();
-        Span span = tracing.tracer().toSpan(ctx);
-        scope.set(tracing.tracer().withSpanInScope(span));
+        try {
+            // 128-bit traceId 보존(리뷰 GPT I7): 32-hex면 상위 64-bit를 traceIdHigh로.
+            String hex = traceId.length() == 32 ? traceId : ("0000000000000000" + traceId);
+            long high = Long.parseUnsignedLong(hex.substring(0, 16), 16);
+            long low = Long.parseUnsignedLong(hex.substring(16), 16);
+            brave.propagation.TraceContext ctx = brave.propagation.TraceContext.newBuilder()
+                    .traceIdHigh(high).traceId(low)
+                    .spanId(Long.parseUnsignedLong(spanId, 16))
+                    .sampled(true).build();
+            Span span = tracing.tracer().toSpan(ctx);
+            scope.set(tracing.tracer().withSpanInScope(span));
+        } catch (NumberFormatException ignored) {
+            /* malformed B3 header: skip trace restore */
+        }
     }
 
     @Override public void postHandle(String subscriberId, Message message, Throwable t) {
