@@ -116,6 +116,10 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         if (kafka != null) {
             kafka.start();
             extraEnv.put("SPRING_KAFKA_BOOTSTRAP_SERVERS", kafka.getBootstrapServers());
+            // 빌더 발행이 consumer 파티션 할당보다 빨라도 누락 안 되게 earliest로 읽는다(offset race 예방).
+            // 미설정 시 default(latest)면 부팅 직후 발행한 레코드를 consumer가 못 받아 SQL 캡처가 비어
+            // 간헐 실패한다(CI 재현). e2e/docker-compose.yml과 동일한 이유.
+            extraEnv.putIfAbsent("SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET", "earliest");
             log.info("started analysis kafka at {}", kafka.getBootstrapServers());
         }
 
