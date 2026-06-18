@@ -24,3 +24,8 @@ Task 7: complete (E2E PASS 53 tests / 0 failures)
 - 1차 E2E에서 outbound produce 검증 2건 FAIL → 근본 원인 2겹(공유 토픽 오염 + 비결정 단언값 하드코딩) 수정.
 - KafkaHelper.consumeNextRecord(expectedKey) 토픽 격리, ComposedFixture substitutions/nonDeterministicValues 노출, Generator emit 렌더링(key 치환·비결정 필드 제외·LENIENT), TestScope kafka() lazy singleton, FixtureComposer PK literal 제외.
 - spec §5 업데이트(토픽 격리·LENIENT·비결정 필드 처리). 상세: task-7-report.md
+
+PR #61 코드리뷰 triage (receiving-code-review):
+- spec-compliance: COMPLIANT. code-quality 2건 수정(subscribe 할당 대기 flaky 방지, emitKeyExpr 비결정 key null fallback).
+- minor 피드백 처리: Task5(buffers.clear) 반영. 나머지 거부/보류 — Task1 이미 해결(Json.mapper), Task2a 거부(다른 10개 메서드가 .equals 직접, NPE 불가), Task2b 거부(plan() 호출부 previous non-null 보장), Task3 거부(ConcurrentLinkedQueue→ArrayDeque 마이크로 최적화 리스크), Task4a/b 거부(YAGNI), Task6 보류(receiver가 null value를 NullNode 래핑 → payload Java-null 미발생).
+- code-quality Finding 3(deterministicPayload가 numeric/중첩 비결정 값 미제거): 후속 — 현 캡처 payload는 textual이라 무해.

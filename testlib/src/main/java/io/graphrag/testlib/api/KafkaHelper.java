@@ -100,6 +100,7 @@ public final class KafkaHelper implements AutoCloseable {
             runner.close();
         }
         consumers.clear();
+        buffers.clear();
         producer.close();
     }
 
