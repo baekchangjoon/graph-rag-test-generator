@@ -9,4 +9,7 @@ public class OrderReserved implements DomainEvent {
     public Long getOrderId() { return orderId; }
     public String getUserId() { return userId; }
     public int getAmount() { return amount; }
+    public void setOrderId(Long orderId) { this.orderId = orderId; }
+    public void setUserId(String userId) { this.userId = userId; }
+    public void setAmount(int amount) { this.amount = amount; }
 }
