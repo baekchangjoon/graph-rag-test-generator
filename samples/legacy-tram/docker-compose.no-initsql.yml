@@ -1,0 +1,12 @@
+# JPA-fallback path: removes the mysql init.sql volume mount so Hibernate ddl-auto=update
+# creates the Eventuate tables (message / received_messages) from the fallback JPA entities.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.no-initsql.yml \
+#     up -d --build --wait reservation ledger
+#
+# Expected result: message (reservationdb) and received_messages (ledgerdb) created by JPA,
+# without orderdb tables (order-web / init.sql not in scope for this path).
+services:
+  mysql:
+    volumes: []
