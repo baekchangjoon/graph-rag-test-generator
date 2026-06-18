@@ -229,35 +229,26 @@ class GeneratorTest {
         assertThat(result.files()).hasSize(1);
         String code = result.files().get(0).content();
 
-        // 1. Check subscriptions
+        // 1. 두 토픽 모두 구독
         assertThat(code).contains("scope.kafka().subscribe(\"orders-topic\");");
         assertThat(code).contains("scope.kafka().subscribe(\"orders-topic-nokey\");");
 
-        // 2. Check assert blocks
-        assertThat(code).contains("org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =");
-        
-        // Assert orders-topic with key
-        assertThat(code).contains("scope.kafka().consumeNextRecord(\"orders-topic\", java.time.Duration.ofSeconds(5));");
+        // 2. key 있는 emit: expectedKey 인자로 자기 발행 레코드만 소비(공유 토픽 격리).
+        //    이 path는 입력/치환이 없어 key는 리터럴, payload는 그대로 LENIENT 비교.
+        assertThat(code).contains(
+                "scope.kafka().consumeNextRecord(\"orders-topic\", \"order-key-123\", java.time.Duration.ofSeconds(5));");
         assertThat(code).contains("org.junit.jupiter.api.Assertions.assertNotNull(record);");
-        assertThat(code).contains("org.junit.jupiter.api.Assertions.assertEquals(\"order-key-123\", record.key());");
-        assertThat(code).contains("org.skyscreamer.jsonassert.JSONAssert.assertEquals(");
         assertThat(code).contains("\"{\\\"orderId\\\":\\\"123\\\",\\\"status\\\":\\\"PENDING\\\"}\"");
 
-        // Assert orders-topic-nokey without key
-        assertThat(code).contains("scope.kafka().consumeNextRecord(\"orders-topic-nokey\", java.time.Duration.ofSeconds(5));");
-        // We should assert that assertEquals is not present for orders-topic-nokey, but the simplest way is to check the structure or that there is only one assertEquals with record.key()
-        assertThat(code).contains("org.junit.jupiter.api.Assertions.assertEquals(\"order-key-123\", record.key());");
-        // Count or verify that assertEquals is not generated for nokey record.
-        // The block for nokey should look like:
-        // {
-        //     org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
-        //         scope.kafka().consumeNextRecord("orders-topic-nokey", java.time.Duration.ofSeconds(5));
-        //     org.junit.jupiter.api.Assertions.assertNotNull(record);
-        //     org.skyscreamer.jsonassert.JSONAssert.assertEquals(
-        //         "{\"orderId\":\"123\",\"status\":\"PENDING\"}", record.value(), true);
-        // }
-        // Let's assert code structure for nokey
-        assertThat(code).doesNotContain("org.junit.jupiter.api.Assertions.assertEquals(null, record.key())");
+        // 3. key 없는 emit: expectedKey = null (필터 없음)
+        assertThat(code).contains(
+                "scope.kafka().consumeNextRecord(\"orders-topic-nokey\", null, java.time.Duration.ofSeconds(5));");
+
+        // 4. 중복 key 단언은 더 이상 생성하지 않는다(consumeNextRecord가 key로 필터링).
+        assertThat(code).doesNotContain("record.key());");
+        // 5. payload 비교는 LENIENT(false) — strict(true) 단언은 없어야 한다.
+        assertThat(code).doesNotContain("record.value(), true);");
+        assertThat(code).contains("record.value(), false);");
     }
 
     static class FakeGraphRagClient implements io.graphrag.generator.client.GraphRagClient {

@@ -47,12 +47,33 @@ public final class KafkaHelper implements AutoCloseable {
 
     /** Waits for the next record on the specified topic and returns it. If it times out, returns null. */
     public org.apache.kafka.clients.consumer.ConsumerRecord<String, String> consumeNextRecord(String topic, java.time.Duration timeout) {
+        return consumeNextRecord(topic, null, timeout);
+    }
+
+    /**
+     * 다음 레코드를 반환하되, expectedKey가 non-null이면 그 key와 일치하는 레코드만 반환한다.
+     * 같은 토픽을 공유하는 다른 테스트가 넣은 레코드(다른 key)는 건너뛴다(토픽 오염 격리).
+     * 타임아웃 내에 일치 레코드가 없으면 null.
+     */
+    public org.apache.kafka.clients.consumer.ConsumerRecord<String, String> consumeNextRecord(String topic, String expectedKey, java.time.Duration timeout) {
         java.util.concurrent.BlockingQueue<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> queue = buffers.get(topic);
         if (queue == null) {
             throw new IllegalStateException("Not subscribed to topic: " + topic);
         }
+        long deadlineNanos = System.nanoTime() + timeout.toNanos();
         try {
-            return queue.poll(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            while (true) {
+                long remaining = deadlineNanos - System.nanoTime();
+                if (remaining <= 0) {
+                    return null;
+                }
+                org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
+                        queue.poll(remaining, java.util.concurrent.TimeUnit.NANOSECONDS);
+                if (record == null || expectedKey == null || expectedKey.equals(record.key())) {
+                    return record;
+                }
+                // expectedKey 불일치 → 다른 테스트의 오염 레코드, 건너뛴다.
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Consumer interrupted", e);

@@ -73,4 +73,23 @@ class KafkaHelperTest {
         // 4. Verify JSONAssert is available and works
         JSONAssert.assertEquals("{\"name\":\"test\",\"id\":1}", record.value(), true);
     }
+
+    @Test
+    void consumeNextRecord_byKey_skipsRecordsWithOtherKeys() throws Exception {
+        // 공유 토픽 오염 방지: 다른 테스트가 같은 토픽에 넣은 레코드(다른 key)는 건너뛰고
+        // 내 key의 레코드만 반환해야 한다.
+        String topic = "test-topic-" + java.util.UUID.randomUUID();
+        kafkaHelper.subscribe(topic);
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10))
+                .until(() -> kafkaHelper.isAssigned(topic));
+
+        kafkaHelper.send(topic, "other-user", "{\"eventId\":\"sample-eventId\",\"type\":\"sample-type\"}");
+        kafkaHelper.send(topic, "my-user", "{\"eventId\":\"99\",\"type\":\"CREATED\"}");
+
+        ConsumerRecord<String, String> record =
+                kafkaHelper.consumeNextRecord(topic, "my-user", Duration.ofSeconds(5));
+        assertThat(record).isNotNull();
+        assertThat(record.key()).isEqualTo("my-user");
+        JSONAssert.assertEquals("{\"type\":\"CREATED\"}", record.value(), false);
+    }
 }

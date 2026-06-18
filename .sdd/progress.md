@@ -19,3 +19,8 @@ Task 5: complete (commits 786f04d..abae2a7, review clean)
 
 Task 6: complete (commits abae2a7..929dc2d, review clean)
 - Minor 피드백: Kafka 이벤트의 payload가 null일 경우 빈 문자열 ""을 JSONAssert에 넣을 때 검증이 깨질 수 있으므로 null 방어 고려 권장 (최종 병합 전 수정 예정)
+
+Task 7: complete (E2E PASS 53 tests / 0 failures)
+- 1차 E2E에서 outbound produce 검증 2건 FAIL → 근본 원인 2겹(공유 토픽 오염 + 비결정 단언값 하드코딩) 수정.
+- KafkaHelper.consumeNextRecord(expectedKey) 토픽 격리, ComposedFixture substitutions/nonDeterministicValues 노출, Generator emit 렌더링(key 치환·비결정 필드 제외·LENIENT), TestScope kafka() lazy singleton, FixtureComposer PK literal 제외.
+- spec §5 업데이트(토픽 격리·LENIENT·비결정 필드 처리). 상세: task-7-report.md

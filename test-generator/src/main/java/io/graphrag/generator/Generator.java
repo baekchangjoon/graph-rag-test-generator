@@ -247,6 +247,42 @@ public class Generator {
         return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
+    /**
+     * emit key를 consumeNextRecord의 expectedKey 인자 표현식으로 변환한다.
+     * 입력 유래 값(예: userId)은 테스트 런타임 변수명으로 치환해 자기 발행 레코드만 소비하게 하고,
+     * 일반 리터럴 key는 따옴표 문자열로, key가 없으면 null(필터 없음)로 둔다.
+     */
+    private static String emitKeyExpr(String key, Map<String, String> substitutions) {
+        if (key == null) {
+            return "null";
+        }
+        String var = substitutions.get(key);
+        return var != null ? var : "\"" + jsonEscape(key) + "\"";
+    }
+
+    /**
+     * emit payload에서 비결정 필드(입력 유래 치환값, DB 시퀀스 PK)를 제거해 결정적 필드만 남긴다.
+     * 남은 JSON은 JSONAssert LENIENT로 비교하므로, 환경/테스트마다 달라지는 값에 의한 거짓 실패를 막는다.
+     */
+    private static String deterministicPayload(com.fasterxml.jackson.databind.JsonNode payload,
+                                               ComposedFixture fixture) {
+        if (!(payload instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
+            return payload.toString();
+        }
+        com.fasterxml.jackson.databind.node.ObjectNode out = obj.deepCopy();
+        List<String> toRemove = new ArrayList<>();
+        out.fields().forEachRemaining(e -> {
+            if (e.getValue().isTextual()) {
+                String v = e.getValue().asText();
+                if (fixture.substitutions().containsKey(v) || fixture.nonDeterministicValues().contains(v)) {
+                    toRemove.add(e.getKey());
+                }
+            }
+        });
+        toRemove.forEach(out::remove);
+        return out.toString();
+    }
+
     /** 테이블의 PK 컬럼명 (Kafka side-effect 단언 키 우선순위). 없으면 null. */
     private String primaryKeyColumn(String tableName) {
         return client.tables().stream()
@@ -339,11 +375,11 @@ public class Generator {
             for (io.graphrag.model.CapturedEventEmit emit : kafkaEvents) {
                 Map<String, Object> modelEmit = new HashMap<>();
                 modelEmit.put("topic", emit.topic());
-                if (emit.key() != null) {
-                    modelEmit.put("key", jsonEscape(emit.key()));
-                }
+                // key는 consumeNextRecord의 expectedKey 인자로 쓴다(공유 토픽 오염 격리).
+                // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
+                modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions()));
                 if (emit.payload() != null) {
-                    modelEmit.put("payloadJson", jsonEscape(emit.payload().toString()));
+                    modelEmit.put("payloadJson", jsonEscape(deterministicPayload(emit.payload(), fixture)));
                 }
                 kafkaEmits.add(modelEmit);
             }
