@@ -108,8 +108,8 @@ public class HttpCaptureServer implements AutoCloseable {
                         && event.getResponse().getHeaders().getHeader(TokenPrefixFilter.UNAUTH_HEADER).isPresent()) {
                     continue;
                 }
-                // 필터가 절대 URL에서 prefix를 이미 제거하므로 보통 path엔 prefix가 없다.
-                // 만약 prefix가 남아있다면(방어적) 여기서 제거한다.
+                // 필터의 transformAbsoluteUrl이 serve event 기록 전에 prefix를 제거하므로 현재 경로에선
+                // path에 prefix가 남지 않는다. 아래는 향후 필터 변경(예: rewrite 비활성) 대비 방어 fallback.
                 String prefix = "/" + authToken;
                 if (path.equals(prefix) || path.startsWith(prefix + "/")) {
                     path = path.equals(prefix) ? "/" : path.substring(prefix.length());
@@ -170,15 +170,15 @@ public class HttpCaptureServer implements AutoCloseable {
                         .build();
                 return RequestFilterAction.stopWith(unauthorised);
             }
-            String stripped = url.substring(prefix.length());   // prefix 제거(쿼리 포함)
+            String stripped = url.substring(prefix.length());   // prefix 제거(path+query 포함)
             if (stripped.isEmpty() || stripped.charAt(0) != '/') {
                 stripped = "/" + stripped;   // 선행 '/' 보장
             }
-            String strippedPath = stripped;
+            String strippedPathAndQuery = stripped;
             Request wrapped = RequestWrapper.create()
                     .transformAbsoluteUrl(absUrl -> {
                         int p = absUrl.indexOf('/', absUrl.indexOf("//") + 2);
-                        return p < 0 ? absUrl : absUrl.substring(0, p) + strippedPath;
+                        return p < 0 ? absUrl : absUrl.substring(0, p) + strippedPathAndQuery;
                     })
                     .wrap(request);
             return RequestFilterAction.continueWith(wrapped);
