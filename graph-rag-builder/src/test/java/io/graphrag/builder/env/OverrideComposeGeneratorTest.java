@@ -65,6 +65,37 @@ class OverrideComposeGeneratorTest {
     }
 
     @Test
+    void injectsLoggingAndEncodingOntoExtraCaptureServices() throws Exception {
+        var spec = new OverrideComposeGenerator.Spec(
+                "a", "/host/agents", 8080, 58080, 6300, 16300,
+                "-javaagent:/grb-agents/jacocoagent.jar=output=tcpserver,address=*,port=6300",
+                Map.of(), Map.of(), false, false,
+                java.util.List.of("b", "c"));   // extraLogServices
+        String yaml = new OverrideComposeGenerator().generate(spec);
+        JsonNode services = new YAMLMapper().readTree(yaml).path("services");
+
+        for (String svc : java.util.List.of("b", "c")) {
+            JsonNode env = services.path(svc).path("environment");
+            String saj = env.path("SPRING_APPLICATION_JSON").asText();
+            assertTrue(saj.contains("logging.level.org.hibernate.SQL"), svc + " H6 SQL 로깅레벨");
+            // H5 BasicBinder 로그레벨이 주입돼야 H5 SUT가 bind 라인을 출력한다(스펙 §8)
+            assertTrue(saj.contains("logging.level.org.hibernate.type.descriptor.sql.BasicBinder"),
+                    svc + " H5 BasicBinder 로깅레벨");
+            assertTrue(env.path("JAVA_TOOL_OPTIONS").asText().contains("-Dfile.encoding=UTF-8"),
+                    svc + " 인코딩 주입");
+            // 보조 서비스엔 에이전트/포트/볼륨 미주입
+            assertFalse(env.path("JAVA_TOOL_OPTIONS").asText().contains("jacocoagent.jar"));
+            assertTrue(services.path(svc).path("ports").isMissingNode());
+            assertTrue(services.path(svc).path("volumes").isMissingNode());
+        }
+        // appService(a)는 기존대로 에이전트/포트 유지 + H5 로깅레벨도 포함
+        assertTrue(services.path("a").path("environment").path("JAVA_TOOL_OPTIONS").asText()
+                .contains("jacocoagent.jar"));
+        assertTrue(services.path("a").path("environment").path("SPRING_APPLICATION_JSON").asText()
+                .contains("logging.level.org.hibernate.type.descriptor.sql.BasicBinder"));
+    }
+
+    @Test
     void attachAlwaysAddsHostGateway_evenWhenBatchNotDisabled() throws Exception {
         var spec = new OverrideComposeGenerator.Spec(
                 "app", "/host/agents", 8080, 58080, 6300, 16300,

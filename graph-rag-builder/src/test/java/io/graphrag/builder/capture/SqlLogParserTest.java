@@ -80,4 +80,96 @@ class SqlLogParserTest {
     void emptyLog_returnsNothing() {
         assertThat(SqlLogParser.parse("")).isEmpty();
     }
+
+    @Test
+    void parsesHibernate5AbbreviatedBasicBinder() {
+        String log = """
+                2026-06-18T10:00:00.100+09:00 DEBUG 1 --- [tram-c-1] org.hibernate.SQL : insert into order_events (type,user_id,id) values (?,?,?)
+                2026-06-18T10:00:00.101+09:00 TRACE 1 --- [tram-c-1] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [CREATED]
+                2026-06-18T10:00:00.102+09:00 TRACE 1 --- [tram-c-1] o.h.type.descriptor.sql.BasicBinder : binding parameter [2] as [VARCHAR] - [user-1]
+                2026-06-18T10:00:00.103+09:00 TRACE 1 --- [tram-c-1] o.h.type.descriptor.sql.BasicBinder : binding parameter [3] as [VARCHAR] - [evt-1]
+                """;
+        List<ParsedSql> parsed = SqlLogParser.parse(log);
+        assertThat(parsed).hasSize(1);
+        assertThat(parsed.get(0).bindings()).containsExactly(
+                new ParsedSql.Binding(1, "CREATED"),
+                new ParsedSql.Binding(2, "user-1"),
+                new ParsedSql.Binding(3, "evt-1"));
+    }
+
+    @Test
+    void parsesHibernate5FullLoggerNameAndNull() {
+        String log = """
+                x DEBUG 1 --- [t] org.hibernate.SQL : update orders set status=? where id=?
+                x TRACE 1 --- [t] org.hibernate.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [null]
+                x TRACE 1 --- [t] org.hibernate.type.descriptor.sql.BasicBinder : binding parameter [2] as [BIGINT] - [42]
+                """;
+        List<ParsedSql> parsed = SqlLogParser.parse(log);
+        assertThat(parsed.get(0).bindings()).containsExactly(
+                new ParsedSql.Binding(1, "null"),
+                new ParsedSql.Binding(2, "42"));
+    }
+
+    @Test
+    void extractTraceId_fromSleuthBracket() {
+        String line = "x DEBUG 1 --- [order-svc,1a2b3c4d5e6f70819a2b3c4d5e6f7081,9a2b3c4d5e6f7081] "
+                + "[tram-c-1] org.hibernate.SQL : select 1";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("1a2b3c4d5e6f70819a2b3c4d5e6f7081");
+    }
+
+    @Test
+    void extractTraceId_fromFourFieldSleuthBracket() {
+        // Sleuth 1.x/2.x (Java8 레거시 기본): [app,traceId,spanId,exportable]
+        String line = "x DEBUG 1 --- [order-svc,1a2b3c4d5e6f70819a2b3c4d5e6f7081,9a2b3c4d5e6f7081,true] "
+                + "[tram-c-1] org.hibernate.SQL : select 1";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("1a2b3c4d5e6f70819a2b3c4d5e6f7081");
+    }
+
+    @Test
+    void extractTraceId_doesNotFalseMatchLongerMdcKey() {
+        // 더 긴 키(myTraceId=/parentTraceId=)의 접미가 traceId로 오탐되면 안 된다
+        assertThat(SqlLogParser.extractTraceId(
+                "x DEBUG 1 --- [t] myTraceId=1a2b3c4d5e6f70819a2b3c4d5e6f7081 c.Foo : msg"))
+                .isNull();
+    }
+
+    @Test
+    void extractTraceId_rejectsOverLengthToken() {
+        // 32 초과 hex 토큰은 묵음 절단하지 말고 거부
+        assertThat(SqlLogParser.extractTraceId(
+                "x DEBUG 1 --- [t] traceId=1a2b3c4d5e6f70819a2b3c4d5e6f7081abcdef01 c.Foo : msg"))
+                .isNull();
+    }
+
+    @Test
+    void extractTraceId_fromMdcDump() {
+        assertThat(SqlLogParser.extractTraceId(
+                "x DEBUG 1 --- [t] traceId=1A2B3C4D5E6F70819A2B3C4D5E6F7081 c.Foo : msg"))
+                .isEqualTo("1a2b3c4d5e6f70819a2b3c4d5e6f7081");
+        assertThat(SqlLogParser.extractTraceId(
+                "x DEBUG 1 --- [t] X-B3-TraceId=1a2b3c4d5e6f7081 c.Foo : msg"))
+                .isEqualTo("1a2b3c4d5e6f7081");
+    }
+
+    @Test
+    void extractTraceId_ignoresHexInSqlBodyAndBindValue() {
+        // " : " 이후(SQL 본문/bind 값)의 hex는 trace로 잡히면 안 된다
+        assertThat(SqlLogParser.extractTraceId(
+                "x DEBUG 1 --- [t] org.hibernate.SQL : select * from t where id='deadbeefdeadbeef'"))
+                .isNull();
+        assertThat(SqlLogParser.extractTraceId(
+                "x TRACE 1 --- [t] o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [VARCHAR] - [cafebabecafebabe]"))
+                .isNull();
+    }
+
+    @Test
+    void traceIdMatches_fullAndRight64BitAndCaseInsensitive() {
+        String full = "1a2b3c4d5e6f70819a2b3c4d5e6f7081";
+        assertThat(SqlLogParser.traceIdMatches(full, full)).isTrue();
+        assertThat(SqlLogParser.traceIdMatches(full, "1A2B3C4D5E6F70819A2B3C4D5E6F7081")).isTrue();
+        assertThat(SqlLogParser.traceIdMatches(full, "9a2b3c4d5e6f7081")).isTrue();   // 우측 16 hex
+        assertThat(SqlLogParser.traceIdMatches(full, "0000000000000000")).isFalse();
+    }
 }

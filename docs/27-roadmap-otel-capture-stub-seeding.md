@@ -13,8 +13,8 @@ seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.
 > **상태: 구현 완료 (2026-06-18).** spec [docs/superpowers/specs/2026-06-18-otel-sql-capture-design.md],
 > plan [docs/superpowers/plans/2026-06-18-otel-sql-capture.md]. `SqlCaptureBackend`(`OtelSpanCapture`
 > 1순위 + `LogParserCapture` 폴백), in-process OTLP/protobuf 리시버, 요청별 `traceparent` 주입(HTTP 헤더 /
-> Kafka 레코드 헤더)으로 trace-id 귀속. 기본값을 `otel`로 전환했고 `--sql-capture log` 로 폴백한다
-> ([docs/06](06-test-environment.md) "SQL 캡처 모드" 절, [docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
+> Kafka 레코드 헤더)으로 trace-id 귀속. 기본값을 `otel`로 전환했고 `--trace-mode none` 으로 폴백한다
+> ([docs/06](06-test-environment.md) "trace 모드" 절, [docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
 >
 > **PoC·구현에서 확정/정정된 사실:**
 > - **SQL 텍스트 속성** — agent 2.16.0은 stable DB semconv opt-in 없이는 SQL을 **`db.statement`(구 키)**로

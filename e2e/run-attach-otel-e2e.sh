@@ -18,7 +18,7 @@ echo "=== [1/4] order-service jar + app 이미지 빌드 ==="
 "$ROOT/gradlew" -q :samples:order-service:bootJar
 docker compose -p "$PROJECT" -f "$ROOT/e2e/docker-compose.yml" build app
 
-echo "=== [2/4] 빌더 attach 실행 (--sql-capture otel) ==="
+echo "=== [2/4] 빌더 attach 실행 (--trace-mode otel) ==="
 "$ROOT/gradlew" -q :graph-rag-builder:run --args="build \
   --sut-src $ROOT/samples/order-service/src/main/java \
   --sut-resources $ROOT/samples/order-service/src/main/resources \
@@ -29,7 +29,7 @@ echo "=== [2/4] 빌더 attach 실행 (--sql-capture otel) ==="
   --jdbc-url jdbc:postgresql://localhost:56432/app \
   --db-service postgres \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
-  --sql-capture otel" 2>&1 | tee "$LOG"
+  --trace-mode otel" 2>&1 | tee "$LOG"
 
 echo "=== [3/4] 그래프 + OTEL 경로 검증 ==="
 python3 - "$OUT" <<'PY'

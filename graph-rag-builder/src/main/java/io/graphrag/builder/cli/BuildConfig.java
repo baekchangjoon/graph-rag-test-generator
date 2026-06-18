@@ -29,14 +29,14 @@ public record BuildConfig(
         BuilderCli.AttachConfig attach,
         io.graphrag.model.RequestHeaders requestHeaders,
         List<String> endpointSelectors,
-        String sqlCapture) {
+        String traceMode) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
         changedFiles = changedFiles == null ? List.of() : changedFiles;
         requestHeaders = requestHeaders == null ? io.graphrag.model.RequestHeaders.empty() : requestHeaders;
         endpointSelectors = endpointSelectors == null ? List.of() : endpointSelectors;
-        sqlCapture = sqlCapture == null ? "otel" : sqlCapture;   // 기본 OTEL (log는 명시 폴백)
+        traceMode = traceMode == null ? "otel" : traceMode;   // 기본 otel (sleuth/none은 명시)
     }
 
     /** 풀빌드 설정 (증분 옵션 없음). */

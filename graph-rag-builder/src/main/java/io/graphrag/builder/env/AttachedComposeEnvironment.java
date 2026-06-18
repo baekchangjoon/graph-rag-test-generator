@@ -32,7 +32,21 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     public record Config(Path userCompose, Path overrideCompose, String appService, String projectName,
                          String appBaseUri, String jdbcUrl, String dbUser, String dbPass,
                          String coverageHost, int coveragePort, String kafkaBootstrap,
-                         String healthPath, int readyTimeoutSeconds) {}
+                         String healthPath, int readyTimeoutSeconds, List<String> captureServices) {
+        public Config {
+            captureServices = (captureServices == null || captureServices.isEmpty())
+                    ? List.of(appService) : List.copyOf(captureServices);
+        }
+
+        /** 기존 13-arg 호출부 호환 (captureServices 미지정 → [appService]). */
+        public Config(Path userCompose, Path overrideCompose, String appService, String projectName,
+                      String appBaseUri, String jdbcUrl, String dbUser, String dbPass,
+                      String coverageHost, int coveragePort, String kafkaBootstrap,
+                      String healthPath, int readyTimeoutSeconds) {
+            this(userCompose, overrideCompose, appService, projectName, appBaseUri, jdbcUrl, dbUser, dbPass,
+                    coverageHost, coveragePort, kafkaBootstrap, healthPath, readyTimeoutSeconds, List.of());
+        }
+    }
 
     private final Config config;
     private final DbConfig.Type dbType;
@@ -67,14 +81,17 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
                 "-f", c.userCompose().toString(), "-f", c.overrideCompose().toString()));
     }
     static List<String> upCommand(Config c) {
-        // app 서비스(+ 그 depends_on)만 기동: 사용자 compose의 무관한 보조 서비스까지 빌드/기동하지 않는다.
-        List<String> cmd = baseCompose(c); cmd.addAll(List.of("up", "-d", "--wait", c.appService())); return cmd;
+        // capture-services 전체 기동(+depends_on): A→B→C가 떠야 C 로그가 발생한다.
+        List<String> cmd = baseCompose(c); cmd.addAll(List.of("up", "-d", "--wait"));
+        cmd.addAll(c.captureServices()); return cmd;
     }
     static List<String> downCommand(Config c) {
         List<String> cmd = baseCompose(c); cmd.addAll(List.of("down", "-v")); return cmd;
     }
     static List<String> logsCommand(Config c) {
-        List<String> cmd = baseCompose(c); cmd.addAll(List.of("logs", "--no-log-prefix", "-f", c.appService())); return cmd;
+        // 한 파일에 인터리브 tail. traceId가 상관 키이므로 --no-log-prefix 유지.
+        List<String> cmd = baseCompose(c); cmd.addAll(List.of("logs", "--no-log-prefix", "-f"));
+        cmd.addAll(c.captureServices()); return cmd;
     }
 
     /** compose up → app readiness 폴링(healthcheck 유무와 무관) → 로그 스트림 시작 → ContainerSut 구성. */

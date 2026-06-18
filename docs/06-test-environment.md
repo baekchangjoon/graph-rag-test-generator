@@ -83,20 +83,19 @@ services:
 
 baggage propagator 활성 시 inbound 헤더 `baggage: test-id=...` 가 모든 outbound HTTP 호출에 자동 복사된다. 이게 WireMock 격리의 기반.
 
-## SQL 캡처 모드 (`--sql-capture`)
+## trace 모드 (`--trace-mode`)
 
-빌더(도구 1)가 요청별로 어떤 SQL·바인딩이 실행됐는지 수집하는 방식이다. `--sql-capture <mode>` 로 고른다.
+빌더(도구 1)가 요청별 SQL·바인딩을 어떤 trace/상관 백엔드로 수집하는지 고른다. `--trace-mode <otel|sleuth|none>`(기본 `otel`). 공통 목표는 **API↔SQL 매핑 그래프**다.
 
-- **`otel` (기본)** — SUT의 OTEL agent가 내보내는 DB span에서 SQL과 바인딩 값을 받는다. 빌더가 요청마다
-  고유 `traceparent` 를 발급해(HTTP 헤더 / Kafka 레코드 헤더) 그 trace의 DB span만 묶으므로, 동시·비동기
-  요청도 서로 섞이지 않고 정확히 귀속된다. 빌더는 분석 동안만 OTLP 리시버를 띄워 SUT의 span을 받는다.
-- **`log`** — SUT stdout의 Hibernate/MyBatis 로그를 파싱하는 폴백 경로. byte-offset 구간으로 귀속하므로
-  단일 직렬 실행을 전제한다. agent의 DB span에서 SQL을 못 받는 환경에서 명시적으로 쓴다.
+| 모드 | trace/baggage 전파 | SQL 추출 | 매핑 범위 | 상관 헤더 |
+|---|---|---|---|---|
+| `none` | 없음 | 로그 byte-offset(직렬) | 동기·동일프로세스(모놀리식 baseline) | 없음 |
+| `sleuth` | Sleuth/B3(+baggage) | 로그 trace-id 상관 | + 비동기 서비스간(B→C) | B3 |
+| `otel` | OTEL agent(traceparent+baggage) | OTLP DB span(로그 fallback) | + 비동기 서비스간(B→C) | traceparent |
 
-`otel` 모드에서도 어떤 요청의 trace에 DB span이 비면 그 요청만 자동으로 로그 파싱으로 폴백한다.
-
-SQL 텍스트 속성은 OTEL agent 버전·설정에 따라 `db.query.text`(신규) 또는 `db.statement`(구) 중 하나로
-오므로 빌더는 둘 다 읽는다. 바인딩 값은 `db.query.parameter.<index>`(0-based)로 받는다.
+- `sleuth`(레거시 Java8+Sleuth+Eventuate/Tram): 요청별 B3 trace-id를 A에 주입하고 그 trace-id가 박힌 로그 라인만 상관해 A→B→C SQL을 회수한다. OTEL javaagent를 부착하지 않는다(레거시 `brave.Tracing` 빈 충돌 회피). **전제**: SUT logback이 `%X{traceId}`(또는 동등 MDC 키)를 출력해야 한다(SUT 제공자 책임).
+- `none`: 추적 전무 SUT의 격하 baseline(직렬·격리 없음). 구 `--sql-capture log` 와 동등.
+- 멀티서비스 로그 수집: attach 모드에서 `--capture-services a,b,c` 로 여러 컨테이너 로그를 한 파일에 인터리브 tail한다(비동기 B→C 캡처). 미지정 시 `--app-service` 단일.
 
 ## RestAssured 테스트 스타일
 

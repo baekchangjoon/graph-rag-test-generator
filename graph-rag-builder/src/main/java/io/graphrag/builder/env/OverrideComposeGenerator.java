@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import io.graphrag.model.Json;
 
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -35,9 +36,10 @@ public final class OverrideComposeGenerator {
                        int jacocoContainerPort, int jacocoHostPort,
                        String javaToolOptions, Map<String, String> mybatisNamespaces,
                        Map<String, String> extraEnv,
-                       boolean addHostGateway, boolean disableBatch) {
+                       boolean addHostGateway, boolean disableBatch,
+                       List<String> extraLogServices) {
 
-        /** 기존 호출부 호환 편의 생성자 (host-gateway/batch 비활성). */
+        /** 9-arg 편의 생성자 (기존 호출부 호환; host-gateway/batch/extraLogServices 비활성). */
         public Spec(String appService, String hostAgentsDir,
                     int appContainerPort, int appHostPort,
                     int jacocoContainerPort, int jacocoHostPort,
@@ -45,11 +47,25 @@ public final class OverrideComposeGenerator {
                     Map<String, String> extraEnv) {
             this(appService, hostAgentsDir, appContainerPort, appHostPort,
                     jacocoContainerPort, jacocoHostPort, javaToolOptions, mybatisNamespaces,
-                    extraEnv, false, false);
+                    extraEnv, false, false, List.of());
+        }
+
+        /** 11-arg 생성자 (addHostGateway/disableBatch 사용 호출부 호환; 보조 서비스 없음). */
+        public Spec(String appService, String hostAgentsDir,
+                    int appContainerPort, int appHostPort,
+                    int jacocoContainerPort, int jacocoHostPort,
+                    String javaToolOptions, Map<String, String> mybatisNamespaces,
+                    Map<String, String> extraEnv,
+                    boolean addHostGateway, boolean disableBatch) {
+            this(appService, hostAgentsDir, appContainerPort, appHostPort,
+                    jacocoContainerPort, jacocoHostPort, javaToolOptions, mybatisNamespaces,
+                    extraEnv, addHostGateway, disableBatch, List.of());
         }
     }
 
     private static final YAMLMapper YAML = new YAMLMapper();
+
+    public static final String ENCODING_JTO = "-Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8";
 
     public String generate(Spec spec) {
         try {
@@ -75,6 +91,18 @@ public final class OverrideComposeGenerator {
                 app.putArray("extra_hosts").add("host.docker.internal:host-gateway");
             }
 
+            // 보조 capture-service: 로깅 레벨(SAJ) + 인코딩(JTO)만. 에이전트/포트/볼륨은 appService 전용.
+            for (String svc : spec.extraLogServices()) {
+                if (svc.equals(spec.appService())) {
+                    continue;   // appService는 위에서 이미 완전 구성
+                }
+                ObjectNode extra = services.putObject(svc);
+                ObjectNode extraEnvNode = extra.putObject("environment");
+                extraEnvNode.put("JAVA_TOOL_OPTIONS", ENCODING_JTO);
+                extraEnvNode.put("SPRING_APPLICATION_JSON",
+                        springApplicationJson(spec.mybatisNamespaces(), false));
+            }
+
             return YAML.writeValueAsString(root);
         } catch (Exception e) {
             throw new IllegalStateException("override compose 생성 실패", e);
@@ -87,6 +115,7 @@ public final class OverrideComposeGenerator {
             ObjectNode node = Json.mapper().createObjectNode();
             node.put("logging.level.org.hibernate.SQL", "DEBUG");
             node.put("logging.level.org.hibernate.orm.jdbc.bind", "TRACE");
+            node.put("logging.level.org.hibernate.type.descriptor.sql.BasicBinder", "TRACE");
             new TreeMap<>(mybatisNamespaces).forEach(
                     (ns, level) -> node.put("logging.level." + ns, level));
             if (disableBatch) {

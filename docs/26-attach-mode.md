@@ -59,9 +59,9 @@ override는 사용자 compose의 **app 서비스에만** 다음을 더한다(`<o
   `/grb-agents:ro` 로 마운트한다.
 - **에이전트 활성화** — `JAVA_TOOL_OPTIONS` 로 jacoco tcpserver 에이전트(`address=*` 로 컨테이너의
   모든 인터페이스에 bind → published 포트로 호스트에서 dump 가능)와 OpenTelemetry javaagent를 켠다.
-- **OTEL 환경변수** — SQL 캡처 모드([docs/06](06-test-environment.md) "SQL 캡처 모드" 절)에 따라 다르다.
-  `--sql-capture log` 면 트레이스 저장을 끄고 baggage 전파만 사용한다(`OTEL_TRACES_EXPORTER=none` …).
-  기본 `--sql-capture otel` 이면 아래 "attach OTEL 네트워킹" 대로 DB span을 호스트 리시버로 보낸다.
+- **OTEL 환경변수** — trace 모드([docs/06](06-test-environment.md) "trace 모드" 절)에 따라 다르다.
+  `--trace-mode none` 이면 트레이스 저장을 끄고 baggage 전파만 사용한다(`OTEL_TRACES_EXPORTER=none` …).
+  기본 `--trace-mode otel` 이면 아래 "attach OTEL 네트워킹" 대로 DB span을 호스트 리시버로 보낸다.
 - **포트 publish** — `<app-port>:<app-container-port>` 와 `<jacoco-port>:6300` 을 호스트로 연다.
 
 ### attach OTEL 네트워킹
@@ -77,7 +77,18 @@ override는 사용자 compose의 **app 서비스에만** 다음을 더한다(`<o
 - batch insert에서 바인딩이 누락되지 않도록 `hibernate.jdbc.batch_size=0` 을 함께 주입한다.
 
 Docker 20.10 미만이면 `host.docker.internal:host-gateway` 가 동작하지 않아 캡처가 호스트 리시버에
-도달하지 못할 수 있다(빌더가 경고를 남긴다). 이 경우 `--sql-capture log` 로 폴백한다.
+도달하지 못할 수 있다(빌더가 경고를 남긴다). 이 경우 `--trace-mode none` 으로 폴백한다.
+
+### sleuth 모드와 멀티서비스 로그 수집 (`--capture-services`)
+
+레거시 Java8+Sleuth SUT는 `--trace-mode sleuth` 로 붙인다. 빌더가 요청마다 B3 trace-id를 발급해
+A 서비스에 주입하고(B3 헤더 / Kafka 레코드 헤더), 그 trace-id가 박힌 로그 라인만 상관해 A→B→C로
+이어지는 비동기·서비스간 SQL을 회수한다. OTEL javaagent는 부착하지 않는다(레거시 `brave.Tracing`
+빈과 충돌하므로). **전제**: SUT logback이 `%X{traceId}`(또는 동등 MDC 키)를 출력해야 한다(SUT
+제공자 책임). 따라서 sleuth 모드에서는 위 "attach OTEL 네트워킹"·OTLP 리시버 배선이 필요 없다.
+
+비동기로 B→C 호출이 일어나는 멀티서비스 구성은 `--capture-services a,b,c` 로 여러 컨테이너 로그를
+한 파일로 인터리브 tail해 함께 상관한다. 미지정 시 `--app-service` 한 컨테이너만 본다.
 
 ### 외부 HTTP(downstream) 캡처
 
