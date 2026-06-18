@@ -107,4 +107,9 @@ public class FileGraphRagClient implements GraphRagClient {
                 .filter(s -> java.util.Objects.equals(s.pathId(), pathId))
                 .toList();
     }
+
+    @Override
+    public List<io.graphrag.model.CapturedEventEmit> capturedEventEmitsForPath(String pathId) {
+        return asset.capturedEventEmits().stream().filter(e -> e.pathId().equals(pathId)).toList();
+    }
 }

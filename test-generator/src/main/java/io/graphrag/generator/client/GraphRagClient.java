@@ -38,4 +38,8 @@ public interface GraphRagClient {
     List<TableSchema> tables();
 
     List<RequiredSeed> seedsForPath(String pathId);
+
+    default List<io.graphrag.model.CapturedEventEmit> capturedEventEmitsForPath(String pathId) {
+        return List.of();
+    }
 }
