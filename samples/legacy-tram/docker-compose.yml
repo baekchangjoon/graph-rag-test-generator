@@ -47,6 +47,8 @@ services:
     volumes:
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    ports:
+      - "53306:3306"   # published for host JDBC access (SchemaExtractor, E2E tests)
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpw"]
       interval: 10s
@@ -61,7 +63,7 @@ services:
       kafka: { condition: service_healthy }
       zookeeper: { condition: service_healthy }
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/reservationdb
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/eventuate
       SPRING_DATASOURCE_USERNAME: cdc
       SPRING_DATASOURCE_PASSWORD: cdcpw
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
@@ -76,6 +78,7 @@ services:
       EVENTUATE_OUTBOX_ID: "1"
       # readOldDebeziumDbOffsetStorageTopic required by MySqlBinlogCdcPipelineReaderProperties.validate()
       EVENTUATELOCAL_CDC_READ_OLD_DEBEZIUM_DB_OFFSET_STORAGE_TOPIC: "false"
+      # Eventuate infra tables (message, offset_store, cdc_monitoring) live in 'eventuate' schema (default).
 
   # ── A: order-web ────────────────────────────────────────────────────────────
   order-web:
