@@ -328,18 +328,20 @@ public final class BuilderCli {
         // {{wiremock}}을 컨테이너가 도달 가능한 host.docker.internal:<port>[/token]로 치환한다.
         String httpToken = newOtlpSecret();   // reuse the per-run secret generator
         io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer();
-        httpCapture.start(config.externalStubsDir(), httpToken);
-        java.util.Map<String, String> mergedEnv = new java.util.LinkedHashMap<>(otelEnv);
-        config.sutEnv().forEach((k, v) -> mergedEnv.put(k,
-                v.replace(io.graphrag.builder.env.AnalysisEnvironment.WIREMOCK_PLACEHOLDER, httpCapture.hostBaseUrl())));
-        log.info("attach external HTTP capture: wiremock {} (container reaches host.docker.internal:{})",
-                httpCapture.baseUrl(), httpCapture.port());
 
-        // httpCapture.start() 이후 발생하는 모든 작업(override 생성/쓰기, envCfg, env 생성/start/explore)을
-        // 같은 try로 감싼다 → env로 소유권을 넘기기 전에 throw 되더라도 finally가 httpCapture/otlpReceiver를
-        // 정확히 1회 정리한다(성공적으로 넘긴 뒤에는 env의 try-with-resources가 소유).
+        // httpCapture.start()를 포함한 모든 작업(WireMock 기동, override 생성/쓰기, envCfg, env 생성/start/explore)을
+        // 같은 try로 감싼다 → start() 시점 실패(포트 바인드/스텁 로드)나 env로 소유권을 넘기기 전 throw에도
+        // finally가 httpCapture/otlpReceiver를 정확히 1회 정리한다(성공적으로 넘긴 뒤에는 env의 try-with-resources가 소유).
+        // httpCapture는 try 밖에서 생성만 하므로(start 없음) finally의 null-safe close()가 미기동 서버에도 안전한 no-op이다.
         boolean handedOff = false;
         try {
+            httpCapture.start(config.externalStubsDir(), httpToken);
+            java.util.Map<String, String> mergedEnv = new java.util.LinkedHashMap<>(otelEnv);
+            config.sutEnv().forEach((k, v) -> mergedEnv.put(k,
+                    v.replace(io.graphrag.builder.env.AnalysisEnvironment.WIREMOCK_PLACEHOLDER, httpCapture.hostBaseUrl())));
+            log.info("attach external HTTP capture: wiremock {} (container reaches host.docker.internal:{})",
+                    httpCapture.baseUrl(), httpCapture.port());
+
             String overrideYaml = new OverrideComposeGenerator().generate(
                     new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
                             at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
