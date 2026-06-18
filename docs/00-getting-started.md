@@ -118,7 +118,8 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 | `--external-stubs <dir> --sut-env KEY={{wiremock}}` | 앱이 외부 HTTP를 호출해서 스텁이 필요할 때 |
 | `--with-redis` / `--with-kafka` | 앱이 Redis·Kafka를 쓸 때 |
 | `--sut-java-home <jdk>` | SUT를 다른 JDK로 띄워야 할 때 |
-| `--sql-capture log` | SQL 캡처를 로그 파싱으로(기본은 OTEL DB span 기반 `otel`). OTEL 캡처가 안 되는 환경의 폴백 ([docs/06](06-test-environment.md) "SQL 캡처 모드") |
+| `--trace-mode none` | SQL 캡처를 로그 파싱으로(기본은 OTEL DB span 기반 `otel`). OTEL 캡처가 안 되는 환경의 폴백 ([docs/06](06-test-environment.md) "trace 모드") |
+| `--trace-mode sleuth` | 레거시 Java8+Sleuth SUT. B3 trace-id로 비동기·서비스간 SQL까지 로그 상관 ([docs/06](06-test-environment.md) "trace 모드") |
 
 끝나면 `./out/graph/graph.json`이 생긴다.
 

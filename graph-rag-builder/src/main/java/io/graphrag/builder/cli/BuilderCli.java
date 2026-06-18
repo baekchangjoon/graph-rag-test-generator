@@ -95,7 +95,8 @@ public final class BuilderCli {
                         required(options, "--jdbc-url"),
                         options.get("--kafka-bootstrap"),
                         options.getOrDefault("--health-path", "/actuator/health"),
-                        Integer.parseInt(options.getOrDefault("--ready-timeout", "120")))
+                        Integer.parseInt(options.getOrDefault("--ready-timeout", "120")),
+                        parseCsv(options.get("--capture-services")))
                 : null;
 
         AuthConfig authConfig = options.containsKey("--auth-login-path")
@@ -147,7 +148,7 @@ public final class BuilderCli {
                 attach,
                 requestHeaders,
                 endpointSelectors,
-                sqlCaptureMode(options.get("--sql-capture")));
+                traceMode(options.get("--trace-mode")));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -232,7 +233,7 @@ public final class BuilderCli {
                     config.sutJavaHome());
             try (AnalysisEnvironment env =
                     new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
-                boolean otelSqlCapture = "otel".equals(config.sqlCapture());
+                boolean otelSqlCapture = "otel".equals(config.traceMode());
                 env.start(config.sutJar(), workDir, sutOptions,
                         config.externalStubsDir(), config.sutEnv(),
                         otelSqlCapture ? otel : null, config.sutId());
@@ -302,15 +303,18 @@ public final class BuilderCli {
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
         int jacocoContainerPort = 6300;
-        String jto = JacocoAgent.containerJavaToolOptions("/grb-agents/jacocoagent.jar", jacocoContainerPort)
-                + " -javaagent:/grb-agents/otel-javaagent.jar";
+        String mode = config.traceMode();
+        boolean otelSqlCapture = "otel".equals(mode);
+        boolean sleuthMode = "sleuth".equals(mode);
 
-        // OTEL SQL 캡처(attach): 호스트 OTLP 리시버를 wildcard bind + per-run secret으로 띄우고,
-        // 컨테이너가 host.docker.internal:<port>로 도달하도록 override에 otlp export env + extra_hosts 주입.
-        // log 모드면 기존 동작(exporter none + baggage, host-gateway/batch 미주입).
+        // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) + 인코딩 병합. 그 외: 기존대로 otel agent.
+        String jacocoJto = JacocoAgent.containerJavaToolOptions("/grb-agents/jacocoagent.jar", jacocoContainerPort);
+        String jto = sleuthMode
+                ? jacocoJto + " " + OverrideComposeGenerator.ENCODING_JTO
+                : jacocoJto + " -javaagent:/grb-agents/otel-javaagent.jar";
+
         // host-gateway 는 외부 HTTP 캡처(모든 attach 모드)와 OTLP receiver 도달에 모두 필요 — 항상 1회 점검.
         warnIfHostGatewayUnsupported();
-        boolean otelSqlCapture = "otel".equals(config.sqlCapture());
         io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver = null;
         Map<String, String> otelEnv;
         if (otelSqlCapture) {
@@ -320,8 +324,12 @@ public final class BuilderCli {
             otelEnv = otel.otlpEnv(config.sutId(), otlpReceiver.hostEndpoint(), secret);
             log.info("OTEL SQL capture (attach): otlp receiver {} (container reaches via {})",
                     otlpReceiver.endpoint(), otlpReceiver.hostEndpoint());
+        } else if (sleuthMode) {
+            otelEnv = Map.of();   // OTEL agent 미사용 → OTEL_* env 불필요. 상관은 B3 헤더 주입으로.
+            log.info("sleuth SQL capture (attach): B3 trace-id log correlation over services {}",
+                    effectiveCaptureServices(at));
         } else {
-            otelEnv = otel.env(config.sutId());   // OTEL env 동등 주입(exporter none + baggage)
+            otelEnv = otel.env(config.sutId());   // none: 기존 log 동작(OTEL env 동등, exporter none + baggage)
         }
 
         // 외부 HTTP 캡처(모든 attach 모드): 호스트 WireMock을 per-run token으로 띄우고, SUT env의
@@ -332,7 +340,6 @@ public final class BuilderCli {
         // httpCapture.start()를 포함한 모든 작업(WireMock 기동, override 생성/쓰기, envCfg, env 생성/start/explore)을
         // 같은 try로 감싼다 → start() 시점 실패(포트 바인드/스텁 로드)나 env로 소유권을 넘기기 전 throw에도
         // finally가 httpCapture/otlpReceiver를 정확히 1회 정리한다(성공적으로 넘긴 뒤에는 env의 try-with-resources가 소유).
-        // httpCapture는 try 밖에서 생성만 하므로(start 없음) finally의 null-safe close()가 미기동 서버에도 안전한 no-op이다.
         boolean handedOff = false;
         try {
             httpCapture.start(config.externalStubsDir(), httpToken);
@@ -342,10 +349,13 @@ public final class BuilderCli {
             log.info("attach external HTTP capture: wiremock {} (container reaches host.docker.internal:{})",
                     httpCapture.baseUrl(), httpCapture.port());
 
+            // host-gateway 는 외부 HTTP 캡처 때문에 항상 주입(true). sleuth 모드는 보조 capture-service에
+            // 로깅/인코딩을 주입하도록 effectiveCaptureServices(at)를 extraLogServices로 전달(app 노드는 generator가 skip).
             String overrideYaml = new OverrideComposeGenerator().generate(
                     new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
                             at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
-                            jto, mybatisLogLevels, mergedEnv, true, otelSqlCapture));
+                            jto, mybatisLogLevels, mergedEnv, true, otelSqlCapture,
+                            effectiveCaptureServices(at)));
             Path overridePath = workDir.resolve("attach-override.yml");
             Files.writeString(overridePath, overrideYaml);
 
@@ -354,7 +364,8 @@ public final class BuilderCli {
                     "http://localhost:" + at.appHostPort(),
                     at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
                     "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
-                    at.healthPath(), at.readyTimeoutSeconds());
+                    at.healthPath(), at.readyTimeoutSeconds(),
+                    effectiveCaptureServices(at));   // app 포함 목록(Config도 빈 목록은 [app]로 정규화)
 
             AttachedComposeEnvironment env = new AttachedComposeEnvironment(
                     envCfg, config.dbConfig().type(), otlpReceiver, httpCapture);
@@ -370,6 +381,21 @@ public final class BuilderCli {
                 if (otlpReceiver != null) { otlpReceiver.stop(); }
             }
         }
+    }
+
+    /** capture-services에 app 서비스를 반드시 포함(누락 시 prepend; 미지정 시 [app]). */
+    private static List<String> effectiveCaptureServices(AttachConfig at) {
+        List<String> req = at.captureServices();
+        if (req.isEmpty()) {
+            return List.of(at.appService());
+        }
+        if (req.contains(at.appService())) {
+            return req;
+        }
+        List<String> out = new java.util.ArrayList<>();
+        out.add(at.appService());
+        out.addAll(req);
+        return out;
     }
 
     /** attach OTLP 리시버용 per-run 256-bit shared secret (hex). */
@@ -482,11 +508,18 @@ public final class BuilderCli {
             // 결정적 시드: 같은 commit 재분석은 동일 trace 시퀀스(재현성), 다른 SUT/commit은 충돌 없음.
             String traceRunId = config.commitSha() == null
                     ? config.sutId() : config.sutId() + ":" + config.commitSha();
-            io.graphrag.builder.capture.SqlCaptureBackend sqlCapture =
-                    "otel".equals(config.sqlCapture()) && env.otlpReceiver() != null
-                            ? new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
-                                    new io.graphrag.builder.capture.TraceParent(traceRunId))
-                            : new io.graphrag.builder.capture.LogParserCapture(env.sut());
+            String mode = config.traceMode();
+            io.graphrag.builder.capture.SqlCaptureBackend sqlCapture;
+            if ("otel".equals(mode) && env.otlpReceiver() != null) {
+                sqlCapture = new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
+                        new io.graphrag.builder.capture.TraceParent(traceRunId));
+            } else if ("sleuth".equals(mode)) {
+                // per-run nonce(R5): 동일 commit 동시 실행 시 trace 시퀀스 충돌 방지(SecureRandom, 비결정적 OK).
+                sqlCapture = new io.graphrag.builder.capture.SleuthLogCapture(env.sut(),
+                        new io.graphrag.builder.capture.B3TraceId(traceRunId, newOtlpSecret()));
+            } else {
+                sqlCapture = new io.graphrag.builder.capture.LogParserCapture(env.sut());
+            }
 
             // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
             // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도
@@ -596,7 +629,8 @@ public final class BuilderCli {
     public record AttachConfig(Path userCompose, String appService,
                                int appContainerPort, int appHostPort, int jacocoHostPort,
                                String jdbcUrl, String kafkaBootstrap,
-                               String healthPath, int readyTimeoutSeconds) {}
+                               String healthPath, int readyTimeoutSeconds,
+                               java.util.List<String> captureServices) {}
 
     /** docs/22 Manual-Archive Seed: 수동 작성 ExploredPath 병합 (id 충돌 시 수동본 우선). */
     private static void mergeManualPaths(Path dir, List<ExploredPath> paths) throws Exception {
@@ -637,6 +671,15 @@ public final class BuilderCli {
             env.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
         }
         return env;
+    }
+
+    /** "a,b,c" → [a,b,c] (공백 strip, 빈 토큰 제거). null/빈 → 빈 리스트. (테스트용 package-private) */
+    static List<String> parseCsv(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(spec.split(","))
+                .map(String::strip).filter(s -> !s.isEmpty()).toList();
     }
 
     /** `coverage --exec <file> --jar <bootjar> [--label x]` — .exec를 라인+브랜치로 분석해 출력. */
@@ -694,13 +737,14 @@ public final class BuilderCli {
         return value;
     }
 
-    /** --sql-capture otel|log (미지정 시 기본 otel). 그 외 값은 거부. */
-    private static String sqlCaptureMode(String value) {
+    /** --trace-mode otel|sleuth|none (미지정 시 기본 otel). 그 외 값은 거부. */
+    static String traceMode(String value) {
         if (value == null) {
-            return "otel";   // PoC①②+수용1~4 green → OTEL이 기본. log는 --sql-capture log 폴백.
+            return "otel";   // OTEL이 기본. sleuth(레거시 B3 로그상관)/none(로그 byte-offset)은 명시.
         }
-        if (!value.equals("otel") && !value.equals("log")) {
-            throw new IllegalArgumentException("--sql-capture must be 'otel' or 'log', got: " + value);
+        if (!value.equals("otel") && !value.equals("sleuth") && !value.equals("none")) {
+            throw new IllegalArgumentException(
+                    "--trace-mode must be 'otel', 'sleuth', or 'none', got: " + value);
         }
         return value;
     }

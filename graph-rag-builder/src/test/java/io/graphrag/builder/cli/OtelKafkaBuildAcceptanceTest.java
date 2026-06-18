@@ -16,7 +16,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 수용-3 (plan Task 5.2): Kafka OTEL SQL 귀속 — 전체 빌드(--sql-capture otel, --with-kafka)에서
+ * 수용-3 (plan Task 5.2): Kafka OTEL SQL 귀속 — 전체 빌드(--trace-mode otel, --with-kafka)에서
  * @KafkaListener consumer가 만든 SQL이 OTEL trace-id로 귀속 캡처되는지 검증한다.
  *
  * <p>order-service를 OTEL 모드로 분석하면 KafkaCaptureRunner가 발행 레코드 헤더에 traceparent를

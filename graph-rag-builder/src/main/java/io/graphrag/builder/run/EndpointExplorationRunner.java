@@ -66,6 +66,24 @@ import java.util.stream.Collectors;
 public class EndpointExplorationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(EndpointExplorationRunner.class);
+
+    /** trace-mode가 주입하는 상관 헤더 이름들(case-insensitive). backend 값이 사용자 값을 이긴다. */
+    private static final java.util.Set<String> CORRELATION_HEADERS = java.util.Set.of(
+            "traceparent", "x-b3-traceid", "x-b3-spanid", "x-b3-sampled", "b3");
+
+    /** 사용자 헤더에서 상관 헤더를 case-insensitive 제거 후 scope 상관 헤더를 덮어쓴다. */
+    static java.util.LinkedHashMap<String, String> applyCorrelationPriority(
+            Map<String, String> userHeaders, Map<String, String> scopeHeaders) {
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, String> h : userHeaders.entrySet()) {
+            if (!CORRELATION_HEADERS.contains(h.getKey().toLowerCase(java.util.Locale.ROOT))) {
+                out.put(h.getKey(), h.getValue());
+            }
+        }
+        out.putAll(scopeHeaders);
+        return out;
+    }
+
     private static final int FUZZER_SATURATION = 2;   // 연속 dry 시드 패스 수
     private static final int VARIANT_CAP = 4;          // 엔드포인트당 negative-validation 변종 상한(ReadInputSynthesizer와 일치)
 
@@ -668,17 +686,17 @@ public class EndpointExplorationRunner {
         if (authHeaderValue != null) {
             builder.header(authConfig.headerName(), authHeaderValue);
         }
-        for (Map.Entry<String, String> h : extraHeaders.resolved(Instant.now()).entrySet()) {
-            // backend의 traceparent가 이겨야 한다 (HttpRequest.Builder.header는 append만 하므로
-            // 사용자 traceparent를 그대로 두면 두 값이 보내져 상관관계가 깨진다) → 사용자 것 skip.
-            if (h.getKey().equalsIgnoreCase("traceparent")) {
-                log.warn("ignoring user-supplied 'traceparent' header (backend correlation header wins)");
-                continue;
+        // 상관 헤더는 활성 trace-mode가 결정(otel: traceparent, sleuth: B3, none: 없음).
+        // 사용자 제공 상관 헤더는 제거하고 backend 것만 주입(중복·비결정 전파 방지).
+        Map<String, String> userHeaders = extraHeaders.resolved(Instant.now());
+        Map<String, String> scopeHeaders = sqlScope.requestHeaders();
+        for (String name : userHeaders.keySet()) {
+            if (CORRELATION_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))
+                    && !scopeHeaders.isEmpty()) {
+                log.warn("ignoring user-supplied correlation header '{}' (backend wins)", name);
             }
-            builder.header(h.getKey(), h.getValue());
         }
-        // SQL 캡처 backend의 상관 헤더 주입 (OTEL: traceparent, log-parser: 없음).
-        for (Map.Entry<String, String> h : sqlScope.requestHeaders().entrySet()) {
+        for (Map.Entry<String, String> h : applyCorrelationPriority(userHeaders, scopeHeaders).entrySet()) {
             builder.header(h.getKey(), h.getValue());
         }
         String method = endpoint.httpMethod();
