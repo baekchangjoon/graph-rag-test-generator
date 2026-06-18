@@ -34,7 +34,12 @@ public final class KafkaHelper implements AutoCloseable {
         }
     }
 
-    /** Subscribes to a given topic using a KafkaConsumer running on a background thread. */
+    /**
+     * Subscribes to a given topic using a KafkaConsumer running on a background thread.
+     * 반환 전 파티션 할당 완료까지 대기한다 — consumer는 auto.offset.reset=latest이므로,
+     * 할당 전에 SUT가 발행하면 레코드가 유실되어 단언이 간헐 실패(flaky)한다. 할당을 보장하면
+     * subscribe 직후 API를 호출하는 생성 테스트가 발행 이벤트를 놓치지 않는다.
+     */
     public synchronized void subscribe(String topic) {
         if (buffers.containsKey(topic)) {
             return;
@@ -43,6 +48,15 @@ public final class KafkaHelper implements AutoCloseable {
         ConsumerRunner runner = new ConsumerRunner(bootstrapServers, topic, buffers.get(topic));
         consumers.add(runner);
         runner.start();
+        long deadlineNanos = System.nanoTime() + java.time.Duration.ofSeconds(10).toNanos();
+        while (!runner.isAssigned() && System.nanoTime() < deadlineNanos) {
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
     }
 
     /** Waits for the next record on the specified topic and returns it. If it times out, returns null. */
