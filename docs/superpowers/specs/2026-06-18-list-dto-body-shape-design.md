@@ -166,6 +166,21 @@ E2E는 order-service에 저비용으로 추가 가능하면 포함, 아니면 �
   맵 반환(무해). 컬렉션-of-DTO는 원소 DTO FQN이라 정상.
 - enum 컬렉션은 (A)-3에서 `CtEnum`으로 scalar 처리, 합성은 enumConstants 첫 상수.
 
+## 후속 작업 (deferred — 이번 happy-only에서 skip한 것)
+
+컬렉션 바디는 이번에 **happy-only**(유효 원소 1개 배열)로만 처리하고, 아래는 의도적으로 skip한다.
+각 항목의 **현재 가드 위치**를 적어 두어 추후 그 지점에서 확장할 수 있게 한다.
+
+| # | skip한 것 | 현재 가드 위치(확장 진입점) | 추후 확장 방향 |
+|---|---|---|---|
+| D1 | **원소별 음수-검증 arm** (`@Valid List<@Valid DTO>` 위반 변종) | `exploreNegativeValidationVariants` 호출 전 `shape.collection()`이면 skip | 배열 한 원소에 위반값을 넣은 변종 합성(나머지 원소는 valid) → 422/400 arm |
+| D2 | **빈 배열 `[]` arm** | 합성이 항상 원소 1개; 빈-배열 분기 없음 | `@NotEmpty`/`isEmpty()` 가드 SUT용 빈-배열 변종 추가(음수-arm 합성에 `[]` 케이스) |
+| D3 | **다중 원소 배열** | `SampleInputSynthesizer`가 원소 1개만 `ArrayNode`에 담음 | N개 원소(중복/경계) 합성 — dedup/batch 분기 커버 |
+| D4 | **컬렉션 바디 필드 변이/coverage-guided fuzzing** | `HeuristicExplorer`/`CoverageGuidedFuzzer`/`InputMutator`의 `base instanceof ObjectNode` 가드에서 skip | 배열-aware 변이(원소 객체 변이 + 배열 길이 변이)로 변이 탐색 확장 |
+| D5 | **컬렉션 바디 + PATH param 조합** | `EndpointExplorationRunner.happyInput` merge에서 `body instanceof ArrayNode`면 merge skip | 배열 body와 path-var를 분리 보관(SynthesizedInput에 path/body 분리)해 둘 다 주입 |
+| D6 | **중첩 컬렉션 `List<List<..>>` · `Map` 바디** | `BodyShapeExtractor.extractFromType`가 1단계 원소만 환원, 그 외 `Optional.empty()` → skip | 재귀 원소 환원 + 중첩 ArrayNode/ObjectNode 합성 |
+| D7 | **Kafka/WS 컬렉션 페이로드 E2E** (저비용 추가 불가 시) | 공유 코드는 적용되나 전용 SUT 엔드포인트 E2E는 없음(단위만) | order-service에 `@KafkaListener List<DTO>`/WS 컬렉션 페이로드 추가해 E2E 고정 |
+
 ## Definition of Done
 
 - [ ] E2E 수용 1~6 green (order-service batch/by-ids + 생성 테스트).
