@@ -274,7 +274,14 @@ public class Generator {
         // 응답 필드명 → 결정적 기대값(요청 입력 필드 + 시드 컬럼 camelCase). 응답 필드가 같은 이름의
         // 입력/시드 값과 일치하면 equalTo, 서버 생성(시퀀스 id/count/timestamp)은 여기 없어 notNull.
         java.util.Map<String, String> knownByField = new java.util.HashMap<>();
-        if (path.sampleInput() instanceof com.fasterxml.jackson.databind.node.ObjectNode in) {
+        // collection body(배열)면 원소 객체에서 결정적 필드를 도출(collection-of-DTO). scalar/빈 배열은
+        // 객체가 아니라 knownByField 비움 → 응답 단언은 notNullValue로 폴백(허용).
+        JsonNode knownSrc = path.sampleInput();
+        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ArrayNode arr
+                && arr.size() > 0 && arr.get(0) instanceof com.fasterxml.jackson.databind.node.ObjectNode) {
+            knownSrc = arr.get(0);
+        }
+        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ObjectNode in) {
             in.fields().forEachRemaining(e -> {
                 if (!e.getValue().isNull()) {
                     knownByField.put(e.getKey(), e.getValue().asText());
@@ -349,6 +356,10 @@ public class Generator {
 
     /** sampleInput에서 path/query param을 제외한 나머지를 JSON body로 직렬화. */
     private static String jsonBodyFromInput(Endpoint endpoint, JsonNode input) {
+        // collection body(JSON 배열)는 path/query 제거 대상이 아님 → 그대로 직렬화.
+        if (input instanceof com.fasterxml.jackson.databind.node.ArrayNode) {
+            return input.toString();
+        }
         if (!(input instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
             return "{}";
         }
