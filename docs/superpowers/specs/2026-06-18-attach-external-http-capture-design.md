@@ -1,103 +1,87 @@
-# attach 모드 외부 HTTP 캡처 배선 — 설계
+# attach 모드 외부 HTTP 캡처 배선 — 설계 (v2)
 
 - 일자: 2026-06-18
 - 브랜치: feat-attach-external-http
+- 리뷰: 3-모델(Sonnet/GPT; Gemini timeout→생략) needs-condition 반영(v2). 핵심 변경: 보안 per-run 토큰(경로-접두사 방식) 채택.
 
 ## 문제
 
-attach 모드(사용자 docker-compose로 컨테이너 SUT를 분석)는 **외부 HTTP(downstream) 호출을 캡처하지
-못한다**. 근거:
-
-1. `AttachedComposeEnvironment.httpCapture()`가 `null`을 반환한다(`// attach v1: 외부 HTTP 캡처 미지원`).
+attach 모드는 SUT의 외부 HTTP(downstream) 호출을 캡처하지 못한다:
+1. `AttachedComposeEnvironment.httpCapture()`가 `null`을 반환(`attach v1: 외부 HTTP 캡처 미지원`).
 2. attach는 호스트 `HttpCaptureServer`(임베디드 WireMock)를 띄우지 않는다.
-3. `EndpointExplorationRunner`는 `httpCapture == null ? List.of() : httpCapture.drainNewExchanges()`로
-   캡처를 건너뛴다.
-4. `BuilderCli.runAttached`는 `--external-stubs`/`--sut-env`(특히 `{{wiremock}}` 치환)를
-   `AttachedComposeEnvironment`로 전달하지 않는다.
+3. `EndpointExplorationRunner`는 `httpCapture == null ? List.of() : httpCapture.drainNewExchanges()`로 캡처를 스킵.
+4. `BuilderCli.runAttached`는 `--external-stubs`/`--sut-env`(`{{wiremock}}` 치환)를 배선하지 않는다.
 
-docs/26 "v1 한계 #3"은 그 사유를 *"컨테이너 SUT가 호스트의 임베디드 WireMock에 기본 도달하지 못하므로"*
-라고 적었다. 이 네트워킹 장애물은 OTEL SQL 캡처 작업에서 도입한 **`host.docker.internal:host-gateway`**
-(컨테이너→호스트 도달)로 이미 해소됐다. 즉 남은 것은 "불가"가 아니라 "미배선"이다.
+docs/26 "v1 한계 #3"의 사유(컨테이너→호스트 미도달)는 OTEL SQL 캡처가 도입한 `host.docker.internal:host-gateway`로 이미 해소됨. 남은 것은 "미배선".
 
 ## 범위
 
-- **포함**: attach 모드에서 SUT의 외부 HTTP 호출을 호스트 임베디드 WireMock으로 받아 캡처
-  (`CapturedHttpCall`). `--sql-capture` **log/otel 무관하게 항상** 동작(외부 HTTP 캡처는 SQL 캡처와 독립한
-  attach 기본 능력).
-- **제외(비목표)**: 호스트 WireMock에 per-run 토큰 인증(단기 mock 서버라 데이터 유출 없음 — 0.0.0.0 노출
-  한계는 docs에 명시). 컨테이너측 WireMock 서비스 방식. OTEL http-client span으로의 외부 HTTP 캡처(span에
-  요청/응답 body가 없어 WireMock 저널을 대체 불가).
+- **포함**: attach에서 SUT 외부 HTTP 호출을 호스트 임베디드 WireMock으로 받아 `CapturedHttpCall` 캡처. `--sql-capture` log/otel 무관 **항상** 동작.
+- **제외(비목표)**: 컨테이너측 WireMock 서비스 방식. OTEL http-client span 기반 외부 HTTP 캡처(span에 body 없음). 다중 외부 서비스의 개별 토큰(단일 per-run 토큰 공용).
+
+## 보안 (per-run 토큰 — 경로-접두사 방식)
+
+호스트 WireMock은 컨테이너 도달을 위해 **모든 인터페이스(0.0.0.0)** 에 bind된다(WireMock 3.13.0 기본; loopback 한정 아님 — 업그레이드 시 재확인). 이는 `docs/decisions/mock-services-security-model.md`의 "compose 밖 미노출" 전제를 벗어나므로, 동류인 OTLP 리시버(attach 0.0.0.0+per-run secret)와 **일관되게 per-run 토큰**으로 보호한다.
+
+OTLP는 agent가 `OTEL_EXPORTER_OTLP_HEADERS`로 토큰 헤더를 붙이지만, 외부 HTTP는 **SUT 앱 코드가 호출**하므로 outbound 헤더 주입이 불가하다. 대신 **빌더가 주입하는 base URL에 토큰을 경로 접두사로 심는다**(SUT-투명):
+
+- `{{wiremock}}` → `http://host.docker.internal:<port>/<token>` (token = per-run 256-bit hex; `newOtlpSecret`과 동일 생성기 공용화).
+- SUT는 `<base>/inventory/stock`을 호출 → 실제 경로 `/<token>/inventory/stock`.
+- WireMock `RequestFilterV2` 확장이: 경로가 `/<token>/`로 시작하지 않으면 **401 stop**; 시작하면 접두사를 제거한 요청으로 `continueWith`(RequestWrapper로 URL rewrite) → 사용자 stub는 **토큰 무관**하게 매칭. 드레인되는 `RawHttpExchange.urlPath`도 접두사 제거된 경로로 기록(토큰 미유출).
+
+→ LAN의 타 프로세스가 토큰 없이 호스트 WireMock을 쳐도 401(가짜 serve event 주입·stub 조회 차단).
 
 ## 설계 (접근 A — OTLP 리시버 배선 미러링)
 
-attach OTEL SQL 캡처에서 호스트 OTLP 리시버를 `host.docker.internal`로 도달시킨 것과 동일한 패턴으로,
-호스트 임베디드 WireMock을 컨테이너가 `host.docker.internal:<port>`로 도달하게 한다.
+### (A) HttpCaptureServer — host 도달 + 토큰 필터
 
-### (A) HttpCaptureServer — host-reachable URL
+`io.graphrag.builder.env.HttpCaptureServer`:
+- 생성/start에 nullable `authToken` 수용. token != null이면 WireMock `extensions(...)`에 위 `RequestFilterV2`(토큰 접두사 검증·strip) 등록. token == null이면 기존 동작(analysis 무토큰 loopback).
+- `int port()`, `String hostBaseUrl()`(= `http://host.docker.internal:<port>` + token이면 `/<token>` 접두사 포함). `baseUrl()`(loopback, analysis용)은 유지.
+- WireMock 기본 0.0.0.0 bind 확인(필요 시 `bindAddress`로 명시).
 
-`io.graphrag.builder.env.HttpCaptureServer`(WireMock `dynamicPort`)는 기본적으로 모든 인터페이스에
-bind한다(컨테이너 도달 가능). 추가:
-- `int port()` — WireMock 포트.
-- `String hostBaseUrl()` — `http://host.docker.internal:<port>` (컨테이너 SUT가 외부 호출 redirect로 쓸 URL).
-  기존 `baseUrl()`(loopback)은 호스트 프로세스(analysis)용으로 유지.
+### (B) AttachedComposeEnvironment — OtlpReceiver + HttpCaptureServer 둘 다 소유
 
-(WireMock이 loopback에만 bind하지 않음을 구현에서 확인/보장 — 기본 `WireMockConfiguration.options()`는
-전 인터페이스 bind. 필요 시 명시.)
+생성자 계약을 명확히(OTEL attach 회귀 방지):
+- `(Config, DbConfig.Type)` → `(config, dbType, null, null)` 위임(기존 호환).
+- 신규 `(Config, DbConfig.Type, OtlpTraceReceiver, HttpCaptureServer)` — 두 nullable 자원 보유. (기존 3-arg `(Config, DbType, OtlpTraceReceiver)`는 `(…, otlp, null)` 위임으로 유지하거나 4-arg로 통합 — 호출부는 runAttached 1곳.)
+- `httpCapture()`가 주입된 HttpCaptureServer 반환(현 null). `close()`에서 둘 다 stop(이미 otlp stop 있음 → http도 추가).
 
-### (B) AttachedComposeEnvironment — 캡처 서버 소유
+### (C) BuilderCli.runAttached — 배선 (OtlpReceiver 패턴 + try/finally 정리)
 
-- 생성자에 nullable `HttpCaptureServer`를 받아 보관(runAttached가 주입; OTLP 리시버 소유 패턴과 동일).
-- `httpCapture()`가 그 서버를 반환(현재 `null` → non-null). `explore()`의 `drainNewExchanges()` 경로가
-  attach에서도 자동 동작(러너 변경 불필요).
-- `close()`에서 서버 stop.
+순서(서버를 override YAML 생성 *전* 시작해 포트 확정):
+1. `warnIfHostGatewayUnsupported()`를 **otel 블록 밖**으로 이동(외부 HTTP에도 host-gateway 필요하므로 attach에서 항상 1회).
+2. 호스트 `HttpCaptureServer`를 per-run token + `config.externalStubsDir()`로 시작.
+3. `config.sutEnv()`의 `AnalysisEnvironment.WIREMOCK_PLACEHOLDER`(`{{wiremock}}`)를 `httpCapture.hostBaseUrl()`(토큰 접두사 포함)로 치환한 env를 OTEL env(otel 모드 시)와 합쳐 `OverrideComposeGenerator.Spec.extraEnv`로 주입.
+4. `addHostGateway=true`를 **attach에서 항상**(현 otel 전용 → 분리).
+5. **실패 정리**: HttpCaptureServer(및 OtlpTraceReceiver)를 시작한 순간부터 `AttachedComposeEnvironment` 생성 성공 전까지의 예외(stub 로드 실패·override 생성/쓰기 실패)에서 `try/finally` 또는 명시적 close로 서버를 stop(고아 서버 방지). 생성 성공 후엔 env가 close 책임.
 
-### (C) BuilderCli.runAttached — 배선 + override 주입
-
-OTLP 리시버 배선과 같은 순서(서버를 override YAML 생성 *전*에 시작해 포트를 확정):
-1. 호스트 `HttpCaptureServer`를 `config.externalStubsDir()`로 시작(외부 stub 로드).
-2. `config.sutEnv()`의 `WIREMOCK_PLACEHOLDER`(`{{wiremock}}`)를 `httpCapture.hostBaseUrl()`로 치환한
-   env 맵을 만든다(analysis는 loopback `baseUrl()`로 치환하던 것을 attach는 hostBaseUrl로).
-3. 그 env를 OTEL env(otel 모드 시)와 합쳐 `OverrideComposeGenerator.Spec.extraEnv`로 app `environment`에 주입.
-4. `addHostGateway=true`를 **attach에서 항상**(현재 otel 전용 → 분리; 외부 HTTP 도달에도 host-gateway 필요).
-   Docker<20.10 host-gateway 미지원 경고는 기존 `warnIfHostGatewayUnsupported()` 재사용.
-5. 시작한 서버를 `AttachedComposeEnvironment`에 전달(소유·stop·`httpCapture()` 노출).
-
-`OverrideComposeGenerator`는 이미 `extraEnv`를 app `environment`에 병합하고 `addHostGateway`로 `extra_hosts`를
-주입하므로 추가 변경 최소. (현재 `addHostGateway`가 otel 모드일 때만 true로 전달되던 호출부를 attach 항상
-true로 바꾼다.)
+`OverrideComposeGenerator`는 이미 `extraEnv` 병합·`addHostGateway` 지원 → 추가 변경 최소(호출부의 addHostGateway 인자만 항상 true).
 
 ### (D) E2E 수용 테스트
 
-order-service는 EXPRESS 주문 시 `EXTERNAL_INVENTORY_URL`로 inventory를 호출한다(`InventoryClient`).
-attach 실행에 `--external-stubs <dir> --sut-env EXTERNAL_INVENTORY_URL={{wiremock}}`를 주면, 컨테이너 SUT의
-inventory 호출이 호스트 WireMock(host.docker.internal)으로 가서 캡처돼야 한다.
+order-service의 EXPRESS 주문 경로는 `EXTERNAL_INVENTORY_URL`로 inventory를 호출(`InventoryClient.check`). 전제:
+- userId는 FK(orders.user_id→users.id)라 `SampleInputSynthesizer`가 부모 users 행을 probe로 seed → `findById(probe-userId)` 성공(별도 user seed 불필요). type="EXPRESS"는 `StaticLiteralOracle`이 SUT 리터럴에서 추출 → 탐색이 EXPRESS arm 도달(analysis e2e가 이미 EXPRESS 201/409 검증하므로 동일 탐색으로 도달).
 
-수용 기준(`e2e/run-attach-ext-http-e2e.sh` 신규 또는 기존 attach e2e 확장):
-1. attach 분석이 정상 완료(SUT 부팅·teardown clean).
-2. graph.json에 inventory에 대한 **`CapturedHttpCall`**(외부 HTTP)이 ≥1건 — URL/메서드가 inventory 호출과
-   일치, (가능하면) 응답 body·SUT가 읽은 응답 필드 보존.
-3. host-gateway로 컨테이너→호스트 WireMock 도달 확인(캡처가 0이면 실패).
+수용 기준(신규 `e2e/run-attach-ext-http-e2e.sh` — 기존 attach 스크립트와 **포트·project 충돌 회피**: PROJECT=`grb-attach-order-exthttp`, app-port 58081, jacoco-port 16301):
+1. attach 분석 정상 완료 + teardown clean.
+2. graph.json에 inventory **`CapturedHttpCall`** ≥1건(URL/메서드 일치; 응답 body·SUT 읽은 필드 보존). `--external-stubs e2e/external-stubs --sut-env EXTERNAL_INVENTORY_URL={{wiremock}}` 사용.
+3. host-gateway로 컨테이너→호스트 WireMock 도달 확인(캡처 0이면 실패). 토큰 불일치 요청은 401(필터 동작 — 단위로 검증).
 4. 기존 attach 회귀(`run-attach-e2e.sh`, `run-attach-otel-e2e.sh`) green 유지.
-
-EXPRESS 주문 경로 도달을 위해 외부 stub(inventory minimal 응답)을 `--external-stubs`로 제공한다(e2e의 기존
-`e2e/external-stubs` 재사용 가능).
 
 ## 영향 범위 / 위험
 
-- `HttpCaptureServer`에 메서드 2개 추가(`port`/`hostBaseUrl`) — 기존 동작 무변경.
-- `AttachedComposeEnvironment` 생성자 시그니처에 nullable 인자 추가 → 호출부(runAttached)만 갱신; 기존
-  2-arg 생성자/테스트는 유지(편의 생성자).
-- `runAttached`가 외부 stub/ sutEnv를 배선 → log 모드 attach도 host-gateway가 주입됨(의도된 변경; 외부
-  HTTP 캡처가 항상 동작). host-gateway는 Docker 20.10+ 필요(경고만, 치명 아님).
-- 보안: 호스트 WireMock이 0.0.0.0로 노출(런 동안만). 토큰 미적용(비목표) — docs/26에 한계로 명시.
-- attach v1 한계: "외부 HTTP(downstream) 캡처 미지원"(docs/26 #3) 제거.
+- `HttpCaptureServer`: token-aware start + `port`/`hostBaseUrl` + RequestFilter 확장. token=null 경로(analysis)는 무변경.
+- `AttachedComposeEnvironment`: 생성자에 HttpCaptureServer nullable 추가(4-arg), close에 stop 추가. 기존 2/3-arg 위임 유지.
+- `runAttached`: 외부 stub/sutEnv 배선 → **log 모드 attach도 host-gateway 주입**(의도). `--external-stubs` 미제공 시 WireMock은 stub 없이 떠 downstream에 404(기존 graceful) — 의도된 동작(운영자가 stub 제공).
+- **Docker<20.10**: host-gateway 미지원 → 컨테이너가 호스트 WireMock 미도달 → 외부 캡처 0. `warnIfHostGatewayUnsupported()`로 경고(하드 실패 아님 — 외부 캡처 불필요한 attach까지 막지 않기 위해). docs/26에 "외부 HTTP 캡처는 Docker 20.10+ 필요" 한계 명시.
+- `ExplorationEnvironment.httpCapture()` 주석(`attach v1 → null`) 갱신(attach에서 non-null).
+- docs/26 "v1 한계 #3" 제거.
 
 ## Definition of Done
 
-- [ ] E2E 수용 1~4 green (attach + `--sut-env {{wiremock}}` → inventory CapturedHttpCall 캡처; 기존 attach
-  e2e 회귀 유지).
-- [ ] 단위: `OverrideComposeGenerator`가 attach에서 항상 `extra_hosts host-gateway` + 치환된 외부 URL env
-  주입; `AttachedComposeEnvironment.httpCapture()` non-null + close 시 stop; `HttpCaptureServer.hostBaseUrl()`.
-- [ ] 전체 회귀(`./gradlew test`) green — analysis 모드/기존 attach 무변경.
-- [ ] docs/26 갱신(v1 한계 #3 제거, attach 외부 HTTP 캡처 + host.docker.internal + 0.0.0.0 노출 한계 기술).
+- [ ] E2E 수용 1~4 green (attach + `{{wiremock}}` → inventory CapturedHttpCall; 토큰 401 단위; 기존 attach e2e 회귀).
+- [ ] 단위: `HttpCaptureServer` 토큰 필터(접두사 검증 401 / strip 후 stub 매칭 / 드레인 URL 토큰 미포함) + `hostBaseUrl`; `OverrideComposeGenerator` attach 항상 host-gateway + 치환 env; `AttachedComposeEnvironment.httpCapture()` non-null + close 시 둘 다 stop; runAttached 실패 시 서버 정리.
+- [ ] 전체 회귀(`./gradlew test`) green — analysis/기존 attach 무변경.
+- [ ] docs/26 갱신(한계 #3 제거, 외부 HTTP 캡처 + host.docker.internal + per-run 토큰 + Docker 20.10+ 한계) + `docs/decisions/mock-services-security-model.md`에 attach 호스트 WireMock의 0.0.0.0+토큰 예외 기록.
 - [ ] PR 전 spec-compliance + 코드 품질 리뷰 트리아지.
