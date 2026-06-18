@@ -91,7 +91,8 @@ public class EndpointExplorationRunner {
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  List<RequiredSeed> seeds,
                                  ExplorationReport.EndpointExploration report,
-                                 ExecutionDataStore cumulativeExec) {
+                                 ExecutionDataStore cumulativeExec,
+                                 List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
     }
 
     private final SutHandle sut;
@@ -109,6 +110,7 @@ public class EndpointExplorationRunner {
     private final Map<String, List<String>> enumColumns;    // 컬럼(snake) → 유효 enum 상수 (시드 읽기 500 방지)
     private final RequestHeaders extraHeaders;              // 사용자 지정 커스텀 헤더 (B3)
     private final SqlCaptureBackend sqlCapture;             // 요청별 SQL 캡처 backend (log 폴백 / OTEL)
+    private final KafkaCaptureReceiver kafkaCapture;
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -126,7 +128,8 @@ public class EndpointExplorationRunner {
                                      Map<String, List<String>> enumConstants,
                                      Map<String, List<String>> enumColumns,
                                      RequestHeaders extraHeaders,
-                                     SqlCaptureBackend sqlCapture) {
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -145,6 +148,7 @@ public class EndpointExplorationRunner {
         this.enumColumns = enumColumns;
         this.extraHeaders = extraHeaders;
         this.sqlCapture = sqlCapture;
+        this.kafkaCapture = kafkaCapture;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -294,7 +298,7 @@ public class EndpointExplorationRunner {
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
         return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
-                finalSeeds, report(endpoint, outcome, comparisons), cumulativeCoverage);
+                finalSeeds, report(endpoint, outcome, comparisons), cumulativeCoverage, bundle.capturedEventEmits());
     }
 
     /**
@@ -437,7 +441,8 @@ public class EndpointExplorationRunner {
     }
 
     private record PathsBundle(List<ExploredPath> paths, List<CapturedSql> allSql,
-                               List<io.graphrag.model.CapturedHttpCall> httpCalls) {
+                               List<io.graphrag.model.CapturedHttpCall> httpCalls,
+                               List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
     }
 
     private record AttachResult(List<ExploredPath> paths, List<RequiredSeed> requiredSeeds) {
@@ -517,11 +522,27 @@ public class EndpointExplorationRunner {
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
         List<io.graphrag.model.CapturedHttpCall> allHttpCalls = new ArrayList<>();
+        List<io.graphrag.model.CapturedEventEmit> allCapturedEventEmits = new ArrayList<>();
+
         for (PathCandidate candidate : outcome.paths()) {
             List<CapturedSql> sql = captureSql(candidate);
             allSql.addAll(sql);
             List<io.graphrag.model.CapturedHttpCall> httpCalls = captureHttpCalls(candidate);
             allHttpCalls.addAll(httpCalls);
+
+            List<io.graphrag.model.CapturedEventEmit> pathEventEmits = new ArrayList<>();
+            int emitSeq = 1;
+            for (io.graphrag.model.CapturedEventEmit emit : candidate.capturedEventEmits()) {
+                pathEventEmits.add(new io.graphrag.model.CapturedEventEmit(
+                        "event-" + candidate.pathId() + "-" + (emitSeq++),
+                        candidate.pathId(),
+                        emit.topic(),
+                        emit.key(),
+                        emit.payload()
+                ));
+            }
+            allCapturedEventEmits.addAll(pathEventEmits);
+
             // seed는 성공(2xx) path에만 연결 — attachSeeds에서 채운다
             paths.add(new ExploredPath(
                     candidate.pathId(),
@@ -535,9 +556,10 @@ public class EndpointExplorationRunner {
                     candidate.discoveredBy(),
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql),
-                    List.of()));
+                    List.of(),
+                    pathEventEmits.stream().map(io.graphrag.model.CapturedEventEmit::id).toList()));
         }
-        return new PathsBundle(paths, allSql, allHttpCalls);
+        return new PathsBundle(paths, allSql, allHttpCalls, allCapturedEventEmits);
     }
 
     /** 시드를 path에 연결: GET은 첫 2xx path, 비-GET by-id는 path별 고유 PK 복제. */
@@ -711,6 +733,41 @@ public class EndpointExplorationRunner {
         HttpResponse<String> response = http.send(builder.build(),
                 HttpResponse.BodyHandlers.ofString());
         List<ParsedSql> drained = sqlScope.drain();   // flush 여유는 backend.drain() 내부로 이동
+
+        String traceId = null;
+        for (Map.Entry<String, String> h : sqlScope.requestHeaders().entrySet()) {
+            if (h.getKey().equalsIgnoreCase("traceparent")) {
+                String tp = h.getValue();
+                if (tp != null) {
+                    String[] parts = tp.split("-");
+                    if (parts.length >= 2) {
+                        String candidate = parts[1];
+                        if (candidate.length() == 32) {
+                            traceId = candidate;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        java.util.List<io.graphrag.model.CapturedEventEmit> capturedEvents = java.util.List.of();
+        if (kafkaCapture != null && traceId != null) {
+            java.util.List<KafkaCaptureReceiver.CapturedRecord> records = kafkaCapture.drain(traceId, 5000);
+            if (!records.isEmpty()) {
+                capturedEvents = new java.util.ArrayList<>();
+                for (KafkaCaptureReceiver.CapturedRecord record : records) {
+                    capturedEvents.add(new io.graphrag.model.CapturedEventEmit(
+                            java.util.UUID.randomUUID().toString(),
+                            null,
+                            record.topic(),
+                            record.key(),
+                            record.value()
+                    ));
+                }
+            }
+        }
+
         ExecutionDataStore delta = coverage.dump(true);
         String coverageKey = CoverageFingerprint.of(delta, appClasses);
         for (ExecutionData ed : delta.getContents()) {
@@ -722,7 +779,7 @@ public class EndpointExplorationRunner {
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
                 httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                coverageKey, drained);
+                coverageKey, drained, capturedEvents);
     }
 
     /**
