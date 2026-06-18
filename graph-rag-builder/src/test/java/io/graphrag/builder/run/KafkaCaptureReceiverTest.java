@@ -90,6 +90,41 @@ class KafkaCaptureReceiverTest {
     }
 
     @Test
+    void testCapturesAndDrainsRecordByTraceIdCaseInsensitive() throws Exception {
+        String topic = "test-topic";
+        createTopic(topic);
+
+        KafkaCaptureReceiver receiver = new KafkaCaptureReceiver(bootstrapServers);
+        receiver.start();
+
+        try {
+            String traceId = "123456789012345678901234567890f5";
+            String spanId = "00f067aa0ba902b9";
+            String traceparent = "00-" + traceId + "-" + spanId + "-01";
+
+            Properties props = new Properties();
+            props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+            props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+            props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                ProducerRecord<String, String> record = new ProducerRecord<>(topic, "my-key-case", "{\"message\":\"hello-case\"}");
+                record.headers().add("TraceParent", traceparent.getBytes(StandardCharsets.UTF_8));
+                producer.send(record).get();
+            }
+
+            List<KafkaCaptureReceiver.CapturedRecord> drained = receiver.drain(traceId, 5000);
+            assertThat(drained).hasSize(1);
+            assertThat(drained.get(0).topic()).isEqualTo(topic);
+            assertThat(drained.get(0).key()).isEqualTo("my-key-case");
+            assertThat(drained.get(0).value().get("message").asText()).isEqualTo("hello-case");
+            assertThat(drained.get(0).headers()).containsEntry("TraceParent", traceparent);
+        } finally {
+            receiver.close();
+        }
+    }
+
+    @Test
     void testFiltersOutInternalTopics() throws Exception {
         String internalTopic = "__internal-topic";
         createTopic(internalTopic);

@@ -39,7 +39,7 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
 
     private final String bootstrapServers;
     private final Queue<CapturedRecord> queue = new ConcurrentLinkedQueue<>();
-    private final AtomicInteger queueSize = new AtomicInteger(0);
+    private int queueSize = 0;
     private final AtomicBoolean running = new AtomicBoolean(false);
     
     private KafkaConsumer<String, String> consumer;
@@ -67,7 +67,7 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
         Properties adminProps = new Properties();
         adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         try (AdminClient admin = AdminClient.create(adminProps)) {
-            Set<String> allTopics = admin.listTopics().names().get();
+            Set<String> allTopics = admin.listTopics().names().get(5, java.util.concurrent.TimeUnit.SECONDS);
             for (String t : allTopics) {
                 if (TOPIC_REGEX.matcher(t).matches()) {
                     topicsToSubscribe.add(t);
@@ -137,16 +137,17 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
 
     private void addRecord(CapturedRecord record) {
         synchronized (queue) {
-            while (queueSize.get() >= MAX_QUEUE_SIZE) {
+            while (queueSize >= MAX_QUEUE_SIZE) {
                 CapturedRecord removed = queue.poll();
                 if (removed != null) {
-                    queueSize.decrementAndGet();
+                    queueSize--;
                 } else {
                     break;
                 }
             }
             if (queue.offer(record)) {
-                queueSize.incrementAndGet();
+                queueSize++;
+                queue.notifyAll();
             }
         }
     }
@@ -164,20 +165,26 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
                     if (Objects.equals(traceId, recordTraceId)) {
                         matched.add(rec);
                         it.remove();
-                        queueSize.decrementAndGet();
+                        queueSize--;
                     }
                 }
-            }
 
-            if (!matched.isEmpty() || System.nanoTime() >= deadline) {
-                break;
-            }
+                long now = System.nanoTime();
+                if (!matched.isEmpty() || now >= deadline) {
+                    break;
+                }
 
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+                long remainingMillis = (deadline - now) / 1_000_000L;
+                if (remainingMillis <= 0) {
+                    break;
+                }
+
+                try {
+                    queue.wait(remainingMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
         }
 
@@ -185,7 +192,13 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
     }
 
     private String getTraceIdFromHeaders(Map<String, String> headers) {
-        String tp = headers.get("traceparent");
+        String tp = null;
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if ("traceparent".equalsIgnoreCase(entry.getKey())) {
+                tp = entry.getValue();
+                break;
+            }
+        }
         if (tp == null) {
             return null;
         }
