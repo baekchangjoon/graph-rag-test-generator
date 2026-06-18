@@ -1,6 +1,7 @@
 package io.graphrag.builder.run;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlCaptureBackend;
@@ -1022,29 +1023,30 @@ public class EndpointExplorationRunner {
     }
 
     /**
-     * body의 모든 스칼라 값을 수집(API_PARAM 분류용). object는 1단 필드값, array는 각 element를 재귀.
-     * 컬렉션 body의 element 필드값도 SQL 바인딩과 매칭되게 한다. Kafka/WS 캡처 러너와 공용(DRY).
+     * body의 스칼라 값을 수집(API_PARAM 분류용). object는 1단 필드값, array는 각 element의 1단 값
+     * (scalar element면 그 값, object element면 그 필드값 — 한 단계). 컬렉션 body의 element 값도 SQL
+     * 바인딩과 매칭되게 한다. Kafka/WS 캡처 러너와 공용(DRY).
      */
     static Set<String> collectBodyValues(JsonNode body) {
-        Set<String> v = new HashSet<>();
-        if (body instanceof com.fasterxml.jackson.databind.node.ArrayNode arr) {
-            arr.forEach(e -> addNodeValues(e, v));
+        Set<String> values = new HashSet<>();
+        if (body instanceof ArrayNode arr) {
+            arr.forEach(e -> addNodeValues(e, values));
         } else {
-            addNodeValues(body, v);
+            addNodeValues(body, values);
         }
-        return v;
+        return values;
     }
 
-    private static void addNodeValues(JsonNode node, Set<String> v) {
+    private static void addNodeValues(JsonNode node, Set<String> values) {
         if (node.isValueNode()) {
             if (!node.isNull()) {
-                v.add(node.asText());
+                values.add(node.asText());
             }
             return;
         }
         node.fields().forEachRemaining(e -> {
             if (!e.getValue().isNull()) {
-                v.add(e.getValue().asText());
+                values.add(e.getValue().asText());
             }
         });
     }
