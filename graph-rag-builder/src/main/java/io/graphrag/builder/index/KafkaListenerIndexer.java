@@ -50,20 +50,32 @@ public class KafkaListenerIndexer {
                     continue;   // 토픽 없는 리스너(미지원 형태)는 skip
                 }
                 String groupId = firstString(listener, "groupId");
-                String payloadType = method.getParameters().isEmpty()
-                        ? null : method.getParameters().get(0).getType().getQualifiedName();
-                // 핸들러가 raw String을 받아 내부에서 역직렬화하면(@KafkaListener void on(String message) {
-                //   X event = mapper.readValue(message, X.class); ... }) 그 X를 실제 payload 타입으로 본다.
-                if ("java.lang.String".equals(payloadType)) {
-                    String inner = readValueTargetType(method);
-                    if (inner != null) {
-                        payloadType = inner;
+                CtTypeReference<?> paramType = method.getParameters().isEmpty()
+                        ? null : method.getParameters().get(0).getType();
+                String payloadType;
+                if (paramType != null
+                        && (paramType instanceof spoon.reflect.reference.CtArrayTypeReference
+                            || BodyShapeExtractor.bodyTypeKey(paramType).contains("<"))) {
+                    // 컬렉션/배열 payload: 제네릭 원소 타입을 보존하는 인코딩 키로 잡는다.
+                    payloadType = BodyShapeExtractor.bodyTypeKey(paramType);
+                    String key = payloadType;
+                    BodyShapeExtractor.extractFromType(model, paramType)
+                            .ifPresent(shape -> shapes.put(key, shape));
+                } else {
+                    payloadType = paramType == null ? null : paramType.getQualifiedName();
+                    // 핸들러가 raw String을 받아 내부에서 역직렬화하면(@KafkaListener void on(String message) {
+                    //   X event = mapper.readValue(message, X.class); ... }) 그 X를 실제 payload 타입으로 본다.
+                    if ("java.lang.String".equals(payloadType)) {
+                        String inner = readValueTargetType(method);
+                        if (inner != null) {
+                            payloadType = inner;
+                        }
                     }
-                }
-                if (payloadType != null) {
-                    String resolved = payloadType;
-                    BodyShapeExtractor.extract(model, resolved)
-                            .ifPresent(shape -> shapes.put(resolved, shape));
+                    if (payloadType != null) {
+                        String resolved = payloadType;
+                        BodyShapeExtractor.extract(model, resolved)
+                                .ifPresent(shape -> shapes.put(resolved, shape));
+                    }
                 }
                 consumers.add(new KafkaConsumer(
                         "kafka-" + topic.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", ""),
