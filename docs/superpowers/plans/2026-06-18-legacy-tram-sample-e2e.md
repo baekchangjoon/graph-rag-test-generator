@@ -14,7 +14,8 @@
 
 - **DB = MySQL (binlog CDC)**. 비즈니스 테이블은 Hibernate `ddl-auto=update`로 생성; Eventuate `message`/`received_messages`는 **1순위 init.sql + 필수 폴백 JPA `@Entity` 미러**(ddl-auto=update가 없으면 생성·있으면 no-op; 핀 버전 스키마와 정확히 일치).
 - **상관 헤더는 B3**(Spec 2 §7: sleuth 모드는 `X-B3-TraceId/SpanId/Sampled` + `b3` 주입, traceparent 미사용). builder가 B3를 주입·상관.
-- **R1 전파 1순위** = `io.eventuate.tram.core:eventuate-tram-spring-cloud-sleuth-integration` 의존성; **폴백** = 커스텀 `io.eventuate.tram.messaging.common.MessageInterceptor`(발행측 현재 Brave span→메시지 B3 헤더, 수신측 헤더 extract→nextSpan→SpanInScope). 둘 다로도 안 되면 **R1=거짓** 판정·문서화.
+- **R1 전파 1순위** = `io.eventuate.tram.springcloudsleuth:eventuate-tram-spring-cloud-sleuth-tram-starter:0.5.0.RELEASE` 의존성(**Task 2 정정**: 구 `eventuate-tram-spring-cloud-sleuth-integration`은 Boot 2.7용 미존재 — 0.29.0/Boot≤2.5 이후 단종); **폴백** = 커스텀 `io.eventuate.tram.messaging.common.MessageInterceptor`(발행측 현재 Brave span→메시지 B3 헤더, 수신측 헤더 extract→nextSpan→SpanInScope). 둘 다로도 안 되면 **R1=거짓** 판정·문서화.
+- **확정 버전 매트릭스(Task 2 스파이크 — 정본 `samples/legacy-tram/VERSIONS.md`)**: Java 8, Spring Boot 2.7.18, Spring Cloud 2021.0.8(sleuth 3.1.9), Eventuate Tram core 0.35.0.RELEASE, sleuth 통합 `eventuate-tram-spring-cloud-sleuth-tram-starter:0.5.0.RELEASE`, `eventuateio/eventuate-cdc-service:0.17.0.RELEASE`, mysql connector 8.0.28(BOM), MySQL 8.0. 모든 서비스 build는 이 값을 사용.
 - **logback**: `%X{traceId}` 포함 + 로거명·메시지 표준 ` : ` 구분자(Spring Boot 기본).
 - **설정 제약**: 샘플 서비스는 앱 설정을 **개별 env**(`SPRING_DATASOURCE_URL`, `SPRING_KAFKA_BOOTSTRAP_SERVERS`, `SPRING_JPA_HIBERNATE_DDL_AUTO`[underscore — Spring relaxed binding이 `spring.jpa.hibernate.ddl-auto`에 매핑] 등)로 — 빌더 override가 `SPRING_APPLICATION_JSON`을 교체하므로 거기에 앱 설정을 의존하지 말 것.
 - **A 성공 상태코드 = HTTP 202**(C SQL 미완 — 비동기).
@@ -613,7 +614,7 @@ import org.springframework.context.annotation.Import;
 @Configuration
 @Import({TramMessageProducerJdbcConfiguration.class, TramEventsPublisherConfiguration.class})
 public class TramMessagingConfig {
-    // eventuate-tram-spring-cloud-sleuth-integration 이 클래스패스에 있으면 자동 구성으로 B3가 메시지에 전파(1순위).
+    // eventuate-tram-spring-cloud-sleuth-tram-starter(Task 2 확정 좌표)가 클래스패스에 있으면 자동 구성으로 B3가 메시지에 전파(1순위).
 }
 ```
 

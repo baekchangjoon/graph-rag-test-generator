@@ -121,7 +121,7 @@ builder ──B3 멀티헤더 주입──▶ POST /orders (A)        (B3 = X-B3
 - **상관 헤더는 B3**(Spec 2 §7: sleuth 모드는 B3 멀티헤더 주입, traceparent 미사용). 빌더 `SleuthLogCapture`가
   요청별 유니크 B3 traceId를 발급·주입하고 그 traceId가 박힌 로그 라인만 상관.
 - **1순위 통합(artifact 확인됨)**: 각 서비스에
-  **`io.eventuate.tram.core:eventuate-tram-spring-cloud-sleuth-integration`** 의존성 추가가 B→C trace 전파 1순위.
+  **`io.eventuate.tram.springcloudsleuth:eventuate-tram-spring-cloud-sleuth-tram-starter:0.5.0.RELEASE`** 의존성 추가가 B→C trace 전파 1순위. (Task 2 정정: 구 `...core:eventuate-tram-spring-cloud-sleuth-integration`은 Boot 2.7용 미존재.)
 - **폴백(통합 jar 비호환 시) — 커스텀 Tram `MessageInterceptor`**:
   - 발행측(`preSend`): `brave.Tracing.currentTracer().currentSpan().context()`에서 B3를 메시지 헤더
     (`X-B3-TraceId`/`X-B3-SpanId`/`X-B3-Sampled`)로 복사.
