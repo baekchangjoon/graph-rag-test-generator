@@ -148,10 +148,15 @@ public class FixtureComposer {
                 ? bodyFormatFor(sampleInput)
                 : objectBodyFormat(sampleInput, varsByFieldValue, bodyArgs);
 
+        // 캡처값 → 런타임 변수명 (emit 단언의 key/payload 치환용).
+        Map<String, String> substitutions = new LinkedHashMap<>();
+        varsByFieldValue.forEach((capturedValue, var) -> substitutions.put(capturedValue, var.name()));
+
         return new ComposedFixture(
                 new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
                 inserts, deletes, bodyFormat, bodyArgs,
-                assertionsFromResponse(path, sqlList, knownByField));
+                assertionsFromResponse(path, sqlList, knownByField),
+                substitutions, collectInsertPkLiterals(sqlList));
     }
 
     /**
@@ -202,9 +207,13 @@ public class FixtureComposer {
                                                                            List<CapturedSql> sqlList,
                                                                            Map<String, String> knownByField) {
         // 서버가 SQL에 literal로 쓴 값(예: status='PENDING')은 필드 무관하게 결정적.
+        // 단, INSERT의 PK 컬럼에 바인딩된 LITERAL 값은 DB 시퀀스(auto-increment)로 생성된 후
+        // 재사용된 것이므로 제외한다 — 환경마다 달라지는 비결정적 값이다.
+        Set<String> insertPkLiterals = collectInsertPkLiterals(sqlList);
         Set<String> literalValues = new HashSet<>();
         sqlList.forEach(sql -> sql.bindings().stream()
                 .filter(b -> b.origin() == BindingOrigin.LITERAL)
+                .filter(b -> !insertPkLiterals.contains(b.value()))
                 .forEach(b -> literalValues.add(b.value())));
         List<ComposedFixture.Assertion> assertions = new ArrayList<>();
         if (path.sampleResponse() == null || path.sampleResponse().isNull()) {
@@ -234,6 +243,32 @@ public class FixtureComposer {
             assertions.add(new ComposedFixture.Assertion(entry.getKey(), matcher));
         });
         return assertions;
+    }
+
+    /**
+     * INSERT SQL의 PK 컬럼에 LITERAL origin으로 바인딩된 값을 수집한다.
+     * 이 값들은 DB 시퀀스(auto-increment)로 생성된 후 이후 SQL에서 재사용되는 것이므로
+     * 환경마다 달라지는 비결정적 값이다.
+     */
+    private static Set<String> collectInsertPkLiterals(List<CapturedSql> sqlList) {
+        Set<String> result = new HashSet<>();
+        for (CapturedSql sql : sqlList) {
+            if (!"INSERT".equals(sql.sqlKind())) {
+                continue;
+            }
+            for (SqlBinding b : sql.bindings()) {
+                // INSERT의 PK 컬럼("id")에 LITERAL로 바인딩된 값 = auto-generated key
+                if (b.origin() == BindingOrigin.LITERAL && isPkColumnName(b.column())) {
+                    result.add(b.value());
+                }
+            }
+        }
+        return result;
+    }
+
+    /** PK 컬럼명 휴리스틱: 정확히 "id"인 이름만 (FK인 "user_id" 등은 제외). */
+    private static boolean isPkColumnName(String column) {
+        return "id".equalsIgnoreCase(column);
     }
 
     private static final java.util.regex.Pattern UUID_RE = java.util.regex.Pattern.compile(

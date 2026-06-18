@@ -107,44 +107,46 @@ sequenceDiagram
 ## 5. 테스트 코드 생성 및 검증 명세 (`test-generator` / `testlib`)
 
 ### 1) 레이스 컨디션 방지형 `KafkaHelper` 보강
-* **문제**: API 호출 완료 후(Post-condition) 카프카 구독을 시작하면 조인 지연으로 이벤트를 유실하거나 과거 레코드를 캡처할 위험이 있습니다.
-* **해결**: 테스트 메서드 내에서 **API 요청을 보내기 전(given 블록 직전)에 구독을 먼저 시작**하도록 헬퍼 라이브러리를 보강합니다.
+* **문제 1 (조인 지연)**: API 호출 완료 후(Post-condition) 카프카 구독을 시작하면 조인 지연으로 이벤트를 유실하거나 과거 레코드를 캡처할 위험이 있습니다.
+* **문제 2 (공유 토픽 오염)**: 같은 토픽(`order.events`)을 inbound consumer 검증 테스트(토픽에 직접 produce)와 outbound produce 검증 테스트가 공유하면, `consumeNextRecord`가 **다른 테스트가 넣은 레코드**를 집어 단언이 깨집니다.
+* **해결**: 테스트 메서드 내에서 **API 요청을 보내기 전(given 블록 직전)에 구독을 먼저 시작**하고, 소비 시 **자기 발행 레코드의 key로 필터링**해 오염을 격리합니다.
   ```java
   public final class KafkaHelper implements AutoCloseable {
       // API 호출 전 특정 토픽에 대한 구독 개시
       public void subscribe(String topic) { ... }
-      
-      // 버퍼에 대기 중인 레코드 중 다음 1건을 조회 (동시성 격리)
+
+      // 다음 1건을 조회 (동시성 격리)
       public ConsumerRecord<String, String> consumeNextRecord(String topic, Duration timeout) { ... }
+
+      // expectedKey와 일치하는 다음 레코드만 반환 (다른 key의 오염 레코드는 건너뜀)
+      public ConsumerRecord<String, String> consumeNextRecord(String topic, String expectedKey, Duration timeout) { ... }
   }
   ```
 
 ### 2) `Generator` 및 Mustache 템플릿 확장 (`test-class.mustache`)
-* **변수 선언 및 JSON 이스케이프**:
-  * `Generator.java`에서 템플릿 주입 전 JSON payload 문자열 내의 쌍따옴표를 백슬래시로 이스케이프(`jsonEscape`) 처리합니다.
-  * 단언 코드 시작부에 `io.graphrag.testlib.api.KafkaHelper kafkaHelper = scope.kafka();` 선언을 동적으로 합성합니다.
-* **로컬 블록 스코프 격리**:
-  * 복수의 아웃바운드 메시지 단언 시 변수명 중복으로 인한 컴파일 에러를 방지하기 위해 각 검증문을 개별 중괄호 `{ ... }` 블록으로 묶어 생성합니다.
+* **비결정 값 처리 (핵심)**: 캡처된 key/payload에는 환경마다 달라지는 값이 섞여 있어 그대로 단언하면 깨집니다. 이를 두 정보로 구분해 처리합니다 (`ComposedFixture`가 노출):
+  * `substitutions` — 캡처값 → 테스트 런타임 표현식 (예: 입력 `userId` 값 `"probe-userId"` → `scope.testId() + "-user"`). PK/FK에 닿는 body 입력 필드에서 도출됩니다.
+  * `nonDeterministicValues` — INSERT의 PK(`id`) 컬럼에 LITERAL로 바인딩된 값 (DB 시퀀스 auto-increment). 예: `eventId` = `"96883"`.
+* **key 격리**: emit key를 `consumeNextRecord`의 `expectedKey` 인자로 넘겨 자기 발행 레코드만 소비합니다. key가 입력 유래(`substitutions`에 존재)면 런타임 변수명으로, 일반 리터럴이면 따옴표 문자열로, 없으면 `null`로 렌더링합니다.
+* **payload 결정성 보장**: expected payload에서 비결정 필드(`substitutions`/`nonDeterministicValues`에 해당하는 값)를 제거하고, 남은 결정적 필드만 **`JSONAssert` LENIENT(strict=false)**로 비교합니다. (입력 유래 `userId`는 key로 이미 검증되므로 payload에서는 제외.)
+* **로컬 블록 스코프 격리**: 복수의 아웃바운드 메시지 단언 시 변수명 중복 컴파일 에러를 막기 위해 각 검증문을 개별 중괄호 `{ ... }` 블록으로 묶습니다.
   ```java
   // API 호출 직전 미리 구독 시작 (Latest offset race 방지)
-  kafkaHelper.subscribe("{{{topic}}}");
+  scope.kafka().subscribe("order.events");
 
-  // SUT API 호출 실행
+  // SUT API 호출 실행 (userId는 테스트 런타임 값으로 치환)
   given()
       .contentType("application/json")
-      .body(requestPayload)
+      .body(String.format("{\"userId\":\"%s\", ...}", userId))
       .post("/api/orders");
 
-  // 격리된 로컬 블록 내에서 캡처된 아웃바운드 이벤트 단언
+  // 격리된 로컬 블록 + 자기 key 필터 + 결정적 필드만 LENIENT 비교
   {
-      org.apache.kafka.clients.consumer.ConsumerRecord<String, String> emitRecord = 
-              kafkaHelper.consumeNextRecord("{{{topic}}}", java.time.Duration.ofSeconds(3));
-      org.junit.jupiter.api.Assertions.assertNotNull(emitRecord, "이벤트가 발행되지 않았습니다: {{{topic}}}");
+      org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
+              scope.kafka().consumeNextRecord("order.events", userId, java.time.Duration.ofSeconds(5));
+      org.junit.jupiter.api.Assertions.assertNotNull(record);
       org.skyscreamer.jsonassert.JSONAssert.assertEquals(
-              "{{{payload}}}", 
-              emitRecord.value(), 
-              org.skyscreamer.jsonassert.JSONCompareMode.LENIENT
-      );
+              "{\"type\":\"CREATED\"}", record.value(), false);  // LENIENT
   }
   ```
 

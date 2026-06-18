@@ -56,13 +56,10 @@ import static org.hamcrest.Matchers.notNullValue;
 
         {
             org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
-                scope.kafka().consumeNextRecord("{{{topic}}}", java.time.Duration.ofSeconds(5));
+                scope.kafka().consumeNextRecord("{{{topic}}}", {{{keyExpr}}}, java.time.Duration.ofSeconds(5));
             org.junit.jupiter.api.Assertions.assertNotNull(record);
-            {{#key}}
-            org.junit.jupiter.api.Assertions.assertEquals("{{{key}}}", record.key());
-            {{/key}}
             org.skyscreamer.jsonassert.JSONAssert.assertEquals(
-                "{{{payloadJson}}}", record.value(), true);
+                "{{{payloadJson}}}", record.value(), false);
         }
         {{/kafkaEmits}}
     }
