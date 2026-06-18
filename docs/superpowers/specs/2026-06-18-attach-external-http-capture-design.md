@@ -27,9 +27,21 @@ OTLP는 agent가 `OTEL_EXPORTER_OTLP_HEADERS`로 토큰 헤더를 붙이지만, 
 
 - `{{wiremock}}` → `http://host.docker.internal:<port>/<token>` (token = per-run 256-bit hex; `newOtlpSecret`과 동일 생성기 공용화).
 - SUT는 `<base>/inventory/stock`을 호출 → 실제 경로 `/<token>/inventory/stock`.
-- WireMock `RequestFilterV2` 확장이: 경로가 `/<token>/`로 시작하지 않으면 **401 stop**; 시작하면 접두사를 제거한 요청으로 `continueWith`(RequestWrapper로 URL rewrite) → 사용자 stub는 **토큰 무관**하게 매칭. 드레인되는 `RawHttpExchange.urlPath`도 접두사 제거된 경로로 기록(토큰 미유출).
+- WireMock `RequestFilterV2` 확장이: 경로가 `/<token>/`로 시작하지 않으면 **401 stop**; 시작하면 접두사를 제거한 요청으로 `continueWith`(RequestWrapper로 URL rewrite) → 사용자 stub는 **토큰 무관**하게 매칭.
 
 → LAN의 타 프로세스가 토큰 없이 호스트 WireMock을 쳐도 401(가짜 serve event 주입·stub 조회 차단).
+
+**토큰은 캡처 데이터에서 반드시 불가시(가장 중요)**: 토큰은 *빌더 캡처 시점의 접근 제어*일 뿐, 생성 테스트로 흘러가면 안 된다. `CapturedHttpCall.urlPath`가 `/<token>/inventory/stock`이면 test-generator가 `scope.http().stub(GET, "/<token>/inventory/stock")`을 생성하고, 테스트 실행 환경의 SUT는 토큰 없는 `/inventory/stock`을 호출해 **stub 불일치로 외부 목이 깨진다**. 따라서 `HttpCaptureServer.drainNewExchanges`가 기록하는 `urlPath`는 반드시 토큰 접두사가 **제거된 깨끗한 경로**여야 한다. WireMock serve event는 보통 *원본(pre-filter)* URL을 보존하므로, RequestFilter의 rewrite에만 의존하지 말고 **드레인 코드가 알고 있는 token으로 접두사를 직접 strip**한다(serve-event 동작과 무관하게 견고). query/응답/consumedFields는 토큰 영향 없음.
+
+## 종단 데이터 흐름 (생성 테스트에서의 활용)
+
+이 기능은 새 파이프라인을 만들지 않고, attach가 **기존 Phase 2 외부-HTTP 캡처→목 파이프라인**에 데이터를 공급하게만 한다(현재는 attach가 `httpCapture()=null`이라 공급이 끊겨 있음). 흐름:
+
+1. **빌더(attach)** — SUT 외부 호출 → 호스트 WireMock(토큰 검증·strip) → `HttpCaptureServer.drainNewExchanges` → `EndpointExplorationRunner.captureHttpCalls` → graph.json의 **`CapturedHttpCall`**(깨끗한 urlPath, query, responseStatus, responseBody, consumedFields, baggagePropagated).
+2. **test-generator** — `HttpMockComposer.compose(httpCallsForPath)`가 호출당 `scope.http().stub(method, urlPath).withQueryParam(...).respondJson(status, consumedFields-투영 body).register();`를 생성(`mocksBlock`). (기존 코드 — 변경 없음.)
+3. **생성 테스트 실행(테스트 환경, docs/06)** — testlib `WireMockHttpMockClient`가 그 stub을 테스트-환경 WireMock에 등록 → 생성 테스트가 SUT를 칠 때 SUT의 외부 호출이 기록된 응답을 받는다(baggage 매칭으로 병렬 격리). SUT의 외부 URL은 테스트 환경이 자체 mock으로 redirect(빌더의 per-run 토큰과 무관).
+
+즉 **빌더의 토큰/host-gateway 배선은 캡처 단계 한정**이고, 캡처된 `CapturedHttpCall`은 토큰이 제거된 깨끗한 데이터라 analysis 모드 캡처와 동일하게 test-generator·생성 테스트에서 그대로 활용된다. attach 캡처는 analysis 캡처와 **동일 스키마·동일 소비 경로**를 탄다.
 
 ## 설계 (접근 A — OTLP 리시버 배선 미러링)
 
