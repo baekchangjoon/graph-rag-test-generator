@@ -16,7 +16,7 @@
 - **상관 헤더는 B3**(Spec 2 §7: sleuth 모드는 `X-B3-TraceId/SpanId/Sampled` + `b3` 주입, traceparent 미사용). builder가 B3를 주입·상관.
 - **R1 전파 1순위** = `io.eventuate.tram.core:eventuate-tram-spring-cloud-sleuth-integration` 의존성; **폴백** = 커스텀 `io.eventuate.tram.messaging.common.MessageInterceptor`(발행측 현재 Brave span→메시지 B3 헤더, 수신측 헤더 extract→nextSpan→SpanInScope). 둘 다로도 안 되면 **R1=거짓** 판정·문서화.
 - **logback**: `%X{traceId}` 포함 + 로거명·메시지 표준 ` : ` 구분자(Spring Boot 기본).
-- **설정 제약**: 샘플 서비스는 앱 설정을 **개별 env**(`SPRING_DATASOURCE_URL`, `SPRING_KAFKA_BOOTSTRAP_SERVERS`, `SPRING_JPA_HIBERNATE_DDL-AUTO` 등)로 — 빌더 override가 `SPRING_APPLICATION_JSON`을 교체하므로 거기에 앱 설정을 의존하지 말 것.
+- **설정 제약**: 샘플 서비스는 앱 설정을 **개별 env**(`SPRING_DATASOURCE_URL`, `SPRING_KAFKA_BOOTSTRAP_SERVERS`, `SPRING_JPA_HIBERNATE_DDL_AUTO`[underscore — Spring relaxed binding이 `spring.jpa.hibernate.ddl-auto`에 매핑] 등)로 — 빌더 override가 `SPRING_APPLICATION_JSON`을 교체하므로 거기에 앱 설정을 의존하지 말 것.
 - **A 성공 상태코드 = HTTP 202**(C SQL 미완 — 비동기).
 - **CDC 기동**: `ledger(C).depends_on=[eventuate-cdc-service]`, `eventuate-cdc-service.depends_on=[mysql(healthy),kafka(healthy)]` → 빌더 `up --wait <capture-services>`가 CDC를 끌어올림.
 - **빌더 의존성(런북 사전조건)**: PR #60 빌더(`--trace-mode`/`--capture-services`) + 본 계획 Task 1(SchemaExtractor MySQL). 런북이 fail-fast 점검.
@@ -126,10 +126,19 @@ class SchemaExtractorMySqlTest {
 }
 ```
 
+- [ ] **Step 1b: Add the Testcontainers JUnit5 extension to builder test deps (리뷰 Sonnet I1)**
+
+`@Testcontainers`/`@Container`는 `org.testcontainers:junit-jupiter`(alias `libs.testcontainers.junit`, 카탈로그에 이미 존재)가 필요하나 `graph-rag-builder/build.gradle.kts`의 test 스코프에 없다. 추가:
+```kotlin
+    testImplementation(libs.junit.jupiter)
+    testImplementation(libs.assertj)
+    testImplementation(libs.testcontainers.junit)   // @Testcontainers/@Container 확장
+```
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.schema.SchemaExtractorMySqlTest' --console=plain`
-Expected: FAIL — `tables`가 비어 `contains("orders")` 실패(현재 `"public"` 하드코딩으로 0 테이블).
+Expected: FAIL — `tables`가 비어 `contains("orders")` 실패(현재 `"public"` 하드코딩으로 0 테이블). (`build.gradle.kts`에 testcontainers.junit 추가 후 컴파일됨.)
 
 - [ ] **Step 3: Implement product-aware catalog/schema selection**
 
@@ -269,7 +278,8 @@ Expected: PASS (MySQL + Postgres 둘 다). (Docker 필요 — testcontainers.)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add graph-rag-builder/src/main/java/io/graphrag/builder/schema/SchemaExtractor.java \
+git add graph-rag-builder/build.gradle.kts \
+        graph-rag-builder/src/main/java/io/graphrag/builder/schema/SchemaExtractor.java \
         graph-rag-builder/src/test/java/io/graphrag/builder/schema/SchemaExtractorMySqlTest.java \
         graph-rag-builder/src/test/java/io/graphrag/builder/schema/SchemaExtractorPostgresTest.java
 git commit -m "feat(builder): SchemaExtractor reads MySQL/MariaDB schema via catalog (was Postgres-only)"
@@ -311,7 +321,7 @@ dependencies {
     implementation("io.eventuate.tram.core:eventuate-tram-spring-jdbc-kafka:0.33.0.RELEASE")
     implementation("io.eventuate.tram.core:eventuate-tram-spring-events:0.33.0.RELEASE")
     implementation("io.eventuate.tram.core:eventuate-tram-spring-cloud-sleuth-integration:0.33.0.RELEASE")
-    runtimeOnly("mysql:mysql-connector-java")
+    runtimeOnly("mysql:mysql-connector-java")   // Boot 2.7 BOM이 관리하는 좌표(신 com.mysql:* 은 Boot3+; 리뷰 Sonnet I3 반려)
 }
 dependencyManagement {
     imports { mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}") }
@@ -383,7 +393,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.cloud:spring-cloud-starter-sleuth")
-    runtimeOnly("mysql:mysql-connector-java")
+    runtimeOnly("mysql:mysql-connector-java")   // Boot 2.7 BOM이 관리하는 좌표(신 com.mysql:* 은 Boot3+; 리뷰 Sonnet I3 반려)
 }
 dependencyManagement {
     imports { mavenBom("org.springframework.cloud:spring-cloud-dependencies:${property("springCloudVersion")}") }
@@ -466,11 +476,15 @@ public class OrderController {
         int amount = ((Number) body.getOrDefault("amount", 0)).intValue();
         Order saved = orders.save(new Order(userId, amount));        // H5 SQL @A
         // 동기 HTTP → B (Sleuth가 B3 전파). 응답 시점엔 C(Tram) 미완 → 202.
-        http.postForEntity(reservationUrl + "/reservations",
-                Map.of("orderId", saved.getId(), "userId", userId, "amount", amount), Void.class);
-        return ResponseEntity.accepted().body(Map.of("orderId", saved.getId()));
+        // Java 8: Map.of(Java9+) 미사용 — LinkedHashMap 사용.
+        Map<String, Object> req = new LinkedHashMap<>();
+        req.put("orderId", saved.getId()); req.put("userId", userId); req.put("amount", amount);
+        http.postForEntity(reservationUrl + "/reservations", req, Void.class);
+        return ResponseEntity.accepted().body(
+                Collections.singletonMap("orderId", saved.getId()));
     }
 }
+// import java.util.Collections; java.util.LinkedHashMap; java.util.Map;
 ```
 
 - [ ] **Step 3: application.yml + logback (%X{traceId} + ` : `)**
@@ -515,16 +529,21 @@ management:
 
 - [ ] **Step 4: Dockerfile + 빌드 확인**
 
-`Dockerfile`:
+`Dockerfile`(멀티스테이지 — 이미지 안에서 빌드해 `docker compose --build`가 호스트 사전빌드/wrapper 없이 자체완결; 리뷰 Sonnet I13). reservation/ledger도 동일 패턴:
 ```dockerfile
+FROM gradle:7.6-jdk8 AS build
+WORKDIR /src
+COPY . .
+RUN gradle bootJar --no-daemon
 FROM eclipse-temurin:8-jre
-COPY build/libs/*.jar /app/app.jar
+COPY --from=build /src/build/libs/*.jar /app/app.jar
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","/app/app.jar"]
 ```
 
-Run: `cd samples/legacy-tram/order-web && gradle bootJar -q && ls build/libs/*.jar`
-Expected: jar 생성(컴파일·부트jar 성공). (DB 없이도 bootJar는 성공; 부팅 검증은 compose 단계.)
+Run(로컬 컴파일 확인은 시스템 gradle 또는 도커 빌드로):
+`docker build -t order-web-check samples/legacy-tram/order-web`
+Expected: 빌드 성공(멀티스테이지로 jar 생성·이미지 완성). (DB 없이도 빌드 성공; 부팅 검증은 compose 단계.)
 
 - [ ] **Step 5: Commit**
 
@@ -566,7 +585,10 @@ public class ReservationApplication {
 package sample.reservation;
 
 import io.eventuate.tram.events.common.DomainEvent;
+import io.eventuate.tram.events.common.EventType;
 
+// @EventType로 type 이름 고정 → B/C의 FQCN이 달라도 라우팅 일치(§주의). 코드 블록에 직접 포함.
+@EventType("OrderReserved")
 public class OrderReserved implements DomainEvent {
     private Long orderId; private String userId; private int amount;
     public OrderReserved() {}
@@ -673,11 +695,12 @@ import javax.persistence.*;
  *  컬럼 정의는 핀 버전 Eventuate 공식 스키마와 정확히 일치해야 한다(불일치 시 Eventuate insert 실패). */
 @Entity @Table(name = "message")
 public class EventuateMessageEntity {
-    @Id @Column(name = "id", length = 1000) private String id;
-    @Column(name = "destination", length = 1000, columnDefinition = "VARCHAR(1000)") private String destination;
-    @Lob @Column(name = "headers", columnDefinition = "TEXT") private String headers;
+    @Id @Column(name = "id", length = 255) private String id;                  // init.sql과 동일(255, InnoDB 한계)
+    @Column(name = "destination", length = 1000) private String destination;
+    @Lob @Column(name = "headers", columnDefinition = "LONGTEXT") private String headers;   // init.sql과 동일
     @Lob @Column(name = "payload", columnDefinition = "LONGTEXT") private String payload;
     @Column(name = "published", columnDefinition = "SMALLINT") private Short published;
+    @Column(name = "message_partition", columnDefinition = "SMALLINT") private Short messagePartition; // 리뷰 Gemini I1
     @Column(name = "creation_time", columnDefinition = "BIGINT") private Long creationTime;
     protected EventuateMessageEntity() {}
 }
@@ -729,12 +752,11 @@ spring:
   jpa:
     hibernate: { ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update} }
 eventuate:
-  database:
-    schema: eventuate
   b3:
     fallback: ${EVENTUATE_B3_FALLBACK:false}
 management: { endpoints: { web: { exposure: { include: health } } } }
 # Eventuate Kafka/JDBC: eventuatelocal.kafka.bootstrap.servers 등은 env로 주입(compose에서).
+# 주: eventuate.database.schema 는 설정하지 않는다 — Eventuate 테이블은 연결 DB(reservationdb)에 있다(리뷰 Sonnet I5/Gemini I2).
 ```
 (logback-spring.xml = Task 3과 동일 내용. Dockerfile = Task 3과 동일.)
 
@@ -776,12 +798,14 @@ public class LedgerApplication {
 }
 ```
 
-`OrderReserved.java`(B와 동일 필드. **type 이름 일치 필수** — §주의 참조):
+`OrderReserved.java`(B와 동일 필드 + **동일 `@EventType("OrderReserved")` 필수** — FQCN이 달라도 라우팅 일치):
 ```java
 package sample.ledger;
 
 import io.eventuate.tram.events.common.DomainEvent;
+import io.eventuate.tram.events.common.EventType;
 
+@EventType("OrderReserved")
 public class OrderReserved implements DomainEvent {
     private Long orderId; private String userId; private int amount;
     public OrderReserved() {}
@@ -791,25 +815,23 @@ public class OrderReserved implements DomainEvent {
 }
 ```
 
-`TramSubscriberConfig.java`:
+`TramSubscriberConfig.java` (`@EnableEventHandlers`를 여기 @Configuration에 — 리뷰 Sonnet I11):
 ```java
 package sample.ledger;
 
 import io.eventuate.tram.spring.consumer.jdbc.TramConsumerJdbcAutoConfiguration;
 import io.eventuate.tram.spring.events.subscriber.TramEventSubscriberConfiguration;
+import io.eventuate.tram.spring.events.subscriber.EnableEventHandlers;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 @Configuration
+@EnableEventHandlers
 @Import({TramConsumerJdbcAutoConfiguration.class, TramEventSubscriberConfiguration.class})
 public class TramSubscriberConfig {}
 ```
 
-> **§주의 (type 매핑)**: Eventuate는 발행 시 이벤트의 클래스명을 메시지 `event-type` 헤더로 쓴다(기본 FQCN). B의 `sample.reservation.OrderReserved` 와 C의 `sample.ledger.OrderReserved` 는 FQCN이 다르다. **해결**: (a) 공유 모듈에 단일 `OrderReserved`(동일 FQCN)를 두고 양 서비스가 의존, 또는 (b) Eventuate의 `@EventType`/`CommonMessageHeaders` type 이름을 양쪽에서 동일 문자열(`"OrderReserved"`)로 명시. **이 계획은 (b) 채택**: 양 `OrderReserved`에 `@io.eventuate.tram.events.common.EventType("OrderReserved")`를 붙여 type 이름을 고정한다(복제 유지 + 라우팅 일치). Task 4/5의 `OrderReserved`에 해당 애너테이션을 추가하라:
-> ```java
-> @io.eventuate.tram.events.common.EventType("OrderReserved")
-> public class OrderReserved implements DomainEvent { ... }
-> ```
+> **§주의 (type 매핑 rationale)**: Eventuate는 발행 시 이벤트의 클래스명을 메시지 `event-type` 헤더로 쓴다(기본 FQCN). B의 `sample.reservation.OrderReserved` 와 C의 `sample.ledger.OrderReserved` 는 FQCN이 달라 그대로면 라우팅이 안 맞는다. 그래서 **양쪽 `OrderReserved` 코드 블록에 이미 `@EventType("OrderReserved")` 를 직접 포함**시켜 type 이름을 고정했다(복제 유지 + 라우팅 일치). 별도 추가 작업 불필요 — 두 블록의 애너테이션이 동일 문자열인지만 확인.
 
 - [ ] **Step 2: Entity + Repository + EventHandlers (ledger_entries insert)**
 
@@ -841,23 +863,24 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {}
 ```
 
-`OrderEventHandlers.java`(@EventHandler → ledger_entries insert. Eventuate가 received_messages로 멱등 처리):
+`OrderEventHandlers.java`(@EventHandler → ledger_entries insert. Eventuate가 received_messages로 멱등 처리).
+**`domainEventHandlers()`는 반드시 `@Bean`** 이어야 Eventuate가 구독을 등록한다(리뷰 Gemini I6). `@EnableEventHandlers`는 `@Configuration`(`TramSubscriberConfig`)에 둔다(리뷰 Sonnet I11):
 ```java
 package sample.ledger;
 
 import io.eventuate.tram.events.subscriber.DomainEventEnvelope;
 import io.eventuate.tram.events.subscriber.DomainEventHandlers;
 import io.eventuate.tram.events.subscriber.DomainEventHandlersBuilder;
-import io.eventuate.tram.spring.events.subscriber.EnableEventHandlers;
+import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 @Component
-@EnableEventHandlers
 public class OrderEventHandlers {
     private final LedgerEntryRepository ledger;
     public OrderEventHandlers(LedgerEntryRepository ledger) { this.ledger = ledger; }
 
+    @Bean   // 구독 등록 필수 — 없으면 C가 이벤트를 받지 못한다(리뷰 Gemini I6)
     public DomainEventHandlers domainEventHandlers() {
         return DomainEventHandlersBuilder
                 .forAggregateType("Order")
@@ -885,8 +908,8 @@ import javax.persistence.*;
 @Entity @Table(name = "received_messages")
 @IdClass(EventuateReceivedMessagesEntity.PK.class)
 public class EventuateReceivedMessagesEntity {
-    @Id @Column(name = "consumer_id", length = 1000) private String consumerId;
-    @Id @Column(name = "message_id", length = 1000) private String messageId;
+    @Id @Column(name = "consumer_id", length = 255) private String consumerId;   // init.sql과 동일(InnoDB 한계)
+    @Id @Column(name = "message_id", length = 255) private String messageId;
     @Column(name = "creation_time", columnDefinition = "BIGINT") private Long creationTime;
     @Column(name = "published", columnDefinition = "SMALLINT") private Short published;
     protected EventuateReceivedMessagesEntity() {}
@@ -910,13 +933,12 @@ package sample.ledger;
 import brave.Span;
 import brave.Tracer;
 import brave.Tracing;
-import brave.propagation.TraceContextOrSamplingFlags;
 import io.eventuate.tram.messaging.common.Message;
 import io.eventuate.tram.messaging.common.MessageInterceptor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** 폴백 수신측: 메시지 B3 헤더 → Brave 컨텍스트 복원 → 컨슈머 스레드 MDC에 traceId 반영. */
+/** 폴백 수신측: 메시지 B3 헤더 → Brave 컨텍스트 복원(128-bit 보존) → 컨슈머 스레드 MDC에 traceId 반영. */
 @Component
 @ConditionalOnProperty(name = "eventuate.b3.fallback", havingValue = "true")
 public class B3MessageInterceptor implements MessageInterceptor {
@@ -928,8 +950,12 @@ public class B3MessageInterceptor implements MessageInterceptor {
         String traceId = message.getHeader("X-B3-TraceId").orElse(null);
         String spanId = message.getHeader("X-B3-SpanId").orElse(null);
         if (traceId == null || spanId == null) return;
+        // 128-bit traceId 보존(리뷰 GPT I7): 32-hex면 상위 64-bit를 traceIdHigh로.
+        String hex = traceId.length() == 32 ? traceId : ("0000000000000000" + traceId);
+        long high = Long.parseUnsignedLong(hex.substring(0, 16), 16);
+        long low = Long.parseUnsignedLong(hex.substring(16), 16);
         brave.propagation.TraceContext ctx = brave.propagation.TraceContext.newBuilder()
-                .traceId(Long.parseUnsignedLong(traceId.length() > 16 ? traceId.substring(traceId.length() - 16) : traceId, 16))
+                .traceIdHigh(high).traceId(low)
                 .spanId(Long.parseUnsignedLong(spanId, 16))
                 .sampled(true).build();
         Span span = tracing.tracer().toSpan(ctx);
@@ -942,7 +968,7 @@ public class B3MessageInterceptor implements MessageInterceptor {
     }
 }
 ```
-> **주의**: 위 폴백은 trace-id 하위 64-bit를 복원한다(Brave TraceContext는 64/128bit). sleuth의 `traceIdMatches`가 full/right-16hex 둘 다 허용하므로 빌더 상관에는 충분. 1순위 sleuth-integration이 동작하면 이 폴백(`eventuate.b3.fallback=false` 기본)은 비활성.
+> **주의**: 128-bit를 보존해 C 로그의 traceId가 주입한 full 32-hex와 동일하게 찍히도록 한다(폴백 시에도 R1 grep 일치). 런북 grep은 full/우측16hex 둘 다 허용(이중 안전). 1순위 sleuth-integration이 동작하면 이 폴백(`eventuate.b3.fallback=false` 기본) 비활성.
 
 - [ ] **Step 4: application.yml + logback + Dockerfile + 빌드 확인**
 
@@ -977,7 +1003,7 @@ git commit -m "feat(sample): ledger (C) — Tram subscriber inserts ledger_entri
 ## Task 6: 인프라 compose (kafka + mysql binlog + eventuate-cdc-service + 3앱) + init.sql
 
 **Files:**
-- Create: `samples/legacy-tram/docker-compose.yml`, `samples/legacy-tram/mysql/init.sql`, `samples/legacy-tram/mysql/my.cnf`, `samples/legacy-tram/README.md`
+- Create: `samples/legacy-tram/docker-compose.yml`, `samples/legacy-tram/docker-compose.e2e.yml`(호스트 포트 publish), `samples/legacy-tram/docker-compose.no-initsql.yml`(폴백 검증), `samples/legacy-tram/mysql/init.sql`, `samples/legacy-tram/mysql/my.cnf`, `samples/legacy-tram/README.md`
 
 **Interfaces:**
 - Produces: `samples/legacy-tram/docker-compose.yml` — 빌더 attach가 `--app-service order-web --capture-services order-web,reservation,ledger` 로 무는 자급 스택. 서비스명 `order-web`/`reservation`/`ledger`/`mysql`/`kafka`/`eventuate-cdc-service`.
@@ -992,56 +1018,73 @@ log-bin=mysql-bin
 binlog-format=ROW
 ```
 
-`mysql/init.sql`(3 DB + Eventuate 공식 스키마 + CDC 유저. **Eventuate 스키마는 핀 버전 공식 SQL을 붙여넣고 폴백 JPA 엔티티와 정확히 일치시킨다** — Task 2/4/5):
+`mysql/init.sql`. **정본 = Task 2 핀 버전의 Eventuate Tram + CDC 공식 MySQL 스키마**(eventuate-tram-core의 `eventuate-tram-embedded-schema`/`mysql.sql` + eventuate-cdc의 `cdc_monitoring`/`offset_store`). 아래는 InnoDB/utf8mb4 한계·CDC 메타 테이블·builder/CDC 자격증명을 반영한 **검증된 출발점**(리뷰 반영) — Task 2에서 공식 스키마와 대조해 컬럼/타입을 최종 확정하고 폴백 JPA 엔티티(Task 4/5)와 **완전히 일치**시킨다:
 ```sql
 CREATE DATABASE IF NOT EXISTS orderdb;
 CREATE DATABASE IF NOT EXISTS reservationdb;
 CREATE DATABASE IF NOT EXISTS ledgerdb;
 
--- B(reservationdb): Eventuate 아웃박스
+-- B(reservationdb): Eventuate 아웃박스 + CDC 메타 테이블(offset_store/cdc_monitoring) — 리뷰 Gemini I5
 USE reservationdb;
 CREATE TABLE IF NOT EXISTS message (
-  id VARCHAR(1000) PRIMARY KEY,
+  id VARCHAR(255) PRIMARY KEY,                 -- 리뷰 Gemini I7: InnoDB 3072B 한계 → 255
   destination VARCHAR(1000) NOT NULL,
-  headers VARCHAR(1000) NOT NULL,
-  payload TEXT NOT NULL,
+  headers LONGTEXT NOT NULL,                   -- 폴백 엔티티와 동일(리뷰 Sonnet I8/GPT I5)
+  payload LONGTEXT NOT NULL,
   published SMALLINT DEFAULT 0,
-  message_partition SMALLINT,
+  message_partition SMALLINT,                  -- 폴백 엔티티에도 포함(리뷰 Gemini I1)
   creation_time BIGINT
+);
+CREATE TABLE IF NOT EXISTS cdc_monitoring (
+  reader_id VARCHAR(255) PRIMARY KEY,
+  last_time BIGINT
+);
+CREATE TABLE IF NOT EXISTS offset_store (
+  client_name VARCHAR(255) PRIMARY KEY,
+  serialized_offset VARCHAR(255)
 );
 -- C(ledgerdb): 중복제거
 USE ledgerdb;
 CREATE TABLE IF NOT EXISTS received_messages (
-  consumer_id VARCHAR(1000),
-  message_id VARCHAR(1000),
+  consumer_id VARCHAR(255),                    -- 복합 PK도 255로(InnoDB 한계)
+  message_id VARCHAR(255),
   published SMALLINT DEFAULT 0,
   creation_time BIGINT,
   PRIMARY KEY(consumer_id, message_id)
 );
 
--- CDC 유저(binlog 읽기 권한)
-CREATE USER IF NOT EXISTS 'cdc'@'%' IDENTIFIED BY 'cdcpw';
+-- builder attach가 ComposeInspector로 읽는 앱 유저(MYSQL_USER/PASSWORD) — 3 DB 접근 권한
+CREATE USER IF NOT EXISTS 'app'@'%' IDENTIFIED WITH mysql_native_password BY 'apppw';
+GRANT ALL PRIVILEGES ON orderdb.* TO 'app'@'%';
+GRANT ALL PRIVILEGES ON reservationdb.* TO 'app'@'%';
+GRANT ALL PRIVILEGES ON ledgerdb.* TO 'app'@'%';
+-- CDC 유저(binlog 읽기). caching_sha2 미지원 클라이언트 대비 native_password(리뷰 Gemini I8)
+CREATE USER IF NOT EXISTS 'cdc'@'%' IDENTIFIED WITH mysql_native_password BY 'cdcpw';
 GRANT SELECT, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'cdc'@'%';
+GRANT ALL PRIVILEGES ON reservationdb.* TO 'cdc'@'%';
 FLUSH PRIVILEGES;
 ```
-> **주의**: 위 `message`/`received_messages` 컬럼은 출발점이다. **Task 2 핀 버전의 Eventuate Tram 공식 MySQL 스키마**(eventuate-tram-core 릴리스의 `mysql.sql`/`eventuate-tram-embedded-schema`)를 정본으로 붙여넣고, 폴백 JPA 엔티티(Task 4/5)와 **컬럼/타입을 완전히 동일**하게 맞춘다.
+> **주의**: 위 컬럼/타입은 InnoDB·CDC 제약을 반영한 출발점이다. **Task 2 핀 버전의 Eventuate 공식 스키마**(message/received_messages/cdc_monitoring/offset_store)와 대조해 최종 확정하고, 폴백 JPA 엔티티(Task 4/5)와 컬럼/타입을 **완전히 동일**하게 맞춘다.
 
 - [ ] **Step 2: docker-compose.yml**
 
-`docker-compose.yml`(서비스/포트/healthcheck/depends_on — CDC를 up 그래프에 포함):
+`docker-compose.yml`(KRaft Kafka[zookeeper 제거, 리뷰 Sonnet I9] + 호스트 리스너[리뷰 Sonnet I2/Gemini I4] + DB 앱/CDC 자격증명[리뷰 GPT I4] + CDC binlog unique id[리뷰 Sonnet I6] + CDC를 up 그래프에 포함):
 ```yaml
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    environment: { ZOOKEEPER_CLIENT_PORT: "2181" }
   kafka:
     image: confluentinc/cp-kafka:7.5.0
-    depends_on: [zookeeper]
     environment:
-      KAFKA_BROKER_ID: "1"
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,EXTERNAL://0.0.0.0:59092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:59092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    ports: ["59092:59092"]                       # 호스트(빌더)가 localhost:59092로 도달
     healthcheck:
       test: ["CMD","kafka-broker-api-versions","--bootstrap-server","localhost:9092"]
       interval: 10s
@@ -1050,7 +1093,11 @@ services:
   mysql:
     image: mysql:8.0
     command: ["--server-id=1","--log-bin=mysql-bin","--binlog-format=ROW"]
-    environment: { MYSQL_ROOT_PASSWORD: rootpw }
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: orderdb            # ComposeInspector가 읽는 키(builder DB 자격증명)
+      MYSQL_USER: app
+      MYSQL_PASSWORD: apppw
     volumes:
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
@@ -1069,10 +1116,10 @@ services:
       SPRING_DATASOURCE_PASSWORD: cdcpw
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
       EVENTUATELOCAL_CDC_DB_USER_NAME: cdc
       EVENTUATELOCAL_CDC_DB_PASSWORD: cdcpw
       EVENTUATELOCAL_CDC_READER_NAME: MySqlReader
+      EVENTUATELOCAL_CDC_MYSQL_BINLOG_CLIENT_UNIQUE_ID: "1234"   # 리뷰 Sonnet I6
       EVENTUATE_CDC_TYPE: EventuateTram
   order-web:
     build: ./order-web
@@ -1080,10 +1127,12 @@ services:
       mysql: { condition: service_healthy }
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/orderdb
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: rootpw
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
       RESERVATION_URL: http://reservation:8080
-    # ports: app/jacoco는 빌더 override가 publish
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG                                  # 리뷰 GPT I3
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE      # H5 bind
+    # app/jacoco 포트는 빌더 attach override가 publish; 직접검증은 docker-compose.e2e.yml
   reservation:
     build: ./reservation
     depends_on:
@@ -1091,10 +1140,11 @@ services:
       kafka: { condition: service_healthy }
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/reservationdb
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: rootpw
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
   ledger:
     build: ./ledger
     depends_on:
@@ -1103,12 +1153,27 @@ services:
       kafka: { condition: service_healthy }
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ledgerdb
-      SPRING_DATASOURCE_USERNAME: root
-      SPRING_DATASOURCE_PASSWORD: rootpw
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
 ```
-> `ledger.depends_on: eventuate-cdc-service` 가 빌더 `up --wait order-web reservation ledger` 시 CDC를 끌어올리는 핵심 연결(스펙 §5).
+> `ledger.depends_on: eventuate-cdc-service` 가 빌더 `up --wait order-web reservation ledger` 시 CDC를 끌어올리는 핵심 연결(스펙 §5). SQL 로깅을 개별 env로 켜 **직접 R1 검증(빌더 override 없이)에서도 C 로그에 H5 SQL이 출력**되게 한다(리뷰 GPT I3) — `SPRING_APPLICATION_JSON` 비의존 제약 준수.
+
+`docker-compose.e2e.yml`(직접 R1 검증/빌더 attach가 호스트에서 도달할 포트 publish — 리뷰 Sonnet I10/Gemini I3/GPT I2):
+```yaml
+services:
+  order-web: { ports: ["58080:8080"] }
+  mysql: { ports: ["53306:3306"] }
+  # kafka 59092는 base compose에서 이미 publish
+```
+
+`docker-compose.no-initsql.yml`(폴백 경로 검증용 — init.sql 볼륨 제거, 리뷰 Sonnet I7):
+```yaml
+services:
+  mysql: { volumes: [] }
+```
 
 - [ ] **Step 3: 스택 부팅 + 스키마 부트스트랩 smoke (필수, 두 경로)**
 
@@ -1140,9 +1205,10 @@ Expected: 폴백(JPA `ddl-auto=update`)만으로도 `message`/`received_messages
 `README.md`: 스택 구성도, 사전조건(Docker, 빌더 PR #60 + Task 1 SchemaExtractor), 부팅·E2E 실행법, 폴백 토글(`EVENTUATE_B3_FALLBACK=true`) 설명.
 
 ```bash
-git add samples/legacy-tram/docker-compose.yml samples/legacy-tram/mysql \
-        samples/legacy-tram/README.md samples/legacy-tram/docker-compose.no-initsql.yml
-git commit -m "feat(sample): docker-compose (kafka+mysql-binlog+cdc+3 apps) + Eventuate init.sql + schema smoke"
+git add samples/legacy-tram/docker-compose.yml samples/legacy-tram/docker-compose.e2e.yml \
+        samples/legacy-tram/docker-compose.no-initsql.yml samples/legacy-tram/mysql \
+        samples/legacy-tram/README.md
+git commit -m "feat(sample): docker-compose (kraft-kafka+mysql-binlog+cdc+3 apps) + Eventuate init.sql + schema smoke"
 ```
 
 ---
@@ -1175,16 +1241,17 @@ if ! graph-rag-builder build --help 2>&1 | grep -q -- '--capture-services'; then
   echo "FAIL: builder lacks --capture-services (need PR #60)"; exit 2
 fi
 
-cleanup() { (cd "$STACK" && docker compose down -v) || true; }
+# base + e2e override(호스트 포트 publish)를 항상 함께 사용
+DC="docker compose -f docker-compose.yml -f docker-compose.e2e.yml"
+cleanup() { (cd "$STACK" && $DC down -v) || true; }
 trap cleanup EXIT
 
-# (1) 스택 up (CDC는 ledger depends_on으로 포함)
-(cd "$STACK" && docker compose up -d --build --wait order-web reservation ledger eventuate-cdc-service)
-# app 포트/db 포트는 빌더 attach override가 publish하지만, R1 독립검증용으로 직접 publish가 필요하면
-# docker-compose.e2e.yml override로 order-web:8080->$APP_PORT, mysql:3306->$DB_PORT 매핑.
+# (1) 스택 up (CDC는 ledger depends_on으로 포함; e2e override가 order-web:58080/mysql:53306 publish)
+(cd "$STACK" && $DC up -d --build --wait order-web reservation ledger eventuate-cdc-service)
 
-# (1b) R1 독립 검증: 알려진 B3로 직접 curl + C 로그 폴링
+# (1b) R1 독립 검증: 알려진 B3로 직접 curl + C 로그 폴링 (요청 직전 시각 앵커 → --since로 신규 라인만)
 TRACE="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; SPAN="bbbbbbbbbbbbbbbb"
+SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"            # 리뷰 Sonnet I4: pre-request 앵커(재실행 false-positive 방지)
 curl -fsS -X POST "http://localhost:$APP_PORT/orders" \
   -H "Content-Type: application/json" \
   -H "X-B3-TraceId: $TRACE" -H "X-B3-SpanId: $SPAN" -H "X-B3-Sampled: 1" \
@@ -1192,14 +1259,17 @@ curl -fsS -X POST "http://localhost:$APP_PORT/orders" \
 echo "[R1] waiting for C(ledger) to log SQL with trace $TRACE ..."
 R1=FAIL
 for i in $(seq 1 120); do   # 120 * 250ms = 30s
-  if (cd "$STACK" && docker compose logs ledger 2>/dev/null) \
-        | grep -i 'org.hibernate.SQL' | grep -iq "$TRACE"; then R1=PASS; break; fi
+  # full 32-hex 또는 우측 16-hex 둘 다 허용(폴백이 64-bit만 복원할 수 있음 — 리뷰 GPT I7)
+  if (cd "$STACK" && $DC logs --since "$SINCE" ledger 2>/dev/null) \
+        | grep -i 'org.hibernate.SQL' \
+        | grep -iqE "${TRACE}|${TRACE: -16}"; then R1=PASS; break; fi
   sleep 0.25
 done
 echo "[R1] $R1"
 if [ "$R1" != PASS ]; then
   echo "=== R1 FAIL diag dump ==="
-  (cd "$STACK" && docker compose logs --tail=200 order-web reservation ledger eventuate-cdc-service kafka)
+  (cd "$STACK" && $DC logs --tail=200 order-web reservation ledger eventuate-cdc-service kafka)
+  echo "힌트: 1순위 sleuth-integration 미동작이면 EVENTUATE_B3_FALLBACK=true로 폴백 인터셉터 켜고 재시도."
   exit 1
 fi
 
@@ -1274,4 +1344,15 @@ Expected: PASS (MySQL + Postgres).
 2. **Placeholder scan**: 버전 핀과 Eventuate 스키마는 T2에서 "해소되는 실제 조합/공식 스키마 정본 대조"로 확정하는 **실행 가능한 절차**로 명시(추측 금지). 폴백 엔티티/ init.sql은 핀 버전 공식 스키마와 일치시키라는 구체 지시 + 대조 대상 명시. TBD 없음.
 3. **Type consistency**: `OrderReserved`(B/C, `@EventType("OrderReserved")`로 type 일치)·`DomainEventPublisher.publish("Order", id, [event])`↔`DomainEventHandlersBuilder.forAggregateType("Order").onEvent(OrderReserved.class,...)`; 서비스명(order-web/reservation/ledger)·DB(orderdb/reservationdb/ledgerdb)·env 키 일관; 빌더 `extract(Connection)` 시그니처 불변(T1); 런북 플래그 `--trace-mode sleuth --capture-services`(Spec 2)와 일치.
 
-**알려진 실행 리스크(계획 내 명시)**: Eventuate 버전/스키마 정합성(T2가 정공), R1 미전파 시 폴백→그래도 실패면 R1=거짓 판정(가치 있는 결과), 런북 포트 충돌(직접검증/attach 분리로 조정).
+**알려진 실행 리스크(계획 내 명시)**: Eventuate 버전/스키마 정합성(T2가 정공), R1 미전파 시 폴백→그래도 실패면 R1=거짓 판정(가치 있는 결과).
+
+---
+
+## 3-Model 리뷰 반영 기록 (2026-06-18)
+
+3-model 교차 리뷰(Sonnet + Gemini 3.5 Flash High + GPT-5.5) 판정·반영:
+
+- **수용(critical)** — Java8 `Map.of`(Java9+) → LinkedHashMap/singletonMap(GPT I1); Kafka 호스트 리스너/포트 미publish → KRaft + EXTERNAL listener + `docker-compose.e2e.yml` 포트 publish(Sonnet I2/I10·Gemini I3/I4·GPT I2); builder DB 자격증명(ComposeInspector가 MYSQL_USER/PASSWORD 읽음) → mysql에 app 유저/권한 추가(GPT I4); CDC 메타 테이블 `offset_store`/`cdc_monitoring` 누락 → init.sql 추가(Gemini I5); `@Bean` 누락(`domainEventHandlers`) → 추가(Gemini I6); InnoDB PK VARCHAR(1000)>3072B → 255(Gemini I7); testcontainers junit 확장 의존성 누락 → 추가(Sonnet I1).
+- **수용(important)** — JPA 폴백 엔티티 ↔ init.sql 스키마 불일치(headers/payload/message_partition) → 일치화(Sonnet I8·Gemini I1·GPT I5); `eventuate.database.schema: eventuate` 오설정 제거(Sonnet I5·Gemini I2); SQL 로깅 미활성(직접 R1 경로) → 개별 env로 H5 SQL/bind 로깅 on(GPT I3); R1 폴링 pre-request 앵커 없음 → `--since`(Sonnet I4); CDC binlog unique id 추가(Sonnet I6); zookeeper race → KRaft 전환(Sonnet I9); mysql caching_sha2 → native_password(Gemini I8); 폴백 64-bit만 복원 → 128-bit 보존 + R1 grep full/우측16hex 허용(GPT I7); `@EventType` 코드블록 직접 포함(Gemini I9·GPT I8); ddl-auto env 키 underscore 통일(GPT I6); no-initsql/e2e override 파일 선언(Sonnet I7).
+- **수용(recommended)** — `@EnableEventHandlers`를 @Configuration으로 이동(Sonnet I11); 멀티스테이지 Dockerfile로 wrapper/사전빌드 불필요(Sonnet I13); unused import 제거(Sonnet I12).
+- **반려(1건, 근거)** — Sonnet I3 "connector groupId를 com.mysql:mysql-connector-j로": 그 좌표는 빌더(Java17) 기준이고 **샘플은 Boot 2.7**이라 BOM이 구 좌표 `mysql:mysql-connector-java`(버전 자동관리)를 관리한다. 신 좌표를 버전 없이 쓰면 미해결 → 구 좌표 유지가 정답. (receiving-code-review: 맹목 적용 회피.)
