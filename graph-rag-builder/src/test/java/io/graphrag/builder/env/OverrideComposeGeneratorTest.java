@@ -63,4 +63,26 @@ class OverrideComposeGeneratorTest {
         assertTrue(saj.contains("spring.jpa.properties.hibernate.jdbc.batch_size"), "batch_size=0 병합");
         assertTrue(saj.contains("logging.level.org.hibernate.SQL"), "기존 로깅 유지");
     }
+
+    @Test
+    void attachAlwaysAddsHostGateway_evenWhenBatchNotDisabled() throws Exception {
+        var spec = new OverrideComposeGenerator.Spec(
+                "app", "/host/agents", 8080, 58080, 6300, 16300,
+                "-javaagent:/grb-agents/otel-javaagent.jar",
+                Map.of(),
+                Map.of("WIREMOCK_TARGET", "http://host.docker.internal:65000/tok"),
+                true, false);   // addHostGateway, disableBatch=false (non-otel attach)
+        String yaml = new OverrideComposeGenerator().generate(spec);
+        JsonNode app = new YAMLMapper().readTree(yaml).path("services").path("app");
+
+        boolean hostGateway = false;
+        for (JsonNode h : app.path("extra_hosts")) {
+            if (h.asText().equals("host.docker.internal:host-gateway")) hostGateway = true;
+        }
+        assertTrue(hostGateway, "attach 모드는 batch 미차단이어도 host-gateway 주입");
+        String saj = app.path("environment").path("SPRING_APPLICATION_JSON").asText();
+        assertFalse(saj.contains("spring.jpa.properties.hibernate.jdbc.batch_size"),
+                "disableBatch=false 이면 batch_size=0 병합 안 함");
+        assertTrue(saj.contains("logging.level.org.hibernate.SQL"), "기존 로깅 유지");
+    }
 }

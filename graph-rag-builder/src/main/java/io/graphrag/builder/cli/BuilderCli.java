@@ -332,8 +332,8 @@ public final class BuilderCli {
         java.util.Map<String, String> mergedEnv = new java.util.LinkedHashMap<>(otelEnv);
         config.sutEnv().forEach((k, v) -> mergedEnv.put(k,
                 v.replace(io.graphrag.builder.env.AnalysisEnvironment.WIREMOCK_PLACEHOLDER, httpCapture.hostBaseUrl())));
-        log.info("attach external HTTP capture: wiremock {} (container reaches via {})",
-                httpCapture.baseUrl(), httpCapture.hostBaseUrl());
+        log.info("attach external HTTP capture: wiremock {} (container reaches host.docker.internal:{})",
+                httpCapture.baseUrl(), httpCapture.port());
 
         // httpCapture.start() 이후 발생하는 모든 작업(override 생성/쓰기, envCfg, env 생성/start/explore)을
         // 같은 try로 감싼다 → env로 소유권을 넘기기 전에 throw 되더라도 finally가 httpCapture/otlpReceiver를
