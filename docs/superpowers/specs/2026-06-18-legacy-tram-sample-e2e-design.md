@@ -56,11 +56,20 @@ R1이 참이면 sleuth가 비동기 cross-service SQL을 요청 단위로 회수
 - **단일 MySQL 인스턴스, 서비스별 분리 DB**: `orderdb`(A), `reservationdb`(B), `ledgerdb`(C).
   Eventuate outbox 패턴상 **`message` 테이블은 발행 서비스의 비즈니스 DB와 같은 DB**(같은 트랜잭션 경계)에
   있어야 하므로 B의 `reservationdb`에 Eventuate `message` 테이블, C의 `ledgerdb`에 `received_messages`.
-- **스키마 생성(두 경로 병행)**:
-  - **비즈니스 테이블(JPA 엔티티) = Hibernate `ddl-auto=create`(또는 update)** — 앱 부팅 시 datasource DB에
-    자동 생성(`orders`, `reservations`, `ledger_entries`). 별도 DDL 불필요.
-  - **Eventuate 인프라 테이블(`message`/`received_messages` 등)은 JPA 엔티티가 아니므로** Eventuate가 제공하는
-    스키마 SQL을 **init.sql**(MySQL 컨테이너 `/docker-entrypoint-initdb.d/`)로 적용. (Eventuate Tram 공식 스키마.)
+- **스키마 생성**:
+  - **비즈니스 테이블(JPA 엔티티) = Hibernate `ddl-auto=update`** — 앱 부팅 시 datasource DB에 자동 생성
+    (`orders`, `reservations`, `ledger_entries`). 별도 DDL 불필요.
+  - **Eventuate 인프라 테이블(`message`/`received_messages`)** 은 두 경로를 **병행**해 init.sql 유무·실패와
+    무관하게 보장한다(자급 샘플 불변식):
+    - **1순위 = init.sql**: Eventuate Tram 공식 스키마를 MySQL 컨테이너 `/docker-entrypoint-initdb.d/`로 적용.
+    - **폴백(필수) = JPA `@Entity` 매핑**: 해당 테이블을 그대로 미러링한 엔티티를 서비스에 포함해 `ddl-auto=update`가
+      **없으면 생성**하게 한다 — B(`reservationdb`)에 `message` 엔티티, C(`ledgerdb`)에 `received_messages` 엔티티.
+      `ddl-auto=update`라 init.sql이 이미 만든 경우 Hibernate가 기존 테이블을 보고 **no-op(멱등)**, init.sql이
+      없으면 Hibernate가 생성. **엔티티는 Eventuate 핀 버전의 공식 스키마와 정확히 일치**해야 한다(테이블/컬럼명,
+      타입은 `@Column(columnDefinition=...)`로 명시; 길이/타입 불일치 시 Eventuate insert가 실패·절단될 수 있으므로
+      핀 버전 스키마에서 도출). (Eventuate CDC 자신의 오프셋/리더십 테이블은 CDC 서비스 소관이라 별도.)
+  - **검증**: 샘플 smoke(또는 런북 사전단계)에서 각 서비스 부팅 후 자기 DB에 해당 Eventuate 테이블이 존재함을
+    확인(init.sql을 의도적으로 비활성화한 변형으로 폴백 경로도 1회 확인).
 - **트랜잭션 경계**: B의 `reservations` insert + `OrderReserved` 발행(=`message` insert)은 **같은 Hibernate
   트랜잭션**(Eventuate 트랜잭셔널 아웃박스) → 둘 다 **요청 trace-id가 박힌** 같은 스레드.
 - **C 멱등성**: Tram이 `received_messages`로 중복 처리 방지(at-least-once 대비). `ledger_entries`는 `order_id`
@@ -162,7 +171,9 @@ double-loop 바깥(수용 = 이 라이브 런북, out-of-process 블랙박스, �
 - **바깥(수용)**: §8의 라이브 런북 3종 PASS.
 - **빌더 선행 과제(§2-2)**: `SchemaExtractor` MySQL 카탈로그 보정은 **단위 테스트**(MySQL/MariaDB dbType에서
   getTables가 catalog로 조회됨; Postgres 회귀)로 TDD. 이 단위 테스트 green이 선행.
-- **안쪽(샘플)**: 샘플 서비스 자체 단위테스트는 최소(샘플=테스트 픽스처). 각 서비스 부팅·핵심 핸들러 smoke만(선택).
+- **안쪽(샘플)**: 샘플 서비스 자체 단위테스트는 최소(샘플=테스트 픽스처). 각 서비스 부팅·핵심 핸들러 smoke는 선택.
+  단, **Eventuate 테이블 부트스트랩 검증은 필수**: (a) init.sql 적용 시 테이블 존재, (b) **init.sql 비활성 변형에서
+  JPA 폴백(`ddl-auto=update`)이 동일 테이블을 생성**함을 1회 확인(§4 폴백 불변식 보장).
 - CI 미포함(Docker+Kafka+CDC 무게·플래키) — 로컬 런북이 수용 게이트. README/런북에 사전조건(Docker, PR #60
   빌더 + MySQL 스키마 보정)과 실행법 명시.
 
