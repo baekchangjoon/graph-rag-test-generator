@@ -820,18 +820,18 @@ public class OrderReserved implements DomainEvent {
 ```
 (C의 `OrderEventHandlers`(package `sample.ledger`)는 `import sample.reservation.OrderReserved;` 로 이 클래스를 참조한다.)
 
-`TramSubscriberConfig.java` (`@EnableEventHandlers`를 여기 @Configuration에 — 리뷰 Sonnet I11):
+`TramSubscriberConfig.java` (구현 정정: `@EnableEventHandlers` 는 0.35.0 에 미존재 — Task 5 jar 검증. 구독은 `OrderEventHandlers` 의 `DomainEventDispatcher` 빈으로 수동 활성화):
 ```java
 package sample.ledger;
 
 import io.eventuate.tram.spring.consumer.jdbc.TramConsumerJdbcAutoConfiguration;
 import io.eventuate.tram.spring.events.subscriber.TramEventSubscriberConfiguration;
-import io.eventuate.tram.spring.events.subscriber.EnableEventHandlers;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
+// @EnableEventHandlers does NOT exist in eventuate-tram-spring-events:0.35.0 (jar 검증).
+// TramEventSubscriberConfiguration 가 DomainEventDispatcherFactory 를 제공 → 구독은 DomainEventDispatcher 빈으로 활성화.
 @Configuration
-@EnableEventHandlers
 @Import({TramConsumerJdbcAutoConfiguration.class, TramEventSubscriberConfiguration.class})
 public class TramSubscriberConfig {}
 ```
@@ -868,24 +868,33 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> {}
 ```
 
-`OrderEventHandlers.java`(@EventHandler → ledger_entries insert. Eventuate가 received_messages로 멱등 처리).
-**`domainEventHandlers()`는 반드시 `@Bean`** 이어야 Eventuate가 구독을 등록한다(리뷰 Gemini I6). `@EnableEventHandlers`는 `@Configuration`(`TramSubscriberConfig`)에 둔다(리뷰 Sonnet I11):
+`OrderEventHandlers.java`(ledger_entries insert. Eventuate가 received_messages로 멱등 처리).
+**구현 정정(0.35.0)**: `@EnableEventHandlers` 부재이므로 구독은 `DomainEventDispatcher` 빈으로 활성화한다 — `TramEventSubscriberConfiguration` 이 제공하는 `DomainEventDispatcherFactory` 를 주입받아 `factory.make("<subscriberId>", handlers)` + `dispatcher.initialize()` 로 등록(없으면 C가 이벤트를 받지 못한다). `OrderReserved` 는 `sample.reservation` 패키지에서 import:
 ```java
 package sample.ledger;
 
+import io.eventuate.tram.events.subscriber.DomainEventDispatcher;
+import io.eventuate.tram.events.subscriber.DomainEventDispatcherFactory;
 import io.eventuate.tram.events.subscriber.DomainEventEnvelope;
 import io.eventuate.tram.events.subscriber.DomainEventHandlers;
 import io.eventuate.tram.events.subscriber.DomainEventHandlersBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import sample.reservation.OrderReserved;   // ★ B와 동일 FQCN
 
 @Component
 public class OrderEventHandlers {
     private final LedgerEntryRepository ledger;
     public OrderEventHandlers(LedgerEntryRepository ledger) { this.ledger = ledger; }
 
-    @Bean   // 구독 등록 필수 — 없으면 C가 이벤트를 받지 못한다(리뷰 Gemini I6)
+    @Bean   // 구독 활성화 필수 — DomainEventDispatcher 가 핸들러를 Tram 컨슈머에 등록·initialize
+    public DomainEventDispatcher domainEventDispatcher(DomainEventDispatcherFactory factory) {
+        DomainEventDispatcher dispatcher = factory.make("ledgerServiceEvents", domainEventHandlers());
+        dispatcher.initialize();
+        return dispatcher;
+    }
+
     public DomainEventHandlers domainEventHandlers() {
         return DomainEventHandlersBuilder
                 .forAggregateType("Order")
