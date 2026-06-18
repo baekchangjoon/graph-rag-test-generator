@@ -36,8 +36,10 @@ public class OrderBatchController {
     public BatchResponse batch(@RequestBody List<OrderController.CreateOrderRequest> requests) {
         int created = 0;
         for (OrderController.CreateOrderRequest r : requests) {
-            if (r.userId() == null || r.amount() == null || r.amount() <= 0 || r.type() == null) {
-                continue;
+            if (r.userId() == null || r.userId().isBlank()
+                    || r.amount() == null || r.amount() <= 0
+                    || r.type() == null || r.type().isBlank()) {
+                continue;   // OrderController.create와 동일한 검증(blank 포함)
             }
             User user = users.findById(r.userId()).orElse(null);
             if (user == null) {
