@@ -54,8 +54,8 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 | L3 | InputOracle (`StaticLiteralOracle` + `ConcolicOracle`) | 분기를 여는 입력 후보 발견. 전자는 Spoon 리터럴, 후자는 ASM 바이트코드 심볼릭 스캔 + Z3(`tools.aqua:z3-turnkey`) |
 | L3 | JaCoCo | arm-level branch coverage 측정 (누적 exec data + per-request probe 지문) |
 | L3 | Testcontainers | 실제 DBMS (운영과 동일 버전) |
-| L4 | Hibernate SQL logger | JPA 발행 SQL 캡처 |
-| L4 | MyBatis Interceptor | MyBatis 발행 SQL 캡처 (동적 SQL 포함 실제 형태) |
+| L4 | OTEL DB span 캡처 (기본) | `SqlCaptureBackend`/`OtelSpanCapture` — SUT의 OTEL agent가 내보내는 DB span(SQL+bind)을 요청별 `traceparent`로 trace-id 귀속 캡처. JDBC 레벨이라 Hibernate·MyBatis·raw JDBC 모두 포함. 동시 요청도 격리 ([docs/06](06-test-environment.md) "SQL 캡처 모드") |
+| L4 | Hibernate SQL logger / MyBatis Interceptor (폴백) | `--sql-capture log` 또는 OTEL이 빈 trace일 때 로그 파싱 캡처(`LogParserCapture`). MyBatis 동적 SQL 실제 형태 포함 |
 | L4 | WireMock | 분석용 임베디드 HTTP mock, recorder 활성 |
 | L4 | Netty LoggingHandler | 바이트 hex dump |
 | L4 | 자체 javaagent | InputStream/OutputStream 후킹 (raw socket) |

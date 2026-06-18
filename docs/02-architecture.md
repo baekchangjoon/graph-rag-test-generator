@@ -17,7 +17,7 @@
   → 분기 탐색 (explore): HeuristicExplorer + CoverageGuidedFuzzer를 ExplorationOrchestrator가 구동.
        happy 입력 + (generic 변이 ⊕ 오라클 후보)를 SUT에 HTTP로 호출, 요청 단위 JaCoCo로
        arm-level 커버리지 관측, novelty 입력을 시드로 환류
-  → sink 캡처 (capture/run): SUT 로그에서 SQL 파싱(SqlLogParser), WireMock 저널에서 외부 HTTP,
+  → sink 캡처 (capture/run): OTEL DB span에서 SQL+bind를 trace-id 귀속 캡처(기본; 로그 파싱 SqlLogParser는 폴백), WireMock 저널에서 외부 HTTP,
                               STOMP/WS 교환, @KafkaListener consumer 발행, 필요한 DB seed.
        Kafka consumer 루프는 HTTP 탐색보다 먼저 실행(consumer가 쓴 행을 read 엔드포인트가 관측).
        WS/Kafka 캡처도 각자 JaCoCo dump delta를 떠 전역 커버리지(runWideExec)에 병합되므로,
@@ -51,7 +51,7 @@ LLM은 어느 도구에도 없다. 외부 오케스트레이터(사람/LLM)가 �
 - LLM 없음. SUT를 **외부 프로세스로 실행**하며 HTTP로 두드려 사실을 관측·캡처.
 - 패키지: `index`(Spoon 정적 인덱싱) · `oracle`(InputOracle: static-literal + concolic ASM/Z3) ·
   `explore`(엔진+오케스트레이터+변이) · `env`(SUT 프로세스/Testcontainers/compose/WireMock) ·
-  `coverage`(JaCoCo arm-level + CoverageFingerprint + OTEL agent) · `capture`(SqlLogParser) ·
+  `coverage`(JaCoCo arm-level + CoverageFingerprint + OTEL agent) · `capture`(SqlCaptureBackend: OtelSpanCapture 기본 + LogParserCapture 폴백, OtlpTraceReceiver) ·
   `run`(EndpointExplorationRunner) · `store`(그래프 저장) · `schema` · `cli`.
 - 산출물: `graph.json`(+ 파티션 샤드) + `exploration-report.json`. 증분 빌드 지원
   (`--incremental-base`/`--changed-files`).
@@ -107,7 +107,7 @@ SUT 소스 + boot jar + compose
                            + InputMutator.forTarget(generic ⊕ constraintDirected) 를 HTTP로 호출,
                            요청 단위 JaCoCo dump를 누적 병합(arm-level), novelty 시드 환류,
                            path 식별 = status + probe 지문
-   ↓ capture              SQL=로그 파싱(SqlLogParser), 외부 HTTP=WireMock 저널, WS, seed
+   ↓ capture              SQL=OTEL DB span trace-id 귀속(기본; 로그 파싱 폴백), 외부 HTTP=WireMock 저널, WS, seed
    ↓ store                graph.json + 파티션 샤드 + exploration-report.json
 ```
 

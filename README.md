@@ -150,5 +150,10 @@ git diff --name-only main > changed.txt
   conjunction joint/enum 변이 → by-id(PUT/DELETE/{id}) 진입(path-id 시드·boolean·enum 컬럼) →
   mutating by-id 시드 리셋·구체 어설션. 외부 spring-petclinic 적용 실측(coveredAppBranches 33→113/253,
   by-id 생성 테스트 fresh DB 16/16). order-service에 **Booking** 추가로 CI 회귀화 → **e2e 53 테스트 GREEN**.
+- **OTEL SQL 캡처 완료** (2026-06-18): SQL 캡처를 교체 가능한 `SqlCaptureBackend` 뒤로 추상화하고
+  OTEL agent의 DB span을 요청별 `traceparent`로 trace-id 귀속하는 `OtelSpanCapture`를 기본 backend로
+  도입(로그 byte-offset 경로는 `--sql-capture log` 폴백). HTTP·Kafka·attach 배선, attach는 호스트
+  OTLP 리시버 + per-run 토큰 인증. 기본값 `otel`. petclinic·tainted-spring MSA(Postgres·MySQL,
+  JDK 8/11/17/23)까지 교차 검증. ([docs/06](docs/06-test-environment.md) "SQL 캡처 모드")
 - 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
   Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
