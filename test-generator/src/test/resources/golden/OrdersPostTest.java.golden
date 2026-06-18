@@ -34,7 +34,7 @@ class OrdersPostTest {
     }
 
     @Test
-    void post_api_orders_happy() {
+    void post_api_orders_happy() throws Exception {
         scope.kafka().subscribe("orders");
         scope.rest().given()
             .contentType("application/json")

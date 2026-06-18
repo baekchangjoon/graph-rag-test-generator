@@ -41,7 +41,7 @@ import static org.hamcrest.Matchers.notNullValue;
     }
 
     @Test
-    void {{testMethodName}}() {
+    void {{testMethodName}}() throws Exception {
         {{#kafkaEmits}}
         scope.kafka().subscribe("{{{topic}}}");
         {{/kafkaEmits}}
