@@ -155,9 +155,12 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
     public List<CapturedRecord> drain(String traceId, long timeoutMillis) {
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
         List<CapturedRecord> matched = new ArrayList<>();
+        long settleTimeoutNanos = 100_000_000L; // 100ms settle timeout
+        long lastMatchedTime = 0;
 
         while (true) {
             synchronized (queue) {
+                boolean foundNew = false;
                 Iterator<CapturedRecord> it = queue.iterator();
                 while (it.hasNext()) {
                     CapturedRecord rec = it.next();
@@ -166,21 +169,42 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
                         matched.add(rec);
                         it.remove();
                         queueSize--;
+                        foundNew = true;
                     }
                 }
 
                 long now = System.nanoTime();
-                if (!matched.isEmpty() || now >= deadline) {
+                if (foundNew) {
+                    lastMatchedTime = now;
+                }
+
+                if (now >= deadline) {
                     break;
                 }
 
-                long remainingMillis = (deadline - now) / 1_000_000L;
-                if (remainingMillis <= 0) {
+                if (!matched.isEmpty() && (now - lastMatchedTime >= settleTimeoutNanos)) {
+                    break;
+                }
+
+                long remainingToDeadlineNanos = deadline - now;
+                long waitNanos = remainingToDeadlineNanos;
+
+                if (!matched.isEmpty()) {
+                    long remainingToSettleNanos = settleTimeoutNanos - (now - lastMatchedTime);
+                    if (remainingToSettleNanos < waitNanos) {
+                        waitNanos = remainingToSettleNanos;
+                    }
+                }
+
+                long waitMillis = waitNanos / 1_000_000L;
+                long waitNanosRemaining = waitNanos % 1_000_000L;
+
+                if (waitMillis <= 0 && waitNanosRemaining <= 0) {
                     break;
                 }
 
                 try {
-                    queue.wait(remainingMillis);
+                    queue.wait(waitMillis, (int) waitNanosRemaining);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;

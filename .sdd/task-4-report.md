@@ -1,58 +1,90 @@
-# Task 4 Report: EndpointExplorationRunner 및 캡처 파이프라인 연동
+# Task 4 Review Issue Resolution Report
 
-본 보고서는 `KafkaCaptureReceiver`와 `EndpointExplorationRunner`를 연동하여 SUT의 아웃바운드 Kafka 이벤트를 성공적으로 수집하고 이를 탐색 결과(Path 및 GraphAsset)에 저장하도록 구현한 내역을 상세히 기록합니다.
+## 1. 개요 및 문제 현상
+`KafkaCaptureReceiver.java`의 `drain(...)` 메서드는 Kafka 이벤트를 수집할 때 매칭되는 레코드를 찾으면 즉시 반환하도록 구현되어 있었습니다. 이로 인해 동일한 trace context 하에서 연속적 또는 비동기적으로 여러 Kafka 이벤트가 발행될 경우, 첫 번째 이벤트가 수집되는 즉시 반환되어 이후에 곧바로 도달하는 이벤트를 미처 수집하지 못하는 레이스 컨디션이 발생할 우려가 있었습니다.
 
-## 1. 수정/생성된 파일 목록
-- **SUT (samples/order-service)**
-  - [OrderController.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/samples/order-service/src/main/java/io/graphrag/sample/orders/OrderController.java): `KafkaTemplate`을 의존성 주입받아 주문 생성 시 `order.events` 토픽으로 이벤트를 발행하는 기능 추가.
-- **shared-model**
-  - [InvocationOutcome.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/explore/InvocationOutcome.java): `capturedEventEmits` 리스트 필드를 추가하고, 생성자와 오버로드된 생성자들을 업데이트.
-- **graph-rag-builder**
-  - [PathCandidate.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/explore/PathCandidate.java): `capturedEventEmits` 리스트 필드를 추가하고, 생성자와 오버로드된 생성자들을 업데이트.
-  - [ExplorationOrchestrator.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationOrchestrator.java): `toOutcome` 단계에서 `PathCandidate` 생성 시 `InvocationOutcome`의 `capturedEventEmits`를 넘겨주도록 수정.
-  - [EndpointExplorationRunner.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java):
-    - `EndpointResult`와 `PathsBundle` 레코드 헤더에 `capturedEventEmits` 추가.
-    - `KafkaCaptureReceiver`를 생성자 주입받고 `doSend(...)` 수행 후 `kafkaCapture.drain(...)`을 통해 traceId별 Kafka 레코드를 회수하여 `CapturedEventEmit`으로 매핑.
-    - `buildPaths` 내에서 캡처된 이벤트를 deterministic ID (`event-${pathId}-${seq}`) 형태로 재구성해 `ExploredPath`에 누적 및 `PathsBundle`에 적재.
-  - [BuilderCli.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/cli/BuilderCli.java):
-    - `ExplorationAccumulators` 에 `capturedEventEmits` 필드 추가.
-    - `build(...)` 내에서 `plan.carriedEventEmits()`를 누적 목록에 병합.
-    - `explore(...)` 내에서 `KafkaCaptureReceiver` 객체를 기동하고 start/close 수명주기를 try-with-resources로 안전하게 관리하며, `EndpointExplorationRunner` 생성 시 주입.
-    - 최종 `GraphAsset` 생성 시 `capturedEventEmits`를 인자로 전달.
-  - [OtelHttpCaptureAcceptanceTest.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/test/java/io/graphrag/builder/capture/OtelHttpCaptureAcceptanceTest.java):
-    - Kafka 브로커가 활성화된 `AnalysisEnvironment`를 구동하고, `KafkaCaptureReceiver` 및 `EndpointExplorationRunner` 연동 하에 주문을 생성하는 HTTP API 호출을 유발하여 아웃바운드 Kafka 이벤트가 성공적으로 캡처되는지 검증하는 `httpRequest_capturesOutboundKafkaEvent` 통합 테스트 추가.
+## 2. 해결 방법 및 설계
+- **Settle/Quiescence Timeout 도입**:
+  - `drain` 메서드 내 루프에서 matching record를 최초 또는 추가로 발견할 때마다 `lastMatchedTime`을 현재의 `System.nanoTime()`으로 갱신합니다.
+  - 다음 루프의 대기(`wait`) 결정 시, 전체 마감 시간(`deadline`)까지 남은 시간과 settle timeout(100ms)까지 남은 시간 중 더 짧은 시간을 계산하여 대기합니다.
+  - 대기 중 `queue.notifyAll()`을 통해 새로운 이벤트가 들어오면 다시 큐를 훑어 matching record를 추가 수집하고, settle timeout을 다시 100ms로 리셋(quiesce 갱신)합니다.
+- **안전성 및 견고함 보장 (Robustness)**:
+  - `wait` 대기 시간이 0ms 이하인 경우 `wait`을 호출하지 않고 탈출하도록 제어하여 무한 대기 상태(wait(0)은 무한 대기를 의미)에 빠지는 것을 방지합니다.
+  - 대기 시간의 정밀도를 높이기 위해 `queue.wait(long timeoutMillis, int nanos)` API를 적용했습니다.
+  - 전체 타임아웃(`deadline`)을 초과하여 불필요한 지연이 생기지 않도록 `deadline` 준수 조건을 항시 검사합니다.
 
-## 2. 작성된 테스트 내용 및 실행 결과
-추가된 통합 테스트 `httpRequest_capturesOutboundKafkaEvent`는 JaCoCo 덤프를 우회하기 위해 `CoverageClient`를 익명 서브클래스화하여 mock 동작을 얹고, 실제 Kafka 토픽(`order.events`)으로 발행된 이벤트를 캡처하여 검증에 성공하였습니다.
+## 3. 구현 내용
+### KafkaCaptureReceiver.java
+`drain` 메서드가 아래와 같이 개선되었습니다:
+```java
+    public List<CapturedRecord> drain(String traceId, long timeoutMillis) {
+        long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        List<CapturedRecord> matched = new ArrayList<>();
+        long settleTimeoutNanos = 100_000_000L; // 100ms settle timeout
+        long lastMatchedTime = 0;
 
-### 테스트 실행 명령어
-```bash
-./gradlew :graph-rag-builder:test --tests io.graphrag.builder.capture.OtelHttpCaptureAcceptanceTest
+        while (true) {
+            synchronized (queue) {
+                boolean foundNew = false;
+                Iterator<CapturedRecord> it = queue.iterator();
+                while (it.hasNext()) {
+                    CapturedRecord rec = it.next();
+                    String recordTraceId = getTraceIdFromHeaders(rec.headers());
+                    if (Objects.equals(traceId, recordTraceId)) {
+                        matched.add(rec);
+                        it.remove();
+                        queueSize--;
+                        foundNew = true;
+                    }
+                }
+
+                long now = System.nanoTime();
+                if (foundNew) {
+                    lastMatchedTime = now;
+                }
+
+                if (now >= deadline) {
+                    break;
+                }
+
+                if (!matched.isEmpty() && (now - lastMatchedTime >= settleTimeoutNanos)) {
+                    break;
+                }
+
+                long remainingToDeadlineNanos = deadline - now;
+                long waitNanos = remainingToDeadlineNanos;
+
+                if (!matched.isEmpty()) {
+                    long remainingToSettleNanos = settleTimeoutNanos - (now - lastMatchedTime);
+                    if (remainingToSettleNanos < waitNanos) {
+                        waitNanos = remainingToSettleNanos;
+                    }
+                }
+
+                long waitMillis = waitNanos / 1_000_000L;
+                long waitNanosRemaining = waitNanos % 1_000_000L;
+
+                if (waitMillis <= 0 && waitNanosRemaining <= 0) {
+                    break;
+                }
+
+                try {
+                    queue.wait(waitMillis, (int) waitNanosRemaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
+        return matched;
+    }
 ```
 
-### 테스트 실행 콘솔 출력
-```text
-> Task :testlib:processResources UP-TO-DATE
-> Task :graph-rag-builder:processResources UP-TO-DATE
-> Task :graph-rag-builder:processTestResources UP-TO-DATE
-> Task :shared-model:compileJava UP-TO-DATE
-> Task :shared-model:processResources NO-SOURCE
-> Task :shared-model:classes UP-TO-DATE
-> Task :shared-model:jar UP-TO-DATE
-> Task :samples:order-service:compileJava UP-TO-DATE
-> Task :samples:order-service:processResources UP-TO-DATE
-> Task :samples:order-service:classes UP-TO-DATE
-> Task :samples:order-service:resolveMainClassName UP-TO-DATE
-> Task :testlib:compileJava UP-TO-DATE
-> Task :testlib:classes UP-TO-DATE
-> Task :testlib:jar UP-TO-DATE
-> Task :graph-rag-builder:compileJava UP-TO-DATE
-> Task :graph-rag-builder:classes UP-TO-DATE
-> Task :samples:order-service:bootJar UP-TO-DATE
-> Task :graph-rag-builder:compileTestJava
-> Task :graph-rag-builder:testClasses
-> Task :graph-rag-builder:test
-
-BUILD SUCCESSFUL in 21s
-14 actionable tasks: 2 executed, 12 up-to-date
-```
+## 4. 검증 결과
+1. **JUnit 단위 테스트 작성 및 검증 (`KafkaCaptureReceiverTest.java`)**:
+   - `testSettleTimeoutAllowsAdditionalEvents` 테스트 케이스를 새로 추가하여, 첫 번째 이벤트가 수집되는 즉시 drain되지 않고 40ms의 갭을 두고 들어오는 두 번째 비동기 이벤트까지 하나의 trace context 내에서 정상적으로 함께 캡처되는지 검증했습니다.
+   - 수정 이전(Red) 단계에서는 크기 1로 실패하였으나, settle timeout 수정 이후(Green) 단계에서는 2개의 이벤트를 누수 없이 정확하게 수집하는 것을 확인했습니다.
+   - `./gradlew :graph-rag-builder:cleanTest :graph-rag-builder:test --tests io.graphrag.builder.run.KafkaCaptureReceiverTest` 명령으로 기존 테스트 케이스를 포함한 전체 단위 테스트의 정상 통과(SUCCESS)를 확인하였습니다.
+2. **Acceptance Test 검증 (`OtelHttpCaptureAcceptanceTest.java`)**:
+   - `./gradlew :graph-rag-builder:cleanTest :graph-rag-builder:test --tests io.graphrag.builder.capture.OtelHttpCaptureAcceptanceTest` 명령을 실행하여 실환경(Docker & Kafka)에서 동작하는 수용성 테스트가 올바르게 작동하고 빌드가 최종적으로 성공함(BUILD SUCCESSFUL)을 입증하였습니다.

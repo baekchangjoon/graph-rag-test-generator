@@ -248,6 +248,62 @@ class KafkaCaptureReceiverTest {
         }
     }
 
+    @Test
+    void testSettleTimeoutAllowsAdditionalEvents() throws Exception {
+        String topic = "test-topic";
+        createTopic(topic);
+
+        KafkaCaptureReceiver receiver = new KafkaCaptureReceiver(bootstrapServers);
+        receiver.start();
+
+        try {
+            String traceId = "123456789012345678901234567890cc";
+            String spanId1 = "00f067aa0ba902b1";
+            String spanId2 = "00f067aa0ba902b2";
+            String traceparent1 = "00-" + traceId + "-" + spanId1 + "-01";
+            String traceparent2 = "00-" + traceId + "-" + spanId2 + "-01";
+
+            Properties props = new Properties();
+            props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+            props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+            props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                // 1. First event
+                ProducerRecord<String, String> record1 = new ProducerRecord<>(topic, "key-1", "{\"val\":1}");
+                record1.headers().add("traceparent", traceparent1.getBytes(StandardCharsets.UTF_8));
+                producer.send(record1).get();
+            }
+
+            // 2. Call drain. We send the second event after a short delay (40ms) using a background thread, while the main thread is blocked in drain.
+            Thread asyncSender = new Thread(() -> {
+                try {
+                    Thread.sleep(40);
+                    try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                        ProducerRecord<String, String> record2 = new ProducerRecord<>(topic, "key-2", "{\"val\":2}");
+                        record2.headers().add("traceparent", traceparent2.getBytes(StandardCharsets.UTF_8));
+                        producer.send(record2).get();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            });
+            asyncSender.start();
+
+            // Timeout of 2000ms is enough. Settle timeout of 100ms should easily capture the second event sent at 40ms.
+            List<KafkaCaptureReceiver.CapturedRecord> drained = receiver.drain(traceId, 2000);
+            asyncSender.join();
+
+            // With the settle timeout, both events should be captured because the second event arrived within 100ms of the first event.
+            // Without the settle timeout, the drain method returns immediately after finding the first event, resulting in size 1.
+            assertThat(drained).hasSize(2);
+            assertThat(drained.get(0).key()).isEqualTo("key-1");
+            assertThat(drained.get(1).key()).isEqualTo("key-2");
+        } finally {
+            receiver.close();
+        }
+    }
+
     private static void createTopic(String topic) throws Exception {
         Properties props = new Properties();
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
