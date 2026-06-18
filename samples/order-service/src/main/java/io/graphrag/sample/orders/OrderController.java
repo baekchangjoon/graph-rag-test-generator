@@ -29,12 +29,15 @@ public class OrderController {
     private final UserRepository users;
     private final OrderRepository orders;
     private final InventoryClient inventory;
+    private final org.springframework.kafka.core.KafkaTemplate<String, String> kafkaTemplate;
 
     public OrderController(UserRepository users, OrderRepository orders,
-                           InventoryClient inventory) {
+                           InventoryClient inventory,
+                           org.springframework.beans.factory.ObjectProvider<org.springframework.kafka.core.KafkaTemplate<String, String>> kafkaTemplateProvider) {
         this.users = users;
         this.orders = orders;
         this.inventory = inventory;
+        this.kafkaTemplate = kafkaTemplateProvider.getIfAvailable();
     }
 
     @PostMapping
@@ -54,6 +57,15 @@ public class OrderController {
             }
         }
         Order saved = orders.save(new Order(user, request.amount(), request.type(), "PENDING"));
+        if (kafkaTemplate != null) {
+            try {
+                String payload = String.format("{\"eventId\":\"%d\",\"type\":\"CREATED\",\"userId\":\"%s\"}",
+                        saved.getId(), user.getId());
+                kafkaTemplate.send("order.events", user.getId(), payload).get();
+            } catch (Exception e) {
+                // best-effort
+            }
+        }
         return new OrderResponse(saved.getId(), saved.getStatus());
     }
 

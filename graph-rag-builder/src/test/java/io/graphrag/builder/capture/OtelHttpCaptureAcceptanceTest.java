@@ -6,6 +6,9 @@ import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.model.Json;
+import io.graphrag.model.Endpoint;
+import io.graphrag.builder.run.EndpointExplorationRunner;
+import io.graphrag.builder.explore.InvocationOutcome;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -179,5 +182,95 @@ class OtelHttpCaptureAcceptanceTest {
             public String readLogRange(long s, long e) { return ""; }
             public void stop() { }
         };
+    }
+
+    private String login(String baseUri) throws Exception {
+        HttpResponse<String> login = http.send(
+                HttpRequest.newBuilder(URI.create(baseUri + "/api/auth/login"))
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(
+                                "{\"username\":\"admin\",\"password\":\"password\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(login.statusCode()).isEqualTo(200);
+        String t = Json.mapper().readTree(login.body()).path("token").asText();
+        assertThat(t).isNotBlank();
+        return t;
+    }
+
+    @Test
+    void httpRequest_capturesOutboundKafkaEvent() throws Exception {
+        Path sutJar = Path.of(System.getProperty("sut.jar"));
+        Path externalStubs = Path.of(System.getProperty("external.stubs"));
+        Path workDir = out.resolve("work-kafka-test");
+        Files.createDirectories(workDir);
+
+        DbConfig dbConfig = new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app");
+        String runId = "acc3-kafka-emit";
+        TraceParent.Ids injected = new TraceParent(runId).next();
+
+        try (AnalysisEnvironment kafkaEnv = new AnalysisEnvironment(dbConfig, false, true)) {
+            OtelAgent otel = OtelAgent.prepare(workDir);
+            SutOptions sutOptions = new SutOptions(
+                    otel.javaToolOptions(), Map.of(), otel.env("order-service"), null);
+            kafkaEnv.start(sutJar, workDir, sutOptions, externalStubs,
+                    Map.of("EXTERNAL_INVENTORY_URL", AnalysisEnvironment.WIREMOCK_PLACEHOLDER),
+                    otel, "order-service");
+
+            String kafkaBootstrap = kafkaEnv.kafkaBootstrapServers();
+            assertThat(kafkaBootstrap).isNotBlank();
+
+            String customBase = kafkaEnv.sut().baseUri();
+            try (java.sql.Connection conn = kafkaEnv.openConnection();
+                 java.sql.Statement stmt = conn.createStatement()) {
+                stmt.execute("INSERT INTO users(id, name) VALUES('admin', 'Administrator') ON CONFLICT DO NOTHING");
+            }
+
+            String actualToken = login(customBase);
+            io.graphrag.builder.run.AuthConfig authConfig = new io.graphrag.builder.run.AuthConfig(
+                    "/api/auth/login", "admin", "password", "token", "Authorization", "Bearer", List.of());
+
+            Endpoint endpoint = new Endpoint("post-orders", "POST", "/api/orders",
+                    "io.graphrag.sample.orders.OrderController", "create", List.of(), true);
+            com.fasterxml.jackson.databind.JsonNode input = Json.mapper().readTree(
+                    "{\"userId\":\"admin\",\"amount\":10,\"type\":\"NORMAL\"}");
+
+            try (io.graphrag.builder.run.KafkaCaptureReceiver receiver =
+                         new io.graphrag.builder.run.KafkaCaptureReceiver(kafkaBootstrap)) {
+                receiver.start();
+
+                try (java.sql.Connection conn = kafkaEnv.openConnection()) {
+                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                            kafkaEnv.sut(), conn, kafkaEnv.dbType(),
+                            new io.graphrag.builder.coverage.CoverageClient("localhost", 0) {
+                                @Override
+                                public org.jacoco.core.data.ExecutionDataStore dump(boolean reset) {
+                                    return new org.jacoco.core.data.ExecutionDataStore();
+                                }
+                            },
+                            new io.graphrag.builder.coverage.BranchCoverageAnalyzer(sutJar),
+                            1, kafkaEnv.httpCapture(), List.of(), List.of(),
+                            new io.graphrag.builder.run.AuthTokenProvider(customBase, authConfig, io.graphrag.model.RequestHeaders.empty()),
+                            authConfig, Map.of(), Map.of(), io.graphrag.model.RequestHeaders.empty(),
+                            new OtelSpanCapture(kafkaEnv.otlpReceiver(), kafkaEnv.sut(), new TraceParent(runId)),
+                            receiver
+                    );
+
+                    java.lang.reflect.Method doSendMethod = EndpointExplorationRunner.class.getDeclaredMethod(
+                            "doSend", HttpClient.class, Endpoint.class, com.fasterxml.jackson.databind.JsonNode.class, String.class);
+                    doSendMethod.setAccessible(true);
+
+                    InvocationOutcome outcome = (InvocationOutcome) doSendMethod.invoke(
+                            runner, HttpClient.newHttpClient(), endpoint, input, "Bearer " + actualToken);
+
+                    assertThat(outcome.capturedEventEmits()).isNotEmpty();
+                    io.graphrag.model.CapturedEventEmit emit = outcome.capturedEventEmits().get(0);
+                    assertThat(emit.topic()).isEqualTo("order.events");
+                    assertThat(emit.key()).isEqualTo("admin");
+                    assertThat(emit.payload().path("type").asText()).isEqualTo("CREATED");
+                    assertThat(emit.payload().path("userId").asText()).isEqualTo("admin");
+                }
+            }
+        }
     }
 }

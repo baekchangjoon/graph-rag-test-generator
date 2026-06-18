@@ -208,9 +208,10 @@ public final class BuilderCli {
         Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
         // 탐색 전체의 line+branch 집계용: 엔드포인트별 누적 exec를 OR 병합한 run-wide 스토어.
         org.jacoco.core.data.ExecutionDataStore runWideExec = new org.jacoco.core.data.ExecutionDataStore();
+        List<io.graphrag.model.CapturedEventEmit> capturedEventEmits = new ArrayList<>();
         ExplorationAccumulators acc = new ExplorationAccumulators(
                 paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
-                coveredAppBranches, runWideExec);
+                coveredAppBranches, runWideExec, capturedEventEmits);
 
         // enum 상수 맵: 순수 소스 파싱(SUT/Docker 불요) → 분석 환경 기동 전 1회.
         Map<String, List<String>> enumConstants =
@@ -250,6 +251,7 @@ public final class BuilderCli {
         wsExchanges.addAll(plan.carriedWsExchanges());
         kafkaExchanges.addAll(plan.carriedKafkaExchanges());
         allSeeds.addAll(plan.carriedSeeds());
+        capturedEventEmits.addAll(plan.carriedEventEmits());
 
         mergeManualPaths(config.manualPathsDir(), paths);
 
@@ -267,7 +269,8 @@ public final class BuilderCli {
 
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
-                wsIndex.endpoints(), wsExchanges, kafkaIndex.consumers(), kafkaExchanges, allSeeds);
+                wsIndex.endpoints(), wsExchanges, kafkaIndex.consumers(), kafkaExchanges, allSeeds,
+                capturedEventEmits);
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
@@ -283,7 +286,8 @@ public final class BuilderCli {
             List<RequiredSeed> allSeeds,
             List<ExplorationReport.EndpointExploration> reportEntries,
             Set<io.graphrag.model.BranchRef> coveredAppBranches,
-            org.jacoco.core.data.ExecutionDataStore runWideExec) {
+            org.jacoco.core.data.ExecutionDataStore runWideExec,
+            List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
     }
 
     /** attach 모드: 사용자 compose + 생성 override 로 SUT를 띄우고 동일한 explore()를 돌린다. */
@@ -426,6 +430,7 @@ public final class BuilderCli {
         List<ExplorationReport.EndpointExploration> reportEntries = acc.reportEntries();
         Set<io.graphrag.model.BranchRef> coveredAppBranches = acc.coveredAppBranches();
         org.jacoco.core.data.ExecutionDataStore runWideExec = acc.runWideExec();
+        List<io.graphrag.model.CapturedEventEmit> capturedEventEmits = acc.capturedEventEmits();
         int totalAppBranches;
         List<TableSchema> tables;
 
@@ -514,50 +519,60 @@ public final class BuilderCli {
                 }
             }
 
-            for (Endpoint endpoint : index.endpoints()) {
-                if (!plan.shouldExplore(endpoint.id())) {
-                    log.info("skip {} (partition clean; carrying over)", endpoint.id());
-                    continue;
+            io.graphrag.builder.run.KafkaCaptureReceiver kafkaCapture = null;
+            if (config.withKafka() && kafkaBootstrap != null) {
+                kafkaCapture = new io.graphrag.builder.run.KafkaCaptureReceiver(kafkaBootstrap);
+                kafkaCapture.start();
+                log.info("KafkaCaptureReceiver started for outbound event capture on {}", kafkaBootstrap);
+            }
+
+            try (io.graphrag.builder.run.KafkaCaptureReceiver receiverToClose = kafkaCapture) {
+                for (Endpoint endpoint : index.endpoints()) {
+                    if (!plan.shouldExplore(endpoint.id())) {
+                        log.info("skip {} (partition clean; carrying over)", endpoint.id());
+                        continue;
+                    }
+                    BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
+                    boolean hasPathParam = endpoint.params().stream()
+                            .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+                    // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
+                    // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
+                    if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+                        log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
+                        continue;
+                    }
+                    var conditions = constraintExtractor.extract(
+                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
+                    var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
+                    Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
+                            shape == null ? Map.of()
+                                    : new ValidationConstraintExtractor()
+                                            .extract(config.sutSrc(), shape.javaType());
+                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                            env.sut(), connection, env.dbType(),
+                            coverageClient, analyzer,
+                            config.budgetRequests(), env.httpCapture(),
+                            responseDtoFieldSets, literals,
+                            authProvider, config.authConfig(), enumConstants, enumColumns,
+                            config.requestHeaders(), sqlCapture, receiverToClose);
+                    // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
+                    List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
+                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
+                                    && g.method().equals(endpoint.handlerMethod()))
+                            .toList();
+                    EndpointExplorationRunner.EndpointResult result =
+                            runner.run(endpoint, shape, tables, conditions,
+                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions,
+                                    endpointStateGuards,
+                                    index.validBodyEndpointIds().contains(endpoint.id()));
+                    paths.addAll(result.paths());
+                    sql.addAll(result.sql());
+                    httpCalls.addAll(result.httpCalls());
+                    allSeeds.addAll(result.seeds());
+                    reportEntries.add(result.report());
+                    capturedEventEmits.addAll(result.capturedEventEmits());
+                    result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
                 }
-                BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
-                boolean hasPathParam = endpoint.params().stream()
-                        .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
-                // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
-                // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
-                if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
-                    log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
-                    continue;
-                }
-                var conditions = constraintExtractor.extract(
-                        config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
-                var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
-                Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
-                        shape == null ? Map.of()
-                                : new ValidationConstraintExtractor()
-                                        .extract(config.sutSrc(), shape.javaType());
-                EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                        env.sut(), connection, env.dbType(),
-                        coverageClient, analyzer,
-                        config.budgetRequests(), env.httpCapture(),
-                        responseDtoFieldSets, literals,
-                        authProvider, config.authConfig(), enumConstants, enumColumns,
-                        config.requestHeaders(), sqlCapture);
-                // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
-                List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
-                        .filter(g -> g.classFqn().equals(endpoint.handlerClass())
-                                && g.method().equals(endpoint.handlerMethod()))
-                        .toList();
-                EndpointExplorationRunner.EndpointResult result =
-                        runner.run(endpoint, shape, tables, conditions,
-                                allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                endpointStateGuards,
-                                index.validBodyEndpointIds().contains(endpoint.id()));
-                paths.addAll(result.paths());
-                sql.addAll(result.sql());
-                httpCalls.addAll(result.httpCalls());
-                allSeeds.addAll(result.seeds());
-                reportEntries.add(result.report());
-                result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
             }
 
             io.graphrag.builder.run.WsCaptureRunner wsRunner =

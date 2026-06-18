@@ -2,6 +2,7 @@ package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.model.BranchRef;
+import io.graphrag.model.CapturedEventEmit;
 
 import java.util.Set;
 
@@ -18,28 +19,37 @@ public record InvocationOutcome(
         long logEnd,
         java.util.List<RawHttpExchange> httpExchanges,
         String coverageKey,
-        java.util.List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
+        java.util.List<io.graphrag.builder.capture.ParsedSql> capturedSql,
+        java.util.List<CapturedEventEmit> capturedEventEmits) {
 
     public InvocationOutcome {
         httpExchanges = httpExchanges == null ? java.util.List.of() : httpExchanges;
         capturedSql = capturedSql == null ? java.util.List.of() : capturedSql;
+        capturedEventEmits = capturedEventEmits == null ? java.util.List.of() : capturedEventEmits;
+    }
+
+    public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
+                             long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges,
+                             String coverageKey, java.util.List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
+        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, coverageKey, capturedSql,
+                java.util.List.of());
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges,
                              String coverageKey) {
         this(status, response, coveredBranches, logStart, logEnd, httpExchanges, coverageKey,
-                java.util.List.of());
+                java.util.List.of(), java.util.List.of());
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges) {
-        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, null, java.util.List.of());
+        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, null, java.util.List.of(), java.util.List.of());
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd) {
         this(status, response, coveredBranches, logStart, logEnd, java.util.List.of(), null,
-                java.util.List.of());
+                java.util.List.of(), java.util.List.of());
     }
 }
