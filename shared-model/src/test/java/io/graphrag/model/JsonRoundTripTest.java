@@ -174,4 +174,44 @@ class JsonRoundTripTest {
         assertThat(Json.mapper().readValue(legacy, ExploredPath.class).requiredSeedIds())
                 .isEmpty();
     }
+
+    @Test
+    void testCapturedEventEmitRoundTrip() throws Exception {
+        CapturedEventEmit emit = new CapturedEventEmit("emit-1", "path-1", "order-topic", "user-1", Json.mapper().readTree("{\"status\":\"OK\"}"));
+        CapturedEventEmit read = roundTrip(emit, CapturedEventEmit.class);
+        assertThat(read.id()).isEqualTo("emit-1");
+        assertThat(read.pathId()).isEqualTo("path-1");
+        assertThat(read.topic()).isEqualTo("order-topic");
+        assertThat(read.key()).isEqualTo("user-1");
+        assertThat(read.payload().get("status").asText()).isEqualTo("OK");
+    }
+
+    @Test
+    void exploredPath_capturedEventEmitIds_roundTripsAndDefaultsEmpty() throws Exception {
+        ExploredPath path = new ExploredPath("p1", "e1", Json.mapper().createObjectNode(),
+                200, Json.mapper().createObjectNode(), List.of(), List.of(), List.of(),
+                "heuristic", List.of(), List.of(), List.of("seed-p1-1"), List.of("emit-1"));
+        ExploredPath back = roundTrip(path, ExploredPath.class);
+        assertThat(back.capturedEventEmitIds()).containsExactly("emit-1");
+
+        String legacy = "{\"id\":\"p\",\"endpointId\":\"e\",\"sampleInput\":{},"
+                + "\"expectedStatus\":200,\"sampleResponse\":{}}";
+        assertThat(Json.mapper().readValue(legacy, ExploredPath.class).capturedEventEmitIds())
+                .isEmpty();
+    }
+
+    @Test
+    void graphAsset_capturedEventEmits_roundTripsAndDefaultsEmpty() throws Exception {
+        CapturedEventEmit emit = new CapturedEventEmit("emit-1", "path-1", "order-topic", "user-1", Json.mapper().readTree("{\"status\":\"OK\"}"));
+        GraphAsset asset = new GraphAsset(
+                "order-service", "abc123",
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(emit));
+        GraphAsset back = roundTrip(asset, GraphAsset.class);
+        assertThat(back.capturedEventEmits()).containsExactly(emit);
+
+        String legacy = "{\"sutId\":\"s\",\"commitSha\":\"c\",\"endpoints\":[],\"paths\":[],\"sql\":[],\"tables\":[]}";
+        GraphAsset legacyAsset = mapper.readValue(legacy, GraphAsset.class);
+        assertThat(legacyAsset.capturedEventEmits()).isEmpty();
+    }
 }
