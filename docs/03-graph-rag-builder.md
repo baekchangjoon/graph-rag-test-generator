@@ -75,6 +75,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - **Branch**: 분기점 + 조건 + 어느 path에서 실행됐는지
 - **PropagationInfo**: 트레이싱 헤더 전파 능력
 - **ValidationConstraint**: `@RequestBody` DTO의 Bean Validation 제약 (`ValidationConstraintExtractor` — NotNull/Size/Min/Max/Pattern 등)
+- **컬렉션 바디 (collection BodyShape)**: `@RequestBody`/Kafka `@KafkaListener`/WS 페이로드가 컬렉션(`List`/`Set`/`Collection`/`Iterable<E>`·배열 `E[]`)이면 `BodyShapeExtractor.extractFromType`가 원소 타입 `E`를 환원해 `BodyShape.collection()==true`로 인덱싱한다. 원소가 DTO면 `fields`에 원소 DTO 필드를, scalar(String/숫자/불리언/`java.time.*`/**enum**)면 빈 `fields`를 둔다. `bodyTypeKey`가 원소 타입까지 인코딩하므로 서로 다른 `List<DTO>`가 `java.util.List` 키로 충돌하지 않는다. 합성(`SampleInputSynthesizer`)은 **유효 원소 1개짜리 JSON 배열**을 만들고 **happy-path만** 1회 탐색한다(컬렉션 바디는 변이/음수-검증/by-id 경로를 타지 않음).
 - **Comparison / StringEquality**: 전 계층(컨트롤러/서비스/도메인) AST에서 추출한 숫자 비교식·문자열 동치 제약 (`ConstraintExtractor.extractComparisons` / `extractStringEqualities`)
 - **입력 후보**: 오라클이 도출한 비-리터럴 입력 후보값 (`InputOracle` — 분기 경계 ±1 등)
 
@@ -133,6 +134,7 @@ override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전
 - **리플렉션, Class.forName**: 정적으로 못 잡음. 일부 누락 가능.
 - **`@Conditional`, profile 기반 빈**: TestContext 부팅에서 일부만 해소
 - **MyBatis `<foreach>` 실 카디널리티**: 1/N 가정으로 합성
+- **컬렉션 바디 — happy-only(원소 1개)**: 컬렉션 `@RequestBody`/Kafka/WS 페이로드는 유효 원소 1개 배열로 happy-path만 탐색한다. 다음은 이번 범위에서 의도적으로 제외(deferred — 확장 진입점은 [list-dto-body-shape 설계](superpowers/specs/2026-06-18-list-dto-body-shape-design.md)의 후속 작업 표 참조): 원소별 음수-검증 arm(`@Valid List<@Valid DTO>` 위반), 빈 배열 `[]` arm, 다중 원소 배열, 컬렉션 바디 필드 변이/coverage-guided fuzzing, 컬렉션 바디 + PATH param 조합, 중첩 컬렉션 `List<List<..>>`/`Map` 바디. 인자 없는 raw `List`는 원소 타입 불명이라 인덱싱하지 않는다(현행 유지).
 - **외부 시스템 응답 enum/range**: 임베디드 mock의 minimal valid 응답에서 출발
 - **비결정적 분기 (시간/Random)**: 분석 시점 `Clock.fixed`, seeded Random 사용
 - **민감 정보**: 캡처 시 패턴 기반 마스킹 필수

@@ -130,6 +130,7 @@ DB 상태 검증은 없다. 응답 검증만.
 | NOT NULL 채움 | 스키마 default 또는 안전한 dummy |
 | 타입 렌더링 (`seedValueLiteral`) | 컬럼 JDBC 타입별: INT→정수, BIGINT→`L`, BOOL→bool, NUMERIC/DECIMAL/DOUBLE→`new BigDecimal(..)`, DATE→`LocalDate.parse(..)`, TIMESTAMP→`LocalDateTime.parse(..)`, TIME→`LocalTime.parse(..)`, UUID→`UUID.fromString(..)`, 그 외→문자열. (따옴표 문자열을 numeric/date 컬럼에 넣으면 INSERT가 깨지므로) |
 | by-id 리소스 시드 | 비-GET by-id(PUT/DELETE)도 대상 리소스를 fixture로 INSERT(+cleanup DELETE) → 빈 DB 재현. path마다 고유 PK |
+| 컬렉션 바디 → JSON 배열 방출 | `sampleInput`이 JSON 배열(컬렉션 `@RequestBody`/Kafka/WS happy 합성)이면 `FixtureComposer.bodyFormatFor`/`Generator`가 `{}`가 아니라 **배열 리터럴 `[ ... ]`** 을 요청 바디로 방출한다(원소 1개). 변수/단언 치환은 배열 원소를 unwrap해 적용한다. `ObjectNode` 전제의 path-var 치환·필드 단언은 배열이면 skip. |
 | Cleanup 합성 | FK 역순 DELETE, 자기 스코프(`WHERE <unique-key>=?`)만 |
 
 ### Assertion 합성 규칙 (`assertionsFromResponse`)
