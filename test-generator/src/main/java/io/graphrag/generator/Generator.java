@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 도구 2 본체. LLM 없음 — 동일 입력은 항상 동일 출력 (docs/04).
@@ -249,15 +250,24 @@ public class Generator {
 
     /**
      * emit key를 consumeNextRecord의 expectedKey 인자 표현식으로 변환한다.
-     * 입력 유래 값(예: userId)은 테스트 런타임 변수명으로 치환해 자기 발행 레코드만 소비하게 하고,
-     * 일반 리터럴 key는 따옴표 문자열로, key가 없으면 null(필터 없음)로 둔다.
+     * 입력 유래 값(예: userId)은 테스트 런타임 변수명으로 치환해 자기 발행 레코드만 소비하게 한다.
+     * key가 없거나 DB 시퀀스 PK처럼 비결정 값이면 null(필터 없음)로 둔다 — 캡처 시점의 stale
+     * 리터럴로 필터링하면 런타임에 생성되는 실제 key와 영영 불일치해 단언이 깨지기 때문이다.
+     * 그 외 결정적 리터럴 key만 따옴표 문자열로 필터링한다.
      */
-    private static String emitKeyExpr(String key, Map<String, String> substitutions) {
+    private static String emitKeyExpr(String key, Map<String, String> substitutions,
+                                      Set<String> nonDeterministicValues) {
         if (key == null) {
             return "null";
         }
         String var = substitutions.get(key);
-        return var != null ? var : "\"" + jsonEscape(key) + "\"";
+        if (var != null) {
+            return var;
+        }
+        if (nonDeterministicValues.contains(key)) {
+            return "null";
+        }
+        return "\"" + jsonEscape(key) + "\"";
     }
 
     /**
@@ -377,7 +387,7 @@ public class Generator {
                 modelEmit.put("topic", emit.topic());
                 // key는 consumeNextRecord의 expectedKey 인자로 쓴다(공유 토픽 오염 격리).
                 // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
-                modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions()));
+                modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions(), fixture.nonDeterministicValues()));
                 if (emit.payload() != null) {
                     modelEmit.put("payloadJson", jsonEscape(deterministicPayload(emit.payload(), fixture)));
                 }
