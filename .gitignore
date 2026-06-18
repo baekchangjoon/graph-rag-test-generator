@@ -33,4 +33,4 @@ e2e/agents/
 # builder run artifacts (reg-coverage writes here when run from module dir)
 .work/
 **/.work/
-e2e/.attach-*-out/
+e2e/.attach*-out/

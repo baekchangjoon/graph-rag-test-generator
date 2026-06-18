@@ -79,6 +79,51 @@ override는 사용자 compose의 **app 서비스에만** 다음을 더한다(`<o
 Docker 20.10 미만이면 `host.docker.internal:host-gateway` 가 동작하지 않아 캡처가 호스트 리시버에
 도달하지 못할 수 있다(빌더가 경고를 남긴다). 이 경우 `--sql-capture log` 로 폴백한다.
 
+### 외부 HTTP(downstream) 캡처
+
+SUT가 호출하는 외부 HTTP 서비스를, 빌더가 띄운 capture WireMock으로 우회시켜
+**캡처된 외부 호출(`CapturedHttpCall`)** 로 graph.json에 기록한다. 분석 모드와 동일한
+`--external-stubs` / `--sut-env {{wiremock}}` 플래그를 attach 모드에서도 그대로 쓴다.
+
+| 플래그 | 의미 |
+|---|---|
+| `--external-stubs <dir>` | 외부 서비스의 minimal valid 응답을 담은 WireMock 스텁(`*.json`) 디렉터리. 운영자가 제공 |
+| `--sut-env KEY={{wiremock}}[,K2=V2]` | app 컨테이너에 주입할 환경변수. 값의 `{{wiremock}}` 가 capture WireMock 주소로 치환된다 |
+
+동작:
+
+- 빌더가 분석 동안만 호스트에 capture WireMock을 띄운다. OTLP 리시버와 마찬가지로 컨테이너에서
+  도달해야 하므로 모든 인터페이스(`0.0.0.0`)에 bind하고, app 서비스에는 (otel 여부와 무관하게 항상)
+  `extra_hosts: ["host.docker.internal:host-gateway"]` 가 주입된다.
+- `--sut-env` 값의 `{{wiremock}}` 는 컨테이너가 도달 가능한
+  `http://host.docker.internal:<port>/<per-run-token>` 로 치환되어 app에 전달된다. SUT는 외부 서비스의
+  base URL을 이 환경변수로 읽어야 한다(예: `EXTERNAL_INVENTORY_URL`).
+- 넓어진 노출을 막기 위해 빌더가 실행마다 1회용 토큰을 만들어 **URL 경로 prefix**(`/<token>`)로 쓴다
+  (SUT는 outbound 헤더를 제어하지 못하므로 헤더 토큰 대신 base URL로 강제). capture WireMock은 그 prefix가
+  맞는 요청만 받고(불일치는 401), 캡처 기록 시 prefix를 벗겨 깨끗한 경로만 남긴다. 토큰은 캡처된
+  `CapturedHttpCall.urlPath` 에 새지 않는다 — 그래야 생성된 테스트(토큰 없는 환경에서 실행)의 mock이
+  맞는다.
+- OTEL 네트워킹과 같은 `host.docker.internal` 경로를 쓰므로 **Docker 20.10+** 가 필요하다. 미만이면
+  컨테이너가 호스트 WireMock에 도달하지 못해 외부 HTTP 캡처가 0건이 된다(빌더가 host-gateway 경고를 남김).
+- 캡처된 외부 호출은 [docs/06](06-test-environment.md)의 HTTP mock 파이프라인을 따라 생성 테스트에서
+  런타임 WireMock 스텁으로 재현된다.
+
+예:
+
+```bash
+./gradlew :graph-rag-builder:run --args="build \
+  --sut-src samples/order-service/src/main/java \
+  --sut-jar samples/order-service/build/libs/order-service.jar \
+  --sut-compose e2e/docker-compose.yml \
+  --out e2e/.attach-exthttp-out --sut-id order-exthttp \
+  --attach --app-service app --app-port 58081 --jacoco-port 16301 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres \
+  --external-stubs e2e/external-stubs \
+  --sut-env EXTERNAL_INVENTORY_URL={{wiremock}}"
+```
+
+전체 파이프라인 예는 `e2e/run-attach-ext-http-e2e.sh` 를 참고한다.
+
 ### 사전 조건
 
 - compose에 SUT app 서비스가 있고, 그 서비스명을 `--app-service` 로 지정한다.
@@ -97,10 +142,8 @@ attach v1은 아래를 지원하지 않는다(조용히 누락하지 않고 명�
    그런 설정은 attach 전에 개별 환경변수(예: `SPRING_DATASOURCE_URL`)로 옮겨야 한다.
 2. **`--sut-compose` 에 인식 가능한 DB 서비스 이미지가 있어야 한다**(postgres/mysql/mariadb).
    dialect 탐지가 분석 모드와 동일하게 compose의 DB 이미지에서 출발한다.
-3. **외부 HTTP(downstream) 캡처 미지원.** 컨테이너 SUT가 호스트의 임베디드 WireMock에 기본 도달하지
-   못하므로, attach 모드는 캡처된 외부 HTTP 호출을 반환하지 않는다.
-4. **Kafka는 `--kafka-bootstrap` 이 있을 때만.** 미지정 시 Kafka consumer는 스킵된다(로그로 알림).
-5. **fresh-stack 전용.** 빌더가 up/down을 소유한다 — 이미 떠 있는 장기 스택에 붙지 않는다.
+3. **Kafka는 `--kafka-bootstrap` 이 있을 때만.** 미지정 시 Kafka consumer는 스킵된다(로그로 알림).
+4. **fresh-stack 전용.** 빌더가 up/down을 소유한다 — 이미 떠 있는 장기 스택에 붙지 않는다.
 
 ## 예시
 

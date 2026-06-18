@@ -43,3 +43,25 @@
 
 인증 있는 SUT 시나리오(`auth_mode=REAL`, `@SendToUser`)는 testlib AuthClient
 어댑터가 실구현되는 시점에 별도 샘플로 추가한다.
+
+## attach 모드 호스트 바인딩 서비스의 per-run 토큰 (2026-06-18 추가)
+
+위 "compose 내부망 전용, 포트 미노출" 전제의 **예외**가 attach 모드에 있다.
+attach 모드는 SUT를 컨테이너로, 빌더의 캡처 인프라(OTLP 리시버 · capture WireMock)를
+**호스트에서** 돌린다. 컨테이너가 `host.docker.internal` 로 도달하려면 이 두 서버가
+호스트의 모든 인터페이스(`0.0.0.0`)에 bind해야 하므로, 분석 동안만이라도 같은 호스트의
+다른 (비신뢰) 프로세스에 노출된다.
+
+이 노출을 막기 위해 **실행마다 1회용 256-bit 토큰**으로 보호한다(fail-closed):
+
+- **OTLP 리시버**: 토큰을 `OTEL_EXPORTER_OTLP_HEADERS` 로 컨테이너에 전달하고, 리시버는
+  상수시간 비교(`MessageDigest.isEqual`)로 일치하는 요청만 받는다(불일치 거부).
+- **capture WireMock**: SUT는 outbound 헤더를 제어하지 못하므로(SUT 코드가 외부 호출의
+  헤더를 우리 마음대로 붙이지 않는다) 헤더 토큰 대신 토큰을 **URL 경로 prefix**(`/<token>`)로
+  쓴다. 빌더가 SUT에 주입하는 base URL(`{{wiremock}}` 치환값)에 prefix를 심고, WireMock의
+  RequestFilter가 prefix 없는 요청은 401로 막은 뒤 prefix를 벗겨 스텁을 매칭한다.
+
+토큰은 **캡처된 데이터(`CapturedHttpCall.urlPath`)와 빌더 로그에 새지 않는다** — drain 시
+prefix를 제거하고, 로그에는 토큰 없는 loopback URL/포트만 남긴다. 그래야 토큰 없는 환경에서
+실행되는 생성 테스트의 mock 경로가 캡처 경로와 일치한다. 토큰은 프로세스 메모리에만 존재하고
+실행이 끝나면 사라진다(영속화하지 않음).

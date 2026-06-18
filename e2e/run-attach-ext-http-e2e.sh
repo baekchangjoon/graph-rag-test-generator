@@ -30,6 +30,7 @@ echo "=== [2/4] 빌더 attach 실행 (--external-stubs + --sut-env EXTERNAL_INVE
   --attach --app-service app --app-port 58081 --jacoco-port 16301 \
   --jdbc-url jdbc:postgresql://localhost:56432/app \
   --db-service postgres \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
   --external-stubs $ROOT/e2e/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}}" 2>&1 | tee "$LOG"
 
