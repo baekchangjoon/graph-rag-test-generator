@@ -832,7 +832,9 @@ import org.springframework.context.annotation.Import;
 // @EnableEventHandlers does NOT exist in eventuate-tram-spring-events:0.35.0 (jar 검증).
 // TramEventSubscriberConfiguration 가 DomainEventDispatcherFactory 를 제공 → 구독은 DomainEventDispatcher 빈으로 활성화.
 @Configuration
-@Import({TramConsumerJdbcAutoConfiguration.class, TramEventSubscriberConfiguration.class})
+// EventuateTramKafkaMessageConsumerConfiguration(io.eventuate.tram.spring.consumer.kafka) = 실제 Kafka MessageConsumer 빈
+// (TramConsumerJdbcAutoConfiguration 는 중복검출만 제공 — 미import 시 C가 구독 못함, Task 6 부팅 검증으로 발견).
+@Import({EventuateTramKafkaMessageConsumerConfiguration.class, TramConsumerJdbcAutoConfiguration.class, TramEventSubscriberConfiguration.class})
 public class TramSubscriberConfig {}
 ```
 
