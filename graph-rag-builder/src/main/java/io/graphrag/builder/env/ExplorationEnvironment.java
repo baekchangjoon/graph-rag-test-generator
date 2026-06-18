@@ -8,7 +8,7 @@ public interface ExplorationEnvironment extends AutoCloseable {
     SutHandle sut();
     Connection openConnection() throws SQLException;
     DbConfig.Type dbType();
-    HttpCaptureServer httpCapture();      // nullable (attach v1 → null)
+    HttpCaptureServer httpCapture();      // nullable — attach는 --external-stubs/--sut-env 배선 시 non-null
     String kafkaBootstrapServers();       // nullable
     String coverageHost();
     int coveragePort();

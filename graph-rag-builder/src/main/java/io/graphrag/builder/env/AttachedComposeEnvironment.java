@@ -39,18 +39,27 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     // OTEL SQL 캡처 모드에서만 non-null. 호스트에 떠 있는 리시버를 runAttached가 만들어 주입하며,
     // 이 환경이 생명주기를 소유(close 시 stop)한다. log 모드면 null → explore()가 LogParserCapture 폴백.
     private final io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver;
+    // 외부 HTTP(스텁/실서비스) 캡처 모드에서만 non-null. runAttached가 만들어 주입하며 이 환경이 생명주기를 소유(close 시 close).
+    private final HttpCaptureServer httpCapture;
     private ContainerSut sut;
     private Process logTail;
 
     public AttachedComposeEnvironment(Config config, DbConfig.Type dbType) {
-        this(config, dbType, null);
+        this(config, dbType, null, null);
     }
 
     public AttachedComposeEnvironment(Config config, DbConfig.Type dbType,
                                       io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver) {
+        this(config, dbType, otlpReceiver, null);
+    }
+
+    public AttachedComposeEnvironment(Config config, DbConfig.Type dbType,
+                                      io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver,
+                                      HttpCaptureServer httpCapture) {
         this.config = config;
         this.dbType = dbType;
         this.otlpReceiver = otlpReceiver;
+        this.httpCapture = httpCapture;
     }
 
     static List<String> baseCompose(Config c) {
@@ -125,7 +134,7 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     @Override public SutHandle sut() { return sut; }
     @Override public io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver() { return otlpReceiver; }
     @Override public DbConfig.Type dbType() { return dbType; }
-    @Override public HttpCaptureServer httpCapture() { return null; }   // attach v1: 외부 HTTP 캡처 미지원
+    @Override public HttpCaptureServer httpCapture() { return httpCapture; }   // nullable — 외부 HTTP 캡처 배선 시 non-null
     @Override public String kafkaBootstrapServers() { return config.kafkaBootstrap(); }
     @Override public String coverageHost() { return config.coverageHost(); }
     @Override public int coveragePort() { return config.coveragePort(); }
@@ -138,6 +147,7 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
         try {
             if (sut != null) { sut.stop(); }   // ContainerSut.stop(): destroy → waitFor → destroyForcibly
             if (otlpReceiver != null) { otlpReceiver.stop(); }
+            if (httpCapture != null) { httpCapture.close(); }
         } finally {
             run(downCommand(config), "compose down");
         }
