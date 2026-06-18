@@ -40,7 +40,7 @@ g=json.load(open(os.path.join(out,"graph.json")))
 http=g.get("httpCalls", [])
 inv=[c for c in http if "inventory" in (c.get("urlPath") or "")]
 assert inv, "no external inventory HTTP captured in attach mode"
-# 토큰 누출 금지: 캡처 urlPath에 토큰(32+ hex 세그먼트)이 없어야 함
+# 토큰 누출 금지: 토큰은 64 hex(256-bit)라 이 정규식이 잡음; order-service urlPath엔 이런 세그먼트 없음
 import re
 assert not any(re.search(r"/[0-9a-f]{16,}/", c["urlPath"]) for c in inv), "token leaked into captured urlPath"
 print("OK external http captured:", [c["urlPath"] for c in inv][:3])
@@ -53,6 +53,7 @@ Expected: FAIL — `no external inventory HTTP captured`(현재 attach `httpCapt
 - [ ] **Step 3: Commit** — `git commit -m "test(e2e): attach external HTTP capture acceptance (red)"` (트레일러: Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>).
 
 > Docker 무거운 outer loop. red 한 번 확인 후 Phase 2~3은 inner-loop 단위 TDD로, Task 5에서 green 재실행.
+> 주의: 세 attach e2e(run-attach-e2e / run-attach-otel-e2e / run-attach-ext-http-e2e)는 같은 `e2e/docker-compose.yml`의 **고정 호스트 포트**(postgres 56432·kafka 59092·wiremock 컨테이너 등)를 공유하므로 **순차 실행**(동시 실행 금지). app/jacoco 포트만 분리(58081/16301).
 
 ---
 
@@ -104,9 +105,9 @@ class HttpCaptureServerTokenTest {
         assertThat(get(base + "/inventory/stock?type=EXPRESS")).isEqualTo(401);
         // 토큰 접두사 경로 → stub 매칭 200 (사용자 stub은 토큰 무관)
         assertThat(get(base + "/tok123/inventory/stock?type=EXPRESS")).isEqualTo(200);
-        // 드레인된 urlPath는 토큰 제거된 깨끗한 경로
+        // 드레인: 401 미인가 probe는 제외, 인가된 호출만 + urlPath는 토큰 제거된 깨끗한 경로
         var ex = server.drainNewExchanges();
-        assertThat(ex).isNotEmpty();
+        assertThat(ex).hasSize(1);                                       // 401 probe 미포함
         assertThat(ex.get(0).urlPath()).isEqualTo("/inventory/stock");   // /tok123 없음
         assertThat(ex.get(0).status()).isEqualTo(200);
     }
@@ -133,21 +134,25 @@ Expected: FAIL — `start(Path,String)`/`port`/`hostBaseUrl` 없음.
   - 필드 `private String authToken;`. 기존 `start(Path)`는 `start(stubsDir, null)`로 위임.
   - 새 `public void start(Path stubsDir, String authToken)`:
     - `this.authToken = authToken;`
-    - WireMock 구성: `WireMockConfiguration.options().dynamicPort()` (기본 0.0.0.0 bind). authToken != null이면 `.extensions(new TokenPrefixFilter(authToken))`로 RequestFilter 등록. (extensions는 server 생성 시점 옵션이므로, `server`를 final 필드가 아니라 start에서 생성하도록 변경 — 또는 생성자에서 authToken을 받게. 구현 편의상 `server`를 start에서 생성: 필드를 `private WireMockServer server;`로 바꾸고 생성자는 비움, start에서 options 구성.)
+    - WireMock 구성: `WireMockConfiguration.options().dynamicPort()` (기본 0.0.0.0 bind). authToken != null이면 `.extensions(new TokenPrefixFilter(authToken))`로 RequestFilter 등록. extensions는 server 생성 시점 옵션이므로 **`server`를 start에서 생성**: 필드를 `private WireMockServer server;`(비-final)로 바꾸고 생성자는 비움, start에서 options 구성.
+    - 생명주기 가드(server nullable로 바뀌므로): `close()`는 `if (server != null && server.isRunning()) server.stop();`(start 전/이중 close 안전 — `AnalysisEnvironment.close()`/runAttached 실패 경로가 close를 호출). `port()`/`baseUrl()`/`hostBaseUrl()`는 start 후 호출 전제(start 전 호출 시 명확 실패는 기존과 동일).
     - `server.start(); loadStubs(stubsDir);`
   - `public int port() { return server.port(); }`
   - `public String hostBaseUrl()` — `"http://host.docker.internal:" + port() + (authToken == null ? "" : "/" + authToken)`.
-  - `drainNewExchanges`: url 기록부 `event.getRequest().getUrl().split("\\?")[0]`를, authToken != null이면 선행 `"/" + authToken` 접두사를 제거하도록 변경:
+  - `drainNewExchanges`: authToken != null이면 (a) **토큰 접두사 없는 이벤트는 skip**(필터가 401로 거부한 미인가 probe — graph 오염 방지), (b) 인가된 이벤트는 접두사를 제거해 깨끗한 path 기록:
 ```java
     String path = event.getRequest().getUrl().split("\\?")[0];
     if (authToken != null) {
         String prefix = "/" + authToken;
-        if (path.equals(prefix)) path = "/";
-        else if (path.startsWith(prefix + "/")) path = path.substring(prefix.length());
+        if (!(path.equals(prefix) || path.startsWith(prefix + "/"))) {
+            continue;   // 미인가 probe(필터 401) → 캡처에서 제외
+        }
+        path = path.equals(prefix) ? "/" : path.substring(prefix.length());
     }
     // ... new RawHttpExchange(method, path, query, ...)
 ```
-  - **TokenPrefixFilter**(내부/별도 클래스, `StubRequestFilterV2` 구현):
+    (drainedCount는 skip 여부와 무관하게 전체 이벤트 수로 갱신 — 인덱싱 일관. fresh 윈도우 내 skip만 적용.)
+  - **TokenPrefixFilter**(내부/별도 클래스, `StubRequestFilterV2` 구현). WireMock 3.13.0 API 검증 완료: `RequestWrapper.Builder`의 URL 변환은 **`transformAbsoluteUrl(FieldTransformer<String>)`** (relative-URL 전용 메서드 없음 — `getUrl()`은 absolute URL에서 파생). `RequestFilterAction.stopWith(...)`/`continueWith(...)`, `ResponseDefinition.notAuthorised()` 존재. `StubRequestFilterV2` 기본값 `applyToStubs()=true`/`applyToAdmin()=false`(우리 용도에 적합 — override 불필요).
 ```java
     private static final class TokenPrefixFilter implements
             com.github.tomakehurst.wiremock.extension.requestfilter.StubRequestFilterV2 {
@@ -164,19 +169,20 @@ Expected: FAIL — `start(Path,String)`/`port`/`hostBaseUrl` 없음.
                         com.github.tomakehurst.wiremock.http.ResponseDefinition.notAuthorised());  // 401
             }
             String stripped = url.substring(prefix.length());
-            if (stripped.isEmpty() || stripped.charAt(0) != '/' ) stripped = "/" + stripped;
+            final String strippedPath = stripped.isEmpty() || stripped.charAt(0) != '/' ? "/" + stripped : stripped;
+            // absolute URL에서 토큰 접두사 제거 → getUrl()/stub 매칭이 prefix 없는 경로로 이뤄짐.
             com.github.tomakehurst.wiremock.http.Request wrapped =
                 com.github.tomakehurst.wiremock.extension.requestfilter.RequestWrapper.create()
-                    .transformAbsoluteRequestUrl(u -> u)   // 상대 URL만 바꾸려면 아래 사용
+                    .transformAbsoluteUrl(absUrl -> {
+                        int pathStart = absUrl.indexOf('/', absUrl.indexOf("//") + 2);
+                        return pathStart < 0 ? absUrl : absUrl.substring(0, pathStart) + strippedPath;
+                    })
                     .wrap(request);
-            // 실제 URL rewrite: RequestWrapper.Builder의 URL 변환 메서드로 prefix 제거.
-            // (WireMock 3.13 정확한 메서드명은 구현 시 확인 — setUrl/transformRequestUrl 등. 목표:
-            //  필터 이후 stub 매칭이 prefix 없는 url로 이뤄지게 한다.)
             return com.github.tomakehurst.wiremock.extension.requestfilter.RequestFilterAction.continueWith(wrapped);
         }
     }
 ```
-  > 구현 주의: `RequestWrapper`로 URL의 토큰 접두사를 제거해 `continueWith`해야 사용자 stub(토큰 무관)이 매칭된다. WireMock 3.13의 정확한 URL 변환 API(예: `RequestWrapper.Builder`의 url 변환 메서드)는 구현 시 확인하고, 단위 테스트(Step 1의 200 매칭)가 이를 검증한다. `ResponseDefinition.notAuthorised()` 명칭도 버전 확인(없으면 `new ResponseDefinitionBuilder().withStatus(401).build()`).
+  > 단위 테스트(Step 1의 토큰 경로 200 매칭 + 무토큰 401)가 strip/거부를 검증한다. `ResponseDefinition.notAuthorised()`가 버전에 없으면 `new com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder().withStatus(401).build()`.
 
 - [ ] **Step 4: 통과 확인** — Run: `./gradlew :graph-rag-builder:test --tests '*HttpCaptureServerTokenTest*'`
 Expected: PASS (3 tests). 기존 `HttpCaptureServer` 사용처(analysis) 회귀: `./gradlew :graph-rag-builder:test --tests '*BuilderE2eTest*'`는 Docker 필요 — 최소 `:graph-rag-builder:compileJava`로 컴파일 확인.
@@ -218,23 +224,29 @@ Expected: PASS (3 tests). 기존 `HttpCaptureServer` 사용처(analysis) 회귀:
 ```
   - override `Spec.extraEnv`에 들어갈 env를 `otelEnv + sutEnv` 병합(LinkedHashMap에 둘 다 put). `addHostGateway`/`disableBatch` 인자: addHostGateway는 **항상 true**(`new OverrideComposeGenerator.Spec(..., mergedEnv, true, otelSqlCapture)`); disableBatch는 기존대로 otelSqlCapture.
   - env 생성: `new AttachedComposeEnvironment(envCfg, config.dbConfig().type(), otlpReceiver, httpCapture)`.
-  - **실패 정리**: httpCapture(및 otlpReceiver) 시작 이후 try-with-resources 진입 전 예외 시 stop. try-with-resources가 둘을 env로 넘기므로, 위험 구간은 `httpCapture.start(...)` ~ `new AttachedComposeEnvironment(...)` 사이(override 생성/쓰기). 이 구간을 try/catch로 감싸 예외 시 `httpCapture.close()`(+otlpReceiver.stop()) 후 rethrow:
+  - **실패 정리(이중 close 없이 정확히 1회)**: ownership 플래그로, env가 자원을 넘겨받기 전 실패에서만 finally가 닫는다. env 구성 성공 후엔 try-with-resources의 `env.close()`가 둘을 닫는다:
 ```java
+        boolean handedOff = false;
         try {
-            String overrideYaml = ...; Files.writeString(overridePath, overrideYaml);
+            String overrideYaml = new OverrideComposeGenerator().generate(spec);   // spec: addHostGateway=true
+            Files.writeString(overridePath, overrideYaml);
             var envCfg = ...;
-            try (AttachedComposeEnvironment env =
-                    new AttachedComposeEnvironment(envCfg, config.dbConfig().type(), otlpReceiver, httpCapture)) {
+            AttachedComposeEnvironment env = new AttachedComposeEnvironment(
+                    envCfg, config.dbConfig().type(), otlpReceiver, httpCapture);
+            handedOff = true;                       // 이제 env가 httpCapture+otlpReceiver 소유
+            try (env) {                             // Java 9+ effectively-final resource
                 env.start(workDir);
-                return explore(...);
+                return explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                        responseDtoFieldSets, plan, enumConstants, acc);
             }
-        } catch (RuntimeException | java.io.IOException e) {
-            httpCapture.close();
-            if (otlpReceiver != null) otlpReceiver.stop();
-            throw e;
+        } finally {
+            if (!handedOff) {
+                httpCapture.close();
+                if (otlpReceiver != null) otlpReceiver.stop();
+            }
         }
 ```
-    (try-with-resources 성공 시 env.close()가 둘을 닫고, catch는 그 전 실패만 처리 — 이중 close 무해하나 주의. 더 단순히: try-with-resources 진입 전 구간만 별도 try/finally로 감싸도 됨. 구현자가 이중-close 없는 형태로 정리.)
+    (env.start()/explore가 던져도 try-with-resources가 env.close()로 1회 닫고, handedOff=true라 finally는 skip. 구성 전 실패는 handedOff=false → finally가 1회 닫음.)
   - import: `io.graphrag.builder.env.HttpCaptureServer`.
 - [ ] **Step 2: OverrideComposeGenerator host-gateway 항상** — 위 Spec 인자에서 addHostGateway=true 고정(코드 1줄). `OverrideComposeGeneratorTest`에 attach가 항상 host-gateway 주입함을 검증하는 단위가 없으면 추가(기존 테스트가 false 케이스만 보면 true 케이스 추가).
 - [ ] **Step 3: 컴파일 + 단위** — Run: `./gradlew :graph-rag-builder:test --tests '*OverrideComposeGenerator*'` + `:graph-rag-builder:compileJava`.
