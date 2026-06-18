@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -20,27 +21,33 @@ public class SchemaExtractor {
 
     public List<TableSchema> extract(Connection connection) throws SQLException {
         DatabaseMetaData meta = connection.getMetaData();
-        List<TableSchema> tables = new ArrayList<>();
+        // MySQL/MariaDB는 catalog=database, schema=null; Postgres 등은 catalog=null, schema="public".
+        String product = meta.getDatabaseProductName().toLowerCase(Locale.ROOT);
+        boolean mysqlFamily = product.contains("mysql") || product.contains("mariadb");
+        String catalog = mysqlFamily ? connection.getCatalog() : null;
+        String schema = mysqlFamily ? null : "public";
 
-        try (ResultSet rs = meta.getTables(null, "public", "%", new String[]{"TABLE"})) {
+        List<TableSchema> tables = new ArrayList<>();
+        try (ResultSet rs = meta.getTables(catalog, schema, "%", new String[]{"TABLE"})) {
             while (rs.next()) {
-                tables.add(extractTable(meta, rs.getString("TABLE_NAME")));
+                tables.add(extractTable(meta, catalog, schema, rs.getString("TABLE_NAME")));
             }
         }
         tables.sort((a, b) -> a.name().compareTo(b.name()));
         return tables;
     }
 
-    private TableSchema extractTable(DatabaseMetaData meta, String table) throws SQLException {
+    private TableSchema extractTable(DatabaseMetaData meta, String catalog, String schema, String table)
+            throws SQLException {
         Set<String> primaryKeys = new LinkedHashSet<>();
-        try (ResultSet rs = meta.getPrimaryKeys(null, "public", table)) {
+        try (ResultSet rs = meta.getPrimaryKeys(catalog, schema, table)) {
             while (rs.next()) {
                 primaryKeys.add(rs.getString("COLUMN_NAME"));
             }
         }
 
         List<ColumnSchema> columns = new ArrayList<>();
-        try (ResultSet rs = meta.getColumns(null, "public", table, "%")) {
+        try (ResultSet rs = meta.getColumns(catalog, schema, table, "%")) {
             while (rs.next()) {
                 String name = rs.getString("COLUMN_NAME");
                 columns.add(new ColumnSchema(
@@ -53,7 +60,7 @@ public class SchemaExtractor {
         }
 
         List<ForeignKey> foreignKeys = new ArrayList<>();
-        try (ResultSet rs = meta.getImportedKeys(null, "public", table)) {
+        try (ResultSet rs = meta.getImportedKeys(catalog, schema, table)) {
             while (rs.next()) {
                 foreignKeys.add(new ForeignKey(
                         rs.getString("FKCOLUMN_NAME"),
@@ -63,7 +70,7 @@ public class SchemaExtractor {
         }
 
         Map<String, List<String>> uniqueIndexes = new LinkedHashMap<>();
-        try (ResultSet rs = meta.getIndexInfo(null, "public", table, true, false)) {
+        try (ResultSet rs = meta.getIndexInfo(catalog, schema, table, true, false)) {
             while (rs.next()) {
                 String indexName = rs.getString("INDEX_NAME");
                 String column = rs.getString("COLUMN_NAME");

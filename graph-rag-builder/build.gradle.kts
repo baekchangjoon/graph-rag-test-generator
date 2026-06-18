@@ -36,6 +36,7 @@ dependencies {
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
+    testImplementation(libs.testcontainers.junit)   // @Testcontainers/@Container 확장
 }
 
 tasks.processResources {
