@@ -53,10 +53,11 @@ class KafkaHelperTest {
 
         // 1. Subscribe to the topic asynchronously
         kafkaHelper.subscribe(topic);
+        kafkaHelper.subscribe(topic); // Double-subscribe to verify duplicate protection
 
         // Wait briefly for consumer group subscription/assignment to be ready
         // (with auto.offset.reset = latest, we want consumer to be ready before we produce)
-        Thread.sleep(1000);
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10)).until(() -> kafkaHelper.isAssigned(topic));
 
         // 2. Publish a message to the topic
         String key = "key-1";
