@@ -29,6 +29,10 @@ public class CoverageGuidedFuzzer implements PathExplorer {
     @Override
     public ExplorationResult explore(EndpointTarget target, ExplorationBudget budget,
                                      KnownCoverage known) {
+        // 컬렉션 body는 happy-only(HeuristicExplorer가 이미 1회 실행) — fuzzer는 object 변이만 한다.
+        if (!(target.baseInput() instanceof ObjectNode)) {
+            return new ExplorationResult(new ArrayList<>());
+        }
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
         List<KnownCoverage.Seed> queue = new ArrayList<>(known.seeds());
         queue.sort(Comparator.comparing(seed -> seed.status() / 100 != 2));   // 2xx 먼저 (stable)

@@ -1,5 +1,6 @@
 package io.graphrag.builder.explore;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
@@ -17,16 +18,18 @@ public class HeuristicExplorer implements PathExplorer {
     public ExplorationResult explore(EndpointTarget target, ExplorationBudget budget,
                                      KnownCoverage known) {
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
-        ObjectNode base = target.baseInput().deepCopy();
+        JsonNode base = target.baseInput().deepCopy();
 
-        tryInput(base, target, budget, known, inputs);
-        for (InputMutator.Mutation mutation : InputMutator.forTarget(target)) {
-            tryInput(mutation.apply().apply(InputMutator.copy(base)), target, budget, known, inputs);
+        tryInput(base, target, budget, known, inputs);            // happy ALWAYS runs (array or object)
+        if (base instanceof ObjectNode objBase) {                 // mutations only for object bodies
+            for (InputMutator.Mutation mutation : InputMutator.forTarget(target)) {
+                tryInput(mutation.apply().apply(InputMutator.copy(objBase)), target, budget, known, inputs);
+            }
         }
         return new ExplorationResult(inputs);
     }
 
-    private void tryInput(ObjectNode body, EndpointTarget target, ExplorationBudget budget,
+    private void tryInput(JsonNode body, EndpointTarget target, ExplorationBudget budget,
                           KnownCoverage known, List<ExplorationResult.ExploredInput> inputs) {
         if (!known.markTried(body) || !budget.tryConsume()) {
             return;

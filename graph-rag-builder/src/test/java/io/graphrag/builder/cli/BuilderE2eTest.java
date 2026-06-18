@@ -57,6 +57,7 @@ class BuilderE2eTest {
                         "post-api-auth-login", "post-api-bookings",
                         "post-api-bookings-id-advance",
                         "post-api-orders",
+                        "post-api-orders-batch", "post-api-orders-by-ids",
                         "post-api-orders-search", "post-api-promo", "post-api-signups",
                         "post-web-orders",
                         "post-web-users-userid-submit",
@@ -131,8 +132,11 @@ class BuilderE2eTest {
         assertThat(httpCall.baggagePropagated()).isTrue();
 
         // Phase 3: STOMP endpoint + 메시지 교환 캡처 (happy/missing-ref)
-        assertThat(asset.wsEndpoints()).extracting(w -> w.id()).containsExactly("ws-orders-count");
-        var wsExchanges = asset.wsExchanges();
+        // (컬렉션 WS endpoint ws-orders-count-batch가 추가됨 — scalar happy 가드는 ws-orders-count로 한정)
+        assertThat(asset.wsEndpoints()).extracting(w -> w.id())
+                .contains("ws-orders-count", "ws-orders-count-batch");
+        var wsExchanges = asset.wsExchanges().stream()
+                .filter(e -> e.wsEndpointId().equals("ws-orders-count")).toList();
         assertThat(wsExchanges).hasSize(2);
         var wsHappy = wsExchanges.get(0);
         assertThat(wsHappy.payload().get("userId").asText()).isEqualTo("probe-userId");

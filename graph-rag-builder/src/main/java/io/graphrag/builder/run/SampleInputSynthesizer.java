@@ -1,6 +1,12 @@
 package io.graphrag.builder.run;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.BooleanNode;
+import com.fasterxml.jackson.databind.node.DoubleNode;
+import com.fasterxml.jackson.databind.node.LongNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
@@ -42,6 +48,28 @@ public class SampleInputSynthesizer {
      */
     public SynthesizedInput synthesize(BodyShape shape, List<TableSchema> tables,
                                        Map<String, List<FieldConstraint>> fieldConstraints) {
+        if (shape.collection()) {
+            // 컬렉션 요청 body는 happy-only로 1-element array를 합성한다(변이/네거티브 파이프라인은 가드됨).
+            ArrayNode arr = Json.mapper().createArrayNode();
+            List<SynthesizedInput.SeedRow> seeds = new ArrayList<>();
+            if (shape.fields().isEmpty()) {                 // scalar/enum element
+                arr.add(scalarValue(shape.javaType(), List.of()));
+            } else {                                         // DTO element
+                ObjResult el = synthesizeObject(shape, tables, fieldConstraints);
+                arr.add(el.body());
+                seeds.addAll(el.seeds());
+            }
+            return new SynthesizedInput(arr, seeds);
+        }
+        ObjResult o = synthesizeObject(shape, tables, fieldConstraints);
+        return new SynthesizedInput(o.body(), o.seeds());
+    }
+
+    private record ObjResult(ObjectNode body, List<SynthesizedInput.SeedRow> seeds) {
+    }
+
+    private ObjResult synthesizeObject(BodyShape shape, List<TableSchema> tables,
+                                       Map<String, List<FieldConstraint>> fieldConstraints) {
         ObjectNode body = Json.mapper().createObjectNode();
         List<SynthesizedInput.SeedRow> seeds = new ArrayList<>();
 
@@ -57,7 +85,7 @@ public class SampleInputSynthesizer {
                 putScalar(body, field, fieldConstraints.getOrDefault(field.name(), List.of()));
             }
         }
-        return new SynthesizedInput(body, seeds);
+        return new ObjResult(body, seeds);
     }
 
     private record FkTarget(String parentTable, String parentColumn) {
@@ -124,16 +152,29 @@ public class SampleInputSynthesizer {
             "java.lang.Double", "double", "java.lang.Float", "float", "java.math.BigDecimal");
 
     private void putScalar(ObjectNode body, BodyShape.BodyField field, List<FieldConstraint> cons) {
-        String t = field.javaType();
-        if (INT_TYPES.contains(t)) { body.put(field.name(), boundedInt(cons)); return; }
-        if (FLOAT_TYPES.contains(t)) { body.put(field.name(), boundedFloat(cons)); return; }
-        if (t.equals("java.lang.Boolean") || t.equals("boolean")) { body.put(field.name(), true); return; }
+        body.set(field.name(), scalarValue(field.javaType(), cons, field.name()));
+    }
+
+    /** 컬렉션 element 스칼라/enum 값 합성용 — 필드명 의존(email 폴백, sample-prefix)이 없는 진입점. */
+    private JsonNode scalarValue(String javaType, List<FieldConstraint> cons) {
+        return scalarValue(javaType, cons, null);
+    }
+
+    /**
+     * 결정적 스칼라 Jackson 노드. fieldName!=null이면 필드명 기반 휴리스틱(email 추정, sample-prefix)을
+     * 적용한다(object body 경로). null이면 element-only 경로로 타입만 본다.
+     */
+    private JsonNode scalarValue(String javaType, List<FieldConstraint> cons, String fieldName) {
+        String t = javaType;
+        if (INT_TYPES.contains(t)) { return LongNode.valueOf(boundedInt(cons)); }
+        if (FLOAT_TYPES.contains(t)) { return DoubleNode.valueOf(boundedFloat(cons)); }
+        if (t.equals("java.lang.Boolean") || t.equals("boolean")) { return BooleanNode.TRUE; }
         switch (t) {   // 시간 타입 — ISO-8601 문자열 (SUT Jackson이 string→LocalDate 역직렬화)
-            case "java.time.LocalDate" -> { body.put(field.name(), "2037-01-01"); return; }
-            case "java.time.LocalDateTime" -> { body.put(field.name(), "2037-01-01T00:00:00"); return; }
-            case "java.time.LocalTime" -> { body.put(field.name(), "00:00:00"); return; }
+            case "java.time.LocalDate" -> { return TextNode.valueOf("2037-01-01"); }
+            case "java.time.LocalDateTime" -> { return TextNode.valueOf("2037-01-01T00:00:00"); }
+            case "java.time.LocalTime" -> { return TextNode.valueOf("00:00:00"); }
             case "java.time.Instant", "java.time.OffsetDateTime", "java.time.ZonedDateTime" ->
-                    { body.put(field.name(), "2037-01-01T00:00:00Z"); return; }
+                    { return TextNode.valueOf("2037-01-01T00:00:00Z"); }
             default -> { }
         }
         List<String> consts = enumConstants.get(t);
@@ -143,11 +184,13 @@ public class SampleInputSynthesizer {
                     .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
                     .map(Map.Entry::getValue).findFirst().orElse(null);
         }
-        if (consts != null && !consts.isEmpty()) { body.put(field.name(), consts.get(0)); return; }
-        boolean email = field.name().toLowerCase().endsWith("email")
-                || cons.stream().anyMatch(c -> c.kind() == Kind.EMAIL);
-        String value = email ? "probe@example.com" : "sample-" + field.name();
-        body.put(field.name(), applySize(value, cons));
+        if (consts != null && !consts.isEmpty()) { return TextNode.valueOf(consts.get(0)); }
+        boolean email = fieldName != null
+                && (fieldName.toLowerCase().endsWith("email")
+                    || cons.stream().anyMatch(c -> c.kind() == Kind.EMAIL));
+        String base = email ? "probe@example.com"
+                : (fieldName != null ? "sample-" + fieldName : "sample");
+        return TextNode.valueOf(applySize(base, cons));
     }
 
     /** 정수 필드: MIN/MAX/POSITIVE/NEGATIVE 교집합 범위 내 결정적 값(기본 1 기준, 범위 충돌 시 하한 우선). */

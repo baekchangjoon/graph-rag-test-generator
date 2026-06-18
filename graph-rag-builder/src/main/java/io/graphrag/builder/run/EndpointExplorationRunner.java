@@ -153,7 +153,7 @@ public class EndpointExplorationRunner {
 
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
 
-        ObjectNode baseInput = happy.body();
+        JsonNode baseInput = happy.body();
         List<BodyShape.BodyField> mutableFields = readPath
                 ? endpoint.params().stream()
                       .filter(p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.QUERY)
@@ -266,9 +266,9 @@ public class EndpointExplorationRunner {
         // orchestrator 우회(검증 실패는 컨트롤러 진입 전 동일 400이라 status+coverageKey로 1 path 병합됨).
         // baseInput은 pass-1 happy body다(SQL 2-pass 재시드가 happy를 happy2로 바꿔도 유지 — negative-auth와 동일).
         // 어노테이션 검증엔 무해: 어떤 valid happy 값이든 단일필드 위반이 reject arm을 연다.
-        if (validBody && baseInput != null && shape != null
+        if (validBody && baseInput instanceof ObjectNode ob && shape != null && !shape.collection()
                 && !"off".equalsIgnoreCase(System.getenv("GRB_NEGATIVE_VALIDATION"))) {
-            finalPaths.addAll(exploreNegativeValidationVariants(endpoint, shape, fieldConstraints, baseInput));
+            finalPaths.addAll(exploreNegativeValidationVariants(endpoint, shape, fieldConstraints, ob));
         }
 
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
@@ -359,7 +359,7 @@ public class EndpointExplorationRunner {
                     Seeds.insert(connection, dbType, row);   // 변종 행(offset PK) — 기존 happy 행과 공존
                 }
                 boolean gate = variant.guard().kind() != ConstraintExtractor.GuardKind.TEMPORAL;
-                ObjectNode body = variant.input().body().deepCopy();
+                ObjectNode body = (ObjectNode) variant.input().body().deepCopy();
                 for (EndpointParam param : endpoint.params()) {
                     if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
                         body.put(param.name(), gate);
@@ -398,7 +398,7 @@ public class EndpointExplorationRunner {
     /** backend가 drain한 ParsedSql를 CapturedSql로 환원 (모든 캡처 경로 공통). */
     private List<CapturedSql> captureSqlFromParsed(String pathId, JsonNode body,
                                                    List<ParsedSql> parsed) {
-        Set<String> apiValues = bodyValues(body);
+        Set<String> apiValues = collectBodyValues(body);
         List<CapturedSql> captured = new ArrayList<>();
         int sequence = 0;
         for (ParsedSql statement : parsed) {
@@ -784,8 +784,14 @@ public class EndpointExplorationRunner {
             }
             SynthesizedInput bodyPart = new SampleInputSynthesizer(enumConstants)
                     .synthesize(shape, tables, fieldConstraints);
-            ObjectNode merged = bodyPart.body().deepCopy();
-            merged.setAll(pathPart.body());   // path/query 우선
+            JsonNode bn = bodyPart.body();
+            if (!(bn instanceof ObjectNode bo)) {
+                // 컬렉션 body(array)는 path/query와 병합 불가 — body를 그대로 둔다(by-id+컬렉션 body는
+                // 드문 조합이며, path param은 URL에서 buildPathAndQuery가 처리). seed는 bodyPart 것을 채택.
+                return new SynthesizedInput(bn, bodyPart.seeds());
+            }
+            ObjectNode merged = bo.deepCopy();
+            merged.setAll((ObjectNode) pathPart.body());   // path/query 우선
             List<SynthesizedInput.SeedRow> seeds = new ArrayList<>(pathPart.seeds());
             for (SynthesizedInput.SeedRow s : bodyPart.seeds()) {
                 boolean dup = seeds.stream().anyMatch(e -> e.table().equals(s.table())
@@ -1015,14 +1021,32 @@ public class EndpointExplorationRunner {
                 outcome.pathsByEngine(), solverRelevantMissed);
     }
 
-    private static Set<String> bodyValues(JsonNode body) {
-        Set<String> values = new HashSet<>();
-        body.fields().forEachRemaining(entry -> {
-            if (!entry.getValue().isNull()) {
-                values.add(entry.getValue().asText());
+    /**
+     * body의 모든 스칼라 값을 수집(API_PARAM 분류용). object는 1단 필드값, array는 각 element를 재귀.
+     * 컬렉션 body의 element 필드값도 SQL 바인딩과 매칭되게 한다. Kafka/WS 캡처 러너와 공용(DRY).
+     */
+    static Set<String> collectBodyValues(JsonNode body) {
+        Set<String> v = new HashSet<>();
+        if (body instanceof com.fasterxml.jackson.databind.node.ArrayNode arr) {
+            arr.forEach(e -> addNodeValues(e, v));
+        } else {
+            addNodeValues(body, v);
+        }
+        return v;
+    }
+
+    private static void addNodeValues(JsonNode node, Set<String> v) {
+        if (node.isValueNode()) {
+            if (!node.isNull()) {
+                v.add(node.asText());
+            }
+            return;
+        }
+        node.fields().forEachRemaining(e -> {
+            if (!e.getValue().isNull()) {
+                v.add(e.getValue().asText());
             }
         });
-        return values;
     }
 
     private static JsonNode parseJsonOrNull(String body) {

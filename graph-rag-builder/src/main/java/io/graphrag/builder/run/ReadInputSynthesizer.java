@@ -190,7 +190,7 @@ public class ReadInputSynthesizer {
                             ? new SynthesizedInput.SeedRow(targetRow.table(), cols, vals)
                             : base.seeds().get(i));   // FK 부모 공유(동일 PK)
                 }
-                ObjectNode vbody = base.body().deepCopy();
+                ObjectNode vbody = (ObjectNode) base.body().deepCopy();
                 if (pkColumn != null) {
                     for (EndpointParam param : endpoint.params()) {
                         if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)

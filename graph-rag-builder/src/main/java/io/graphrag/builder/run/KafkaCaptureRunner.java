@@ -25,7 +25,6 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
@@ -84,15 +83,18 @@ public class KafkaCaptureRunner {
         List<CapturedSql> allSql = new ArrayList<>();
         ExecutionDataStore cumulativeExec = new ExecutionDataStore();
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(producerProps())) {
-            ObjectNode payload = happy.body();
+            JsonNode payload = happy.body();
             String exchangeId = consumer.id() + "-x1";
-            String key = payload.has("userId") ? payload.get("userId").asText() : exchangeId;
+            String key = payload.isObject() && payload.has("userId")
+                    ? payload.get("userId").asText() : exchangeId;
             // happy: SQL 출현까지 폴링 (consumer가 만든 행 캡처)
             List<CapturedSql> happySql = publishAndCapture(producer, consumer, exchangeId, payload, key,
                     false, true, exchanges, allSql, cumulativeExec);
 
-            // 반대-arm 변종(결측-필드 / 중복) — GRB_KAFKA_VARIANTS=off면 skip.
-            if (!"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_VARIANTS"))) {
+            // 반대-arm 변종(결측-필드 / 중복) — GRB_KAFKA_VARIANTS=off면 skip. 컬렉션(array) payload는
+            // happy-only(변종은 ObjectNode 전제) → object일 때만 변종 발행.
+            if (payload instanceof ObjectNode objPayload
+                    && !"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_VARIANTS"))) {
                 // missing-field(결정적, 하드): 빈 payload → required-필드 null-guard early-return arm.
                 publishAndCapture(producer, consumer, consumer.id() + "-missing",
                         missingFieldPayload(), variantKey(consumer, "missing"),
@@ -100,7 +102,7 @@ public class KafkaCaptureRunner {
                 // duplicate(best-effort): happy 행 커밋 가시성 확인 후 동일 payload 재발행 → dedup-skip arm.
                 if (awaitHappyRowCommitted(happySql, tables)) {
                     publishAndCapture(producer, consumer, consumer.id() + "-dup",
-                            payload.deepCopy(), key, true, false, exchanges, allSql, cumulativeExec);
+                            objPayload.deepCopy(), key, true, false, exchanges, allSql, cumulativeExec);
                 }
             }
         }
@@ -109,7 +111,7 @@ public class KafkaCaptureRunner {
 
     /** 1회 발행 + (SQL await | 고정 settle) + 커버리지 delta + SQL/교환 캡처. */
     private List<CapturedSql> publishAndCapture(KafkaProducer<String, String> producer,
-            KafkaConsumer consumer, String exchangeId, ObjectNode payload, String key, boolean variant,
+            KafkaConsumer consumer, String exchangeId, JsonNode payload, String key, boolean variant,
             boolean awaitSql, List<KafkaExchange> exchanges, List<CapturedSql> allSql,
             ExecutionDataStore cumulativeExec) throws Exception {
         coverage.dump(true);   // baseline: 직전 구간 컷, 이 발행의 delta만 측정
@@ -196,12 +198,7 @@ public class KafkaCaptureRunner {
     }
 
     private List<CapturedSql> captureSql(String exchangeId, JsonNode payload, List<ParsedSql> parsed) {
-        Set<String> payloadValues = new HashSet<>();
-        payload.fields().forEachRemaining(entry -> {
-            if (!entry.getValue().isNull()) {
-                payloadValues.add(entry.getValue().asText());
-            }
-        });
+        Set<String> payloadValues = EndpointExplorationRunner.collectBodyValues(payload);
         List<CapturedSql> captured = new ArrayList<>();
         int sequence = 0;
         for (ParsedSql statement : parsed) {
