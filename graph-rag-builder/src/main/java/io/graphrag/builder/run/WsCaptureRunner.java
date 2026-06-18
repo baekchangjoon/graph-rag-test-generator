@@ -23,7 +23,6 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -64,14 +63,17 @@ public class WsCaptureRunner {
             Seeds.insert(connection, dbType, seed);
         }
 
-        List<ObjectNode> payloads = new ArrayList<>();
+        List<JsonNode> payloads = new ArrayList<>();
         payloads.add(happy.body());
-        for (BodyShape.BodyField field : shape.fields()) {
-            if (field.javaType().equals("java.lang.String")
-                    && field.name().endsWith("Id") && field.name().length() > 2) {
-                ObjectNode variant = happy.body().deepCopy();
-                variant.put(field.name(), "missing-" + field.name());
-                payloads.add(variant);
+        // missing-ref 변종은 ObjectNode payload 전제 — 컬렉션(array) body는 happy-only.
+        if (happy.body() instanceof ObjectNode happyObj) {
+            for (BodyShape.BodyField field : shape.fields()) {
+                if (field.javaType().equals("java.lang.String")
+                        && field.name().endsWith("Id") && field.name().length() > 2) {
+                    ObjectNode variant = happyObj.deepCopy();
+                    variant.put(field.name(), "missing-" + field.name());
+                    payloads.add(variant);
+                }
             }
         }
 
@@ -80,7 +82,7 @@ public class WsCaptureRunner {
         ExecutionDataStore cumulativeExec = new ExecutionDataStore();
         coverage.dump(true);   // baseline: boot/seed 구간 제거 후 교환별 핸들러 delta만 측정
         int sequence = 0;
-        for (ObjectNode payload : payloads) {
+        for (JsonNode payload : payloads) {
             sequence++;
             String exchangeId = endpoint.id() + "-x" + sequence;
             long logStart = sut.logOffset();
@@ -110,12 +112,7 @@ public class WsCaptureRunner {
     }
 
     private List<CapturedSql> captureSql(String exchangeId, JsonNode payload, String logSegment) {
-        Set<String> payloadValues = new HashSet<>();
-        payload.fields().forEachRemaining(entry -> {
-            if (!entry.getValue().isNull()) {
-                payloadValues.add(entry.getValue().asText());
-            }
-        });
+        Set<String> payloadValues = EndpointExplorationRunner.collectBodyValues(payload);
         List<CapturedSql> captured = new ArrayList<>();
         int sequence = 0;
         for (ParsedSql statement : SqlLogParser.parse(logSegment)) {

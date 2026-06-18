@@ -1,6 +1,6 @@
 package io.graphrag.builder.run;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ForeignKey;
@@ -68,7 +68,7 @@ class SampleInputSynthesizerTest {
     @Test
     void synthesize_enum_date_email_validValues() {
         Map<String, List<String>> enums = Map.of("io.x.PriceTier", List.of("BASIC", "VIP"));
-        ObjectNode body = new SampleInputSynthesizer(enums).synthesize(shape(
+        JsonNode body = new SampleInputSynthesizer(enums).synthesize(shape(
                 new BodyShape.BodyField("priceTier", "io.x.PriceTier"),
                 new BodyShape.BodyField("checkInDate", "java.time.LocalDate"),
                 new BodyShape.BodyField("ownerEmail", "java.lang.String"),
@@ -84,7 +84,7 @@ class SampleInputSynthesizerTest {
 
     @Test
     void synthesize_noArgCtor_defaultsForEnum() {   // 빈 맵 호환
-        ObjectNode body = new SampleInputSynthesizer().synthesize(shape(
+        JsonNode body = new SampleInputSynthesizer().synthesize(shape(
                 new BodyShape.BodyField("priceTier", "io.x.PriceTier")), List.of()).body();
         assertThat(body.get("priceTier").asText()).isEqualTo("sample-priceTier");
     }
@@ -99,7 +99,7 @@ class SampleInputSynthesizerTest {
     void synthesize_minConstraint_intAtLeastMin() {
         var fcMap = Map.of("roomNumber", List.of(
                 fc("roomNumber", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MIN, 100)));
-        ObjectNode body = new SampleInputSynthesizer().synthesize(
+        JsonNode body = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("roomNumber", "int")), List.of(), fcMap).body();
         assertThat(body.get("roomNumber").asInt()).isGreaterThanOrEqualTo(100);
     }
@@ -109,7 +109,7 @@ class SampleInputSynthesizerTest {
         var fcMap = Map.of("nights", List.of(
                 fc("nights", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MIN, 1),
                 fc("nights", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.MAX, 30)));
-        ObjectNode body = new SampleInputSynthesizer().synthesize(
+        JsonNode body = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("nights", "int")), List.of(), fcMap).body();
         assertThat(body.get("nights").asInt()).isBetween(1, 30);
     }
@@ -118,7 +118,7 @@ class SampleInputSynthesizerTest {
     void synthesize_negativeConstraint_intNegative() {
         var fcMap = Map.of("delta", List.of(
                 fc("delta", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.NEGATIVE, 0)));
-        ObjectNode body = new SampleInputSynthesizer().synthesize(
+        JsonNode body = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("delta", "int")), List.of(), fcMap).body();
         assertThat(body.get("delta").asInt()).isLessThan(0);
     }
@@ -128,7 +128,7 @@ class SampleInputSynthesizerTest {
         var fcMap = Map.of("petName", List.of(
                 fc("petName", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.SIZE_MIN, 2),
                 fc("petName", io.graphrag.builder.index.ValidationConstraintExtractor.Kind.SIZE_MAX, 5)));
-        ObjectNode body = new SampleInputSynthesizer().synthesize(
+        JsonNode body = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("petName", "java.lang.String")), List.of(), fcMap).body();
         assertThat(body.get("petName").asText().length()).isBetween(2, 5);
     }
@@ -144,7 +144,7 @@ class SampleInputSynthesizerTest {
                 new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "roomNumber", "<", 100, 12),
                 new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "create", "roomNumber", ">", 499, 13));
         var merged = EndpointExplorationRunner.mergeComparisonBounds(Map.of(), comparisons, shape);
-        ObjectNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
+        JsonNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
         assertThat(body.get("nights").asInt()).isBetween(1, 30);
         assertThat(body.get("roomNumber").asInt()).isBetween(100, 499);
     }
@@ -156,13 +156,13 @@ class SampleInputSynthesizerTest {
         var comparisons = List.of(
                 new io.graphrag.builder.index.ConstraintExtractor.Comparison("x.Svc", "m", "nights", ">", 7, 1));
         var merged = EndpointExplorationRunner.mergeComparisonBounds(Map.of(), comparisons, shape);
-        ObjectNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
+        JsonNode body = new SampleInputSynthesizer().synthesize(shape, List.of(), merged).body();
         assertThat(body.get("nights").asInt()).isEqualTo(1);   // 변형 없음
     }
 
     @Test
     void synthesize_unconstrainedFloat_moderateLargeDefault() {
-        ObjectNode body = new SampleInputSynthesizer().synthesize(
+        JsonNode body = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("depositAmount", "double")), List.of(), Map.of()).body();
         assertThat(body.get("depositAmount").asDouble()).isGreaterThanOrEqualTo(1000.0);
     }
@@ -178,10 +178,10 @@ class SampleInputSynthesizerTest {
 
     @Test
     void synthesize_emptyConstraints_unchanged() {
-        ObjectNode withEmpty = new SampleInputSynthesizer().synthesize(
+        JsonNode withEmpty = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("amount", "int"),
                         new BodyShape.BodyField("type", "java.lang.String")), List.of(), Map.of()).body();
-        ObjectNode legacy = new SampleInputSynthesizer().synthesize(
+        JsonNode legacy = new SampleInputSynthesizer().synthesize(
                 shape(new BodyShape.BodyField("amount", "int"),
                         new BodyShape.BodyField("type", "java.lang.String")), List.of()).body();
         assertThat(withEmpty).isEqualTo(legacy);
