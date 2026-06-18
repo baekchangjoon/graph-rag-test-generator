@@ -37,6 +37,7 @@ services:
   # ── MySQL 8.0 (binlog ROW) ───────────────────────────────────────────────────
   mysql:
     image: mysql:8.0
+    # my.cnf and command: apply the same binlog settings (belt-and-suspenders)
     command: ["--server-id=1", "--log-bin=mysql-bin", "--binlog-format=ROW"]
     environment:
       MYSQL_ROOT_PASSWORD: rootpw
@@ -45,6 +46,7 @@ services:
       MYSQL_PASSWORD: apppw
     volumes:
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpw"]
       interval: 10s
@@ -88,6 +90,12 @@ services:
       LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
       LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
     # ports published via docker-compose.e2e.yml overlay
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   # ── B: reservation ──────────────────────────────────────────────────────────
   reservation:
@@ -99,9 +107,16 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/reservationdb
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: apppw
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
       LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
 
   # ── C: ledger ────────────────────────────────────────────────────────────────
   ledger:
@@ -114,6 +129,13 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ledgerdb
       SPRING_DATASOURCE_USERNAME: app
       SPRING_DATASOURCE_PASSWORD: apppw
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
       EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
       LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
