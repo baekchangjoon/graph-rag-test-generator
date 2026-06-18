@@ -58,9 +58,11 @@ public class PartitionedGraphStore implements GraphStore {
                 groupBy(asset.wsEndpoints(), w -> partitionFor(ownerPartition, w.id()));
         Map<String, List<io.graphrag.model.WsExchange>> wsExchanges =
                 groupBy(asset.wsExchanges(), x -> partitionFor(ownerPartition, x.id()));
+        Map<String, List<io.graphrag.model.CapturedEventEmit>> capturedEventEmits =
+                groupBy(asset.capturedEventEmits(), e -> partitionFor(ownerPartition, e.pathId()));
 
         Map<String, GraphAsset> shards = new LinkedHashMap<>();
-        Stream.of(endpoints, paths, sql, httpCalls, wsEndpoints, wsExchanges)
+        Stream.of(endpoints, paths, sql, httpCalls, wsEndpoints, wsExchanges, capturedEventEmits)
                 .flatMap(m -> m.keySet().stream()).sorted().distinct()
                 .forEach(key -> shards.put(key, new GraphAsset(null, null,
                         endpoints.getOrDefault(key, List.of()),
@@ -71,7 +73,8 @@ public class PartitionedGraphStore implements GraphStore {
                         wsEndpoints.getOrDefault(key, List.of()),
                         wsExchanges.getOrDefault(key, List.of()),
                         List.of(), List.of(),
-                        List.of())));
+                        List.of(),
+                        capturedEventEmits.getOrDefault(key, List.of()))));
 
         GraphAsset global = new GraphAsset(asset.sutId(), asset.commitSha(),
                 List.of(), List.of(), List.of(), asset.tables(), asset.mappers(),
@@ -104,6 +107,7 @@ public class PartitionedGraphStore implements GraphStore {
             List<io.graphrag.model.CapturedHttpCall> httpCalls = new ArrayList<>();
             List<io.graphrag.model.WsEndpoint> wsEndpoints = new ArrayList<>();
             List<io.graphrag.model.WsExchange> wsExchanges = new ArrayList<>();
+            List<io.graphrag.model.CapturedEventEmit> capturedEventEmits = new ArrayList<>();
             try (Stream<Path> files = Files.list(partitionsDir())) {
                 for (Path file : files.filter(p -> p.toString().endsWith(".json"))
                         .sorted().toList()) {
@@ -114,12 +118,14 @@ public class PartitionedGraphStore implements GraphStore {
                     httpCalls.addAll(shard.httpCalls());
                     wsEndpoints.addAll(shard.wsEndpoints());
                     wsExchanges.addAll(shard.wsExchanges());
+                    capturedEventEmits.addAll(shard.capturedEventEmits());
                 }
             }
             return new GraphAsset(global.sutId(), global.commitSha(), endpoints, paths,
                     sql, global.tables(), global.mappers(), httpCalls,
                     wsEndpoints, wsExchanges,
-                    global.kafkaConsumers(), global.kafkaExchanges(), global.seeds());
+                    global.kafkaConsumers(), global.kafkaExchanges(), global.seeds(),
+                    capturedEventEmits);
         } catch (IOException e) {
             throw new UncheckedIOException("failed to load partitioned graph from " + dir, e);
         }

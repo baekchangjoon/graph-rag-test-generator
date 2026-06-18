@@ -424,5 +424,17 @@
         "sql-ws-orders-count-x2-1"
       ]
     }
+  ],
+  "capturedEventEmits": [
+    {
+      "id": "emit-1",
+      "pathId": "post-api-orders-happy",
+      "topic": "orders",
+      "key": "order-1",
+      "payload": {
+        "userId": "probe-userId",
+        "amount": 1
+      }
+    }
   ]
 }

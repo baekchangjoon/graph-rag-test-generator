@@ -58,12 +58,15 @@ public class IncrementalBuildPlanner {
         carriedPaths.forEach(p -> carriedPathIds.add(p.id()));
         carriedWsExchanges.forEach(x -> carriedPathIds.add(x.id()));
 
+        List<io.graphrag.model.CapturedEventEmit> carriedEventEmits = previous.capturedEventEmits().stream()
+                .filter(e -> carriedPathIds.contains(e.pathId())).toList();
+
         return new IncrementalPlan(explore, carriedPaths,
                 previous.sql().stream()
                         .filter(s -> carriedPathIds.contains(s.pathId())).toList(),
                 previous.httpCalls().stream()
                         .filter(c -> carriedPathIds.contains(c.pathId())).toList(),
-                carriedWsExchanges, List.of(), List.of());
+                carriedWsExchanges, List.of(), List.of(), carriedEventEmits);
     }
 
     /** --endpoint 전용: 주어진 id 집합만 탐색, 나머지는 base에서 전부 이월(Kafka·seed 포함). base=null이면 부분(이월 없음). */
@@ -72,7 +75,7 @@ public class IncrementalBuildPlanner {
             List<io.graphrag.model.KafkaConsumer> kafkaConsumers) {
         if (previous == null) {
             return new IncrementalPlan(new LinkedHashSet<>(exploreIds),
-                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                    List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         }
         // carried unit ids = present in current index AND not selected
         Set<String> carriedEndpointIds = new LinkedHashSet<>();
@@ -106,9 +109,12 @@ public class IncrementalBuildPlanner {
                 .filter(s -> carriedPathIds.contains(s.pathId()) || carriedSeedRefIds.contains(s.id()))
                 .toList();
 
+        List<io.graphrag.model.CapturedEventEmit> carriedEventEmits = previous.capturedEventEmits().stream()
+                .filter(e -> carriedPathIds.contains(e.pathId())).toList();
+
         return new IncrementalPlan(new LinkedHashSet<>(exploreIds), carriedPaths,
                 carriedSql,
                 previous.httpCalls().stream().filter(c -> carriedPathIds.contains(c.pathId())).toList(),
-                carriedWs, carriedKafka, carriedSeeds);
+                carriedWs, carriedKafka, carriedSeeds, carriedEventEmits);
     }
 }

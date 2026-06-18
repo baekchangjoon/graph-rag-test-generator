@@ -41,7 +41,8 @@ class IncrementalBuildPlannerTest {
                 List.of(new WsExchange("wsx-1", "ws-orders-count", null, "/topic/orders",
                         null, List.of("sql-ws-1"))),
                 List.of(), List.of(),
-                List.of());
+                List.of(),
+                List.of(new io.graphrag.model.CapturedEventEmit("emit-1", "p-orders-1", "orders-topic", "key-1", null)));
     }
 
     private static ExploredPath path(String id, String endpointId) {
@@ -71,6 +72,8 @@ class IncrementalBuildPlannerTest {
                 .containsExactly("http-1");
         assertThat(plan.carriedWsExchanges()).extracting(WsExchange::id)
                 .containsExactly("wsx-1");
+        assertThat(plan.carriedEventEmits()).extracting(io.graphrag.model.CapturedEventEmit::id)
+                .containsExactly("emit-1");
     }
 
     @Test
@@ -119,5 +122,6 @@ class IncrementalBuildPlannerTest {
         assertThat(plan.shouldExplore("post-api-orders")).isTrue();
         assertThat(plan.shouldExplore("anything")).isTrue();
         assertThat(plan.carriedPaths()).isEmpty();
+        assertThat(plan.carriedEventEmits()).isEmpty();
     }
 }

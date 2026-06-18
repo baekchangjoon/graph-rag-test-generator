@@ -115,4 +115,36 @@ class PartitionedGraphStoreTest {
         assertThat(Files.exists(dir.resolve("partitions/io.graphrag.sample.users.json")))
                 .isFalse();
     }
+
+    @Test
+    void testSaveAndLoadCapturedEventEmits() {
+        Endpoint orders = new Endpoint("post-api-orders", "POST", "/api/orders",
+                "io.graphrag.sample.orders.OrderController", "create", List.of(), false);
+        JsonNode body = Json.mapper().createObjectNode().put("userId", "u1");
+        ExploredPath orderPath = new ExploredPath("p-orders-1", "post-api-orders",
+                body, 201, body, List.of("sql-1"), List.of("http-1"),
+                List.of(), "heuristic", List.of(), List.of(), List.of());
+
+        io.graphrag.model.CapturedEventEmit emit = new io.graphrag.model.CapturedEventEmit(
+                "emit-1", "p-orders-1", "orders-topic", "key-1", body);
+
+        GraphAsset asset = new GraphAsset("order-service", "sha-1",
+                List.of(orders),
+                List.of(orderPath),
+                List.of(),
+                List.of(), List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(), List.of(),
+                List.of(),
+                List.of(emit));
+
+        PartitionedGraphStore store = new PartitionedGraphStore(dir);
+        store.save(asset);
+
+        GraphAsset loaded = store.load();
+
+        assertThat(loaded.capturedEventEmits()).containsExactlyInAnyOrder(emit);
+    }
 }

@@ -18,6 +18,7 @@ class FileGraphRagClientTest {
         assertThat(client.path("post-api-orders-happy").expectedStatus()).isEqualTo(201);
         assertThat(client.sqlForPath("post-api-orders-happy")).hasSize(2);
         assertThat(client.tables()).hasSize(2);
+        assertThat(client.capturedEventEmitsForPath("post-api-orders-happy")).hasSize(1);
     }
 
     @Test
