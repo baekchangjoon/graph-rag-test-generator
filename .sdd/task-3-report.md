@@ -1,68 +1,30 @@
-# Task 3 Completion Report: KafkaCaptureReceiver
+# Task 3 Fix Report
 
-## 1. Created/Modified Files
+## Overview
+This report documents the fixes applied to resolve the Important and Minor issues identified in the Task 3 Review for `KafkaCaptureReceiver.java`.
 
-### Created Files
-- [KafkaCaptureReceiver.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/main/java/io/graphrag/builder/run/KafkaCaptureReceiver.java)
-  - Manages background thread to consume messages from Kafka broker.
-  - Filters out internal topics (e.g. `_` prefix) using regex pattern: `^(?!_).+`.
-  - Parses W3C `traceparent` header to extract the 32-character hexadecimal `traceId` to support correlation.
-  - Buffers up to 10,000 maximum captured records in a thread-safe capped queue, evicting the oldest elements when full.
-  - Defensively wraps null tombstones and non-JSON string payloads in Jackson `NullNode`/`TextNode` respectively.
-  - Implements thread-safe `drain()` with waiting logic to poll matched messages for specific `traceId`s.
+## Changes Implemented
 
-- [KafkaCaptureReceiverTest.java](file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/test/java/io/graphrag/builder/run/KafkaCaptureReceiverTest.java)
-  - ImplementsJUnit 5 integration tests using Testcontainers `KafkaContainer` (utilizing standard `confluentinc/cp-kafka:7.4.0` image).
-  - Tests verify:
-    1. Base end-to-end trace correlation and message capture.
-    2. Dynamic exclusion of internal topics (e.g., `__internal-topic`).
-    3. Capped queue size eviction (sending 10,005 items and validating that the oldest 5 were correctly evicted while the newest 5 remain).
-    4. Defensive fallback for null tombstones and non-JSON payloads.
+### 1. Wait-Notify Loop Optimization
+- **Issue:** The `drain()` method was using polling with `Thread.sleep(50)` to wait for new records, which is inefficient.
+- **Resolution:** Updated the synchronization mechanism as follows:
+  - Inside `addRecord`, if a record is successfully offered to the queue, `queue.notifyAll()` is called to wake up any threads waiting in `drain`.
+  - Inside `drain`, if the requested trace record is not yet found and the deadline has not expired, the thread releases the lock and waits on the `queue` object using `queue.wait(remainingMillis)` instead of sleeping.
+  - The remaining timeout (`remainingMillis`) is dynamically recalculated on each iteration.
 
----
+### 2. AdminClient listTopics() Timeout Added
+- **Issue:** The call `admin.listTopics().names().get()` could block indefinitely under network/Kafka broker issues.
+- **Resolution:** Enforced a 5-second timeout by replacing it with `names().get(5, java.util.concurrent.TimeUnit.SECONDS)`.
 
-## 2. Test Commands Executed
+### 3. Case-Insensitive Traceparent Header Lookup
+- **Issue:** Traceparent header matching was case-sensitive.
+- **Resolution:** Replaced the simple `headers.get("traceparent")` with a case-insensitive iteration over the header map.
+- **Testing:** Added a new test `testCapturesAndDrainsRecordByTraceIdCaseInsensitive` in `KafkaCaptureReceiverTest.java` that uses a mixed-case header `TraceParent` to verify that the implementation successfully captures and drains the trace record case-insensitively.
 
-Run Gradle test command:
-```bash
-./gradlew :graph-rag-builder:test --tests io.graphrag.builder.run.KafkaCaptureReceiverTest
-```
+### 4. Simple int queueSize under Lock
+- **Issue:** The field `AtomicInteger queueSize` was used alongside explicit `synchronized (queue)` synchronization, which is redundant.
+- **Resolution:** Replaced `AtomicInteger queueSize` with a plain `int queueSize`. All accesses and mutations (increments, decrements, reads) to `queueSize` are fully synchronized under the `queue` lock.
 
----
-
-## 3. Test Console Output
-
-```text
-> Task :testlib:processResources UP-TO-DATE
-> Task :graph-rag-builder:processResources UP-TO-DATE
-> Task :graph-rag-builder:processTestResources UP-TO-DATE
-> Task :shared-model:compileJava UP-TO-DATE
-> Task :shared-model:processResources NO-SOURCE
-> Task :shared-model:classes UP-TO-DATE
-> Task :shared-model:jar UP-TO-DATE
-> Task :samples:order-service:compileJava UP-TO-DATE
-> Task :samples:order-service:processResources UP-TO-DATE
-> Task :samples:order-service:classes UP-TO-DATE
-> Task :samples:order-service:resolveMainClassName UP-TO-DATE
-> Task :testlib:compileJava UP-TO-DATE
-> Task :testlib:classes UP-TO-DATE
-> Task :testlib:jar UP-TO-DATE
-> Task :graph-rag-builder:compileJava UP-TO-DATE
-> Task :graph-rag-builder:classes UP-TO-DATE
-> Task :samples:order-service:bootJar UP-TO-DATE
-
-> Task :graph-rag-builder:compileTestJava
-Note: /Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/graph-rag-builder/src/test/java/io/graphrag/builder/run/KafkaCaptureReceiverTest.java uses or overrides a deprecated API.
-Note: Recompile with -Xlint:deprecation for details.
-
-> Task :graph-rag-builder:testClasses
-> Task :graph-rag-builder:test
-
-[Incubating] Problems report is available at: file:///Users/changjoonbaek/github_graph-rag-test-generator/graph-rag/build/reports/problems/problems-report.html
-
-BUILD SUCCESSFUL in 15s
-14 actionable tasks: 2 executed, 12 up-to-date
-```
-- Total test cases run: 4
-- Passed: 4
-- Failed: 0
+## Verification Results
+- Ran `./gradlew :graph-rag-builder:cleanTest :graph-rag-builder:test --tests io.graphrag.builder.run.KafkaCaptureReceiverTest --no-build-cache`
+- Status: **PASSED**
