@@ -1,0 +1,119 @@
+services:
+
+  # ── ZooKeeper (required by Eventuate CDC 0.17 for leadership election) ────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      # 'srvr' is the only whitelisted 4LW command in cp-zookeeper:7.5.0
+      test: ["CMD", "bash", "-c", "echo srvr | nc localhost 2181 | grep Mode"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── Kafka (KRaft-capable image but ZK-mode here to match CDC 0.17 requirements) ─
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      zookeeper: { condition: service_healthy }
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: "INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:59092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://localhost:59092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+    ports:
+      - "59092:59092"   # host (builder) reaches kafka via localhost:59092
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── MySQL 8.0 (binlog ROW) ───────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    command: ["--server-id=1", "--log-bin=mysql-bin", "--binlog-format=ROW"]
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: orderdb   # ComposeInspector key; app DBs created by init.sql
+      MYSQL_USER: app
+      MYSQL_PASSWORD: apppw
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpw"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ── Eventuate CDC service ────────────────────────────────────────────────────
+  eventuate-cdc-service:
+    image: eventuateio/eventuate-cdc-service:0.17.0.RELEASE
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      zookeeper: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/reservationdb
+      SPRING_DATASOURCE_USERNAME: cdc
+      SPRING_DATASOURCE_PASSWORD: cdcpw
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EVENTUATELOCAL_ZOOKEEPER_CONNECTION_STRING: zookeeper:2181
+      EVENTUATELOCAL_CDC_DB_USER_NAME: cdc
+      EVENTUATELOCAL_CDC_DB_PASSWORD: cdcpw
+      EVENTUATELOCAL_CDC_READER_NAME: MySqlReader
+      EVENTUATELOCAL_CDC_MYSQL_BINLOG_CLIENT_UNIQUE_ID: "1234"
+      EVENTUATE_CDC_TYPE: EventuateTram
+      # outboxId required by UnifiedCdcConfigurator.validate() (CdcPipelineReaderProperties)
+      EVENTUATE_OUTBOX_ID: "1"
+      # readOldDebeziumDbOffsetStorageTopic required by MySqlBinlogCdcPipelineReaderProperties.validate()
+      EVENTUATELOCAL_CDC_READ_OLD_DEBEZIUM_DB_OFFSET_STORAGE_TOPIC: "false"
+
+  # ── A: order-web ────────────────────────────────────────────────────────────
+  order-web:
+    build: ./order-web
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/orderdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
+      RESERVATION_URL: http://reservation:8080
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
+    # ports published via docker-compose.e2e.yml overlay
+
+  # ── B: reservation ──────────────────────────────────────────────────────────
+  reservation:
+    build: ./reservation
+    depends_on:
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/reservationdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
+      EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE
+
+  # ── C: ledger ────────────────────────────────────────────────────────────────
+  ledger:
+    build: ./ledger
+    depends_on:
+      eventuate-cdc-service: { condition: service_started }
+      mysql: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ledgerdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
+      EVENTUATELOCAL_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOGGING_LEVEL_ORG_HIBERNATE_SQL: DEBUG
+      LOGGING_LEVEL_ORG_HIBERNATE_TYPE_DESCRIPTOR_SQL_BASICBINDER: TRACE

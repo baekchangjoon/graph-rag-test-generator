@@ -5,7 +5,8 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:root}
     password: ${SPRING_DATASOURCE_PASSWORD:rootpw}
   jpa:
-    hibernate: { ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update} }
+    hibernate:
+      ddl-auto: ${SPRING_JPA_HIBERNATE_DDL_AUTO:update}
 eventuate:
   b3: { fallback: ${EVENTUATE_B3_FALLBACK:false} }
 management: { endpoints: { web: { exposure: { include: health } } } }
