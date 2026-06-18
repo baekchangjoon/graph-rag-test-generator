@@ -42,6 +42,9 @@ import static org.hamcrest.Matchers.notNullValue;
 
     @Test
     void {{testMethodName}}() {
+        {{#kafkaEmits}}
+        scope.kafka().subscribe("{{{topic}}}");
+        {{/kafkaEmits}}
         {{#authRequired}}scope.rest().authenticated(){{/authRequired}}{{^authRequired}}scope.rest().given(){{/authRequired}}
             .contentType("application/json")
 {{^readPath}}            .body({{{bodyExpr}}})
@@ -49,5 +52,18 @@ import static org.hamcrest.Matchers.notNullValue;
             .{{httpMethodLower}}("{{{requestPath}}}")
         .then()
             .statusCode({{expectedStatus}}){{{assertionsBlock}}};
+        {{#kafkaEmits}}
+
+        {
+            org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
+                scope.kafka().consumeNextRecord("{{{topic}}}", java.time.Duration.ofSeconds(5));
+            org.junit.jupiter.api.Assertions.assertNotNull(record);
+            {{#key}}
+            org.junit.jupiter.api.Assertions.assertEquals("{{{key}}}", record.key());
+            {{/key}}
+            org.skyscreamer.jsonassert.JSONAssert.assertEquals(
+                "{{{payloadJson}}}", record.value(), true);
+        }
+        {{/kafkaEmits}}
     }
 }

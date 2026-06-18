@@ -331,6 +331,25 @@ public class Generator {
         scope.put("bodyExpr", bodyExpr);
         scope.put("authRequired", endpoint.authRequired());
         scope.put("mocksBlock", mocks.block());
+        
+        List<io.graphrag.model.CapturedEventEmit> kafkaEvents = client.capturedEventEmitsForPath(pathId);
+        if (!kafkaEvents.isEmpty()) {
+            scope.put("hasKafkaEmits", true);
+            List<Map<String, Object>> kafkaEmits = new ArrayList<>();
+            for (io.graphrag.model.CapturedEventEmit emit : kafkaEvents) {
+                Map<String, Object> modelEmit = new HashMap<>();
+                modelEmit.put("topic", emit.topic());
+                if (emit.key() != null) {
+                    modelEmit.put("key", jsonEscape(emit.key()));
+                }
+                if (emit.payload() != null) {
+                    modelEmit.put("payloadJson", jsonEscape(emit.payload().toString()));
+                }
+                kafkaEmits.add(modelEmit);
+            }
+            scope.put("kafkaEmits", kafkaEmits);
+        }
+
         // 격리 불가(SUT propagation 부재) → 직렬 실행 마크 (docs/04)
         scope.put("serialMark", mocks.propagationMissing()
                 ? "@Execution(ExecutionMode.SAME_THREAD)\n" : "");

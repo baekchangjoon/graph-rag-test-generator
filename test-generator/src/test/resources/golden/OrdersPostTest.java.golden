@@ -35,6 +35,7 @@ class OrdersPostTest {
 
     @Test
     void post_api_orders_happy() {
+        scope.kafka().subscribe("orders");
         scope.rest().given()
             .contentType("application/json")
             .body(String.format("{\"userId\":\"%s\",\"amount\":1,\"type\":\"sample-type\"}", userId))
@@ -44,5 +45,14 @@ class OrdersPostTest {
             .statusCode(201)
             .body("id", notNullValue())
             .body("status", equalTo("PENDING"));
+
+        {
+            org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
+                scope.kafka().consumeNextRecord("orders", java.time.Duration.ofSeconds(5));
+            org.junit.jupiter.api.Assertions.assertNotNull(record);
+            org.junit.jupiter.api.Assertions.assertEquals("order-1", record.key());
+            org.skyscreamer.jsonassert.JSONAssert.assertEquals(
+                "{\"userId\":\"probe-userId\",\"amount\":1}", record.value(), true);
+        }
     }
 }

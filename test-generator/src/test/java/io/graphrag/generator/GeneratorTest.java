@@ -184,4 +184,165 @@ class GeneratorTest {
         assertThat(code).doesNotContain(".contentType(\"application/json\")\n            .body(");
         assertThat(code).contains(".statusCode(200)");
     }
+
+    @Test
+    void generate_withKafkaOutboundEvents_includesAssertions() {
+        io.graphrag.model.Endpoint endpoint = new io.graphrag.model.Endpoint(
+                "post-api-orders", "POST", "/api/orders",
+                "OrderController", "create", java.util.List.of(), false);
+
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.node.ObjectNode payload = mapper.createObjectNode()
+                .put("orderId", "123")
+                .put("status", "PENDING");
+
+        io.graphrag.model.ExploredPath path = new io.graphrag.model.ExploredPath(
+                "post-api-orders-happy", "post-api-orders",
+                mapper.createObjectNode(), 200, mapper.createObjectNode(),
+                java.util.List.of(), java.util.List.of(), java.util.List.of(), "test", java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of("emit-1", "emit-2")
+        );
+
+        io.graphrag.model.CapturedEventEmit emit1 = new io.graphrag.model.CapturedEventEmit(
+                "emit-1", "post-api-orders-happy", "orders-topic", "order-key-123", payload
+        );
+
+        io.graphrag.model.CapturedEventEmit emit2 = new io.graphrag.model.CapturedEventEmit(
+                "emit-2", "post-api-orders-happy", "orders-topic-nokey", null, payload
+        );
+
+        io.graphrag.model.GraphAsset asset = new io.graphrag.model.GraphAsset(
+                "sut", "commit",
+                java.util.List.of(endpoint),
+                java.util.List.of(path),
+                java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(), java.util.List.of(),
+                java.util.List.of(emit1, emit2)
+        );
+
+        FakeGraphRagClient fakeClient = new FakeGraphRagClient(asset);
+        GenerationRequest request = new GenerationRequest(
+                "post-api-orders", "post-api-orders-happy",
+                "OrdersPostTest", "io.graphrag.generated", AuthMode.DISABLED);
+
+        GenerationResult result = new Generator(fakeClient).generate(request);
+
+        assertThat(result.files()).hasSize(1);
+        String code = result.files().get(0).content();
+
+        // 1. Check subscriptions
+        assertThat(code).contains("scope.kafka().subscribe(\"orders-topic\");");
+        assertThat(code).contains("scope.kafka().subscribe(\"orders-topic-nokey\");");
+
+        // 2. Check assert blocks
+        assertThat(code).contains("org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =");
+        
+        // Assert orders-topic with key
+        assertThat(code).contains("scope.kafka().consumeNextRecord(\"orders-topic\", java.time.Duration.ofSeconds(5));");
+        assertThat(code).contains("org.junit.jupiter.api.Assertions.assertNotNull(record);");
+        assertThat(code).contains("org.junit.jupiter.api.Assertions.assertEquals(\"order-key-123\", record.key());");
+        assertThat(code).contains("org.skyscreamer.jsonassert.JSONAssert.assertEquals(");
+        assertThat(code).contains("\"{\\\"orderId\\\":\\\"123\\\",\\\"status\\\":\\\"PENDING\\\"}\"");
+
+        // Assert orders-topic-nokey without key
+        assertThat(code).contains("scope.kafka().consumeNextRecord(\"orders-topic-nokey\", java.time.Duration.ofSeconds(5));");
+        // We should assert that assertEquals is not present for orders-topic-nokey, but the simplest way is to check the structure or that there is only one assertEquals with record.key()
+        assertThat(code).contains("org.junit.jupiter.api.Assertions.assertEquals(\"order-key-123\", record.key());");
+        // Count or verify that assertEquals is not generated for nokey record.
+        // The block for nokey should look like:
+        // {
+        //     org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
+        //         scope.kafka().consumeNextRecord("orders-topic-nokey", java.time.Duration.ofSeconds(5));
+        //     org.junit.jupiter.api.Assertions.assertNotNull(record);
+        //     org.skyscreamer.jsonassert.JSONAssert.assertEquals(
+        //         "{\"orderId\":\"123\",\"status\":\"PENDING\"}", record.value(), true);
+        // }
+        // Let's assert code structure for nokey
+        assertThat(code).doesNotContain("org.junit.jupiter.api.Assertions.assertEquals(null, record.key())");
+    }
+
+    static class FakeGraphRagClient implements io.graphrag.generator.client.GraphRagClient {
+        private final io.graphrag.model.GraphAsset asset;
+
+        FakeGraphRagClient(io.graphrag.model.GraphAsset asset) {
+            this.asset = asset;
+        }
+
+        @Override
+        public io.graphrag.model.Endpoint endpoint(String id) {
+            return asset.endpoints().stream().filter(e -> e.id().equals(id)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("unknown endpoint: " + id));
+        }
+
+        @Override
+        public io.graphrag.model.ExploredPath path(String id) {
+            return asset.paths().stream().filter(p -> p.id().equals(id)).findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("unknown path: " + id));
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.ExploredPath> pathsForEndpoint(String endpointId) {
+            return asset.paths().stream().filter(p -> p.endpointId().equals(endpointId)).toList();
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.CapturedSql> sqlForPath(String pathId) {
+            return asset.sql().stream().filter(s -> s.pathId().equals(pathId)).toList();
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.CapturedHttpCall> httpCallsForPath(String pathId) {
+            return asset.httpCalls().stream().filter(c -> c.pathId().equals(pathId)).toList();
+        }
+
+        @Override
+        public boolean hasWsEndpoint(String id) {
+            return asset.wsEndpoints().stream().anyMatch(w -> w.id().equals(id));
+        }
+
+        @Override
+        public io.graphrag.model.WsEndpoint wsEndpoint(String id) {
+            return asset.wsEndpoints().stream().filter(w -> w.id().equals(id)).findFirst().orElse(null);
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.WsExchange> wsExchangesFor(String wsEndpointId) {
+            return asset.wsExchanges().stream().filter(w -> w.wsEndpointId().equals(wsEndpointId)).toList();
+        }
+
+        @Override
+        public io.graphrag.model.WsExchange wsExchange(String exchangeId) {
+            return asset.wsExchanges().stream().filter(w -> w.id().equals(exchangeId)).findFirst().orElse(null);
+        }
+
+        @Override
+        public boolean hasKafkaConsumer(String id) {
+            return asset.kafkaConsumers().stream().anyMatch(k -> k.id().equals(id));
+        }
+
+        @Override
+        public io.graphrag.model.KafkaConsumer kafkaConsumer(String id) {
+            return asset.kafkaConsumers().stream().filter(k -> k.id().equals(id)).findFirst().orElse(null);
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.KafkaExchange> kafkaExchangesFor(String consumerId) {
+            return asset.kafkaExchanges().stream().filter(x -> x.kafkaConsumerId().equals(consumerId)).toList();
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.TableSchema> tables() {
+            return asset.tables();
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.RequiredSeed> seedsForPath(String pathId) {
+            return asset.seeds().stream().filter(s -> java.util.Objects.equals(s.pathId(), pathId)).toList();
+        }
+
+        @Override
+        public java.util.List<io.graphrag.model.CapturedEventEmit> capturedEventEmitsForPath(String pathId) {
+            return asset.capturedEventEmits().stream().filter(e -> e.pathId().equals(pathId)).toList();
+        }
+    }
 }
+
