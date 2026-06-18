@@ -36,6 +36,9 @@ public final class KafkaHelper implements AutoCloseable {
 
     /** Subscribes to a given topic using a KafkaConsumer running on a background thread. */
     public synchronized void subscribe(String topic) {
+        if (buffers.containsKey(topic)) {
+            return;
+        }
         buffers.computeIfAbsent(topic, k -> new java.util.concurrent.LinkedBlockingQueue<>());
         ConsumerRunner runner = new ConsumerRunner(bootstrapServers, topic, buffers.get(topic));
         consumers.add(runner);
@@ -65,12 +68,22 @@ public final class KafkaHelper implements AutoCloseable {
         producer.close();
     }
 
+    public synchronized boolean isAssigned(String topic) {
+        for (ConsumerRunner runner : consumers) {
+            if (runner.topic.equals(topic) && runner.isAssigned()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static final class ConsumerRunner implements Runnable, AutoCloseable {
         private final String topic;
         private final java.util.concurrent.BlockingQueue<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> queue;
         private final org.apache.kafka.clients.consumer.KafkaConsumer<String, String> consumer;
         private final Thread thread;
         private volatile boolean closed = false;
+        private volatile boolean assigned = false;
 
         public ConsumerRunner(String bootstrapServers, String topic, java.util.concurrent.BlockingQueue<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> queue) {
             this.topic = topic;
@@ -92,6 +105,10 @@ public final class KafkaHelper implements AutoCloseable {
             this.thread.start();
         }
 
+        public boolean isAssigned() {
+            return assigned;
+        }
+
         @Override
         public void run() {
             try {
@@ -100,6 +117,7 @@ public final class KafkaHelper implements AutoCloseable {
                     try {
                         org.apache.kafka.clients.consumer.ConsumerRecords<String, String> records =
                                 consumer.poll(java.time.Duration.ofMillis(100));
+                        this.assigned = !consumer.assignment().isEmpty();
                         for (org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record : records) {
                             queue.put(record);
                         }
