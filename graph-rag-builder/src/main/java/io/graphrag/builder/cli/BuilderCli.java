@@ -308,6 +308,8 @@ public final class BuilderCli {
         // OTEL SQL 캡처(attach): 호스트 OTLP 리시버를 wildcard bind + per-run secret으로 띄우고,
         // 컨테이너가 host.docker.internal:<port>로 도달하도록 override에 otlp export env + extra_hosts 주입.
         // log 모드면 기존 동작(exporter none + baggage, host-gateway/batch 미주입).
+        // host-gateway 는 외부 HTTP 캡처(모든 attach 모드)와 OTLP receiver 도달에 모두 필요 — 항상 1회 점검.
+        warnIfHostGatewayUnsupported();
         boolean otelSqlCapture = "otel".equals(config.sqlCapture());
         io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver = null;
         Map<String, String> otelEnv;
@@ -315,7 +317,6 @@ public final class BuilderCli {
             String secret = newOtlpSecret();
             otlpReceiver = new io.graphrag.builder.capture.otlp.OtlpTraceReceiver();
             otlpReceiver.start("0.0.0.0", secret);
-            warnIfHostGatewayUnsupported();
             otelEnv = otel.otlpEnv(config.sutId(), otlpReceiver.hostEndpoint(), secret);
             log.info("OTEL SQL capture (attach): otlp receiver {} (container reaches via {})",
                     otlpReceiver.endpoint(), otlpReceiver.hostEndpoint());
@@ -323,24 +324,49 @@ public final class BuilderCli {
             otelEnv = otel.env(config.sutId());   // OTEL env 동등 주입(exporter none + baggage)
         }
 
-        String overrideYaml = new OverrideComposeGenerator().generate(
-                new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
-                        at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
-                        jto, mybatisLogLevels, otelEnv, otelSqlCapture, otelSqlCapture));
-        Path overridePath = workDir.resolve("attach-override.yml");
-        Files.writeString(overridePath, overrideYaml);
+        // 외부 HTTP 캡처(모든 attach 모드): 호스트 WireMock을 per-run token으로 띄우고, SUT env의
+        // {{wiremock}}을 컨테이너가 도달 가능한 host.docker.internal:<port>[/token]로 치환한다.
+        String httpToken = newOtlpSecret();   // reuse the per-run secret generator
+        io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer();
+        httpCapture.start(config.externalStubsDir(), httpToken);
+        java.util.Map<String, String> mergedEnv = new java.util.LinkedHashMap<>(otelEnv);
+        config.sutEnv().forEach((k, v) -> mergedEnv.put(k,
+                v.replace(io.graphrag.builder.env.AnalysisEnvironment.WIREMOCK_PLACEHOLDER, httpCapture.hostBaseUrl())));
+        log.info("attach external HTTP capture: wiremock {} (container reaches via {})",
+                httpCapture.baseUrl(), httpCapture.hostBaseUrl());
 
-        var envCfg = new AttachedComposeEnvironment.Config(at.userCompose(), overridePath,
-                at.appService(), "grb-attach-" + config.sutId(),
-                "http://localhost:" + at.appHostPort(),
-                at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
-                "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
-                at.healthPath(), at.readyTimeoutSeconds());
-        try (AttachedComposeEnvironment env =
-                     new AttachedComposeEnvironment(envCfg, config.dbConfig().type(), otlpReceiver)) {
-            env.start(workDir);
-            return explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                    responseDtoFieldSets, plan, enumConstants, acc);
+        // httpCapture.start() 이후 발생하는 모든 작업(override 생성/쓰기, envCfg, env 생성/start/explore)을
+        // 같은 try로 감싼다 → env로 소유권을 넘기기 전에 throw 되더라도 finally가 httpCapture/otlpReceiver를
+        // 정확히 1회 정리한다(성공적으로 넘긴 뒤에는 env의 try-with-resources가 소유).
+        boolean handedOff = false;
+        try {
+            String overrideYaml = new OverrideComposeGenerator().generate(
+                    new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
+                            at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
+                            jto, mybatisLogLevels, mergedEnv, true, otelSqlCapture));
+            Path overridePath = workDir.resolve("attach-override.yml");
+            Files.writeString(overridePath, overrideYaml);
+
+            var envCfg = new AttachedComposeEnvironment.Config(at.userCompose(), overridePath,
+                    at.appService(), "grb-attach-" + config.sutId(),
+                    "http://localhost:" + at.appHostPort(),
+                    at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
+                    "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
+                    at.healthPath(), at.readyTimeoutSeconds());
+
+            AttachedComposeEnvironment env = new AttachedComposeEnvironment(
+                    envCfg, config.dbConfig().type(), otlpReceiver, httpCapture);
+            handedOff = true;
+            try (env) {
+                env.start(workDir);
+                return explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                        responseDtoFieldSets, plan, enumConstants, acc);
+            }
+        } finally {
+            if (!handedOff) {
+                httpCapture.close();
+                if (otlpReceiver != null) { otlpReceiver.stop(); }
+            }
         }
     }
 
