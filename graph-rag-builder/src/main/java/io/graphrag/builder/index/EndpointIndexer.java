@@ -12,8 +12,6 @@ import spoon.reflect.declaration.CtAnnotation;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtParameter;
-import spoon.reflect.declaration.CtRecord;
-import spoon.reflect.declaration.CtRecordComponent;
 import spoon.reflect.declaration.CtType;
 
 import java.nio.file.Path;
@@ -155,9 +153,10 @@ public class EndpointIndexer {
         boolean formAdded = false;   // 단일 커맨드 객체로 스코프 — 첫 FORM 파라미터만
         for (CtParameter<?> parameter : method.getParameters()) {
             if (findAnnotation(parameter, REQUEST_BODY) != null) {
-                String bodyType = parameter.getType().getQualifiedName();
+                String bodyType = BodyShapeExtractor.bodyTypeKey(parameter.getType());
                 params.add(new EndpointParam(parameter.getSimpleName(), bodyType, ParamKind.BODY));
-                extractBodyShape(model, bodyType).ifPresent(s -> bodyShapes.put(bodyType, s));
+                BodyShapeExtractor.extractFromType(model, parameter.getType())
+                        .ifPresent(s -> bodyShapes.put(bodyType, s));
             } else if (findAnnotation(parameter, PATH_VARIABLE) != null) {
                 // 이름은 정규화(@PathVariable value/name 우선) — path 템플릿 {x}와 일치해야 치환·역추출이 정확.
                 params.add(new EndpointParam(
@@ -172,8 +171,9 @@ public class EndpointIndexer {
             } else if (formMode && !formAdded) {
                 // @Controller 폼 커맨드 객체: @ModelAttribute 또는 SUT 클래스(필드 해석)인 unannotated POJO.
                 // BindingResult/Model 등 프레임워크 타입은 bodyShape 미해석 → 자동 제외.
-                String formType = parameter.getType().getQualifiedName();
-                java.util.Optional<BodyShape> shape = extractBodyShape(model, formType);
+                String formType = BodyShapeExtractor.bodyTypeKey(parameter.getType());
+                java.util.Optional<BodyShape> shape =
+                        BodyShapeExtractor.extractFromType(model, parameter.getType());
                 boolean modelAttr = findAnnotation(parameter, MODEL_ATTRIBUTE) != null;
                 if (shape.isPresent() && (modelAttr || !shape.get().fields().isEmpty())) {
                     shape.ifPresent(s -> bodyShapes.put(formType, s));
@@ -183,41 +183,6 @@ public class EndpointIndexer {
             }
         }
         return params;
-    }
-
-    private java.util.Optional<BodyShape> extractBodyShape(CtModel model, String qualifiedName) {
-        for (CtType<?> type : model.getAllTypes()) {
-            CtType<?> target = findNested(type, qualifiedName);
-            if (target == null) {
-                continue;
-            }
-            List<BodyShape.BodyField> fields = new ArrayList<>();
-            if (target instanceof CtRecord record) {
-                for (CtRecordComponent component : record.getRecordComponents()) {
-                    fields.add(new BodyShape.BodyField(
-                            component.getSimpleName(),
-                            component.getType().getQualifiedName()));
-                }
-            } else {
-                target.getFields().forEach(field -> fields.add(new BodyShape.BodyField(
-                        field.getSimpleName(), field.getType().getQualifiedName())));
-            }
-            return java.util.Optional.of(new BodyShape(qualifiedName, fields));
-        }
-        return java.util.Optional.empty();
-    }
-
-    private CtType<?> findNested(CtType<?> type, String qualifiedName) {
-        if (type.getQualifiedName().equals(qualifiedName)) {
-            return type;
-        }
-        for (CtType<?> nested : type.getNestedTypes()) {
-            CtType<?> found = findNested(nested, qualifiedName);
-            if (found != null) {
-                return found;
-            }
-        }
-        return null;
     }
 
     private static CtAnnotation<?> findAnnotation(CtElement element, String qualifiedName) {

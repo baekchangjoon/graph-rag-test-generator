@@ -51,11 +51,13 @@ public class WsEndpointIndexer {
                 }
                 String destination = annotationValue(mapping);
                 String sendTo = annotationValue(findAnnotation(method, SEND_TO));
-                String payloadType = method.getParameters().isEmpty()
-                        ? null : method.getParameters().get(0).getType().getQualifiedName();
-                if (payloadType != null) {
-                    BodyShapeExtractor.extract(model, payloadType)
-                            .ifPresent(shape -> shapes.put(payloadType, shape));
+                String payloadType = null;
+                if (!method.getParameters().isEmpty()) {
+                    var pt = method.getParameters().get(0).getType();
+                    String key = BodyShapeExtractor.bodyTypeKey(pt);
+                    BodyShapeExtractor.extractFromType(model, pt)
+                            .ifPresent(shape -> shapes.put(key, shape));
+                    payloadType = key;
                 }
                 endpoints.add(new WsEndpoint(
                         "ws" + destination.toLowerCase().replaceAll("[^a-z0-9]+", "-")
