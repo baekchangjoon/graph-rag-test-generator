@@ -586,10 +586,11 @@ public class ReservationApplication {
 package sample.reservation;
 
 import io.eventuate.tram.events.common.DomainEvent;
-import io.eventuate.tram.events.common.EventType;
 
-// @EventType로 type 이름 고정 → B/C의 FQCN이 달라도 라우팅 일치(§주의). 코드 블록에 직접 포함.
-@EventType("OrderReserved")
+// NOTE(구현 정정): eventuate-tram-events:0.35.0.RELEASE 에는 @EventType 가 존재하지 않는다(jar 검증:
+// DomainEvent/DomainEventNameMapping/DefaultDomainEventNameMapping 만 존재, DefaultDomainEventNameMapping 은
+// FQCN(getClass().getName())으로 라우팅). 따라서 발행 event-type 헤더 = FQCN `sample.reservation.OrderReserved`.
+// 라우팅 일치는 C(ledger)가 동일 FQCN(package sample.reservation)으로 OrderReserved 를 복제해 맞춘다(§주의).
 public class OrderReserved implements DomainEvent {
     private Long orderId; private String userId; private int amount;
     public OrderReserved() {}
@@ -799,14 +800,16 @@ public class LedgerApplication {
 }
 ```
 
-`OrderReserved.java`(B와 동일 필드 + **동일 `@EventType("OrderReserved")` 필수** — FQCN이 달라도 라우팅 일치):
+`OrderReserved.java`(B와 동일 필드 + **B와 동일 FQCN `sample.reservation.OrderReserved` 필수** — @EventType 미존재(0.35.0) 대체책):
+> **파일 위치 주의**: 이 클래스는 ledger 서비스의 소스 트리 안에 두되 **package 는 `sample.reservation`** 으로 선언한다 →
+> 파일 경로 `samples/legacy-tram/ledger/src/main/java/sample/reservation/OrderReserved.java`. 그래야 C의 FQCN 이
+> B가 발행한 event-type 헤더(FQCN)와 동일해져 `DefaultDomainEventNameMapping`(FQCN 기반)이 자동 라우팅한다.
 ```java
-package sample.ledger;
+package sample.reservation;   // ★ ledger 서비스지만 B와 FQCN 일치를 위해 sample.reservation 패키지로 선언
 
 import io.eventuate.tram.events.common.DomainEvent;
-import io.eventuate.tram.events.common.EventType;
 
-@EventType("OrderReserved")
+// @EventType 는 0.35.0 에 없음(Task 4 검증). 라우팅 일치는 B와 동일 FQCN으로 달성(복제 유지).
 public class OrderReserved implements DomainEvent {
     private Long orderId; private String userId; private int amount;
     public OrderReserved() {}
@@ -815,6 +818,7 @@ public class OrderReserved implements DomainEvent {
     public int getAmount() { return amount; }
 }
 ```
+(C의 `OrderEventHandlers`(package `sample.ledger`)는 `import sample.reservation.OrderReserved;` 로 이 클래스를 참조한다.)
 
 `TramSubscriberConfig.java` (`@EnableEventHandlers`를 여기 @Configuration에 — 리뷰 Sonnet I11):
 ```java
@@ -832,7 +836,7 @@ import org.springframework.context.annotation.Import;
 public class TramSubscriberConfig {}
 ```
 
-> **§주의 (type 매핑 rationale)**: Eventuate는 발행 시 이벤트의 클래스명을 메시지 `event-type` 헤더로 쓴다(기본 FQCN). B의 `sample.reservation.OrderReserved` 와 C의 `sample.ledger.OrderReserved` 는 FQCN이 달라 그대로면 라우팅이 안 맞는다. 그래서 **양쪽 `OrderReserved` 코드 블록에 이미 `@EventType("OrderReserved")` 를 직접 포함**시켜 type 이름을 고정했다(복제 유지 + 라우팅 일치). 별도 추가 작업 불필요 — 두 블록의 애너테이션이 동일 문자열인지만 확인.
+> **§주의 (type 매핑 rationale — 구현 정정)**: Eventuate는 발행 시 이벤트의 클래스명(FQCN)을 메시지 `event-type` 헤더로 쓴다(`DefaultDomainEventNameMapping`). 원안은 `@EventType("OrderReserved")` 로 짧은 type 이름을 고정해 B/C의 FQCN 차이를 가교하려 했으나, **Task 4에서 `io.eventuate.tram.events.common.EventType` 가 핀 버전 `eventuate-tram-events:0.35.0.RELEASE` 에 존재하지 않음을 jar로 검증**(해당 jar에는 DomainEvent/DomainEventNameMapping/DefaultDomainEventNameMapping 만 존재). 따라서 B는 FQCN `sample.reservation.OrderReserved` 를 헤더로 발행한다. **정정책: C가 자신의 `OrderReserved` 를 동일 FQCN(`package sample.reservation`)으로 복제**해 FQCN 기반 기본 매핑이 양쪽에서 일치하게 한다(커스텀 `DomainEventNameMapping` 빈 불필요, B 재작업 불필요). 확인 포인트: C의 `OrderReserved` 패키지가 `sample.reservation` 인지, 그리고 publish/subscribe 의 aggregateType 이 둘 다 `"Order"` 인지.
 
 - [ ] **Step 2: Entity + Repository + EventHandlers (ledger_entries insert)**
 
@@ -1343,7 +1347,7 @@ Expected: PASS (MySQL + Postgres).
 
 1. **Spec coverage**: §2 빌더 의존성/MySQL→T1·T7(fail-fast); §3 도메인→T3/T4/T5(202·각 홉 SQL); §4 데이터/이중스키마→T4/T5(폴백 엔티티)·T6(init.sql)·T6 smoke; §5 컴포넌트/CDC depends_on→T6; §6 trace 전파(1순위+폴백)→T4/T5(sleuth-integration·B3MessageInterceptor); §7 attach 호출→T7; §8 수용 3종→T7; §9 테스트→T1/T6/T7/T8; §10 리스크(R1 거짓 판정·버전)→T2(핀)·T7(폴백 토글). 
 2. **Placeholder scan**: 버전 핀과 Eventuate 스키마는 T2에서 "해소되는 실제 조합/공식 스키마 정본 대조"로 확정하는 **실행 가능한 절차**로 명시(추측 금지). 폴백 엔티티/ init.sql은 핀 버전 공식 스키마와 일치시키라는 구체 지시 + 대조 대상 명시. TBD 없음.
-3. **Type consistency**: `OrderReserved`(B/C, `@EventType("OrderReserved")`로 type 일치)·`DomainEventPublisher.publish("Order", id, [event])`↔`DomainEventHandlersBuilder.forAggregateType("Order").onEvent(OrderReserved.class,...)`; 서비스명(order-web/reservation/ledger)·DB(orderdb/reservationdb/ledgerdb)·env 키 일관; 빌더 `extract(Connection)` 시그니처 불변(T1); 런북 플래그 `--trace-mode sleuth --capture-services`(Spec 2)와 일치.
+3. **Type consistency**: `OrderReserved`(B/C 모두 FQCN `sample.reservation.OrderReserved` 로 통일 → 기본 FQCN 매핑 라우팅 일치; @EventType 는 0.35.0 미존재로 폐기, Task 4 검증)·`DomainEventPublisher.publish("Order", id, [event])`↔`DomainEventHandlersBuilder.forAggregateType("Order").onEvent(OrderReserved.class,...)`; 서비스명(order-web/reservation/ledger)·DB(orderdb/reservationdb/ledgerdb)·env 키 일관; 빌더 `extract(Connection)` 시그니처 불변(T1); 런북 플래그 `--trace-mode sleuth --capture-services`(Spec 2)와 일치.
 
 **알려진 실행 리스크(계획 내 명시)**: Eventuate 버전/스키마 정합성(T2가 정공), R1 미전파 시 폴백→그래도 실패면 R1=거짓 판정(가치 있는 결과).
 
