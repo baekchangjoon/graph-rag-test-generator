@@ -758,7 +758,10 @@ eventuate:
     fallback: ${EVENTUATE_B3_FALLBACK:false}
 management: { endpoints: { web: { exposure: { include: health } } } }
 # Eventuate Kafka/JDBC: eventuatelocal.kafka.bootstrap.servers 등은 env로 주입(compose에서).
-# 주: eventuate.database.schema 는 설정하지 않는다 — Eventuate 테이블은 연결 DB(reservationdb)에 있다(리뷰 Sonnet I5/Gemini I2).
+# 주(Task 7 실증 정정): 원안(리뷰 Sonnet I5/Gemini I2)은 "eventuate.database.schema 미설정, 테이블은 reservationdb"
+# 였으나 — Eventuate 0.35.0/CDC 0.17.0 은 인프라 테이블(message/received_messages/offset_store/cdc_monitoring)을
+# 기본 schema 'eventuate' 에 둔다. Task 7 E2E(R1 PASS = end-to-end 실증)로 확정: init.sql 이 별도 'eventuate' DB를
+# 만들고, CDC datasource=jdbc:mysql://mysql:3306/eventuate, app/cdc 유저에 eventuate.* 권한. (원안 가정은 틀렸음.)
 ```
 (logback-spring.xml = Task 3과 동일 내용. Dockerfile = Task 3과 동일.)
 
