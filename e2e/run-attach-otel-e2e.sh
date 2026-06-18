@@ -3,7 +3,8 @@
 # 사용자 docker-compose(e2e/docker-compose.yml) + 생성 override 로 컨테이너 SUT를 띄우고, 빌더가
 # 호스트에 wildcard-bind + per-run secret 인증 OTLP 리시버를 띄운다. 컨테이너의 OTEL agent가
 # host.docker.internal:<port> 로 span을 보내 SQL이 OTEL trace-id 귀속으로 캡처되는지(로그 폴백 아님)
-# 검증한다. graph.json 에 SQL > 0 + 빌더 로그에 "otlp receiver" 활성 & 폴백 경고 0.
+# 검증한다. graph.json 에 SQL>=20(깊은 탐색 — OTLP 채널이 실제로 다수 SQL을 귀속) + 빌더 로그에
+# "otlp receiver" 활성 & 폴백 경고 0. 인증(--auth-*)으로 JwtAuthFilter 통과 → 깊은 탐색.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/e2e/.attach-otel-out"; PROJECT="grb-attach-order-otel"   # = "grb-attach-" + sutId(order-otel)
@@ -27,6 +28,7 @@ echo "=== [2/4] 빌더 attach 실행 (--sql-capture otel) ==="
   --attach --app-service app --app-port 58080 --jacoco-port 16300 \
   --jdbc-url jdbc:postgresql://localhost:56432/app \
   --db-service postgres \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
   --sql-capture otel" 2>&1 | tee "$LOG"
 
 echo "=== [3/4] 그래프 + OTEL 경로 검증 ==="
@@ -34,10 +36,13 @@ python3 - "$OUT" <<'PY'
 import json,sys,os
 out=sys.argv[1]
 g=json.load(open(os.path.join(out,"graph.json")))
-assert len(g["sql"])>0, "no SQL captured (attach OTEL channel broken)"
+# 깊은 탐색 + OTLP 귀속: 인증 통과 시 ~53 sql. 얕으면(전 요청 403) ~3 → 회귀 검출.
+sql=len(g["sql"])
+assert sql>=20, f"shallow/broken OTEL: only {sql} sql (auth/OTLP 채널 회귀? 깊으면 ~53)"
 r=json.load(open(os.path.join(out,"exploration-report.json")))
-assert r["coveredAppBranches"]>0, "no branches covered (jacoco attach broken)"
-print(f"OK endpoints={len(g['endpoints'])} sql={len(g['sql'])} coveredBranches={r['coveredAppBranches']}")
+br=r["coveredAppBranches"]
+assert br>=50, f"shallow exploration: only {br} branches (auth/jacoco attach 회귀? 깊으면 ~140)"
+print(f"OK endpoints={len(g['endpoints'])} sql={sql} coveredBranches={br}")
 PY
 
 # OTEL 경로가 실제로 동작했는지: 리시버 활성 + OTEL-문제 신호 0.
