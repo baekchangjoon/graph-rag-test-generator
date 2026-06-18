@@ -30,7 +30,9 @@ class SchemaExtractorMySqlTest {
 
             List<TableSchema> tables = new SchemaExtractor().extract(c);
 
-            assertThat(tables).extracting(TableSchema::name).contains("orders");
+            // containsExactlyInAnyOrder: catalog 스코핑이 깨져 다른 DB/시스템 테이블이 새면 실패 → 진짜 가드
+            // (catalog=getCatalog()=orderdb, schema=null 경로가 실제로 동작함을 보증).
+            assertThat(tables).extracting(TableSchema::name).containsExactlyInAnyOrder("orders");
             TableSchema orders = tables.stream()
                     .filter(t -> t.name().equals("orders")).findFirst().orElseThrow();
             assertThat(orders.columns()).extracting("name")
