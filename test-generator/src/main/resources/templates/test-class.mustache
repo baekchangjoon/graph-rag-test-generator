@@ -33,13 +33,15 @@ import static org.hamcrest.Matchers.notNullValue;
 {{/vars}}{{#inserts}}        scope.jdbc().update("{{{sql}}}"{{#argExprs}}, {{{.}}}{{/argExprs}});
 {{/inserts}}{{#deletes}}        scope.jdbc().deferDelete("{{{sql}}}"{{#argExprs}}, {{{.}}}{{/argExprs}});
 {{/deletes}}{{#kafkaEmits}}        scope.kafka().subscribe("{{{topic}}}");
-{{/kafkaEmits}}{{{mocksBlock}}}        {{#authRequired}}scope.rest().authenticated(){{/authRequired}}{{^authRequired}}scope.rest().given(){{/authRequired}}
+{{/kafkaEmits}}{{{mocksBlock}}}        {{#postCreateCleanup}}io.restassured.response.Response __resp = {{/postCreateCleanup}}{{#authRequired}}scope.rest().authenticated(){{/authRequired}}{{^authRequired}}scope.rest().given(){{/authRequired}}
             .contentType("application/json")
 {{^readPath}}            .body({{{bodyExpr}}})
 {{/readPath}}        .when()
             .{{httpMethodLower}}("{{{requestPath}}}")
         .then()
-            .statusCode({{expectedStatus}}){{{assertionsBlock}}};
+            .statusCode({{expectedStatus}}){{{assertionsBlock}}}{{#postCreateCleanup}}
+            .extract().response();
+        scope.jdbc().deferDelete("DELETE FROM {{{table}}} WHERE {{{pkColumn}}} = ?", (Object) __resp.path("{{{pkField}}}")){{/postCreateCleanup}};
 {{#kafkaEmits}}
         {
             org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =

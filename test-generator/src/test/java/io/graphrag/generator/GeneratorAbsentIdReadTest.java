@@ -1,0 +1,63 @@
+package io.graphrag.generator;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
+import io.graphrag.model.ParamKind;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Fix#1 (PR #62 flaky): absent-id read(404) 시나리오의 numeric path id 를 IDENTITY 가 한 테스트 런에서
+ * 도달 불가능한 큰 값으로 치환한다. 캡처된 작은 probe id(예: 1)를 그대로 쓰면, 같은 공유 SUT DB 에 대해
+ * 병렬로 도는 성공 POST 가 IDENTITY id=1 을 만들어 404 가 200 으로 뒤집히는 race 가 난다.
+ */
+class GeneratorAbsentIdReadTest {
+
+    private static final ObjectMapper M = new ObjectMapper();
+
+    private static Endpoint getById(String javaType) {
+        return new Endpoint("get-api-bookings-id", "GET", "/api/bookings/{id}",
+                "io.sample.BookingController", "getById",
+                List.of(new EndpointParam("id", javaType, ParamKind.PATH)), false);
+    }
+
+    private static JsonNode input(String json) {
+        try { return M.readTree(json); } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    @Test
+    void notFoundRead_numericPathId_usesUnreachableAbsentId() {
+        Endpoint ep = getById("java.lang.Long");
+        // 캡처된 probe id=1 이지만 404 read 라 도달불가 큰 id 로 치환되어야 한다.
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":1}"), true);
+        assertThat(path).isEqualTo("/api/bookings/2000000000");
+    }
+
+    @Test
+    void notFoundRead_intPathId_alsoSubstituted() {
+        Endpoint ep = getById("int");
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":3}"), true);
+        assertThat(path).isEqualTo("/api/bookings/2000000000");
+    }
+
+    @Test
+    void successRead_keepsCapturedId() {
+        Endpoint ep = getById("java.lang.Long");
+        // 2xx read 는 시드한 자기 데이터를 조회하므로 캡처 id 를 그대로 유지해야 한다.
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":95277}"), false);
+        assertThat(path).isEqualTo("/api/bookings/95277");
+    }
+
+    @Test
+    void notFoundRead_nonNumericPathId_unchanged() {
+        Endpoint ep = getById("java.lang.String");
+        // 문자열 id 는 IDENTITY race 대상이 아니므로 캡처값 유지(치환 안 함).
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":\"abc\"}"), true);
+        assertThat(path).isEqualTo("/api/bookings/abc");
+    }
+}

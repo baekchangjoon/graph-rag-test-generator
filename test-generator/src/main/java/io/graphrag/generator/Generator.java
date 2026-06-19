@@ -9,6 +9,8 @@ import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.HttpMockComposer;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.model.CapturedSql;
+import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.TableSchema;
 import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
@@ -133,7 +135,8 @@ public class Generator {
             String mocksBlock, boolean readPath, String bodyExpr, String httpMethodLower,
             String requestPath, int expectedStatus, String assertionsBlock, boolean authRequired,
             boolean serial, List<String> warnings,
-            List<java.util.Map<String, Object>> kafkaEmits) {
+            List<java.util.Map<String, Object>> kafkaEmits,
+            Map<String, Object> postCreateCleanup) {
     }
 
     private ScenarioMethod buildScenarioMethod(Endpoint endpoint, GenerationRequest request,
@@ -189,13 +192,17 @@ public class Generator {
             kafkaEmits.add(modelEmit);
         }
 
+        Map<String, Object> postCreateCleanup = postCreateCleanup(
+                endpoint.httpMethod(), path.expectedStatus(), sql, client.tables(),
+                fixture.assertions(), fixture.deletes());
         return new ScenarioMethod(
                 deriveMethodName(endpoint.id(), path.id()),
                 fixture.vars(), fixture.inserts(), fixture.deletes(),
                 mocks.block(), readPath, bodyExpr, endpoint.httpMethod().toLowerCase(),
-                resolveLiteralPath(endpoint, path.sampleInput()), path.expectedStatus(),
+                resolveLiteralPath(endpoint, path.sampleInput(), readPath && path.expectedStatus() == 404),
+                path.expectedStatus(),
                 assertionsBlock, endpoint.authRequired(),
-                mocks.propagationMissing(), path.validationWarnings(), kafkaEmits);
+                mocks.propagationMissing(), path.validationWarnings(), kafkaEmits, postCreateCleanup);
     }
 
     static String deriveMethodName(String endpointId, String pathId) {
@@ -234,6 +241,7 @@ public class Generator {
             ms.put("assertionsBlock", m.assertionsBlock());
             ms.put("authRequired", m.authRequired());
             ms.put("kafkaEmits", m.kafkaEmits());
+            ms.put("postCreateCleanup", m.postCreateCleanup());
             methodScopes.add(ms);
         }
 
@@ -529,14 +537,30 @@ public class Generator {
         return "String.format(" + literal + ", " + String.join(", ", fixture.bodyArgExprs()) + ")";
     }
 
-    private static String resolveLiteralPath(Endpoint endpoint, JsonNode input) {
+    /**
+     * IDENTITY/시퀀스 PK가 한 테스트 런에서 도달 불가능한 큰 id (Integer 범위 내라 int path param에도 안전).
+     * absent-id read(404)가 이 값을 쓰면, 병렬로 도는 성공 POST가 만드는 작은 IDENTITY id(1,2,3…)와
+     * 충돌하지 않아 '부재' 단언이 결정적으로 유지된다 (PR #62 flaky 수정, Fix#1).
+     */
+    static final String ABSENT_NUMERIC_ID = "2000000000";
+
+    /**
+     * notFoundRead = 이 시나리오가 'id 부재'를 전제하는 read(404)인지. true이면 numeric path id를
+     * 캡처된 작은 probe 값 대신 ABSENT_NUMERIC_ID로 치환해 병렬 race를 제거한다(테스트 의도=404는 보존).
+     */
+    static String resolveLiteralPath(Endpoint endpoint, JsonNode input, boolean notFoundRead) {
         String path = endpoint.path();
         StringBuilder query = new StringBuilder();
         for (EndpointParam p : endpoint.params()) {
             if (p.kind() == ParamKind.PATH) {
-                // 404 등 path param이 누락된 read-path도 유효한 URL을 만들어야 한다.
-                // 빌더의 buildPathAndQuery와 동일한 센티널로 {id} 미바인딩 오류를 방지한다.
-                String v = input.has(p.name()) ? input.get(p.name()).asText() : pathSentinel(p);
+                String v;
+                if (notFoundRead && isNumericParam(p)) {
+                    v = ABSENT_NUMERIC_ID;   // 캡처 id 무시: 404는 도달불가 id로 확정 부재 보장
+                } else {
+                    // 404 등 path param이 누락된 read-path도 유효한 URL을 만들어야 한다.
+                    // 빌더의 buildPathAndQuery와 동일한 센티널로 {id} 미바인딩 오류를 방지한다.
+                    v = input.has(p.name()) ? input.get(p.name()).asText() : pathSentinel(p, notFoundRead);
+                }
                 path = path.replace("{" + p.name() + "}", v);
             } else if (p.kind() == ParamKind.QUERY && input.has(p.name())) {
                 query.append(query.isEmpty() ? "?" : "&").append(p.name())
@@ -546,10 +570,66 @@ public class Generator {
         return path + query;
     }
 
-    private static String pathSentinel(EndpointParam param) {
+    private static boolean isNumericParam(EndpointParam param) {
         return switch (param.javaType()) {
-            case "java.lang.Integer", "int", "java.lang.Long", "long" -> "0";
+            case "java.lang.Integer", "int", "java.lang.Long", "long",
+                 "java.math.BigInteger", "short", "java.lang.Short" -> true;
+            default -> false;
+        };
+    }
+
+    private static String pathSentinel(EndpointParam param, boolean notFoundRead) {
+        return switch (param.javaType()) {
+            // numeric path param 누락 시: 404 read면 도달불가 id, 그 외엔 기존처럼 0.
+            case "java.lang.Integer", "int", "java.lang.Long", "long" -> notFoundRead ? ABSENT_NUMERIC_ID : "0";
             default -> "missing";
         };
+    }
+
+    /**
+     * Fix#3: 성공 POST(2xx)가 IDENTITY(autoIncrement) 단일 PK 행을 만들고, 그 PK가 응답에 돌아오며,
+     * 그 테이블에 대한 param-bound cleanup이 아직 없을 때만 — 응답 PK를 캡처해 deferDelete를 등록하기
+     * 위한 모델(table/pkColumn/pkField)을 반환한다. 그 외에는 null(템플릿이 정리 블록을 생략).
+     *
+     * 잔류 IDENTITY row(특히 id=1,2,3…)는 병렬로 도는 absent-id read(404)의 '부재' 가정을 깰 수 있다
+     * (Fix#1의 보조 위생). autoIncrement PK가 아니면 트리거하지 않으므로 기존 골든/일반 경로는 불변.
+     */
+    static Map<String, Object> postCreateCleanup(String httpMethod, int expectedStatus,
+            List<CapturedSql> sqlList, List<TableSchema> tables,
+            List<ComposedFixture.Assertion> assertions, List<ComposedFixture.Stmt> existingDeletes) {
+        if (!"POST".equals(httpMethod) || expectedStatus < 200 || expectedStatus >= 300) {
+            return null;
+        }
+        Map<String, TableSchema> byName = new HashMap<>();
+        tables.forEach(t -> byName.put(t.name(), t));
+        for (CapturedSql s : sqlList) {
+            if (!"INSERT".equals(s.sqlKind())) {
+                continue;
+            }
+            TableSchema t = byName.get(s.tableName());
+            if (t == null) {
+                continue;
+            }
+            List<ColumnSchema> pks = t.columns().stream().filter(ColumnSchema::primaryKey).toList();
+            if (pks.size() != 1 || !pks.get(0).autoIncrement()) {
+                continue;   // 복합 PK 또는 비-IDENTITY PK는 응답 id로 결정적 정리 불가 → 건너뜀
+            }
+            ColumnSchema pk = pks.get(0);
+            String pkField = snakeToCamel(pk.name());
+            // 응답이 그 PK를 돌려주지 않으면 런타임에 추출할 값이 없다 → 정리 불가.
+            if (assertions.stream().noneMatch(a -> a.jsonPath().equals(pkField))) {
+                continue;
+            }
+            // 이미 이 테이블을 param-bound로 정리하면 IDENTITY row도 함께 지워지므로 보강 불필요.
+            if (existingDeletes.stream().anyMatch(d -> d.sql().startsWith("DELETE FROM " + t.name() + " "))) {
+                return null;
+            }
+            Map<String, Object> m = new HashMap<>();
+            m.put("table", t.name());
+            m.put("pkColumn", pk.name());
+            m.put("pkField", pkField);
+            return m;
+        }
+        return null;
     }
 }
