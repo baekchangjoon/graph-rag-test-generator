@@ -10,9 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  # check를 3개 샤드로 분할해 별도 러너에서 병렬 실행(직렬 ~85분 → 가장 느린 샤드 기준).
-  # 분할 기준: @Tag("integration")(=풀-SUT-부팅 7개 무거운 테스트)을 unit에서 제외하고 2샤드로 나눔.
-  # unit = 전 모듈 비-integration(가벼운 testcontainer 테스트 포함), it-cli/it-rest = 무거운 integration.
+  # check를 샤드로 분할해 별도 러너에서 병렬 실행(직렬 ~85분 → 가장 느린 샤드 기준).
+  # 분류 체계: docs/05-testing.md 참고.
+  #  - unit  = in-process · Docker 불필요 (excludeTags=integration,docker)
+  #  - docker= in-process · 단일 컨테이너 컴포넌트 테스트 (includeTags=docker)
+  #  - it-*  = integration(풀-SUT 부팅) 무거운 테스트 (includeTags=integration)
   check:
     name: check (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
@@ -21,12 +23,15 @@ jobs:
       matrix:
         shard:
           - name: unit
-            args: "check -PexcludeTags=integration"
+            args: "check -PexcludeTags=integration,docker"
+          # Docker 데몬을 요구하는 컴포넌트 테스트(Testcontainers DB/Kafka, samples SUT slice).
+          - name: docker
+            args: "test -PincludeTags=docker"
           # it-cli(cli 통합 4개)가 한 샤드에선 ~12분 → 무거운 OTEL 풀빌드 2개와 가벼운 2개로 분할.
           - name: it-cli-light
-            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderE2eTest' --tests 'io.graphrag.builder.cli.BuilderEndpointSelectorTest'"
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderIntegrationTest' --tests 'io.graphrag.builder.cli.BuilderEndpointSelectorIntegrationTest'"
           - name: it-cli-otel
-            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderCollectionE2eTest' --tests 'io.graphrag.builder.cli.OtelKafkaBuildAcceptanceTest'"
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderCollectionIntegrationTest' --tests 'io.graphrag.builder.cli.OtelKafkaBuildIntegrationTest'"
           - name: it-rest
             args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.capture.*' --tests 'io.graphrag.builder.coverage.*'"
     steps:
@@ -61,7 +66,7 @@ jobs:
 
   # builder Docker 이미지가 컨테이너 안에서 Testcontainers + SUT로 graph.json을 만드는지 검증(D-E2E-2).
   # Linux 전용(--network host)이라 ubuntu 러너에서만 의미가 있어 PR에서만 돈다.
-  docker-builder-e2e:
+  dind-builder-e2e:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -74,10 +79,10 @@ jobs:
       - name: Builder image E2E (Testcontainers-in-container)
         env:
           GRADLE_OPTS: -Dorg.gradle.java.home=${{ env.JAVA_HOME }}
-        run: ./e2e/run-docker-builder-e2e.sh
+        run: ./e2e/run-dind-builder-e2e.sh
 
   # 실행 환경 서비스 이미지(test-state-dashboard, socket-mock-server)가 부팅·응답하는지 검증(D-E2E-3).
-  docker-services-e2e:
+  service-image-boot-e2e:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -90,13 +95,13 @@ jobs:
       - name: Execution-env service images boot
         env:
           GRADLE_OPTS: -Dorg.gradle.java.home=${{ env.JAVA_HOME }}
-        run: ./e2e/run-docker-services-e2e.sh
+        run: ./e2e/run-service-image-boot-e2e.sh
 
   # vX.Y.Z(-prerelease) 태그 push 시에만, 모든 검증 통과 후 distZip + testlib jar + OTEL agent를 Release에
   # 첨부하고 4개 Docker 이미지(generator·builder·dashboard·socket-mock)를 GHCR에 push한다.
   release:
     runs-on: ubuntu-latest
-    needs: [check, e2e, docker-builder-e2e, docker-services-e2e]
+    needs: [check, e2e, dind-builder-e2e, service-image-boot-e2e]
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

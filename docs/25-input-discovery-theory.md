@@ -312,7 +312,7 @@ base (변이 없음)         →                            → 201
   `Σ(coeff·field)+const`로 확장하고(3개째·진짜 곱은 bail), 비교 opcode를 threading해 두 필드를 동시충족하는
   정수 튜플을 Z3로 푼다(합 최소화 → 작은·in-range 값). `InputMutator.interField`가 한 atomic 변이로 적용.
   결정적 in-repo 승리: order-service `loyaltyPoints == nights*600+7` → 튜플 (607,1)만 201을 열며 필드별
-  변이로는 불가(BuilderE2eTest 단언). `docs/superpowers/plans/2026-06-15-stage4-z3-interfield-solver.md`.
+  변이로는 불가(BuilderIntegrationTest 단언). `docs/superpowers/plans/2026-06-15-stage4-z3-interfield-solver.md`.
 
 **여전히 미해결(Stage 4 잔여)**:
 - **결합 다변수 중 비선형·interprocedural**(`deposit*1.1 < nights*priceTier.getNightlyRate()`):

@@ -22,11 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>order-service를 OTEL 모드로 분석하면 KafkaCaptureRunner가 발행 레코드 헤더에 traceparent를
  * 주입하고(PoC②: consumer process span이 그 child가 됨), 그 trace의 DB span을 환원한다. happy
  * 교환이 order_events INSERT를 페이로드 값 binding과 함께 캡처해야 한다. log 모드 회귀는
- * {@link BuilderE2eTest}가 동일 단언을 커버한다. Docker 필요.
+ * {@link BuilderIntegrationTest}가 동일 단언을 커버한다. Docker 필요.
  */
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-class OtelKafkaBuildAcceptanceTest {
+class OtelKafkaBuildIntegrationTest {
 
     @TempDir
     Path out;

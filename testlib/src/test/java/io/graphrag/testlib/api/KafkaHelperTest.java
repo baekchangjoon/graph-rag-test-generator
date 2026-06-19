@@ -13,7 +13,9 @@ import org.testcontainers.utility.DockerImageName;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Tag;
 
+@Tag("docker")
 class KafkaHelperTest {
 
     private static KafkaContainer kafka;

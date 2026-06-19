@@ -18,7 +18,7 @@ import java.net.Socket;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class SocketMockIntegrationTest {
+class SocketMockServerTest {
 
     @Autowired
     TestRestTemplate rest;

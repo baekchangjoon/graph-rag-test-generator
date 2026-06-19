@@ -90,7 +90,7 @@ in-process 도구의 고유 가치는 **분기를 여는 입력 값을 찾아내
     도출. 도구는 `org.ow2.asm`(JDK 추적)·`tools.aqua:z3-turnkey`(native 번들) — 버전 rot 없음.
 - **배선** — BuilderCli가 두 오라클을 merge해 constraintDirected로 환류. **실증**: order-service
   promo에 파생 분기 `score*2==84` 추가 → concolic이 42 도출 → promo handler **10/10**(소스 리터럴로는
-  불가능한 arm 커버). 전 단위 + BuilderE2eTest green.
+  불가능한 arm 커버). 전 단위 + BuilderIntegrationTest green.
 
 ## arm-aware path 보존 (완료 2026-06-14)
 

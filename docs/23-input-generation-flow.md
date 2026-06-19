@@ -73,7 +73,7 @@
 
 해석 대상이 아닌 백엔드(Redis 캐시 조회: mindgraph `byUser`, notification)는 pass-1에 SELECT가 없어
 hint=null → 보정 안 함(현행 유지). **회귀 가드**: order-service `GET /api/profiles/by-name/{name}`
-(resource `profiles`≠table `users`, 비-PK `name` 조회)이 CI(`BuilderE2eTest` + e2e)에서 `users`/`name`
+(resource `profiles`≠table `users`, 비-PK `name` 조회)이 CI(`BuilderIntegrationTest` + e2e)에서 `users`/`name`
 시드 해석을 라이브 검증한다.
 
 ## 2. 정적 분석 결과를 입력 생성에 환류 (BuilderCli, 1회 빌드)

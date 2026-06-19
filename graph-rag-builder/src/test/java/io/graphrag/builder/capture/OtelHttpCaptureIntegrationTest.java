@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class OtelHttpCaptureAcceptanceTest {
+class OtelHttpCaptureIntegrationTest {
 
     private Path out;
     private AnalysisEnvironment env;

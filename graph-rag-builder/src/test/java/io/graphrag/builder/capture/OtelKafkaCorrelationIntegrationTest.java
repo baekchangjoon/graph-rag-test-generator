@@ -36,7 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-class OtelKafkaCorrelationPocTest {
+class OtelKafkaCorrelationIntegrationTest {
 
     private static final String TOPIC = "order.events";
     private static final long QUIESCE_TIMEOUT_MILLIS = 25_000;

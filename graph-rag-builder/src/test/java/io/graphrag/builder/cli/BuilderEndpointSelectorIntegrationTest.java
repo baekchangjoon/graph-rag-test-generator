@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** --endpoint 선택자 수용 테스트: 선택한 단위만 탐색(부분 그래프), 정적 인덱스는 풀 유지. Docker 필요. */
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-class BuilderEndpointSelectorTest {
+class BuilderEndpointSelectorIntegrationTest {
 
     @TempDir
     Path out;

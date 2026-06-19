@@ -31,7 +31,7 @@ class LogParserCaptureTest {
     }
 
     /**
-     * REPRO (flaky BuilderE2eTest:178 root cause): a consumer emits SQL in stages — dedup
+     * REPRO (flaky BuilderIntegrationTest:178 root cause): a consumer emits SQL in stages — dedup
      * existsById SELECTs first, then the INSERT slightly later. drain(timeout) must capture the
      * later INSERT too, not return as soon as the first SQL appears.
      *

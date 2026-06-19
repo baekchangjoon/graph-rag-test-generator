@@ -1,6 +1,8 @@
 # 06 — 테스트 환경 (RestAssured + docker-compose)
 
-생성된 테스트가 실행되는 환경. 도구 1의 분석 환경과는 별개다.
+생성된 테스트가 실행되는 *런타임 토폴로지*를 다룬다. 도구 1의 분석 환경과는 별개다.
+레포 자체 테스트의 분류 체계(unit/integration/docker/e2e · 접미사·`@Tag`·CI 샤드)는
+[05-testing](05-testing.md)을 본다.
 
 > **Prebuilt(소스 빌드 불필요)**: 보조 서비스는 GHCR 이미지로 발행된다 —
 > `ghcr.io/baekchangjoon/test-state-dashboard`, `ghcr.io/baekchangjoon/socket-mock-server`(둘 다
