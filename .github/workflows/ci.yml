@@ -10,8 +10,22 @@ permissions:
   contents: read
 
 jobs:
+  # check를 3개 샤드로 분할해 별도 러너에서 병렬 실행(직렬 ~85분 → 가장 느린 샤드 기준).
+  # 분할 기준: @Tag("integration")(=풀-SUT-부팅 7개 무거운 테스트)을 unit에서 제외하고 2샤드로 나눔.
+  # unit = 전 모듈 비-integration(가벼운 testcontainer 테스트 포함), it-cli/it-rest = 무거운 integration.
   check:
+    name: check (${{ matrix.shard.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: unit
+            args: "check -PexcludeTags=integration"
+          - name: it-cli
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.*'"
+          - name: it-rest
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.capture.*' --tests 'io.graphrag.builder.coverage.*'"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -20,10 +34,10 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
       # gradle.properties의 로컬 java.home을 러너의 JDK로 덮어쓴다
-      - name: Unit + integration tests
+      - name: Tests (${{ matrix.shard.name }})
         env:
           GRADLE_OPTS: -Dorg.gradle.java.home=${{ env.JAVA_HOME }}
-        run: ./gradlew check
+        run: ./gradlew ${{ matrix.shard.args }}
 
   e2e:
     runs-on: ubuntu-latest
