@@ -524,6 +524,12 @@ public class EndpointExplorationRunner {
         List<io.graphrag.model.CapturedHttpCall> allHttpCalls = new ArrayList<>();
         List<io.graphrag.model.CapturedEventEmit> allCapturedEventEmits = new ArrayList<>();
 
+        // End-of-endpoint batch drain: Kafka records are buffered continuously by the background
+        // consumer; by the time all requests for this endpoint have completed, all emitted records
+        // are already buffered. A short settle handles stragglers (records in flight).
+        java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> kafkaByTrace =
+                kafkaCapture != null ? kafkaCapture.drainAllByTraceId(300) : java.util.Map.of();
+
         for (PathCandidate candidate : outcome.paths()) {
             List<CapturedSql> sql = captureSql(candidate);
             allSql.addAll(sql);
@@ -532,13 +538,14 @@ public class EndpointExplorationRunner {
 
             List<io.graphrag.model.CapturedEventEmit> pathEventEmits = new ArrayList<>();
             int emitSeq = 1;
-            for (io.graphrag.model.CapturedEventEmit emit : candidate.capturedEventEmits()) {
+            for (KafkaCaptureReceiver.CapturedRecord record :
+                    kafkaByTrace.getOrDefault(candidate.kafkaTraceId(), java.util.List.of())) {
                 pathEventEmits.add(new io.graphrag.model.CapturedEventEmit(
                         "event-" + candidate.pathId() + "-" + (emitSeq++),
                         candidate.pathId(),
-                        emit.topic(),
-                        emit.key(),
-                        emit.payload()
+                        record.topic(),
+                        record.key(),
+                        record.value()
                 ));
             }
             allCapturedEventEmits.addAll(pathEventEmits);
@@ -751,23 +758,6 @@ public class EndpointExplorationRunner {
             }
         }
 
-        java.util.List<io.graphrag.model.CapturedEventEmit> capturedEvents = java.util.List.of();
-        if (kafkaCapture != null && traceId != null) {
-            java.util.List<KafkaCaptureReceiver.CapturedRecord> records = kafkaCapture.drain(traceId, 5000);
-            if (!records.isEmpty()) {
-                capturedEvents = new java.util.ArrayList<>();
-                for (KafkaCaptureReceiver.CapturedRecord record : records) {
-                    capturedEvents.add(new io.graphrag.model.CapturedEventEmit(
-                            java.util.UUID.randomUUID().toString(),
-                            null,
-                            record.topic(),
-                            record.key(),
-                            record.value()
-                    ));
-                }
-            }
-        }
-
         ExecutionDataStore delta = coverage.dump(true);
         String coverageKey = CoverageFingerprint.of(delta, appClasses);
         for (ExecutionData ed : delta.getContents()) {
@@ -779,7 +769,7 @@ public class EndpointExplorationRunner {
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
                 httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                coverageKey, drained, capturedEvents);
+                coverageKey, drained, java.util.List.of(), traceId);
     }
 
     /**
