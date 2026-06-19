@@ -67,27 +67,206 @@ public class Generator {
                     List.of("form endpoint not generated (coverage-only): " + endpoint.id()),
                     new io.graphrag.model.ParallelSafetyReport(List.of(), List.of()));
         }
+        List<ExploredPath> paths = new ArrayList<>();
         if (request.pathId() != null) {
-            return generateSingle(request, request.testClassName(), request.pathId());
+            paths.add(client.path(request.pathId()));
+        } else {
+            for (ExploredPath p : client.pathsForEndpoint(request.endpointId())) {
+                if ("negative-auth".equals(p.discoveredBy())
+                        || "negative-validation".equals(p.discoveredBy())) {
+                    continue;
+                }
+                paths.add(p);
+            }
         }
-        List<GeneratedFile> files = new ArrayList<>();
+
+        List<ScenarioMethod> parallel = new ArrayList<>();
+        List<ScenarioMethod> serial = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
+        for (ExploredPath path : paths) {
+            ScenarioMethod m = buildScenarioMethod(endpoint, request, path);
+            warnings.addAll(m.warnings());
+            (m.serial() ? serial : parallel).add(m);
+        }
+
+        List<GeneratedFile> files = new ArrayList<>();
         List<String> fullyParallel = new ArrayList<>();
         List<io.graphrag.model.SerialRequired> serialRequired = new ArrayList<>();
-        for (ExploredPath path : client.pathsForEndpoint(request.endpointId())) {
-            if ("negative-auth".equals(path.discoveredBy())
-                    || "negative-validation".equals(path.discoveredBy())) {
-                continue;   // 부정-인증/부정-검증 커버용 path(거부 arm)는 테스트 생성 대상 아님(커버리지 전용)
+
+        if (!parallel.isEmpty()) {
+            files.add(renderTestClass(request, endpoint, request.testClassName(), parallel, false));
+            fullyParallel.add(request.testClassName());
+        }
+        if (!serial.isEmpty()) {
+            String serialName = request.testClassName() + "Serial";
+            if (request.pathId() != null && parallel.isEmpty()) {
+                serialName = request.testClassName();
             }
-            String className = request.testClassName() + classSuffix(endpoint.id(), path.id());
-            GenerationResult single = generateSingle(request, className, path.id());
-            files.addAll(single.files());
-            warnings.addAll(single.warnings());
-            fullyParallel.addAll(single.parallelSafety().fullyParallel());
-            serialRequired.addAll(single.parallelSafety().serialRequired());
+            files.add(renderTestClass(request, endpoint, serialName, serial, true));
+            serialRequired.add(new io.graphrag.model.SerialRequired(
+                    serialName, SAME_THREAD_REASON,
+                    "외부 HTTP 호출에 baggage가 전파되지 않음 — OTEL agent 부착 또는 직렬 실행 필요"));
+        }
+        if (!files.isEmpty()) {
+            files.add(new GeneratedFile("junit-platform.properties", JUNIT_PLATFORM_PROPERTIES));
         }
         return new GenerationResult(files, warnings,
                 new ParallelSafetyReport(fullyParallel, serialRequired));
+    }
+
+    private static final String JUNIT_PLATFORM_PROPERTIES =
+            "junit.jupiter.execution.parallel.enabled=true\n"
+            + "junit.jupiter.execution.parallel.mode.default=concurrent\n"
+            + "junit.jupiter.execution.parallel.mode.classes.default=concurrent\n"
+            + "junit.jupiter.execution.parallel.config.strategy=dynamic\n"
+            + "junit.jupiter.execution.parallel.config.dynamic.factor=1\n";
+
+    private static final String SAME_THREAD_REASON = "SUT_PROPAGATION_MISSING";
+    private static final String CLASS_SERIAL_MARK = "@Execution(ExecutionMode.SAME_THREAD)\n";
+    private static final String SERIAL_IMPORTS =
+            "import org.junit.jupiter.api.parallel.Execution;\n"
+            + "import org.junit.jupiter.api.parallel.ExecutionMode;\n";
+
+    private record ScenarioMethod(
+            String methodName, List<ComposedFixture.Var> vars,
+            List<ComposedFixture.Stmt> inserts, List<ComposedFixture.Stmt> deletes,
+            String mocksBlock, boolean readPath, String bodyExpr, String httpMethodLower,
+            String requestPath, int expectedStatus, String assertionsBlock, boolean authRequired,
+            boolean serial, List<String> warnings,
+            List<java.util.Map<String, Object>> kafkaEmits) {
+    }
+
+    private ScenarioMethod buildScenarioMethod(Endpoint endpoint, GenerationRequest request,
+                                               ExploredPath path) {
+        List<CapturedSql> sql = client.sqlForPath(path.id());
+        boolean readPath = endpoint.httpMethod().equals("GET");
+        java.util.Map<String, String> knownByField = new java.util.HashMap<>();
+        // collection body(배열)면 원소 객체에서 결정적 필드를 도출(collection-of-DTO).
+        JsonNode knownSrc = path.sampleInput();
+        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ArrayNode arr
+                && arr.size() > 0 && arr.get(0) instanceof com.fasterxml.jackson.databind.node.ObjectNode) {
+            knownSrc = arr.get(0);
+        }
+        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ObjectNode in) {
+            in.fields().forEachRemaining(e -> {
+                if (!e.getValue().isNull()) {
+                    knownByField.put(e.getKey(), e.getValue().asText());
+                }
+            });
+        }
+        for (RequiredSeed s : client.seedsForPath(path.id())) {
+            for (int i = 0; i < s.columns().size() && i < s.values().size(); i++) {
+                knownByField.putIfAbsent(snakeToCamel(s.columns().get(i)), s.values().get(i));
+            }
+        }
+        ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
+                client.seedsForPath(path.id()), readPath, knownByField);
+        HttpMockComposer.ComposedMocks mocks =
+                new HttpMockComposer().compose(client.httpCallsForPath(path.id()));
+
+        String bodyExpr = bodyExpr(fixture);
+        boolean methodHasBody = endpoint.httpMethod().equals("POST")
+                || endpoint.httpMethod().equals("PUT") || endpoint.httpMethod().equals("PATCH");
+        if (methodHasBody && fixture.bodyFormat().isEmpty()) {
+            String json = jsonBodyFromInput(endpoint, path.sampleInput());
+            bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        }
+        String assertionsBlock = fixture.assertions().stream()
+                .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
+                .reduce("", String::concat);
+
+        // Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성.
+        List<Map<String, Object>> kafkaEmits = new ArrayList<>();
+        for (io.graphrag.model.CapturedEventEmit emit : client.capturedEventEmitsForPath(path.id())) {
+            Map<String, Object> modelEmit = new HashMap<>();
+            modelEmit.put("topic", emit.topic());
+            // key는 consumeNextRecord의 expectedKey 인자로 쓴다(공유 토픽 오염 격리).
+            // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
+            modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions(), fixture.nonDeterministicValues()));
+            if (emit.payload() != null) {
+                modelEmit.put("payloadJson", jsonEscape(deterministicPayload(emit.payload(), fixture)));
+            }
+            kafkaEmits.add(modelEmit);
+        }
+
+        return new ScenarioMethod(
+                deriveMethodName(endpoint.id(), path.id()),
+                fixture.vars(), fixture.inserts(), fixture.deletes(),
+                mocks.block(), readPath, bodyExpr, endpoint.httpMethod().toLowerCase(),
+                resolveLiteralPath(endpoint, path.sampleInput()), path.expectedStatus(),
+                assertionsBlock, endpoint.authRequired(),
+                mocks.propagationMissing(), path.validationWarnings(), kafkaEmits);
+    }
+
+    static String deriveMethodName(String endpointId, String pathId) {
+        String rest = pathId.startsWith(endpointId + "-")
+                ? pathId.substring(endpointId.length() + 1) : pathId;
+        // 모든 비식별자 문자를 '_'로 (단순히 '-'만이 아니라) → 어떤 path id든 유효한 Java 식별자 보장
+        String name = rest.replaceAll("[^A-Za-z0-9]", "_");
+        if (name.isEmpty() || Character.isDigit(name.charAt(0))) {
+            name = "s_" + name;
+        }
+        return name;
+    }
+
+    private GeneratedFile renderTestClass(GenerationRequest request, Endpoint endpoint,
+                                          String className, List<ScenarioMethod> methods,
+                                          boolean classSerial) {
+        List<String> baseNames = new ArrayList<>();
+        for (ScenarioMethod m : methods) {
+            baseNames.add(m.methodName());
+        }
+        List<String> uniqueNames = uniqueMethodNames(baseNames);
+        List<Map<String, Object>> methodScopes = new ArrayList<>();
+        for (int idx = 0; idx < methods.size(); idx++) {
+            ScenarioMethod m = methods.get(idx);
+            Map<String, Object> ms = new HashMap<>();
+            ms.put("methodName", uniqueNames.get(idx));
+            ms.put("vars", m.vars());
+            ms.put("inserts", m.inserts());
+            ms.put("deletes", m.deletes());
+            ms.put("mocksBlock", m.mocksBlock());
+            ms.put("readPath", m.readPath());
+            ms.put("bodyExpr", m.bodyExpr());
+            ms.put("httpMethodLower", m.httpMethodLower());
+            ms.put("requestPath", m.requestPath());
+            ms.put("expectedStatus", m.expectedStatus());
+            ms.put("assertionsBlock", m.assertionsBlock());
+            ms.put("authRequired", m.authRequired());
+            ms.put("kafkaEmits", m.kafkaEmits());
+            methodScopes.add(ms);
+        }
+
+        Map<String, Object> scope = new HashMap<>();
+        scope.put("packageName", request.packageName());
+        scope.put("className", className);
+        scope.put("httpMethod", endpoint.httpMethod());
+        scope.put("endpointPath", endpoint.path());
+        scope.put("endpointId", endpoint.id());
+        scope.put("methodCount", methods.size());
+        scope.put("methods", methodScopes);
+        scope.put("classSerialMark", classSerial ? CLASS_SERIAL_MARK : "");
+        scope.put("serialImports", classSerial ? SERIAL_IMPORTS : "");
+
+        StringWriter writer = new StringWriter();
+        template.execute(writer, scope);
+        return new GeneratedFile(
+                request.packageName().replace('.', '/') + "/" + className + ".java",
+                writer.toString());
+    }
+
+    /** 중복 메서드명을 _2, _3… 접미사로 고유화 (동일 base의 2번째부터). */
+    static List<String> uniqueMethodNames(List<String> baseNames) {
+        java.util.Set<String> used = new java.util.HashSet<>();
+        List<String> result = new ArrayList<>(baseNames.size());
+        for (String name : baseNames) {
+            String unique = name;
+            for (int i = 2; !used.add(unique); i++) {
+                unique = name + "_" + i;
+            }
+            result.add(unique);
+        }
+        return result;
     }
 
     /** STOMP exchange → 테스트 클래스 합성 (3.3). */
@@ -249,9 +428,8 @@ public class Generator {
     }
 
     /**
-     * emit key를 consumeNextRecord의 expectedKey 인자 표현식으로 변환한다.
-     * 입력 유래 값(예: userId)은 테스트 런타임 변수명으로 치환해 자기 발행 레코드만 소비하게 한다.
-     * key가 없거나 DB 시퀀스 PK처럼 비결정 값이면 null(필터 없음)로 둔다 — 캡처 시점의 stale
+     * emit key를 consumeNextRecord의 expectedKey 표현식으로 변환한다.
+     * 입력 유래 값(치환 대상)이면 테스트 런타임 변수로, 비결정 값이면 null로(필터 없음),
      * 리터럴로 필터링하면 런타임에 생성되는 실제 key와 영영 불일치해 단언이 깨지기 때문이다.
      * 그 외 결정적 리터럴 key만 따옴표 문자열로 필터링한다.
      */
@@ -308,115 +486,6 @@ public class Generator {
                 ? pathId.substring(endpointId.length() + 1)
                 : pathId;
         return "_" + rest.toUpperCase().replaceAll("[^A-Z0-9]", "_");
-    }
-
-    private GenerationResult generateSingle(GenerationRequest request, String className,
-                                            String pathId) {
-        Endpoint endpoint = client.endpoint(request.endpointId());
-        ExploredPath path = client.path(pathId);
-        List<CapturedSql> sql = client.sqlForPath(pathId);
-
-        boolean readPath = endpoint.httpMethod().equals("GET");
-        // 응답 필드명 → 결정적 기대값(요청 입력 필드 + 시드 컬럼 camelCase). 응답 필드가 같은 이름의
-        // 입력/시드 값과 일치하면 equalTo, 서버 생성(시퀀스 id/count/timestamp)은 여기 없어 notNull.
-        java.util.Map<String, String> knownByField = new java.util.HashMap<>();
-        // collection body(배열)면 원소 객체에서 결정적 필드를 도출(collection-of-DTO). scalar/빈 배열은
-        // 객체가 아니라 knownByField 비움 → 응답 단언은 notNullValue로 폴백(허용).
-        JsonNode knownSrc = path.sampleInput();
-        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ArrayNode arr
-                && arr.size() > 0 && arr.get(0) instanceof com.fasterxml.jackson.databind.node.ObjectNode) {
-            knownSrc = arr.get(0);
-        }
-        if (knownSrc instanceof com.fasterxml.jackson.databind.node.ObjectNode in) {
-            in.fields().forEachRemaining(e -> {
-                if (!e.getValue().isNull()) {
-                    knownByField.put(e.getKey(), e.getValue().asText());
-                }
-            });
-        }
-        for (RequiredSeed s : client.seedsForPath(pathId)) {
-            for (int i = 0; i < s.columns().size() && i < s.values().size(); i++) {
-                knownByField.putIfAbsent(snakeToCamel(s.columns().get(i)), s.values().get(i));
-            }
-        }
-        ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
-                client.seedsForPath(pathId), readPath, knownByField);
-        HttpMockComposer.ComposedMocks mocks =
-                new HttpMockComposer().compose(client.httpCallsForPath(pathId));
-
-        Map<String, Object> scope = new HashMap<>();
-        scope.put("packageName", request.packageName());
-        scope.put("className", className);
-        scope.put("httpMethod", endpoint.httpMethod());
-        scope.put("httpMethodLower", endpoint.httpMethod().toLowerCase());
-        scope.put("endpointPath", endpoint.path());
-        // 모든 method에서 PATH/QUERY param을 치환한다. write-path(PUT/DELETE /x/{id})도
-        // {id}를 빌더 탐색과 동일한 센티널/입력값으로 바인딩해야 RestAssured 미바인딩 오류를 막는다.
-        scope.put("requestPath", resolveLiteralPath(endpoint, path.sampleInput()));
-        scope.put("readPath", readPath);
-        scope.put("endpointId", endpoint.id());
-        scope.put("pathId", path.id());
-        scope.put("testMethodName", path.id().replace('-', '_'));
-        scope.put("expectedStatus", path.expectedStatus());
-        scope.put("vars", fixture.vars());
-        scope.put("inserts", fixture.inserts());
-        scope.put("deletes", fixture.deletes());
-        scope.put("assertionsBlock", fixture.assertions().stream()
-                .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
-                .reduce("", String::concat));
-        // seeds-브랜치(by-id 등)는 bodyFormat을 안 채운다. body를 갖는 메서드(POST/PUT/PATCH)면
-        // 실제 보낸 body(sampleInput에서 path/query 제외)를 직렬화해 요청 body로 쓴다. 빈 객체 "{}"도
-        // 그대로 보내야 컨트롤러 검증(예: "at least one of ...")이 재현된다(빈 문자열 → 일반 400 방지).
-        String bodyExpr = bodyExpr(fixture);
-        boolean methodHasBody = endpoint.httpMethod().equals("POST")
-                || endpoint.httpMethod().equals("PUT") || endpoint.httpMethod().equals("PATCH");
-        if (methodHasBody && fixture.bodyFormat().isEmpty()) {
-            String json = jsonBodyFromInput(endpoint, path.sampleInput());
-            bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-        }
-        scope.put("bodyExpr", bodyExpr);
-        scope.put("authRequired", endpoint.authRequired());
-        scope.put("mocksBlock", mocks.block());
-        
-        List<io.graphrag.model.CapturedEventEmit> kafkaEvents = client.capturedEventEmitsForPath(pathId);
-        if (!kafkaEvents.isEmpty()) {
-            scope.put("hasKafkaEmits", true);
-            List<Map<String, Object>> kafkaEmits = new ArrayList<>();
-            for (io.graphrag.model.CapturedEventEmit emit : kafkaEvents) {
-                Map<String, Object> modelEmit = new HashMap<>();
-                modelEmit.put("topic", emit.topic());
-                // key는 consumeNextRecord의 expectedKey 인자로 쓴다(공유 토픽 오염 격리).
-                // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
-                modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions(), fixture.nonDeterministicValues()));
-                if (emit.payload() != null) {
-                    modelEmit.put("payloadJson", jsonEscape(deterministicPayload(emit.payload(), fixture)));
-                }
-                kafkaEmits.add(modelEmit);
-            }
-            scope.put("kafkaEmits", kafkaEmits);
-        }
-
-        // 격리 불가(SUT propagation 부재) → 직렬 실행 마크 (docs/04)
-        scope.put("serialMark", mocks.propagationMissing()
-                ? "@Execution(ExecutionMode.SAME_THREAD)\n" : "");
-        scope.put("serialImports", mocks.propagationMissing()
-                ? "import org.junit.jupiter.api.parallel.Execution;\n"
-                + "import org.junit.jupiter.api.parallel.ExecutionMode;\n" : "");
-
-        StringWriter writer = new StringWriter();
-        template.execute(writer, scope);
-
-        String relativePath = request.packageName().replace('.', '/')
-                + "/" + className + ".java";
-        ParallelSafetyReport safety = mocks.propagationMissing()
-                ? new ParallelSafetyReport(List.of(), List.of(new io.graphrag.model.SerialRequired(
-                        className, "SUT_PROPAGATION_MISSING",
-                        "외부 HTTP 호출에 baggage가 전파되지 않음 — OTEL agent 부착 또는 직렬 실행 필요")))
-                : new ParallelSafetyReport(List.of(className), List.of());
-        return new GenerationResult(
-                List.of(new GeneratedFile(relativePath, writer.toString())),
-                path.validationWarnings(),
-                safety);
     }
 
     /** sampleInput에서 path/query param을 제외한 나머지를 JSON body로 직렬화. */

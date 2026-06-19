@@ -138,20 +138,20 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 병렬 시나리오 병합 클래스 | `GeneratorTest#endpointMergesParallelScenariosIntoOneClass` (+golden) | Gen | 🔴 planned |
-| REQ-002 | 직렬 Serial 클래스 분리 | `GeneratorTest#propagationMissingScenarioGoesToSerialClass` | Gen | 🔴 planned |
-| REQ-003 | 병렬 클래스 @Execution 부재 | `GeneratorTest#parallelClassHasNoExecutionAnnotation` | Gen | 🔴 planned |
-| REQ-004 | junit-platform.properties emit | `GeneratorTest#emitsJunitPlatformPropertiesDynamic` | Gen | 🔴 planned |
-| REQ-005 | 기존 properties 경고 | `GeneratorCliTest#warnsWhenOverwritingDifferentProperties` | Gen | 🔴 planned |
-| REQ-006 | ParallelSafetyReport 클래스레벨 | `GeneratorTest#reportsParallelAndSerialClasses` | Gen | 🔴 planned |
-| REQ-007 | 단건 후방호환 | `GeneratorTest#singlePathBackwardCompatible` | Gen | 🔴 planned |
-| REQ-008 | deferDelete FIFO | `JdbcHelperTest#runsDeferredDeletesInRegistrationOrder` | Unit | 🔴 planned |
-| REQ-009 | deferDelete 실패 격리 | `JdbcHelperTest#deferredDeleteFailureIsBestEffort` | Unit | 🔴 planned |
-| REQ-010 | cleanup이 delete 먼저 | `TestScopeTest#cleanupRunsDeferredDeletesBeforeTeardown` | Unit | 🔴 planned |
-| REQ-011 | @AfterEach 직접 DELETE 없음 | `GeneratorTest#afterEachOnlyCallsScopeCleanup` | Gen | 🔴 planned |
-| REQ-012 | 불변식 가드 | `GeneratorTest#noPerClassInstanceOrStaticScope` | Gen | 🔴 planned |
-| REQ-013 | 병렬+격리 e2e green | `e2e/run-e2e.sh` (parallel run green) | E2E | 🔴 planned |
-| REQ-014 | methodName 도출 | `GeneratorTest#methodNameDerivationRules` | Gen | 🔴 planned |
+| REQ-001 | 병렬 시나리오 병합 클래스 | `GeneratorTest#endpointMergesParallelScenariosIntoOneClass` (+골든 `generate_matchesGoldenFile`) | Gen | 🟢 green |
+| REQ-002 | 직렬 Serial 클래스 분리 | `GeneratorTest#propagationMissingScenarioGoesToSerialClass` | Gen | 🟢 green |
+| REQ-003 | 병렬 클래스 @Execution 부재 | `GeneratorTest#endpointMergesParallelScenariosIntoOneClass` (`doesNotContain("@Execution")` 단언) | Gen | 🟢 green |
+| REQ-004 | junit-platform.properties emit | `GeneratorTest#emitsJunitPlatformPropertiesDynamic` | Gen | 🟢 green |
+| REQ-005 | 기존 properties 경고 | `GeneratorCliTest#writeFile_absentFile_*`/`writeFile_identicalContent_*`/`writeFile_existingDifferentContent_*` + `overwritesExistingDifferentPropertiesWithEmittedContent` | Gen | 🟢 green |
+| REQ-006 | ParallelSafetyReport 클래스레벨 | `GeneratorTest#reportsParallelAndSerialClasses` | Gen | 🟢 green |
+| REQ-007 | 단건 후방호환 | `GeneratorTest#singleSerialPathGetsClassLevelSameThread` (+골든 단건 happy `generate_matchesGoldenFile`) | Gen | 🟢 green |
+| REQ-008 | deferDelete FIFO | `JdbcHelperTest#runsDeferredDeletesInRegistrationOrder` | Unit | 🟢 green |
+| REQ-009 | deferDelete 실패 격리 | `JdbcHelperTest#deferredDeleteFailureIsBestEffort` | Unit | 🟢 green |
+| REQ-010 | cleanup이 delete 먼저 | `TestScopeTest#cleanupRunsDeferredDeletesBeforeConnectionClose` | Unit | 🟢 green |
+| REQ-011 | @AfterEach 직접 DELETE 없음 | `GeneratorTest#endpointMergesParallelScenariosIntoOneClass` (`@AfterEach` 본문 단언) | Gen | 🟢 green |
+| REQ-012 | 불변식 가드 | `GeneratorTest#endpointMergesParallelScenariosIntoOneClass` (`@TestInstance`/`static TestScope` 부재 단언) | Gen | 🟢 green |
+| REQ-013 | 병렬+격리 e2e green | `e2e/run-e2e.sh` (parallel run green) | E2E | 🟢 green |
+| REQ-014 | methodName 도출 | `GeneratorTest#methodNameDerivationRules` (+`methodNameStripsEndpointPrefix`, `uniqueMethodNamesDedupesCollision`) | Gen | 🟢 green |
 | REQ-015 | WS/Kafka 불변 | `GeneratorKafkaTest` (regression) | Gen | 🔵 out-of-scope |
 
-Coverage: 0/14 green (0%) — target 100% (대상: Must 13 + Should 1[REQ-005]). Won't/out-of-scope: REQ-015(🔵, 회귀만 확인).
+Coverage: 14/14 green (100%) — 대상: Must 13 + Should 1[REQ-005]. Won't/out-of-scope: REQ-015(🔵, 회귀만 확인).

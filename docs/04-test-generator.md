@@ -82,14 +82,15 @@ class OrdersPostTest {
 
     @AfterEach
     void cleanup() throws Exception {
-        // 자기 스코프만 cleanup. FK 역순.
-        jdbc.update("DELETE FROM orders WHERE user_id=?", userId);
-        jdbc.update("DELETE FROM users WHERE id=?", userId);
+        // 자기 스코프만 cleanup. 각 @Test 메소드가 본문에서 scope.jdbc().deferDelete(...)로
+        // 등록한 삭제를 testlib가 등록 순서(FIFO)대로 실행한 뒤 mock/연결을 해제한다.
         scope.cleanup();
     }
 
+    // 한 엔드포인트의 병렬-안전 시나리오는 이 클래스 안에 @Test 메소드 여러 개로 묶인다
+    // (happy(), s404_1(), s201_2() …). 각 @Test는 자기 scope.testId()로 격리된다.
     @Test
-    void createOrder_express_userId() {
+    void happy() {
         given(scope.rest.given())
             .header("Authorization", "Bearer " + token)
             .header("baggage", "test-id=" + scope.testId)
@@ -107,6 +108,20 @@ class OrdersPostTest {
 ```
 
 DB 상태 검증은 없다. 응답 검증만.
+
+### 클래스 그룹화 + 병렬 설정
+
+- 한 HTTP 엔드포인트의 병렬-안전 시나리오는 `request.testClassName()` 클래스 1개에 평탄
+  `@Test` 메소드들로 묶인다. 전파 정보가 없어 격리할 수 없는 시나리오는 클래스레벨
+  `@Execution(ExecutionMode.SAME_THREAD)`를 단 별도 `{testClassName}Serial` 클래스로 분리한다.
+  병렬 클래스에는 클래스·메소드 어느 레벨에도 `@Execution`이 없다.
+- 생성 파일이 1개 이상이면 산출물에 `junit-platform.properties`를 1개 emit한다
+  (`parallel.enabled=true`, `mode.default=concurrent`, `mode.classes.default=concurrent`,
+  `config.strategy=dynamic`, `config.dynamic.factor=1`). 소비자는 이 파일을 자기 프로젝트의
+  `src/test/resources/` 루트에 둔다. CLI는 내용이 다른 기존 파일을 덮어쓸 때 경고를 한 번 남긴다.
+- `@AfterEach`는 `scope.cleanup()` 한 줄이다. cleanup DELETE는 각 `@Test` 메소드 본문에서
+  `scope.jdbc().deferDelete(sql, args)`로 자식→부모 순으로 등록하고, testlib가 등록 순서(FIFO)대로
+  실행한다(FK-safe 삭제 순서는 generator가 보장하며, testlib는 등록 역순으로 뒤집지 않는다).
 
 ## 규칙 카탈로그
 
@@ -149,9 +164,9 @@ boolean 파라미터 바인딩이 깨진다.
 | 규칙 | 동작 |
 |---|---|
 | HTTP: propagation 있음 | `withBaggage("test-id", scope.testId)` 추가 |
-| HTTP: propagation 없음 | **경고** + 직렬 실행 마크 또는 인스턴스 분리 힌트 |
+| HTTP: propagation 없음 | **경고** + 해당 시나리오를 클래스레벨 `@Execution(SAME_THREAD)`인 `…Serial` 클래스로 분리 |
 | Socket: session field 있음 | session field 매칭 |
-| Socket: session field 없음 | **직렬 실행 마크** (`@Execution(SAME_THREAD)`) |
+| Socket: session field 없음 | **경고** + `…Serial` 클래스로 분리(클래스레벨 `@Execution(SAME_THREAD)`) |
 
 ### 인증 규칙
 

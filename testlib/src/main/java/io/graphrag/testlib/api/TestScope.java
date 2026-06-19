@@ -144,17 +144,21 @@ public final class TestScope {
         return kafkaSingleton;
     }
 
-    /** 자기 스코프의 mock/연결만 해제. DB row 정리는 테스트 코드가 FK 역순으로 직접 수행. */
+    /** 자기 스코프의 등록된 DB 정리(deferred delete)를 등록 순서대로(deferred delete) 실행한 뒤 mock/연결을 해제. */
     public void cleanup() {
         if (cleaned) {
             return;
         }
         cleaned = true;
-        stompHelpers.forEach(StompHelper::close);
-        kafkaHelpers.forEach(KafkaHelper::close);
-        http.removeAllForScope(testId);
-        socket.removeSession(testId);
-        jdbc.close();
+        try {
+            jdbc.runDeferredDeletes();
+            stompHelpers.forEach(StompHelper::close);
+            kafkaHelpers.forEach(KafkaHelper::close);
+            http.removeAllForScope(testId);
+            socket.removeSession(testId);
+        } finally {
+            jdbc.close();
+        }
         dashboard.report(new TestEvent(EventType.SCOPE_CLEANED, testId,
                 RUN_ID, Instant.now(), Json.mapper().nullNode()));
     }
