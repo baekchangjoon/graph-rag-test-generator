@@ -97,6 +97,15 @@ baggage propagator 활성 시 inbound 헤더 `baggage: test-id=...` 가 모든 o
 - `none`: 추적 전무 SUT의 격하 baseline(직렬·격리 없음). 구 `--sql-capture log` 와 동등.
 - 멀티서비스 로그 수집: attach 모드에서 `--capture-services a,b,c` 로 여러 컨테이너 로그를 한 파일에 인터리브 tail한다(비동기 B→C 캡처). 미지정 시 `--app-service` 단일.
 
+## Kafka outbound produce 캡처
+
+`--trace-mode`(SQL 캡처 경로)와 **직교**하는 별도 백엔드다. SUT가 발행하는 outbound Kafka 메시지를 캡처해 어설션을 만든다.
+
+- 활성: attach 모드 `--kafka-bootstrap <host:port>`, 분석 모드 `--with-kafka`. 미지정 시 produce 캡처를 건너뛴다.
+- 동작: 백그라운드 `KafkaCaptureReceiver`가 브로커 토픽을 구독하고, 요청별 trace-id(otel=traceparent, sleuth=B3)로 레코드를 귀속해 `CapturedEventEmit`(topic+key+payload)을 만든다.
+- 생성 테스트: `KafkaHelper.consumeNextRecord(topic[, expectedKey], timeout)` + `JSONAssert`로 단언한다. 비결정 필드는 제거하고, 토픽/키 필터로 복수 emit을 각각 검증한다.
+- inbound `@KafkaListener` 소비(컨슈머 탐색)와는 다르다 — 이쪽은 SUT가 **내보내는** 메시지의 캡처다.
+
 ## RestAssured 테스트 스타일
 
 ```java

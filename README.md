@@ -31,7 +31,8 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 | `testlib` | 생성 테스트가 의존하는 helper (TestScope, SPI 어댑터) |
 | `test-state-dashboard` | 테스트 자원 추적 + TTL 누수 감지 |
 | `socket-mock-server` | Netty TCP mock + admin REST |
-| `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) |
+| `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) + **Kafka outbound produce** 캡처 데모 |
+| `samples/legacy-tram` | 레거시 async MSA 샘플 (Java 8 + Spring Boot 2.7 + Sleuth(B3) + Eventuate Tram 0.35 + MySQL binlog/CDC + Kafka, order-web→reservation→ledger 3개 앱). `--trace-mode sleuth` 의 비동기·서비스간 SQL 캡처 라이브 E2E 검증용. 런북: `e2e/run-legacy-tram-sleuth-e2e.sh` |
 | `e2e` | Phase 0 E2E 사이클 |
 
 ## 요구 환경
@@ -91,6 +92,25 @@ path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트
   --sut-compose <path/to/docker-compose.yml> --out <dir> \
   --attach --app-service app --app-port 58080 --jacoco-port 16300 \
   --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres"
+
+# 도구 1 — Kafka outbound produce 캡처 (attach 모드)
+#   --kafka-bootstrap 지정 시 백그라운드 KafkaCaptureReceiver가 SUT 발행 메시지를
+#   요청별 trace-id로 귀속 캡처(CapturedEventEmit) → 생성 테스트가 JSONAssert 어설션 합성
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres \
+  --kafka-bootstrap localhost:9092"
+
+# 도구 1 — 레거시 Sleuth trace 모드 + 멀티서비스 로그 수집 (Java8 + Eventuate Tram)
+#   --trace-mode sleuth: B3 trace-id로 비동기·서비스간 SQL 상관 (OTEL agent 미부착)
+#   --capture-services: 여러 컨테이너 로그를 인터리브 tail해 A→B→C SQL 회수 (attach 전용)
+#   동작 데모는 samples/legacy-tram + e2e/run-legacy-tram-sleuth-e2e.sh 참고
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service order-web --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:mysql://localhost:53306/orderdb --db-service mysql \
+  --trace-mode sleuth --capture-services order-web,reservation,ledger"
 
 # 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
 git diff --name-only main > changed.txt
@@ -155,5 +175,15 @@ git diff --name-only main > changed.txt
   도입(로그 byte-offset 경로는 `--trace-mode none` 폴백). HTTP·Kafka·attach 배선, attach는 호스트
   OTLP 리시버 + per-run 토큰 인증. 기본값 `otel`. petclinic·tainted-spring MSA(Postgres·MySQL,
   JDK 8/11/17/23)까지 교차 검증. ([docs/06](docs/06-test-environment.md) "SQL 캡처 모드")
+- **Kafka outbound produce 캡처 완료** (2026-06-18): SUT가 발행하는 Kafka 메시지를 요청별
+  trace-id로 귀속 캡처(`KafkaCaptureReceiver` → `CapturedEventEmit`)하고, 생성 테스트가
+  `KafkaHelper.consumeNextRecord` + `JSONAssert`로 어설션을 합성한다. 비결정 필드 제거 +
+  토픽/키 필터로 복수 emit 다중 검증. attach 모드는 `--kafka-bootstrap`, 분석 모드는
+  `--with-kafka` 로 활성. order-service 데모 e2e 53 테스트 GREEN. (PR #61)
+- **레거시 Sleuth trace 모드 + legacy-tram 라이브 E2E 완료** (2026-06-19): Java8+Sleuth(B3)+
+  Eventuate Tram MSA에서 `--trace-mode sleuth --capture-services a,b,c` 로 order-web→reservation
+  →ledger 동기/비동기 홉의 SQL을 요청 단위로 회수. `samples/legacy-tram`(Boot 2.7·MySQL binlog/CDC)
+  에서 R1(B3 전파)·CAP(캡처)·NOISE(노이즈 배제) 3종 수용 기준 라이브 PASS.
+  런북 `e2e/run-legacy-tram-sleuth-e2e.sh`. (PR #60·#63)
 - 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
   Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
