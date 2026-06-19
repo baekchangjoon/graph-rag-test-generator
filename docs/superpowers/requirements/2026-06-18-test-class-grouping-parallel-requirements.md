@@ -149,6 +149,7 @@
 - 유형: Functional (data hygiene)
 - 우선순위: Should (REQ-016이 race를 결정적으로 제거; 본 항목은 잔류 행 위생 보조)
 - 설명: 성공 create(POST 2xx)가 **autoIncrement 단일 PK** 행을 만들고 그 PK가 응답에 돌아오며 해당 테이블에 **param-bound cleanup이 없을 때**, 응답 PK를 캡처해 `deferDelete`로 정리한다. 잔류 auto-generated 행(특히 작은 id)이 다른 absent-id read의 부재 가정을 깨는 것을 줄인다. autoIncrement PK가 아니면 트리거하지 않아 기존 산출물/골든은 불변.
+  - **한계(의도):** 한 path가 IDENTITY PK 테이블에 다중 INSERT하면 **첫 적격 테이블 행만** 정리한다(나머지 IDENTITY 행은 잔류 가능). race 자체는 REQ-016이 결정적으로 제거하므로 보조 위생의 한계로 수용한다.
 - 수용기준:
   - Given POST 2xx + INSERT 대상 테이블이 autoIncrement 단일 PK + 응답에 그 PK 필드 존재 + 그 테이블에 기존 delete 없음, When `generate`, Then `(Object) __resp.path("<pk>")`를 인자로 한 `deferDelete("DELETE FROM <table> WHERE <pk> = ?", …)`가 발행된다(varargs+제네릭 추론 회피 위해 `(Object)` 캐스트 필수).
   - Given autoIncrement PK가 아니거나 이미 param-bound cleanup이 있는 경우, When `generate`, Then 추가 deferDelete를 발행하지 않는다(`OrdersPostTest` 골든 불변).
