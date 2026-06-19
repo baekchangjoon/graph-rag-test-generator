@@ -263,12 +263,19 @@ class OtelHttpCaptureAcceptanceTest {
                     InvocationOutcome outcome = (InvocationOutcome) doSendMethod.invoke(
                             runner, HttpClient.newHttpClient(), endpoint, input, "Bearer " + actualToken);
 
-                    assertThat(outcome.capturedEventEmits()).isNotEmpty();
-                    io.graphrag.model.CapturedEventEmit emit = outcome.capturedEventEmits().get(0);
-                    assertThat(emit.topic()).isEqualTo("order.events");
-                    assertThat(emit.key()).isEqualTo("admin");
-                    assertThat(emit.payload().path("type").asText()).isEqualTo("CREATED");
-                    assertThat(emit.payload().path("userId").asText()).isEqualTo("admin");
+                    // per-request blocking kafka drain was removed (perf): capture is now end-correlated
+                    // by traceId. Drain the background buffer and look up this request's records by the
+                    // traceId doSend recorded on the outcome — same end-correlation the real build does.
+                    java.util.Map<String, java.util.List<io.graphrag.builder.run.KafkaCaptureReceiver.CapturedRecord>>
+                            byTrace = receiver.drainAllByTraceId(500);
+                    java.util.List<io.graphrag.builder.run.KafkaCaptureReceiver.CapturedRecord> recs =
+                            byTrace.getOrDefault(outcome.kafkaTraceId(), java.util.List.of());
+                    assertThat(recs).as("HTTP request's outbound kafka event captured (end-correlated)").isNotEmpty();
+                    io.graphrag.builder.run.KafkaCaptureReceiver.CapturedRecord rec = recs.get(0);
+                    assertThat(rec.topic()).isEqualTo("order.events");
+                    assertThat(rec.key()).isEqualTo("admin");
+                    assertThat(rec.value().path("type").asText()).isEqualTo("CREATED");
+                    assertThat(rec.value().path("userId").asText()).isEqualTo("admin");
                 }
             }
         }
