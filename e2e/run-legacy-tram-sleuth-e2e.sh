@@ -241,7 +241,7 @@ NOISE=NOT-DETERMINED
 if [ -f "$HOST_JAR" ]; then
     echo "=== [3/4] builder attach (--trace-mode sleuth, capture-services order-web,reservation,ledger) ==="
     set +e   # builder attach failures are captured, not fatal here
-    "$ROOT/gradlew" -q :graph-rag-builder:run --args="build \
+    "$ROOT/gradlew" -p "$ROOT" -q :graph-rag-builder:run --args="build \
       --attach \
       --sut-compose $STACK/docker-compose.yml \
       --app-service order-web \
@@ -275,9 +275,9 @@ if [ -f "$HOST_JAR" ]; then
             # @RequestBody Map<String,Object> is untyped — builder skips exploration for it
             SQL_COUNT=$(python3 -c "import json,sys; g=json.load(open('$GRAPH')); print(len(g.get('sql',[])))" 2>/dev/null || echo "0")
             if [ "$SQL_COUNT" = "0" ]; then
-                echo "[CAP] graph.json has 0 SQL entries — builder made no explorations (likely: @RequestBody Map<String,Object> untyped endpoint; builder skips such endpoints)"
-                echo "[CAP] NOT-DETERMINED (builder exploration limitation, not a capture mechanism failure)"
-                CAP=NOT-DETERMINED
+                echo "[CAP] graph.json has 0 SQL entries — builder made no explorations"
+                echo "[CAP] FAIL — order-web now uses typed OrderRequest DTO; 0 SQL entries means the builder still failed to explore POST /orders"
+                CAP=FAIL
             else
                 CAP=PASS
                 for needle in 'insert into orders' 'insert into reservations' 'insert into ledger_entries'; do
