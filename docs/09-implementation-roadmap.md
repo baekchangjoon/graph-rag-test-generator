@@ -2,7 +2,7 @@
 
 TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 
-## 현황 (2026-06-15)
+## 현황 (2026-06-19)
 
 | Phase | 상태 |
 |---|---|
@@ -14,6 +14,14 @@ TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 | 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`archive/progress/6-2.md`) |
 | 6.3, 6.4 | 미착수 |
 | 7 (auth · DB-agnostic · multi-method/GET read-path · constraint-directed input + 콘콜릭 oracle) | 완료 (`archive/progress/7-*.md`) |
+
+### 캡처 백엔드 확장 (Phase 7 이후, 2026-06)
+
+| 작업 | 상태 |
+|---|---|
+| SQL 캡처 백엔드 추상화 + OTEL DB span 기본 | 완료 (2026-06-18) — `SqlCaptureBackend`/`OtelSpanCapture`, 로그 byte-offset 폴백. `--trace-mode otel`(기본) (`docs/06`, PR #60) |
+| 레거시 Sleuth(B3) trace 모드 + legacy-tram 라이브 E2E | 완료 (2026-06-19) — `--trace-mode sleuth --capture-services`, `samples/legacy-tram`에서 R1/CAP/NOISE PASS (PR #60·#63) |
+| Kafka outbound produce 캡처 + 어설션 합성 | 완료 (2026-06-18) — `KafkaCaptureReceiver`→`CapturedEventEmit`, `--kafka-bootstrap`(attach)/`--with-kafka`(분석) (PR #61) |
 
 ### 입력 발견 단계 (Stage 0–3b, Phase 7 이후 심화)
 
@@ -132,7 +140,7 @@ Phase 2 메트릭: 외부 HTTP 호출 있는 endpoint의 테스트가 WireMock �
 | 단계 | 산출 |
 |---|---|
 | 7.1 인증 | `AuthTokenProvider`/`AuthConfig`: endpoint별 `authRequired` 시 토큰 발급·헤더 주입 |
-| 7.2 DB-agnostic | `DbConfig`/`JdbcContainers`(Postgres·MySQL)/`ComposeInspector`(compose에서 DBMS·자격 추출, `${VAR:-default}` 전개) |
+| 7.2 DB-agnostic | `DbConfig`/`JdbcContainers`(Postgres·MySQL·MariaDB)/`ComposeInspector`(compose에서 DBMS·자격 추출, `${VAR:-default}` 전개) |
 | 7.3 multi-HTTP-method + GET read-path | PUT/DELETE/PATCH 등 PATH param 치환, `ReadInputSynthesizer`로 GET seed 합성 |
 | 7.4 제약-지향 입력 + 콘콜릭 oracle | `InputOracle`(static-literal + `ConcolicOracle` ASM/Z3), `ConstraintExtractor`가 산출한 후보를 필드별 투영 |
 

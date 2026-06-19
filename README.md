@@ -167,7 +167,7 @@ git diff --name-only main > changed.txt
   (`PartitionedGraphStore`, Neo4j 보류 — `docs/decisions/graph-store-phase6.md`) +
   증분 빌드 (`--incremental-base`/`--changed-files`, 더티 파티션만 재탐색)
 - **Phase 7 완료** (2026-06-14): 다중 HTTP method + JWT 인증 + DB 비종속 + GET read-path.
-  GET/PUT/DELETE/PATCH 인덱싱, `--sut-compose` 기반 DB 타입 자동 탐지,
+  GET/PUT/DELETE/PATCH 인덱싱, `--sut-compose` 기반 DB 타입 자동 탐지(Postgres·MySQL·MariaDB),
   `--auth-*` JWT 인증 주입(탐색·생성 테스트 양쪽), GET 조회 경로 시드+결정적 합성.
 - **입력 발견 Stage 0–3b 완료** (2026-06-15): 유효 happy 합성(enum/날짜/이메일) → 다필드 `&&`
   conjunction joint/enum 변이 → by-id(PUT/DELETE/{id}) 진입(path-id 시드·boolean·enum 컬럼) →
