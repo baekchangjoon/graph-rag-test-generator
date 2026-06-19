@@ -111,6 +111,25 @@ class SqlLogParserTest {
     }
 
     @Test
+    void extractTraceId_fromTwoFieldSleuthBracket() {
+        // Boot 2.7 + Sleuth 3.x 실제 출력: [32hexTraceId,spanId] (app 이름 없음)
+        String line = "2026-06-18T10:00:00.100+09:00 DEBUG 1 --- "
+                + "[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbb] "
+                + "[tram-c-1] org.hibernate.SQL : select 1";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    }
+
+    @Test
+    void extractTraceId_twoFieldBracket_mixedCase_lowercasedOnReturn() {
+        // 대소문자 혼용 → 소문자로 정규화
+        String line = "x DEBUG 1 --- [AABBCCDDEEFF00112233445566778899,AABBCCDD11223344] "
+                + "org.hibernate.SQL : select 1";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("aabbccddeeff00112233445566778899");
+    }
+
+    @Test
     void extractTraceId_fromSleuthBracket() {
         String line = "x DEBUG 1 --- [order-svc,1a2b3c4d5e6f70819a2b3c4d5e6f7081,9a2b3c4d5e6f7081] "
                 + "[tram-c-1] org.hibernate.SQL : select 1";
