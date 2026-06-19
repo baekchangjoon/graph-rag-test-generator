@@ -32,8 +32,8 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 | `test-state-dashboard` | 테스트 자원 추적 + TTL 누수 감지 |
 | `socket-mock-server` | Netty TCP mock + admin REST |
 | `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) + **Kafka outbound produce** 캡처 데모 |
-| `samples/legacy-tram` | 레거시 async MSA 샘플 (Java 8 + Spring Boot 2.7 + Sleuth(B3) + Eventuate Tram 0.35 + MySQL binlog/CDC + Kafka, order-web→reservation→ledger 3개 앱). `--trace-mode sleuth` 의 비동기·서비스간 SQL 캡처 라이브 E2E 검증용. 런북: `e2e/run-legacy-tram-sleuth-e2e.sh` |
-| `e2e` | Phase 0 E2E 사이클 |
+| `samples/legacy-tram` | 레거시 async MSA 샘플 (Java 8 + Spring Boot 2.7 + Sleuth(B3) + Eventuate Tram 0.35 + MySQL binlog/CDC + Kafka, order-web→reservation→ledger 3개 앱). `--trace-mode sleuth` 의 비동기·서비스간 SQL 캡처 라이브 E2E 검증용. **루트 Gradle 빌드 미포함** — docker compose로 별도 빌드/실행. 런북: `e2e/run-legacy-tram-sleuth-e2e.sh` |
+| `e2e` | E2E·attach·dist·legacy-tram 수용/회귀 런북 모음 (`run-e2e.sh` 외 `run-attach-*.sh`·`run-dist-e2e.sh`·`run-legacy-tram-sleuth-e2e.sh` 등) |
 
 ## 요구 환경
 
@@ -49,7 +49,7 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 흐름: SUT jar 빌드 → 도구 1이 SUT를 **외부 프로세스**로 띄운 Testcontainers + JaCoCo 분석
 환경에서 분기 탐색 후 graph.json + exploration-report.json 생성 → 도구 2가 endpoint별 전 path
 테스트 생성(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
-성공 시 `✅ E2E PASS — tests=N failures=0`.
+성공 시 `✅ E2E PASS — tests=N skipped=0 failures=0 errors=0` (skipped·errors도 0이어야 한다).
 
 입력 생성: happy 입력 + (generic 경계 변이 ⊕ **InputOracle** 후보)를 HTTP로 호출한다. 오라클은
 교체 가능하며 현재 두 구현을 합집합으로 쓴다 — `StaticLiteralOracle`(Spoon, 소스 리터럴 비교·문자열
@@ -58,10 +58,10 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트로 보존된다.
 
 그 위에 단계별 입력 발견(Stage 0–3b)을 쌓았다: **Stage 0** 유효 happy 합성(enum 첫 상수·날짜 ISO·이메일),
-**Stage 1/2** 메서드 내 `&&` 다필드 가드 추출 + joint/enum 변이(`tier==VIP && loyalty<500` 등),
+**Stage 1/2** 메서드 내 `&&` 다필드 가드 추출 + joint/enum 변이(`tier==VIP && loyaltyPoints<500` 등),
 **Stage 3** by-id(GET/PUT/DELETE /{id}) path-id+리소스 시드·boolean 파라미터·enum 컬럼 시드,
 **Stage 3b** mutating by-id 요청별 시드 리셋 + 결정성 인지 구체 어설션(생성 by-id 테스트가 빈 DB 재현).
-원리: `docs/23-input-generation-flow.md`, `docs/24`, 이론: `docs/25-input-discovery-theory.md`.
+원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`, 이론: `docs/25-input-discovery-theory.md`.
 
 개별 실행:
 
@@ -69,8 +69,9 @@ path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트
 # 전체 단위/통합 테스트
 ./gradlew check
 
-# 도구 1 단독 (기본)
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir>"
+# 도구 1 단독 (기본) — --sut-compose 는 필수(여기서 DB 종류를 자동 탐지한다)
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir>"
 
 # 도구 1 — DB 타입을 SUT compose에서 자동 탐지 (Phase 7)
 #   --db-service/--db-image 로 compose 자동탐지를 오버라이드 가능, --with-redis 로 Redis 부착
@@ -137,6 +138,8 @@ git diff --name-only main > changed.txt
 - 개발 내력(specs/plans/progress, 시점 스냅샷): `docs/archive/`
 
 ## 외부 SUT 회귀·커버리지 (개발용)
+
+> `.work/` 스크립트는 **로컬 개발 전용**이라 저장소에 포함되지 않는다(`.gitignore`). 클론 직후엔 없으며, 외부 SUT를 로컬에 둔 개발 환경에서만 동작한다.
 
 ```bash
 # 외부 SUT 1종 격리 실행 (petclinic | auth-user | diary)

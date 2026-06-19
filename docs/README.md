@@ -21,8 +21,10 @@
 | 탐색 엔진과 입력 오라클(ASM+Z3) | [24-exploration-backends-and-input-oracle](24-exploration-backends-and-input-oracle.md) |
 | 입력 발견의 이론적 근거 | [25-input-discovery-theory](25-input-discovery-theory.md) |
 | 사용자 compose로 SUT 분석(attach 모드) + 커스텀 요청 헤더 | [26-attach-mode](26-attach-mode.md) |
-| SQL 캡처 모드(OTEL 기본 / log 폴백) | [06-test-environment](06-test-environment.md) "SQL 캡처 모드" 절 |
+| trace/SQL 캡처 모드 (`--trace-mode` otel·sleuth·none) + 레거시 Java8+Sleuth MSA | [06-test-environment](06-test-environment.md) "trace 모드" 절 |
+| Kafka outbound produce 캡처 (SUT 발행 메시지 귀속 + 어설션 합성) | [06-test-environment](06-test-environment.md) "Kafka outbound produce 캡처" 절 |
 | 로드맵: OTEL SQL 캡처(완료)·외부 stub seeding·override 키 경고 | [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) |
+| 핸들러/앱 커버리지 진행 현황(개발 트래킹) | [coverage-progress](coverage-progress.md) |
 | 기능별 설계 결정 기록 | [decisions/](decisions/) |
 | 개발 내력(과거 시점 스냅샷) | [archive/](archive/) |
 

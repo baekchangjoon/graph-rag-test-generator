@@ -65,7 +65,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 ## 캡처되는 핵심 사실
 
-스키마는 `SCHEMAS.md`의 `0. 공통 데이터 모델` 참조. 요지:
+스키마 정의(공통 데이터 모델)는 `shared-model` 모듈의 DTO 소스(`io.graphrag.model.*`) 참조. 요지:
 
 - **Endpoint**: HTTP 메소드/경로, handler 메소드, 인증 요구
 - **ExploredPath**: 탐색된 코드 경로. sample input, exit status, 분기 시퀀스, (옵션) path constraint
