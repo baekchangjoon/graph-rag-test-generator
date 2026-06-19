@@ -116,10 +116,12 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 |---|---|
 | `--auth-login-path /api/auth/login --auth-user U --auth-pass P` | 로그인 토큰이 필요한 보호된 엔드포인트가 있을 때 |
 | `--external-stubs <dir> --sut-env KEY={{wiremock}}` | 앱이 외부 HTTP를 호출해서 스텁이 필요할 때 |
-| `--with-redis` / `--with-kafka` | 앱이 Redis·Kafka를 쓸 때 |
+| `--with-redis` / `--with-kafka` | 앱이 Redis·Kafka를 쓸 때 (분석 모드) |
+| `--kafka-bootstrap <host:port>` | (attach 모드) SUT가 outbound Kafka 메시지를 발행할 때. 요청별 trace-id로 produce 캡처([docs/06](06-test-environment.md) "Kafka outbound produce 캡처") |
+| `--capture-services <a,b,c>` | (attach 모드) 멀티서비스 SUT의 여러 컨테이너 로그를 인터리브 tail해 비동기·서비스간 SQL 회수 ([docs/06](06-test-environment.md) "trace 모드") |
 | `--sut-java-home <jdk>` | SUT를 다른 JDK로 띄워야 할 때 |
 | `--trace-mode none` | SQL 캡처를 로그 파싱으로(기본은 OTEL DB span 기반 `otel`). OTEL 캡처가 안 되는 환경의 폴백 ([docs/06](06-test-environment.md) "trace 모드") |
-| `--trace-mode sleuth` | 레거시 Java8+Sleuth SUT. B3 trace-id로 비동기·서비스간 SQL까지 로그 상관 ([docs/06](06-test-environment.md) "trace 모드") |
+| `--trace-mode sleuth` | 레거시 Java8+Sleuth SUT. B3 trace-id로 비동기·서비스간 SQL까지 로그 상관 ([docs/06](06-test-environment.md) "trace 모드"). 동작 데모: `samples/legacy-tram` |
 
 끝나면 `./out/graph/graph.json`이 생긴다.
 

@@ -56,6 +56,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 | L3 | Testcontainers | 실제 DBMS (운영과 동일 버전) |
 | L4 | OTEL DB span 캡처 (기본) | `SqlCaptureBackend`/`OtelSpanCapture` — SUT의 OTEL agent가 내보내는 DB span(SQL+bind)을 요청별 `traceparent`로 trace-id 귀속 캡처. JDBC 레벨이라 Hibernate·MyBatis·raw JDBC 모두 포함. 동시 요청도 격리 ([docs/06](06-test-environment.md) "trace 모드") |
 | L4 | Hibernate SQL logger / MyBatis Interceptor (폴백) | `--trace-mode none` 또는 OTEL이 빈 trace일 때 로그 파싱 캡처(`LogParserCapture`). MyBatis 동적 SQL 실제 형태 포함. `--trace-mode sleuth` 는 같은 로그 파싱에 B3 trace-id 상관을 더해 비동기·서비스간 SQL까지 회수 |
+| L4 | Kafka outbound produce 캡처 | `KafkaCaptureReceiver` — SUT가 발행하는 토픽을 백그라운드 구독, 요청별 trace-id(traceparent/B3)로 귀속해 `CapturedEventEmit` 생성. attach 모드 `--kafka-bootstrap`, 분석 모드 `--with-kafka` 시 활성 |
 | L4 | WireMock | 분석용 임베디드 HTTP mock, recorder 활성 |
 | L4 | Netty LoggingHandler | 바이트 hex dump |
 | L4 | 자체 javaagent | InputStream/OutputStream 후킹 (raw socket) |
@@ -70,6 +71,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - **ExploredPath**: 탐색된 코드 경로. sample input, exit status, 분기 시퀀스, (옵션) path constraint
 - **CapturedSQL**: 실제 발행된 SQL. 바인딩의 origin (API param/literal/computed) 보존
 - **CapturedHttpCall**: 외부 HTTP. URL + body + 응답 + SUT가 실제로 읽은 응답 필드
+- **CapturedEventEmit**: SUT가 발행한 outbound Kafka 메시지. topic + key(nullable) + payload(JSON) + trace-id 귀속. 생성 테스트의 `KafkaHelper.consumeNextRecord` + `JSONAssert` 어설션에 사용 (`@KafkaListener` 인바운드 소비와 구분 — 이쪽은 outbound produce)
 - **CapturedSocketIO**: 외부 socket. 보낸/받은 바이트, (옵션) 디코드 결과
 - **Table/Column**: 운영 DBMS 기준 물리 스키마 + FK + UNIQUE
 - **Branch**: 분기점 + 조건 + 어느 path에서 실행됐는지
