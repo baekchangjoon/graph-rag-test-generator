@@ -64,6 +64,54 @@ jobs:
           GRADLE_OPTS: -Dorg.gradle.java.home=${{ env.JAVA_HOME }}
         run: ./e2e/run-e2e.sh
 
+  # 프로젝트 자체 테스트 커버리지(제품 모듈 집계)를 측정해 PR에 리포트한다. 정보성(non-blocking):
+  # release.needs에 넣지 않고 임계값 게이트도 두지 않는다. 분류 체계: docs/05-testing.md "커버리지" 절.
+  # 측정 범위 = unit + docker(=excludeTags=integration). integration(풀-SUT)·e2e(out-of-process)는
+  # 무겁고/단일 러너 직렬·flaky해서 제외(코멘트/문서에 명시). 더 정확히는 check 샤드의 exec를
+  # 아티팩트로 합치는 방식이 있으나 범위 밖. PR에서만 돈다.
+  coverage:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Aggregate self-test coverage (unit + docker)
+        env:
+          GRADLE_OPTS: -Dorg.gradle.java.home=${{ env.JAVA_HOME }}
+        run: ./gradlew jacocoAggregatedReport -PexcludeTags=integration
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: build/reports/jacoco/jacocoAggregatedReport/html
+          if-no-files-found: warn
+      - name: Comment coverage on PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          XML=build/reports/jacoco/jacocoAggregatedReport/jacocoAggregatedReport.xml
+          MARKER='<!-- jacoco-coverage -->'
+          SUMMARY="$(python3 .github/scripts/coverage_summary.py "$XML" 'unit + docker (integration·e2e 제외)')"
+          BODY="$MARKER"$'\n'"$SUMMARY"
+          printf '%s\n' "$BODY" >> "$GITHUB_STEP_SUMMARY"
+          CID="$(gh api "repos/$REPO/issues/$PR/comments" \
+            --jq "[.[] | select(.body | startswith(\"$MARKER\"))][0].id // empty")"
+          if [ -n "$CID" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$CID" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$REPO/issues/$PR/comments" -f body="$BODY" >/dev/null
+          fi
+
   # builder Docker 이미지가 컨테이너 안에서 Testcontainers + SUT로 graph.json을 만드는지 검증(D-E2E-2).
   # Linux 전용(--network host)이라 ubuntu 러너에서만 의미가 있어 PR에서만 돈다.
   dind-builder-e2e:
