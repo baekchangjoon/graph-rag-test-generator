@@ -3,6 +3,7 @@ package io.graphrag.builder.cli;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.*;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -15,11 +16,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
 class BuilderCollectionE2eTest {
-    @TempDir Path out;
+    @TempDir static Path out;
+
+    // 두 테스트는 동일한 풀 빌드(exploreAll)를 HTTP/Kafka 측면으로 나눠 검증할 뿐이므로
+    // 불변 산출물 GraphAsset을 1회만 빌드해 공유한다.
+    static GraphAsset asset;
+
+    @BeforeAll
+    static void buildOnce() throws Exception {
+        asset = build();
+    }
 
     @Test
-    void httpCollectionBody_exploredWithArrayAndCapturedSql() throws Exception {
-        GraphAsset asset = build();
+    void httpCollectionBody_exploredWithArrayAndCapturedSql() {
         assertThat(asset.endpoints()).extracting(Endpoint::id).contains("post-api-orders-batch");
         List<ExploredPath> batch = asset.paths().stream()
                 .filter(p -> p.id().startsWith("post-api-orders-batch")).toList();
@@ -35,15 +44,14 @@ class BuilderCollectionE2eTest {
     }
 
     @Test
-    void kafkaCollectionPayload_capturedAsArray() throws Exception {
-        GraphAsset asset = build();
+    void kafkaCollectionPayload_capturedAsArray() {
         assertThat(asset.kafkaConsumers()).extracting(KafkaConsumer::topic).contains("order.events.batch");
         var ex = asset.kafkaExchanges().stream()
                 .filter(e -> e.kafkaConsumerId().contains("batch") && !e.variant()).findFirst().orElseThrow();
         assertThat(ex.payload().isArray()).isTrue();
     }
 
-    private GraphAsset build() throws Exception {
+    private static GraphAsset build() throws Exception {
         Path sutSrc = Path.of(System.getProperty("sut.src"));
         AuthConfig auth = new AuthConfig("/api/auth/login","admin","password",
                 "token","Authorization","Bearer", List.of());
