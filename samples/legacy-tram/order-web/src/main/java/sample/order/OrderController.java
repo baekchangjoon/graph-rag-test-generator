@@ -23,9 +23,9 @@ public class OrderController {
 
     @PostMapping("/orders")
     @Transactional
-    public ResponseEntity<Map<String, Object>> create(@RequestBody Map<String, Object> body) {
-        String userId = String.valueOf(body.get("userId"));
-        int amount = ((Number) body.getOrDefault("amount", 0)).intValue();
+    public ResponseEntity<Map<String, Object>> create(@RequestBody OrderRequest body) {
+        String userId = body.getUserId();
+        int amount = body.getAmount();
         Order saved = orders.save(new Order(userId, amount));
         // 동기 HTTP → B (Sleuth가 B3 전파). 응답 시점엔 C(Tram) 미완 → 202.
         // Java 8: Map.of(Java9+) 미사용 — LinkedHashMap 사용.

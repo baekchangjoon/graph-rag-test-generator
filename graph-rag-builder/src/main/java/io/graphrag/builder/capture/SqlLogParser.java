@@ -36,9 +36,16 @@ public final class SqlLogParser {
     private static final Pattern MDC_TRACE = Pattern.compile(
             "(?i)(?<![A-Za-z0-9-])(?:traceId|X-B3-TraceId)=([0-9a-fA-F]{16,32})(?![0-9a-fA-F])");
     /**
-     * Sleuth MDC 브래킷. 3-field [app,traceId,spanId] (Sleuth 3.x) 와
-     * 4-field [app,traceId,spanId,exportable] (Sleuth 1.x/2.x, Java8 레거시 기본) 둘 다 매칭.
+     * Sleuth MDC 브래킷. 다음 형식을 모두 매칭:
+     * - 2-field [traceId,spanId] (Boot 2.7 + Sleuth 3.x 실제 출력, app 이름 없음)
+     * - 3-field [app,traceId,spanId] (Sleuth 3.x, app 이름 포함)
+     * - 4-field [app,traceId,spanId,exportable] (Sleuth 1.x/2.x, Java8 레거시 기본)
+     *
+     * 2-field: 첫 필드가 32-hex(traceId) + 두 번째 필드가 1-32 hex(spanId).
+     * 3+field: 첫 필드가 비-hex(app) → 두 번째 필드가 traceId.
      */
+    private static final Pattern SLEUTH_BRACKET_2FIELD = Pattern.compile(
+            "\\[([0-9a-fA-F]{32}),[0-9a-fA-F]{1,32}\\]");
     private static final Pattern SLEUTH_BRACKET = Pattern.compile(
             "\\[[^,\\]]*,([0-9a-fA-F]{16,32}),[0-9a-fA-F]{1,32}(?:,[^\\]]*)?\\]");
 
@@ -55,6 +62,12 @@ public final class SqlLogParser {
         Matcher mdc = MDC_TRACE.matcher(prefix);
         if (mdc.find()) {
             return mdc.group(1).toLowerCase(java.util.Locale.ROOT);
+        }
+        // 2-field bracket [32hexTraceId,spanId] — Boot 2.7 + Sleuth 3.x 실제 출력 (app 이름 없음).
+        // 3+field bracket [app,traceId,spanId] 보다 먼저 시도: 더 구체적인 형식.
+        Matcher bracket2 = SLEUTH_BRACKET_2FIELD.matcher(prefix);
+        if (bracket2.find()) {
+            return bracket2.group(1).toLowerCase(java.util.Locale.ROOT);
         }
         Matcher bracket = SLEUTH_BRACKET.matcher(prefix);
         if (bracket.find()) {

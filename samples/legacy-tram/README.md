@@ -136,7 +136,7 @@ CDC 0.17.0.RELEASE, MySQL 8.0, Kafka/ZooKeeper 7.5.0).
 Matching log line from ledger service:
 
 ```
-2026-06-18 16:28:58.558 DEBUG [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,a49a33c78b95d55b]
+2026-06-19 00:37:54.537 DEBUG [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,44337112491c93d3]
   org.hibernate.SQL : insert into ledger_entries (amount, created_at, order_id, user_id) values (?, ?, ?, ?)
 ```
 
@@ -147,13 +147,19 @@ within the same trace context. Spring Cloud Sleuth's native Eventuate Tram integ
 (`eventuate-tram-spring-cloud-sleuth-tram-starter:0.5.0.RELEASE`) carried the B3 context
 through the Tram messaging layer without needing the manual `B3MessageInterceptor` fallback.
 
-**CAP verdict: NOT-DETERMINED** — the builder's exploration engine skips endpoints with
-`@RequestBody Map<String, Object>` (untyped body), so no exploration occurred and no SQL
-was written to `graph.json`. The Sleuth log-correlation mechanism itself is confirmed
-working by R1; the CAP/NOISE gate requires a typed DTO on the order endpoint.
+**CAP verdict: PASS** — the builder's `--trace-mode sleuth` attach captured 3 SQL entries
+across all three services:
+- `insert into orders` (order-web, service A)
+- `insert into reservations` (reservation, service B)
+- `insert into ledger_entries` (ledger, service C — async via Tram/Kafka/CDC)
+
+Key ingredients: (1) `OrderController` now accepts `@RequestBody OrderRequest` (typed DTO)
+so the builder's endpoint explorer can synthesize a POST /orders body; (2) `SqlLogParser`
+handles the Boot 2.7 + Sleuth 3.x 2-field bracket format `[32hexTraceId,16hexSpanId]`
+(via `SLEUTH_BRACKET_2FIELD` pattern) in addition to the 3/4-field formats.
 
 **NOISE verdict: PASS** — `graph.json` contains no `from received_messages` or
-`from message where` entries (trivially, since graph has 0 SQL rows).
+`from message where` entries (CDC background SQL correctly excluded by trace-id filter).
 
 Run: `bash e2e/run-legacy-tram-sleuth-e2e.sh` from the repo root.
 
