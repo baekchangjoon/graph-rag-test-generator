@@ -7,6 +7,8 @@ import io.graphrag.testlib.internal.SqlTableParser;
 import io.graphrag.testlib.spi.DashboardReporter;
 import io.graphrag.testlib.spi.Env;
 import io.graphrag.testlib.spi.JdbcAdapter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -16,12 +18,18 @@ import java.time.Instant;
 /** 픽스처 INSERT / cleanup DELETE 용 JDBC 접근. 연결은 lazy, cleanup 시 닫는다. */
 public final class JdbcHelper {
 
+    private static final Logger log = LoggerFactory.getLogger(JdbcHelper.class);
+
     private final JdbcAdapter adapter;
     private final Env env;
     private final String testId;
     private final String runId;
     private final DashboardReporter dashboard;
     private Connection connection;
+    private final java.util.List<DeferredDelete> deferred = new java.util.ArrayList<>();
+
+    private record DeferredDelete(String sql, Object[] args) {
+    }
 
     JdbcHelper(JdbcAdapter adapter, Env env, String testId, String runId, DashboardReporter dashboard) {
         this.adapter = adapter;
@@ -43,6 +51,32 @@ public final class JdbcHelper {
             }
         } catch (SQLException e) {
             throw new IllegalStateException("jdbc update failed: " + sql, e);
+        }
+    }
+
+    /**
+     * cleanup 시 실행할 DELETE를 등록 순서(FIFO)대로 보관한다. scope.cleanup()에서 실행.
+     * FK 안전 정리를 위해 호출자는 자식 테이블 DELETE를 먼저 등록해야 한다(FK 역순).
+     */
+    public void deferDelete(String sql, Object... args) {
+        deferred.add(new DeferredDelete(sql, args.clone()));
+    }
+
+    /**
+     * 등록된 DELETE를 등록 순서(FIFO)대로 실행한다.
+     * 개별 실패는 경고 로그를 남기고 삼켜 나머지 정리를 막지 않는다.
+     */
+    void runDeferredDeletes() {
+        try {
+            for (DeferredDelete d : deferred) {
+                try {
+                    update(d.sql(), d.args());
+                } catch (RuntimeException e) {
+                    log.warn("deferred DELETE failed (best-effort, ignored): {} — {}", d.sql(), e.getMessage());
+                }
+            }
+        } finally {
+            deferred.clear();
         }
     }
 

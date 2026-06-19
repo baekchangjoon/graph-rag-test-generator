@@ -1,0 +1,2 @@
+io.graphrag.testlib.adapter.jdbc.PlainJdbcAdapter
+io.graphrag.testlib.adapter.jdbc.RecordingJdbcAdapter

@@ -62,9 +62,10 @@ class GeneratorNegativeValidationTest {
                 "post-api-signups", null, "SignupTest", "io.x", AuthMode.DISABLED);
         GenerationResult result = new Generator(client(List.of(happy(), negativeValidation()))).generate(req);
 
-        // negative-validation path는 제외 → happy 1개만 생성
-        assertThat(result.files()).hasSize(1);
-        assertThat(result.files().get(0).relativePath()).contains("SignupTest");
+        // negative-validation path는 제외 → happy 클래스 1개만 생성 (+ junit-platform.properties)
+        assertThat(result.files()).filteredOn(f -> f.relativePath().endsWith(".java")).hasSize(1);
+        assertThat(result.files()).filteredOn(f -> f.relativePath().endsWith(".java"))
+                .allSatisfy(f -> assertThat(f.relativePath()).contains("SignupTest"));
         assertThat(result.files()).noneSatisfy(f ->
                 assertThat(f.relativePath()).containsIgnoringCase("negval"));
     }

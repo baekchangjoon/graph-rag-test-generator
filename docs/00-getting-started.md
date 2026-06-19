@@ -157,13 +157,25 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
   --out     ./out/generated
 ```
 
-`./out/generated`에 테스트 `.java`가 생긴다.
+`./out/generated`에 테스트 `.java`와 `junit-platform.properties` 하나가 생긴다.
+
+HTTP 엔드포인트 하나는 `@Test` 메소드 여러 개를 가진 테스트 클래스 **1개**로 나온다(예:
+`OrdersPostTest.java` 안에 `happy()`, `s404_1()`, `s201_2()`). 각 `@Test`는 자기 `scope.testId()`로
+격리돼 병렬 실행에 안전하다. 격리할 수 없는 시나리오(전파 정보 없음)는 클래스레벨
+`@Execution(ExecutionMode.SAME_THREAD)`를 단 별도 `…Serial` 클래스(예: `OrdersPostTestSerial.java`)로
+분리한다.
 
 ### 6. 생성된 테스트 실행
 
 생성된 테스트는 `io.graphrag.testlib.*`를 import하므로, 컴파일하려면 Releases의
 **`testlib-<v>.jar`** 를 자기 테스트 프로젝트의 의존성에 더한다(RestAssured·JUnit 등 표준 테스트
 의존은 평소처럼 추가).
+
+병렬 실행을 켜려면 산출물의 `junit-platform.properties`를 자기 테스트 프로젝트의
+`src/test/resources/` 루트에 둔다. 이 파일은 `parallel.enabled=true`,
+`config.strategy=dynamic`, `config.dynamic.factor=1`을 지정한다(이게 의도된 기본값이다). 이미
+`junit-platform.properties`가 있으면 통째로 덮어쓰지 말고 `junit.jupiter.execution.parallel.*`
+다섯 줄만 병합한다. (CLI는 내용이 다른 기존 파일을 덮어쓸 때 경고를 한 번 남긴다.)
 
 실행하려면 운영과 같은 DBMS·WireMock·socket-mock·대시보드가 떠 있는 실행 환경이 필요하다. 그 구성은
 [06-test-environment](06-test-environment.md)를 따른다. 데모(`e2e/`)의 `docker-compose.yml`과

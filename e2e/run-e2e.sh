@@ -67,6 +67,12 @@ echo "=== [4/5] docker-compose 기동 + 생성 테스트 실행 ==="
 mkdir -p "$E2E/build/generated-tests"
 rm -rf "$E2E/build/generated-tests"/*
 cp -R "$OUT/generated/io" "$E2E/build/generated-tests/"
+# NOTE: this file is overwritten on each run by the generator-emitted junit-platform.properties
+# (kept byte-identical to the emitted config so the copy leaves no diff). Do not add comments here.
+# 생성기가 emit한 병렬 설정을 e2e 테스트 리소스로 반영(REQ-013): 실제 배포 설정으로 실행
+if [ -f "$OUT/generated/junit-platform.properties" ]; then
+  cp "$OUT/generated/junit-platform.properties" "$E2E/src/test/resources/junit-platform.properties"
+fi
 
 docker compose -f "$E2E/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true
 # 고정 호스트 포트가 직전 down 직후 해제되기 전(race)이거나 잔류 컨테이너로
