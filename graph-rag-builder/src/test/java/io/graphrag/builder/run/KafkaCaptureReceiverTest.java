@@ -278,40 +278,70 @@ class KafkaCaptureReceiverTest {
             props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
             props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
 
+            // 단일 producer를 미리 warm해서 두 send 모두 빠르게 만든다. (이전엔 background 스레드가
+            // 40ms settle window 안에서 새 KafkaProducer를 *생성*했는데, CI에서 producer 생성/메타데이터
+            // fetch가 100ms settle을 넘겨 두 번째 이벤트를 놓치는 flaky의 근본 원인이었다.)
             try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
-                // 1. First event
+                // 0. consumer가 group join/assignment을 끝내고 실제로 소비할 때까지 warmup.
+                //    drain의 first-match 윈도우는 200ms로 짧아, 갓 start()한 consumer의 rebalance가
+                //    그 안에 안 끝나면 event1을 못 잡아 size 0이 된다(CI 근본 원인). 이 helper는
+                //    consumer가 살아 소비할 때까지 probe를 보내 확인해 타이밍 의존을 제거한다.
+                awaitReceiverConsuming(receiver, producer, topic);
+
+                // 1. First event (이 send가 producer 메타데이터까지 warm한다)
                 ProducerRecord<String, String> record1 = new ProducerRecord<>(topic, "key-1", "{\"val\":1}");
                 record1.headers().add("traceparent", traceparent1.getBytes(StandardCharsets.UTF_8));
                 producer.send(record1).get();
-            }
 
-            // 2. Call drain. We send the second event after a short delay (40ms) using a background thread, while the main thread is blocked in drain.
-            Thread asyncSender = new Thread(() -> {
-                try {
-                    Thread.sleep(40);
-                    try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                // 2. Call drain. Send the second event after a short delay (40ms) on a background thread
+                // using the SAME warmed producer — window 안에서는 send만 하므로 100ms settle에 안정적으로 든다.
+                Thread asyncSender = new Thread(() -> {
+                    try {
+                        Thread.sleep(40);
                         ProducerRecord<String, String> record2 = new ProducerRecord<>(topic, "key-2", "{\"val\":2}");
                         record2.headers().add("traceparent", traceparent2.getBytes(StandardCharsets.UTF_8));
                         producer.send(record2).get();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            });
-            asyncSender.start();
+                });
+                asyncSender.start();
 
-            // Timeout of 2000ms is enough. Settle timeout of 100ms should easily capture the second event sent at 40ms.
-            List<KafkaCaptureReceiver.CapturedRecord> drained = receiver.drain(traceId, 2000);
-            asyncSender.join();
+                // Timeout of 2000ms is enough. Settle timeout of 100ms should easily capture the second event sent at 40ms.
+                List<KafkaCaptureReceiver.CapturedRecord> drained = receiver.drain(traceId, 2000);
+                asyncSender.join();
 
-            // With the settle timeout, both events should be captured because the second event arrived within 100ms of the first event.
-            // Without the settle timeout, the drain method returns immediately after finding the first event, resulting in size 1.
-            assertThat(drained).hasSize(2);
-            assertThat(drained.get(0).key()).isEqualTo("key-1");
-            assertThat(drained.get(1).key()).isEqualTo("key-2");
+                // With the settle timeout, both events should be captured because the second event arrived within 100ms of the first event.
+                // Without the settle timeout, the drain method returns immediately after finding the first event, resulting in size 1.
+                assertThat(drained).hasSize(2);
+                assertThat(drained.get(0).key()).isEqualTo("key-1");
+                assertThat(drained.get(1).key()).isEqualTo("key-2");
+            }
         } finally {
             receiver.close();
         }
+    }
+
+    /**
+     * receiver의 consumer가 실제로 레코드를 소비할 수 있을 때까지(=group join/assignment 완료) 대기한다.
+     * 별도 traceId의 probe 레코드를 반복 발행하고, drain으로 그게 잡히면 consumer가 살아있다고 본다.
+     * (consumer는 earliest라 assignment 후 이전 probe까지 모두 읽으므로 한 번이라도 잡히면 준비 완료.)
+     */
+    private static void awaitReceiverConsuming(KafkaCaptureReceiver receiver,
+                                               KafkaProducer<String, String> producer,
+                                               String topic) throws Exception {
+        String warmTrace = "ffffffffffffffffffffffffffffffff";
+        String warmTp = "00-" + warmTrace + "-00f067aa0ba90001-01";
+        long deadline = System.currentTimeMillis() + 20_000;
+        while (System.currentTimeMillis() < deadline) {
+            ProducerRecord<String, String> probe = new ProducerRecord<>(topic, "warmup", "{}");
+            probe.headers().add("traceparent", warmTp.getBytes(StandardCharsets.UTF_8));
+            producer.send(probe).get();
+            if (!receiver.drain(warmTrace, 1000).isEmpty()) {
+                return;
+            }
+        }
+        throw new IllegalStateException("Kafka capture receiver did not start consuming within 20s");
     }
 
     @Test
