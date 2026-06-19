@@ -276,3 +276,13 @@ generate(request)                        [HTTP 경로]
 - **R4 — 직렬 격리 약화 우려(메소드레벨 SAME_THREAD).** Option A로 **직렬 시나리오를 병합 클래스에 넣지 않고 별도 클래스 + 클래스레벨 SAME_THREAD**로 분리 → 현행 격리 메커니즘(전역 단일 스레드 고정) 그대로, 무회귀(§4.0, §4.5).
 - **R5 — 메소드명 충돌(다른 path가 같은 접미어).** 충돌 시 접미 인덱스로 해소, 단위 테스트로 고정.
 - **R6 — e2e 병렬도 프로파일 변경(fixed/8 → dynamic/factor=1).** 의도된 변경: e2e가 **실제 배포되는 emit 설정**을 그대로 검증하도록 정렬(AC6). CI 머신 코어 수에 따라 병렬도가 달라지나, 테스트는 병렬-안전 전제라 정확성 영향 없음. 타이밍 변동은 dynamic factor 조정으로 흡수 가능.
+
+## 9. 역전파 (2026-06-19) — cross-class absent-id race
+
+R1("병렬 cleanup 플래키")의 완화책(§4.4 불변식 + AC6/AC7)은 **클래스 내** 메소드 간 cleanup 격리만 보장했고, **클래스 간** 공유 SUT-DB 상태 충돌은 포착하지 못했다. PR #62 병렬 e2e에서 `BookingsGetByIdTest.s404`(`GET /api/bookings/1` 기대 404)가 동시 실행되는 `BookingsPostTest`의 성공 POST(IDENTITY `id=1` 생성, 응답 id 미캡처로 잔류)와 race를 일으켜 간헐적으로 200을 받았다(스케줄 의존 flaky).
+
+- **근본원인:** absent-id read가 캡처된 작은 probe id(`1`)로 '부재'를 가정 + 성공 create가 작은 IDENTITY id를 만들어 잔류 + 클래스 간 concurrent + 공유 단일 SUT/Postgres.
+- **추가 요구:** REQ-016(absent-id read는 도달불가 id `2000000000` 사용 → race 결정적 제거), REQ-017(성공 create의 autoIncrement 행을 응답 id로 deferDelete 정리, 보조 위생).
+- **구현:** `Generator.resolveLiteralPath`(notFoundRead 분기 + `ABSENT_NUMERIC_ID`), `Generator.postCreateCleanup` + 템플릿 `(Object) __resp.path(...)`(varargs+제네릭 CCE 회피).
+- **확인:** `GeneratorAbsentIdReadTest`/`GeneratorPostCreateCleanupTest`/`GeneratorFlakyFixIntegrationTest` + e2e 54/54 green + PR #62 CI 전 체크 green.
+- **R1 보강:** 병렬-안전 불변식에 "absent-id 가정 negative read는 도달불가 id를 쓴다"와 "성공 create는 자기 생성 행을 정리한다"를 포함한다.

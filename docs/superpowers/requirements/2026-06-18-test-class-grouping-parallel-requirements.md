@@ -134,6 +134,27 @@
   - Given 기존 `GeneratorKafkaTest`/WS 관련 테스트, When 본 변경 후 실행, Then 식별자 형식 변경 없이 통과(회귀 없음).
 - 검증 레벨: Gen black-box
 
+### REQ-016 — 병렬-안전 absent-id read: 도달 불가능한 id 사용
+- 유형: Non-functional (parallel-safety) / Functional
+- 우선순위: Must
+- 설명: 클래스 간 병렬(`mode.classes.default=concurrent`) 실행에서 공유 SUT DB를 쓰는 **absent-id read(by-id 404)** 시나리오는 캡처된 작은 probe id(예: `1`) 대신 IDENTITY/시퀀스가 한 테스트 런에서 **도달 불가능한 큰 id**(예: `2000000000`)를 쓴다. 동시 실행되는 성공 create가 만드는 작은 IDENTITY id(`1,2,3…`)와 충돌해 '부재' 가정(404)이 200으로 뒤집히는 race를 결정적으로 제거한다.
+  - **역전파 근거:** REQ-013(병렬+격리 e2e green)이 *클래스 내* cleanup 격리만 보장하고 *클래스 간* absent-id race를 포착하지 못해 `BookingsGetByIdTest.s404`(`GET /api/bookings/1` 기대 404, 동시 POST가 id=1 생성 시 200)가 간헐 실패했다. 이를 메우는 요구로 추가.
+- 수용기준:
+  - Given GET by-id 엔드포인트의 `expectedStatus==404` 이고 path-param이 numeric인 시나리오, When `generate`, Then `requestPath`의 path id가 도달불가 큰 id로 렌더되고 캡처된 작은 id는 쓰이지 않는다.
+  - Given 같은 클래스의 2xx(seed 조회)·400(검증) 시나리오, When `generate`, Then 그 path id는 치환되지 않는다(seed한 id/검증값 보존).
+  - Given e2e 병렬 실행, When `e2e/run-e2e.sh`, Then by-id 404 시나리오(`BookingsGetByIdTest.s404` 류)가 결정적으로 통과(green).
+- 검증 레벨: Gen black-box (`GeneratorAbsentIdReadTest`, `GeneratorFlakyFixIntegrationTest#fix1_*`) + E2E
+
+### REQ-017 — 성공 create 시나리오의 auto-generated 행 정리
+- 유형: Functional (data hygiene)
+- 우선순위: Should (REQ-016이 race를 결정적으로 제거; 본 항목은 잔류 행 위생 보조)
+- 설명: 성공 create(POST 2xx)가 **autoIncrement 단일 PK** 행을 만들고 그 PK가 응답에 돌아오며 해당 테이블에 **param-bound cleanup이 없을 때**, 응답 PK를 캡처해 `deferDelete`로 정리한다. 잔류 auto-generated 행(특히 작은 id)이 다른 absent-id read의 부재 가정을 깨는 것을 줄인다. autoIncrement PK가 아니면 트리거하지 않아 기존 산출물/골든은 불변.
+- 수용기준:
+  - Given POST 2xx + INSERT 대상 테이블이 autoIncrement 단일 PK + 응답에 그 PK 필드 존재 + 그 테이블에 기존 delete 없음, When `generate`, Then `(Object) __resp.path("<pk>")`를 인자로 한 `deferDelete("DELETE FROM <table> WHERE <pk> = ?", …)`가 발행된다(varargs+제네릭 추론 회피 위해 `(Object)` 캐스트 필수).
+  - Given autoIncrement PK가 아니거나 이미 param-bound cleanup이 있는 경우, When `generate`, Then 추가 deferDelete를 발행하지 않는다(`OrdersPostTest` 골든 불변).
+  - Given e2e 병렬 실행, When `e2e/run-e2e.sh`, Then 성공 create 클래스(`BookingsPostTest` 류)가 통과(green).
+- 검증 레벨: Gen black-box (`GeneratorPostCreateCleanupTest`, `GeneratorFlakyFixIntegrationTest#fix3_*`) + E2E
+
 ## 추적 매트릭스
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
@@ -153,5 +174,9 @@
 | REQ-013 | 병렬+격리 e2e green | `e2e/run-e2e.sh` (parallel run green) | E2E | 🟢 green |
 | REQ-014 | methodName 도출 | `GeneratorTest#methodNameDerivationRules` (+`methodNameStripsEndpointPrefix`, `uniqueMethodNamesDedupesCollision`) | Gen | 🟢 green |
 | REQ-015 | WS/Kafka 불변 | `GeneratorKafkaTest` (regression) | Gen | 🔵 out-of-scope |
+| REQ-016 | 병렬-안전 absent-id read(도달불가 id) | `GeneratorAbsentIdReadTest`(4) + `GeneratorFlakyFixIntegrationTest#fix1_getById404_rendersUnreachableAbsentId` + e2e `BookingsGetByIdTest.s404`(parallel green) | Gen+E2E | 🟢 green |
+| REQ-017 | 성공 create auto-id 행 정리 | `GeneratorPostCreateCleanupTest`(7) + `GeneratorFlakyFixIntegrationTest#fix3_postCreate_autoIncPk_capturesResponseIdAndDefersDelete` + e2e `BookingsPostTest`(parallel green) | Gen+E2E | 🟢 green |
 
-Coverage: 14/14 green (100%) — 대상: Must 13 + Should 1[REQ-005]. Won't/out-of-scope: REQ-015(🔵, 회귀만 확인).
+Coverage: 16/16 green (100%) — 대상: Must 14 + Should 2[REQ-005, REQ-017]. Won't/out-of-scope: REQ-015(🔵, 회귀만 확인).
+
+> 역전파(2026-06-19): PR #62 병렬 e2e에서 `BookingsGetByIdTest.s404` 간헐 실패(absent-id race)가 드러나, REQ-016/REQ-017을 추가하고 생성기에 Fix#1(도달불가 id)·Fix#3(응답 id 정리)을 구현했다. CI 전 체크 green으로 확인.
