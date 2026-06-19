@@ -182,6 +182,26 @@ fun String.toTags() = split(",").map(String::trim).filter(String::isNotEmpty).to
   `if: pull_request || tag v*` 조건이라 **PR·릴리스 태그 트리거에서만** 실행됨 → AC5는 그
   트리거 기준으로 평가(메인 push는 unit/docker/it-*/e2e만 검증).
 
+## 추가 범위: 자체 테스트 커버리지 측정 (CI)
+
+(구현 중 사용자 요청으로 추가된 범위.) 기존엔 프로젝트 *자체* 테스트 커버리지가 CI에서
+전혀 측정되지 않았다(루트에 `jacoco` 미적용, `graph-rag-builder`의 jacoco 의존성은 *SUT*
+커버리지 측정용). 이를 추가한다:
+
+- 루트에 `jacoco` 적용 + 제품 모듈 6개를 합치는 수동 `jacocoAggregatedReport`(JacocoReport)
+  태스크. `jacoco-report-aggregation` 플러그인은 Spring Boot 모듈 BOM 버전을 루트에서 못 풀어
+  실패하므로 exec+classes+sources만 읽는 수동 집계를 채택.
+- 집계 대상 = 제품 모듈만(`samples`/`e2e` 제외).
+- **CI 측정 범위 = unit + docker**(`-PexcludeTags=integration`). integration은 단일 러너 직렬로
+  무겁고/flaky해 제외, e2e는 out-of-process라 미포함 → 수치는 in-process 하한(코멘트에 범위 라벨).
+  (리뷰 C1 반영: 풀-SUT 재실행이 가장 느린 flaky job이 되는 문제 회피. 더 정확한 전체 수치는
+  check 샤드 exec 아티팩트 병합으로 확장 가능 — 현 범위 밖.)
+- CI `coverage` job(PR 전용, non-blocking): 집계 실행 → HTML을 `coverage-html` 아티팩트로
+  업로드 + 전체 커버리지 표를 PR 코멘트(`.github/scripts/coverage_summary.py`)·job summary에 게시.
+  빈 집계 시 0% 오보 대신 실패(리뷰 C3 반영).
+- 검증(추가 AC): `jacocoAggregatedReport -PexcludeTags=integration`가 XML+HTML과 전체 표를
+  산출(로컬 unit+docker 실측으로 확인).
+
 ## 리스크 / 미해결
 
 - **branch protection required checks(외부 설정).** job/샤드 이름이 바뀌면(`docker-builder-e2e`

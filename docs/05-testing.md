@@ -51,6 +51,29 @@
 - **(b) 산출물이 docker 이미지*로* 패키징됨** — `service-image-boot-e2e`.
 - **(c) 테스트 하네스 *자체가* docker 안에서 돎(DinD)** — `dind-builder-e2e`.
 
+## 커버리지 (자체 테스트)
+
+프로젝트 *자체* 테스트가 제품 코드를 얼마나 덮는지 측정한다. (도구가 측정하는 *SUT* 분기
+커버리지인 `docs/coverage-progress.md`와는 별개다.)
+
+- **집계 태스크:** 루트 `./gradlew jacocoAggregatedReport`. 제품 모듈 6개(`shared-model`,
+  `testlib`, `test-state-dashboard`, `socket-mock-server`, `graph-rag-builder`,
+  `test-generator`)의 `test`를 jacoco로 돌려 하나로 합친다.
+  산출물: `build/reports/jacoco/jacocoAggregatedReport/`(XML + HTML).
+- **CI 측정 범위 = unit + docker** (`-PexcludeTags=integration`). integration(풀-SUT 부팅)은
+  단일 러너에서 직렬로 돌리면 무겁고(>12분) flaky해서 제외하고, e2e(out-of-process)는 별도
+  프로세스라 애초에 잡히지 않는다. 즉 이 수치는 **in-process unit+컴포넌트 하한**이다(코멘트에
+  범위 라벨 표기). 더 정확한 전체 수치는 `check` 샤드가 만든 `test.exec`를 아티팩트로 합치는
+  방식으로 확장 가능(현재 범위 밖).
+- **제외 모듈:** `samples`(fixture SUT)·`e2e`(하네스)는 집계 대상이 아니다.
+- **CI:** `coverage` job(PR 전용, 정보성·non-blocking)이 집계를 실행해 (a) HTML 리포트를
+  `coverage-html` 아티팩트로 업로드하고 (b) 전체 커버리지 표(+범위 라벨)를 PR 코멘트(마커 갱신)와
+  job summary에 게시한다. 임계값 게이트나 `release.needs` 의존은 두지 않는다. 집계 XML이
+  비면(exec 미병합) 그럴듯한 0%를 게시하지 않고 실패한다.
+- 구현 메모: `jacoco-report-aggregation` 플러그인은 Spring Boot 모듈의 BOM 버전을 루트에서
+  해석하려다 실패해, exec+classes+sources만 읽는 수동 `JacocoReport`를 쓴다. 코멘트 표는
+  `.github/scripts/coverage_summary.py`가 집계 XML에서 생성한다.
+
 ## 현재 분류 현황
 
 - **integration(7):** `BuilderIntegrationTest`, `BuilderCollectionIntegrationTest`,
