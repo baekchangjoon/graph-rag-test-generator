@@ -184,6 +184,26 @@ class SqlLogParserTest {
     }
 
     @Test
+    void extractTraceId_64bitTwoFieldBracket_returnsFirstField() {
+        // Fix 3: SLEUTH_BRACKET_2FIELD must also match a 16-hex (64-bit) trace-id
+        String line = "x DEBUG 1 --- [1a2b3c4d5e6f7081,9a2b3c4d5e6f7081] "
+                + "[tram-c-1] org.hibernate.SQL : insert into ledger_entries values (?,?)";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("1a2b3c4d5e6f7081");
+    }
+
+    @Test
+    void extractTraceId_threeFieldBracketWhoseAppTokenIs32Hex_returnsSecondField() {
+        // Fix 4 precedence: app token happens to be 32 hex — must NOT be mistaken for
+        // 2-field and return the app token; the real traceId is the SECOND field.
+        String line = "x DEBUG 1 --- "
+                + "[deadbeefdeadbeefdeadbeefdeadbeef,cafebabecafebabecafebabecafebabe,9a2b3c4d5e6f7081] "
+                + "[tram-c-1] org.hibernate.SQL : insert into orders values (?)";
+        assertThat(SqlLogParser.extractTraceId(line))
+                .isEqualTo("cafebabecafebabecafebabecafebabe");
+    }
+
+    @Test
     void traceIdMatches_fullAndRight64BitAndCaseInsensitive() {
         String full = "1a2b3c4d5e6f70819a2b3c4d5e6f7081";
         assertThat(SqlLogParser.traceIdMatches(full, full)).isTrue();

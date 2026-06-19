@@ -114,8 +114,10 @@ docker compose up -d \
   order-web reservation ledger eventuate-cdc-service
 ```
 
-The Task 7 E2E test asserts the trace-id appears end-to-end in `ledger_entries.trace_id`
-regardless of which path is active.
+The Task 7 E2E test asserts that the B3 trace-id bracket (e.g. `[traceId,spanId]`) prefixed
+by Spring Cloud Sleuth appears in ledger C's **Hibernate SQL log line**
+(`org.hibernate.SQL : insert into ledger_entries ...`), confirming the trace context
+propagates end-to-end — regardless of which path (primary OTel or Sleuth fallback) is active.
 
 ## Teardown
 

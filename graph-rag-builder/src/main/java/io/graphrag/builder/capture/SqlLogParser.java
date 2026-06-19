@@ -41,11 +41,12 @@ public final class SqlLogParser {
      * - 3-field [app,traceId,spanId] (Sleuth 3.x, app 이름 포함)
      * - 4-field [app,traceId,spanId,exportable] (Sleuth 1.x/2.x, Java8 레거시 기본)
      *
-     * 2-field: 첫 필드가 32-hex(traceId) + 두 번째 필드가 1-32 hex(spanId).
+     * 2-field: 첫 필드가 16–32 hex(traceId) + 두 번째 필드가 1-32 hex(spanId).
+     *          64-bit trace-id(16 hex)와 128-bit trace-id(32 hex) 모두 매칭.
      * 3+field: 첫 필드가 비-hex(app) → 두 번째 필드가 traceId.
      */
     private static final Pattern SLEUTH_BRACKET_2FIELD = Pattern.compile(
-            "\\[([0-9a-fA-F]{32}),[0-9a-fA-F]{1,32}\\]");
+            "\\[([0-9a-fA-F]{16,32}),[0-9a-fA-F]{1,32}\\]");
     private static final Pattern SLEUTH_BRACKET = Pattern.compile(
             "\\[[^,\\]]*,([0-9a-fA-F]{16,32}),[0-9a-fA-F]{1,32}(?:,[^\\]]*)?\\]");
 

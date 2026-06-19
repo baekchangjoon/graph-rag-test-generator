@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS orders (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
   user_id     VARCHAR(255) NOT NULL,
   amount      INT,
-  trace_id    VARCHAR(64),
   created_at  BIGINT
 );
 
@@ -25,7 +24,6 @@ CREATE TABLE IF NOT EXISTS reservations (
   order_id   BIGINT NOT NULL,
   user_id    VARCHAR(255),
   amount     INT,
-  trace_id   VARCHAR(64),
   created_at BIGINT
 );
 
@@ -36,7 +34,6 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   order_id    BIGINT NOT NULL UNIQUE,
   user_id     VARCHAR(255),
   amount      INT,
-  trace_id    VARCHAR(64),
   created_at  BIGINT
 );
 
