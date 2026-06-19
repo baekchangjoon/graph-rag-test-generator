@@ -18,7 +18,8 @@ public record PathCandidate(
         long logEnd,
         List<RawHttpExchange> httpExchanges,
         List<io.graphrag.builder.capture.ParsedSql> capturedSql,
-        List<CapturedEventEmit> capturedEventEmits) {
+        List<CapturedEventEmit> capturedEventEmits,
+        String kafkaTraceId) {
 
     public PathCandidate {
         capturedSql = capturedSql == null ? List.of() : capturedSql;
@@ -29,13 +30,13 @@ public record PathCandidate(
                          List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
                          List<RawHttpExchange> httpExchanges, List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                capturedSql, List.of());
+                capturedSql, List.of(), null);
     }
 
     public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
                          List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
                          List<RawHttpExchange> httpExchanges) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                List.of(), List.of());
+                List.of(), List.of(), null);
     }
 }

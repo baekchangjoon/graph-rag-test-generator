@@ -20,7 +20,8 @@ public record InvocationOutcome(
         java.util.List<RawHttpExchange> httpExchanges,
         String coverageKey,
         java.util.List<io.graphrag.builder.capture.ParsedSql> capturedSql,
-        java.util.List<CapturedEventEmit> capturedEventEmits) {
+        java.util.List<CapturedEventEmit> capturedEventEmits,
+        String kafkaTraceId) {
 
     public InvocationOutcome {
         httpExchanges = httpExchanges == null ? java.util.List.of() : httpExchanges;
@@ -32,24 +33,24 @@ public record InvocationOutcome(
                              long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges,
                              String coverageKey, java.util.List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
         this(status, response, coveredBranches, logStart, logEnd, httpExchanges, coverageKey, capturedSql,
-                java.util.List.of());
+                java.util.List.of(), null);
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges,
                              String coverageKey) {
         this(status, response, coveredBranches, logStart, logEnd, httpExchanges, coverageKey,
-                java.util.List.of(), java.util.List.of());
+                java.util.List.of(), java.util.List.of(), null);
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd, java.util.List<RawHttpExchange> httpExchanges) {
-        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, null, java.util.List.of(), java.util.List.of());
+        this(status, response, coveredBranches, logStart, logEnd, httpExchanges, null, java.util.List.of(), java.util.List.of(), null);
     }
 
     public InvocationOutcome(int status, JsonNode response, Set<BranchRef> coveredBranches,
                              long logStart, long logEnd) {
         this(status, response, coveredBranches, logStart, logEnd, java.util.List.of(), null,
-                java.util.List.of(), java.util.List.of());
+                java.util.List.of(), java.util.List.of(), null);
     }
 }

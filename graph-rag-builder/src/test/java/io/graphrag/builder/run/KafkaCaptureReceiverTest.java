@@ -304,6 +304,77 @@ class KafkaCaptureReceiverTest {
         }
     }
 
+    @Test
+    void drainAllByTraceId_groupsRecordsByTraceId() throws Exception {
+        String topic = "test-topic";
+
+        KafkaCaptureReceiver receiver = new KafkaCaptureReceiver(bootstrapServers);
+        receiver.start();
+
+        try {
+            String traceId1 = "aaaaaaaabbbbbbbbccccccccdddddddd";
+            String traceId2 = "11111111222222223333333344444444";
+            String tp1 = "00-" + traceId1 + "-00f067aa0ba902b7-01";
+            String tp2 = "00-" + traceId2 + "-00f067aa0ba902b8-01";
+
+            Properties props = new Properties();
+            props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+            props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+            props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+
+            try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
+                // Two records for traceId1
+                ProducerRecord<String, String> r1a = new ProducerRecord<>(topic, "k1a", "{\"v\":1}");
+                r1a.headers().add("traceparent", tp1.getBytes(StandardCharsets.UTF_8));
+                producer.send(r1a).get();
+
+                ProducerRecord<String, String> r1b = new ProducerRecord<>(topic, "k1b", "{\"v\":2}");
+                r1b.headers().add("traceparent", tp1.getBytes(StandardCharsets.UTF_8));
+                producer.send(r1b).get();
+
+                // One record for traceId2
+                ProducerRecord<String, String> r2 = new ProducerRecord<>(topic, "k2", "{\"v\":3}");
+                r2.headers().add("traceparent", tp2.getBytes(StandardCharsets.UTF_8));
+                producer.send(r2).get();
+            }
+
+            // Allow background consumer to buffer the records before draining
+            Thread.sleep(1000);
+
+            java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> result =
+                    receiver.drainAllByTraceId(50);
+
+            assertThat(result).containsKey(traceId1);
+            assertThat(result.get(traceId1)).hasSize(2);
+            assertThat(result.get(traceId1).stream().map(KafkaCaptureReceiver.CapturedRecord::key).toList())
+                    .containsExactlyInAnyOrder("k1a", "k1b");
+
+            assertThat(result).containsKey(traceId2);
+            assertThat(result.get(traceId2)).hasSize(1);
+            assertThat(result.get(traceId2).get(0).key()).isEqualTo("k2");
+
+            // Queue must be empty after drain
+            java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> second =
+                    receiver.drainAllByTraceId(0);
+            assertThat(second).isEmpty();
+        } finally {
+            receiver.close();
+        }
+    }
+
+    @Test
+    void drainAllByTraceId_emptyWhenNoRecordsBuffered() throws Exception {
+        KafkaCaptureReceiver receiver = new KafkaCaptureReceiver(bootstrapServers);
+        receiver.start();
+        try {
+            java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> result =
+                    receiver.drainAllByTraceId(0);
+            assertThat(result).isEmpty();
+        } finally {
+            receiver.close();
+        }
+    }
+
     private static void createTopic(String topic) throws Exception {
         Properties props = new Properties();
         props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);

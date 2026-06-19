@@ -152,8 +152,19 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
         }
     }
 
+    /**
+     * 첫 매칭 레코드를 기다리는 짧은 윈도우. 대부분의 탐색 요청은 Kafka emit이 없는데, 이게 없으면
+     * drain이 매번 full deadline(예: 5s)을 block한다(요청당 5s 낭비 → 풀빌드에서 수 분 누적; OTEL
+     * 모드만 per-request drain 호출이라 OTEL 풀빌드가 none보다 ~8배 느렸던 근본원인). 첫 매칭이 이
+     * 윈도우 내에 없으면 빈 결과로 즉시 반환한다. 매칭이 시작되면 settle/deadline 로직으로 전환.
+     * 로컬 Kafka produce→consume 지연(<수백 ms)에 안전한 여유값.
+     */
+    static final long FIRST_MATCH_TIMEOUT_NANOS = 200_000_000L; // 200ms (quick fix)
+
     public List<CapturedRecord> drain(String traceId, long timeoutMillis) {
-        long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        long startNanos = System.nanoTime();
+        long deadline = startNanos + timeoutMillis * 1_000_000L;
+        long firstMatchDeadline = Math.min(deadline, startNanos + FIRST_MATCH_TIMEOUT_NANOS);
         List<CapturedRecord> matched = new ArrayList<>();
         long settleTimeoutNanos = 100_000_000L; // 100ms settle timeout
         long lastMatchedTime = 0;
@@ -182,12 +193,17 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
                     break;
                 }
 
-                if (!matched.isEmpty() && (now - lastMatchedTime >= settleTimeoutNanos)) {
+                if (matched.isEmpty()) {
+                    // 첫 매칭 전: first-match 윈도우까지만 대기(없으면 빈 결과 반환).
+                    if (now >= firstMatchDeadline) {
+                        break;
+                    }
+                } else if (now - lastMatchedTime >= settleTimeoutNanos) {
                     break;
                 }
 
-                long remainingToDeadlineNanos = deadline - now;
-                long waitNanos = remainingToDeadlineNanos;
+                // 대기 상한: 첫 매칭 전이면 first-match deadline, 이후엔 overall deadline.
+                long waitNanos = (matched.isEmpty() ? firstMatchDeadline : deadline) - now;
 
                 if (!matched.isEmpty()) {
                     long remainingToSettleNanos = settleTimeoutNanos - (now - lastMatchedTime);
@@ -234,6 +250,24 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
             }
         }
         return null;
+    }
+
+    /**
+     * End-of-exploration drain: brief settle for stragglers, then remove & return ALL buffered
+     * records grouped by their traceparent traceId. Non-per-request → no per-request blocking.
+     */
+    public java.util.Map<String, java.util.List<CapturedRecord>> drainAllByTraceId(long settleMillis) {
+        try { Thread.sleep(settleMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        java.util.Map<String, java.util.List<CapturedRecord>> byTrace = new java.util.LinkedHashMap<>();
+        synchronized (queue) {
+            for (CapturedRecord rec : queue) {
+                String tid = getTraceIdFromHeaders(rec.headers());
+                if (tid != null) byTrace.computeIfAbsent(tid, k -> new java.util.ArrayList<>()).add(rec);
+            }
+            queue.clear();
+            queueSize = 0;
+        }
+        return byTrace;
     }
 
     @Override
