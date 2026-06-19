@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  - Fix#1: GET by-id 404 시나리오의 path id 가 도달불가 큰 id 로 렌더된다.
  *  - Fix#3: 성공 POST(autoIncrement PK, param-bound cleanup 없음)가 응답 id 를 캡처해 deferDelete 한다.
  */
-class GeneratorFlakyFixIntegrationTest {
+class GeneratorFlakyFixTest {
 
     private static GraphRagClient client(Endpoint ep, List<ExploredPath> paths,
                                          java.util.Map<String, List<CapturedSql>> sqlByPath,

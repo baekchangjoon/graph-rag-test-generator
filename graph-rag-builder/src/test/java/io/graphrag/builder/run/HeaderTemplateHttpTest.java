@@ -9,7 +9,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import static org.junit.jupiter.api.Assertions.*;
 
-class HeaderTemplateHttpIT {
+class HeaderTemplateHttpTest {
     static HttpServer server; static int port;
 
     @BeforeAll static void up() throws Exception {

@@ -5,6 +5,7 @@
 | 용어 | 뜻 |
 |---|---|
 | **SUT** (System Under Test) | 테스트 대상 앱. 여기서는 분석할 기존 Java/Spring 애플리케이션. |
+| **unit / integration / docker / e2e 테스트** | 테스트 분류 4종. 레이어·프로세스·docker 정의와 접미사/`@Tag` 규칙은 [05-testing](05-testing.md) 참고. |
 | **도구 1 / graph-rag-builder** | SUT를 외부 프로세스로 띄워 호출해 보며 사실을 캡처하는 CLI. 산출물은 `graph.json`. |
 | **도구 2 / test-generator** | `graph.json`과 요청 한 건으로 RestAssured 테스트를 합성하는 CLI. |
 | **graph.json** | 도구 1이 캡처한 사실 모음(엔드포인트·분기·발행 SQL·외부 호출·DB 스키마). 두 도구를 잇는 유일한 인터페이스. |

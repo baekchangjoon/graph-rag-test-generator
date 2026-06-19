@@ -21,9 +21,11 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Tag;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
+@Tag("docker")
 class OrderExpressApiTest {
 
     @Container

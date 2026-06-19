@@ -22,11 +22,15 @@ subprojects {
         }
         tasks.withType<Test>().configureEach {
             useJUnitPlatform {
-                // CI 샤딩용 JUnit5 태그 필터: -PincludeTags=integration / -PexcludeTags=integration
+                // CI 샤딩용 JUnit5 태그 필터: 콤마 구분 멀티 태그 지원
+                // (예: -PexcludeTags=integration,docker / -PincludeTags=docker).
+                // JUnit5 태그식엔 콤마 연산자가 없으므로 split 후 vararg로 넘긴다.
+                fun String.toTags() =
+                    split(",").map(String::trim).filter(String::isNotEmpty).toTypedArray()
                 (providers.gradleProperty("includeTags").orNull)
-                    ?.takeIf { it.isNotBlank() }?.let { includeTags(it) }
+                    ?.takeIf { it.isNotBlank() }?.let { includeTags(*it.toTags()) }
                 (providers.gradleProperty("excludeTags").orNull)
-                    ?.takeIf { it.isNotBlank() }?.let { excludeTags(it) }
+                    ?.takeIf { it.isNotBlank() }?.let { excludeTags(*it.toTags()) }
             }
             // Docker Engine 29+는 구버전 API(<1.40)를 거부. docker-java가 협상 없이
             // 1.32를 쓰는 문제의 우회 (docs/decisions/sut-analysis-environment.md)

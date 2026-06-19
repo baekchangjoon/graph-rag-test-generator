@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** 실제 order-service jar에 대한 빌더 전 사이클 (Phase 1: 탐색 + MyBatis). Docker 필요. */
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-class BuilderE2eTest {
+class BuilderIntegrationTest {
 
     @TempDir
     Path out;
@@ -45,7 +45,7 @@ class BuilderE2eTest {
                 Path.of(System.getProperty("external.stubs")),
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
                 null, null, authConfig, false, true, null,
-                // 기본값은 otel로 전환됨(OtelKafkaBuildAcceptanceTest가 otel full-build 커버).
+                // 기본값은 otel로 전환됨(OtelKafkaBuildIntegrationTest가 otel full-build 커버).
                 // 이 테스트는 log-parser 폴백 경로의 full-build 회귀 가드로 명시 고정한다.
                 null, io.graphrag.model.RequestHeaders.empty(), java.util.List.of(), "none"));
 

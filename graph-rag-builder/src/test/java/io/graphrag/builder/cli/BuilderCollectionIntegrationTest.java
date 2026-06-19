@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-class BuilderCollectionE2eTest {
+class BuilderCollectionIntegrationTest {
     @TempDir static Path out;
 
     // 두 테스트는 동일한 풀 빌드(exploreAll)를 HTTP/Kafka 측면으로 나눠 검증할 뿐이므로

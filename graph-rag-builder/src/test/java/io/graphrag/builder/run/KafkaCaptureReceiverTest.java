@@ -25,11 +25,13 @@ import java.util.Map;
 import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Tag;
 
 // 테스트 격리: testCapsQueueToTenThousand이 공유 토픽에 1만건을 flood하면 이후 테스트의 리시버(earliest,
 // 모든 토픽 구독)가 그 backlog를 읽어 대상 레코드를 굶기거나 cap-evict해 flaky 실패가 난다.
 // flood 테스트를 @Order로 맨 마지막에 돌려 이후 테스트가 backlog에 노출되지 않게 한다(결정적, 순차 실행).
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("docker")
 class KafkaCaptureReceiverTest {
 
     private static KafkaContainer kafka;

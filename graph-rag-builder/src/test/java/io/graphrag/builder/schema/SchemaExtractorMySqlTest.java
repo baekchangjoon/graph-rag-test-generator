@@ -12,8 +12,10 @@ import java.sql.Statement;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Tag;
 
 @Testcontainers
+@Tag("docker")
 class SchemaExtractorMySqlTest {
 
     @Container
