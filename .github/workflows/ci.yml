@@ -22,8 +22,11 @@ jobs:
         shard:
           - name: unit
             args: "check -PexcludeTags=integration"
-          - name: it-cli
-            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.*'"
+          # it-cli(cli 통합 4개)가 한 샤드에선 ~12분 → 무거운 OTEL 풀빌드 2개와 가벼운 2개로 분할.
+          - name: it-cli-light
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderE2eTest' --tests 'io.graphrag.builder.cli.BuilderEndpointSelectorTest'"
+          - name: it-cli-otel
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderCollectionE2eTest' --tests 'io.graphrag.builder.cli.OtelKafkaBuildAcceptanceTest'"
           - name: it-rest
             args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.capture.*' --tests 'io.graphrag.builder.coverage.*'"
     steps:
