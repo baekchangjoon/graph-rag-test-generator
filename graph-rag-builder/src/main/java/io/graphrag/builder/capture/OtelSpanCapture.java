@@ -28,7 +28,12 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
     private static final java.util.regex.Pattern DIGITS = java.util.regex.Pattern.compile("\\d+");
 
     static final long AWAIT_TIMEOUT_MILLIS = 8_000;
-    static final long QUIESCENCE_MILLIS = 250;
+    // drain은 "마지막 span 후 QUIESCENCE_MILLIS 동안 새 span 없음"으로 완료를 판정한다. 이 값은
+    // 요청당 drain의 고정 floor(프로파일링: sqlDrain ≈ 마지막-span-시간 + QUIESCENCE, 균일 분포).
+    // OTEL agent BSP_SCHEDULE_DELAY=100ms(배치 export) → 안전하려면 배치 간격보다 커야 한다.
+    // 150 = 배치 간격(100ms)의 1.5×(jitter 마진). 250→150으로 요청당 ~100ms 단축(OTEL 풀빌드 가속).
+    // 100은 BSP 경계라 부하 높은 CI에서 늦은 span 누락(flaky) 위험이 있어 채택하지 않음.
+    static final long QUIESCENCE_MILLIS = 150;
     private static final long POLL_MILLIS = 50;
 
     private final OtlpTraceReceiver receiver;
