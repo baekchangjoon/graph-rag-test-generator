@@ -105,6 +105,7 @@ baggage propagator 활성 시 inbound 헤더 `baggage: test-id=...` 가 모든 o
 - 동작: 백그라운드 `KafkaCaptureReceiver`가 브로커 토픽을 구독하고, 요청별 trace-id(otel=traceparent, sleuth=B3)로 레코드를 귀속해 `CapturedEventEmit`(topic+key+payload)을 만든다.
 - 생성 테스트: `KafkaHelper.consumeNextRecord(topic[, expectedKey], timeout)` + `JSONAssert`로 단언한다. 비결정 필드는 제거하고, 토픽/키 필터로 복수 emit을 각각 검증한다.
 - inbound `@KafkaListener` 소비(컨슈머 탐색)와는 다르다 — 이쪽은 SUT가 **내보내는** 메시지의 캡처다.
+- 생성된 `KafkaHelper` 어설션을 실행하려면 테스트 실행 compose에 Kafka 브로커 서비스가 있어야 한다(예: `e2e/docker-compose.yml`의 `kafka` 서비스 참조).
 
 ## RestAssured 테스트 스타일
 
@@ -153,7 +154,7 @@ class OrdersPostTest {
 
 ## 인증
 
-두 가지 모드, 도구 2의 `auth_mode`로 선택:
+두 가지 모드, 도구 2의 `authMode`(GenerationRequest 필드, JSON camelCase)로 선택:
 
 ### real
 
