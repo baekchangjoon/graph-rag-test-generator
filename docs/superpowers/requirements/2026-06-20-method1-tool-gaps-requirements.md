@@ -267,14 +267,14 @@ Coverage: 9/18 green (50%) — target 100% (대상: Must 15 + 미연기 Should 3
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
 
-### P3 진행 현황 (2026-06-20)
+### P3 진행 현황 (2026-06-21 — 수정 완료)
 - **완료(🟢): REQ-009, REQ-010, REQ-011** — `ServerGeneratedDetector` 추출 + `Generator.deterministicPayload` + `test-class.mustache` CustomComparator 블록 (feat-p3-kafka-serverfields 브랜치)
-  - 단위/통합: test-generator 58 / graph-rag-builder 276 / shared-model 19 = 합계 353 tests, failures=0, errors=0 (BUILD SUCCESSFUL)
-  - E2E(order-service): tests=54 skipped=0 failures=2 errors=0 — `OrdersPostTest.s201_1/s201_2`의 Kafka `userId` CustomComparator 단언 실패. 해당 테스트는 P3가 order-service 픽스처에 처음 추가한 Kafka emit 단언으로, 단위 레벨(REQ-009~011)은 전부 🟢임. E2E 실패 원인 분석은 하단 "발견된 선재 이슈" 참조.
+  - **버그 수정(2026-06-21):** `test-class.mustache` kafkaEmits Customization 람다가 `o2`(expected·캡처 리터럴)를 actual로 잘못 참조하던 버그 수정. JSONAssert 1.5.1의 `ValueMatcher.equal(o1, o2)`에서 **o1 = actual, o2 = expected** 임을 실증 확인(`KafkaCustomizationRuntimeTest`) 후, serverGeneratedFields·substitutionFields 양쪽을 `o1` 기준으로 수정. 골든 파일(`OrdersPostTest.java.golden`)도 동일하게 수정.
+  - 단위/통합: test-generator 64 tests, failures=0, errors=0 (BUILD SUCCESSFUL) — `KafkaCustomizationRuntimeTest` 6개 포함
+  - E2E(order-service): tests=54 skipped=0 failures=0 errors=0 ✅ (수정 전: failures=2)
 - **잔여**: REQ-012(Should·다음 인크리먼트)
 
 ### 발견된 선재 이슈(P3 범위 밖)
-- **Kafka CustomComparator e2e 회귀(P3 도입):** order-service e2e `OrdersPostTest.s201_1/s201_2` — P3가 `test-class.mustache`에 추가한 Kafka CustomComparator 단언 블록에서 `userId` 필드 비교(`o2.toString().equals(userId)`)가 JSONAssert `LENIENT` 모드에서 실패(`Expected: probe-userId, got: t-xxxx-user`). 단위 테스트에서 동일 로직이 통과하므로, 원인은 JSONAssert `CustomComparator`의 `Customization` 매칭 경로 또는 e2e 병렬 실행 환경(topic 오염 가능성) 쪽으로 추정됨. P3 범위 외 — 별도 추적 필요.
 - **Kafka emit payload가 null인 경우:** 템플릿이 `JSONAssert.assertEquals("", record.value(), ...)` 형태로 렌더링되어 빈 객체를 단언함 — P3 이전부터 존재하던 동작이며 서버-생성 필드(G3)와 무관. 별도 추적.
 
 ### P1 진행 현황 (2026-06-20)

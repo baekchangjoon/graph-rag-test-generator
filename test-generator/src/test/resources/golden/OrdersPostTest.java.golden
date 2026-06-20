@@ -50,7 +50,7 @@ class OrdersPostTest {
                 new org.skyscreamer.jsonassert.comparator.CustomComparator(
                     org.skyscreamer.jsonassert.JSONCompareMode.LENIENT,
                     new org.skyscreamer.jsonassert.Customization("userId",
-                        (o1, o2) -> java.util.Objects.equals(o2 == null ? null : o2.toString(), String.valueOf(userId)))
+                        (o1, o2) -> java.util.Objects.equals(o1 == null ? null : o1.toString(), String.valueOf(userId)))
                 ));
         }
     }

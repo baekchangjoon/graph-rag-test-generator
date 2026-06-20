@@ -138,6 +138,22 @@ class GeneratorKafkaServerFieldsTest {
                 .as("Should use LENIENT mode in CustomComparator")
                 .contains("LENIENT");
 
+        // REQ-010/011 arg-order guard: Customization lambdas must compare o1 (ACTUAL), not o2 (expected literal).
+        // JSONAssert 1.5.1: ValueMatcher.equal(o1=actual, o2=expected).
+        // server-gen: "o1 != null && o1.toString().matches(...)"
+        assertThat(code)
+                .as("server-gen Customization must use o1 (actual) for regex check")
+                .containsPattern("(?s)Customization\\(\"eventId\",\\s*\\(o1,\\s*o2\\)\\s*->\\s*o1 != null && o1\\.toString\\(\\)\\.matches\\(");
+        // substitution: "o1 == null ? null : o1.toString()"
+        assertThat(code)
+                .as("substitution Customization must use o1 (actual) for variable comparison")
+                .containsPattern("(?s)Customization\\(\"tenantId\",\\s*\\(o1,\\s*o2\\)\\s*->\\s*java\\.util\\.Objects\\.equals\\(o1 == null");
+        // guard: o2 must NOT be used for the actual value comparison
+        assertThat(code)
+                .as("Customization lambdas must NOT compare o2 (that is the captured expected literal)")
+                .doesNotContainPattern("(?s)Customization\\(.*->.*o2 != null && o2\\.toString\\(\\)\\.matches\\(")
+                .doesNotContainPattern("(?s)Customization\\(.*->.*Objects\\.equals\\(o2 == null");
+
         // Compile check: generated source must compile without errors
         compileCheck(code);
     }

@@ -51,9 +51,9 @@ import static org.hamcrest.Matchers.notNullValue;
                 new org.skyscreamer.jsonassert.comparator.CustomComparator(
                     org.skyscreamer.jsonassert.JSONCompareMode.LENIENT{{#serverGeneratedFields}},
                     new org.skyscreamer.jsonassert.Customization("{{field}}",
-                        (o1, o2) -> o2 != null && o2.toString().matches("{{{regex}}}")){{/serverGeneratedFields}}{{#substitutionFields}},
+                        (o1, o2) -> o1 != null && o1.toString().matches("{{{regex}}}")){{/serverGeneratedFields}}{{#substitutionFields}},
                     new org.skyscreamer.jsonassert.Customization("{{field}}",
-                        (o1, o2) -> java.util.Objects.equals(o2 == null ? null : o2.toString(), String.valueOf({{{var}}}))){{/substitutionFields}}
+                        (o1, o2) -> java.util.Objects.equals(o1 == null ? null : o1.toString(), String.valueOf({{{var}}}))){{/substitutionFields}}
                 ));
         }
 {{/kafkaEmits}}    }
