@@ -6,6 +6,7 @@ import io.graphrag.model.ParamKind;
 import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtExecutableReferenceExpression;
+import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLiteral;
@@ -89,7 +90,7 @@ public class RouterFunctionIndexer {
      * 핸들러 인자(h::add 형태의 메서드 참조)에서 PATH/BODY 파라미터를 추출한다 (best-effort).
      * Spoon noClasspath 모드에서 참조 해석에 실패하면 params를 비운 채로 반환한다.
      */
-    private static void enrichFromHandler(CtModel model, spoon.reflect.code.CtExpression<?> handlerArg,
+    private static void enrichFromHandler(CtModel model, CtExpression<?> handlerArg,
             List<EndpointParam> params, Map<String, BodyShape> bodyShapes) {
         CtMethod<?> handlerMethod = resolveHandlerMethod(model, handlerArg);
         if (handlerMethod == null || handlerMethod.getBody() == null) {
@@ -101,7 +102,7 @@ public class RouterFunctionIndexer {
                     && inv.getArguments().get(0) instanceof CtLiteral<?> lit
                     && lit.getValue() instanceof String varName) {
                 params.add(new EndpointParam(varName, "java.lang.String", ParamKind.PATH));
-            } else if ("bodyToMono".equals(name) && !inv.getArguments().isEmpty()
+            } else if (("bodyToMono".equals(name) || "bodyToFlux".equals(name)) && !inv.getArguments().isEmpty()
                     && inv.getArguments().get(0) instanceof CtFieldRead<?> fieldRead
                     && fieldRead.getTarget() instanceof CtTypeAccess<?> typeAccess) {
                 CtTypeReference<?> accessed = typeAccess.getAccessedType();
@@ -118,9 +119,15 @@ public class RouterFunctionIndexer {
      * {@code h::add} 형태의 메서드 참조를 Spoon 모델에서 실제 {@link CtMethod}로 해석한다.
      * noClasspath 모드에서는 선언 타입을 FQN으로 해석할 수 없는 경우가 많으므로,
      * 선언 타입 심플 네임 + 메서드 심플 네임으로 매칭한다.
+     *
+     * <p><strong>First-match limitation:</strong> when multiple classes or overloads share
+     * the same simple name, this method returns the first match from
+     * {@link spoon.reflect.CtModel#getAllTypes()} (noClasspath best-effort); the result
+     * could later be refined by comparing parameter counts or fully-qualified types once
+     * classpath information is available.
      */
     private static CtMethod<?> resolveHandlerMethod(CtModel model,
-            spoon.reflect.code.CtExpression<?> handlerArg) {
+            CtExpression<?> handlerArg) {
         if (!(handlerArg instanceof CtExecutableReferenceExpression<?, ?> methodRef)) {
             return null;
         }

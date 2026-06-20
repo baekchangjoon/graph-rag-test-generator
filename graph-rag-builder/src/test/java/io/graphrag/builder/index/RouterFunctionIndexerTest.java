@@ -70,6 +70,40 @@ class RouterFunctionIndexerTest {
     }
 
     @Test
+    void index_extractsBodyShapeFromBodyToFlux(@TempDir Path dir) throws Exception {  // REQ-002 bodyToFlux
+        Path pkg = Files.createDirectories(dir.resolve("com/x"));
+        Files.writeString(pkg.resolve("Dto.java"),
+                "package com.x;\npublic record Dto(String title, int score) {}\n");
+        Files.writeString(pkg.resolve("Routes.java"),
+                "package com.x;\n"
+              + "import org.springframework.context.annotation.Bean;\n"
+              + "import org.springframework.web.reactive.function.server.*;\n"
+              + "import static org.springframework.web.reactive.function.server.RouterFunctions.route;\n"
+              + "public class Routes {\n"
+              + "  @Bean RouterFunction<ServerResponse> r(Handler h) {\n"
+              + "    return route().POST(\"/items\", h::create).build();\n"
+              + "  }\n}\n");
+        Files.writeString(pkg.resolve("Handler.java"),
+                "package com.x;\n"
+              + "import org.springframework.web.reactive.function.server.*;\n"
+              + "import reactor.core.publisher.Flux;\n"
+              + "import reactor.core.publisher.Mono;\n"
+              + "public class Handler {\n"
+              + "  Mono<ServerResponse> create(ServerRequest req) {\n"
+              + "    return req.bodyToFlux(Dto.class).collectList().flatMap(d -> ServerResponse.ok().build());\n"
+              + "  }\n}\n");
+
+        IndexResult result = new RouterFunctionIndexer().index(dir);
+        io.graphrag.model.Endpoint ep = result.endpoints().get(0);
+        assertThat(ep.path()).isEqualTo("/items");
+        assertThat(ep.params()).extracting(io.graphrag.model.EndpointParam::name, io.graphrag.model.EndpointParam::kind)
+                .contains(tuple("body", io.graphrag.model.ParamKind.BODY));
+        assertThat(result.bodyShapes().get("com.x.Dto")).isNotNull();
+        assertThat(result.bodyShapes().get("com.x.Dto").fields())
+                .extracting(BodyShape.BodyField::name).contains("title", "score");
+    }
+
+    @Test
     void index_extractsBodyShapeAndPathVar(@TempDir Path dir) throws Exception {  // REQ-002
         Path pkg = Files.createDirectories(dir.resolve("com/x"));
         Files.writeString(pkg.resolve("Dto.java"),
