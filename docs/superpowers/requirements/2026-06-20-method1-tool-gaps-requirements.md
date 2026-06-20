@@ -272,10 +272,13 @@ Coverage: 6/18 green (33%) — target 100% (대상: Must 15 + 미연기 Should 3
 - **완료(🟢): REQ-022** — e2e/run-e2e.sh 통과 (54 tests, failures=0, errors=0; P1 변경으로 회귀 없음)
 - **잔여**: P2(REQ-005~007), P3(REQ-009~012), P4(REQ-013~015), P5(REQ-017~018) — 구현 대기
 
-### Known limitations (REQ-002 후보 정제)
-- `RouterFunctionIndexer`는 handler body에서 `req.pathVariable("x")` 텍스트 호출이 명시된 경우만 PATH 파라미터를 추출한다. 경로 템플릿 `{id}` 플레이스홀더가 있더라도 handler가 `pathVariable`을 textually 호출하지 않으면 PATH param으로 역추출되지 않는다(`EndpointIndexer` 스타일의 플레이스홀더 역추출이 함수형 라우트에는 아직 미적용). 비-GET 라우트는 synthetic body fallback으로 explore에 도달하며(`EndpointExplorationRunner.buildPathAndQuery`가 `{id}`→sentinel `"0"` 치환), GET 라우트는 skip 대상이 아니다. 향후 REQ-002 정제 후보.
-- `bodyToFlux(Dto.class)`(컬렉션 body)도 `bodyToMono`와 동일하게 `collection=false` BodyShape로 등록된다. `SampleInputSynthesizer`는 `collection=true`일 때만 JSON 배열(`ArrayNode`)을 emit하므로, 현재 함수형 컬렉션 body 라우트는 단일 객체를 받게 된다 — handler가 배열 파싱을 기대하면 정밀도가 떨어진다(실행 자체는 도달). 수정: `bodyToFlux` 분기에서 `collection=true`로 등록. 최종 리뷰 finding #1, REQ-002 정제 후보.
-- 함수형 인덱서의 `params`는 소스 등장 순서를 유지한다(`EndpointIndexer`는 `kindOrder`로 PATH→QUERY→FORM→BODY 정렬). 출력은 결정론적이나 형제 인덱서와 정렬 규약이 다르다 — 일관성 nit, 기능 무영향.
+### REQ-002 정제 — 해결 완료 (commit 7ccdfd6)
+최종 리뷰가 지적한 3개 정제 후보를 deferred로 두지 않고 근본 해결했다(원칙: 타협 없음):
+- ✅ **path-template 역추출**: `EndpointIndexer.extractPlaceholders(path)`를 재사용해 `{id}` 등 경로 플레이스홀더를 PATH param으로 역추출한다(handler가 `pathVariable()`를 호출하지 않아도). enrichFromHandler → 역추출 → synthetic fallback 순서라, path-var 라우트는 synthetic body를 받지 않는다. 테스트: `index_backExtractsPathPlaceholders_whenHandlerSkipsPathVariable`, `index_syntheticBody_notAddedWhenPathPlaceholderExists`.
+- ✅ **bodyToFlux 컬렉션**: `bodyToFlux(Dto.class)`는 `collection=true` BodyShape로 등록(`Map.merge`로 동일 FQN 충돌 시 collection=true 우선) → `SampleInputSynthesizer`가 `ArrayNode` emit. 테스트: `index_extractsBodyShapeFromBodyToFlux`(collection=true 단언), `index_bodyToMono_collectionIsFalse`.
+- ✅ **params 정렬**: PATH→QUERY→FORM→BODY로 `EndpointIndexer.kindOrder`와 동일하게 정렬. 테스트: `index_paramsAreSorted_pathBeforeBody`.
+
+→ REQ-001/002는 best-effort 한계 없이 함수형 라우트의 path-var(명시 호출 + 템플릿)·body(mono/flux)·정렬을 온전히 커버한다.
 
 ---
 
