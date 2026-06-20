@@ -1,6 +1,8 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
+import io.graphrag.model.ParamKind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -65,5 +67,38 @@ class RouterFunctionIndexerTest {
                         tuple("POST", "/internal/counseling/sessions/{id}/messages"));
         assertThat(result.endpoints()).allSatisfy(e ->
                 assertThat(e.handlerClass()).isEqualTo("com.x.Routes"));
+    }
+
+    @Test
+    void index_extractsBodyShapeAndPathVar(@TempDir Path dir) throws Exception {  // REQ-002
+        Path pkg = Files.createDirectories(dir.resolve("com/x"));
+        Files.writeString(pkg.resolve("Dto.java"),
+                "package com.x;\npublic record Dto(String title, int score) {}\n");
+        Files.writeString(pkg.resolve("Routes.java"),
+                "package com.x;\n"
+              + "import org.springframework.context.annotation.Bean;\n"
+              + "import org.springframework.web.reactive.function.server.*;\n"
+              + "import static org.springframework.web.reactive.function.server.RouterFunctions.route;\n"
+              + "public class Routes {\n"
+              + "  @Bean RouterFunction<ServerResponse> r(Handler h) {\n"
+              + "    return route().POST(\"/sessions/{id}/messages\", h::add).build();\n"
+              + "  }\n}\n");
+        Files.writeString(pkg.resolve("Handler.java"),
+                "package com.x;\n"
+              + "import org.springframework.web.reactive.function.server.*;\n"
+              + "import reactor.core.publisher.Mono;\n"
+              + "public class Handler {\n"
+              + "  Mono<ServerResponse> add(ServerRequest req) {\n"
+              + "    String id = req.pathVariable(\"id\");\n"
+              + "    return req.bodyToMono(Dto.class).flatMap(d -> ServerResponse.ok().build());\n"
+              + "  }\n}\n");
+
+        IndexResult result = new RouterFunctionIndexer().index(dir);
+        io.graphrag.model.Endpoint ep = result.endpoints().get(0);
+        assertThat(ep.params()).extracting(io.graphrag.model.EndpointParam::name, io.graphrag.model.EndpointParam::kind)
+                .contains(tuple("id", io.graphrag.model.ParamKind.PATH),
+                          tuple("body", io.graphrag.model.ParamKind.BODY));
+        assertThat(result.bodyShapes().get("com.x.Dto").fields())
+                .extracting(BodyShape.BodyField::name).contains("title", "score");
     }
 }
