@@ -10,6 +10,14 @@ public record BodyShape(String javaType, List<BodyField> fields, boolean collect
         this(javaType, fields, false);
     }
 
+    /**
+     * 바디 타입을 해석할 수 없는 함수형 라우트용 빈 합성 shape.
+     * explore 단계가 엔드포인트를 건너뛰지 않도록 BODY 파라미터와 함께 사용한다.
+     */
+    public static BodyShape empty() {
+        return new BodyShape("io.graphrag.synthetic.Body", List.of());
+    }
+
     public record BodyField(String name, String javaType) {
     }
 }

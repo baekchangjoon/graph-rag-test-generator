@@ -31,6 +31,7 @@ import java.util.Set;
  */
 public class RouterFunctionIndexer {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(RouterFunctionIndexer.class);
     private static final Set<String> HTTP_METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
 
     public IndexResult index(Path sutSrcDir) {
@@ -70,6 +71,15 @@ public class RouterFunctionIndexer {
                     List<EndpointParam> params = new ArrayList<>();
                     if (inv.getArguments().size() >= 2) {
                         enrichFromHandler(model, inv.getArguments().get(1), params, bodyShapes);
+                    }
+                    // non-GET 라우트에 PATH/BODY 파라미터가 없으면 explore 단계가 건너뜀.
+                    // 람다 핸들러처럼 바디 타입을 해석할 수 없는 경우 synthetic BODY + empty shape을 추가한다.
+                    if (!"GET".equals(verb) && params.stream().noneMatch(
+                            p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.BODY)) {
+                        String synth = BodyShape.empty().javaType();
+                        params.add(new EndpointParam("body", synth, ParamKind.BODY));
+                        bodyShapes.putIfAbsent(synth, BodyShape.empty());
+                        log.warn("functional route {} {}: body 타입 미해석 → synthetic shape (best-effort)", verb, path);
                     }
                     endpoints.add(new Endpoint(
                             EndpointIds.of(verb, path),
