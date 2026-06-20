@@ -14,6 +14,7 @@ import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
+import io.graphrag.builder.index.GatewayRouteIndexer;
 import io.graphrag.builder.index.IndexResult;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
@@ -165,6 +166,11 @@ public final class BuilderCli {
         if (!functional.endpoints().isEmpty()) {
             log.info("found {} functional route(s) (RouterFunction)", functional.endpoints().size());
             index = index.merge(functional);
+        }
+        IndexResult gateway = new GatewayRouteIndexer().index(config.sutSrc());
+        if (!gateway.endpoints().isEmpty()) {
+            log.info("found {} gateway route(s) (RouteLocator)", gateway.endpoints().size());
+            index = index.merge(gateway);
         }
         io.graphrag.builder.index.WsIndexResult wsIndex =
                 new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
