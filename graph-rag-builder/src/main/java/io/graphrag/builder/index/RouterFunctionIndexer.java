@@ -16,6 +16,9 @@ import spoon.reflect.declaration.CtType;
 import spoon.reflect.reference.CtTypeReference;
 import spoon.reflect.visitor.filter.TypeFilter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,7 +34,7 @@ import java.util.Set;
  */
 public class RouterFunctionIndexer {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(RouterFunctionIndexer.class);
+    private static final Logger log = LoggerFactory.getLogger(RouterFunctionIndexer.class);
     private static final Set<String> HTTP_METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
 
     public IndexResult index(Path sutSrcDir) {
@@ -76,9 +79,9 @@ public class RouterFunctionIndexer {
                     // 람다 핸들러처럼 바디 타입을 해석할 수 없는 경우 synthetic BODY + empty shape을 추가한다.
                     if (!"GET".equals(verb) && params.stream().noneMatch(
                             p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.BODY)) {
-                        String synth = BodyShape.empty().javaType();
-                        params.add(new EndpointParam("body", synth, ParamKind.BODY));
-                        bodyShapes.putIfAbsent(synth, BodyShape.empty());
+                        BodyShape synthShape = BodyShape.empty();
+                        params.add(new EndpointParam("body", synthShape.javaType(), ParamKind.BODY));
+                        bodyShapes.putIfAbsent(synthShape.javaType(), synthShape);
                         log.warn("functional route {} {}: body 타입 미해석 → synthetic shape (best-effort)", verb, path);
                     }
                     endpoints.add(new Endpoint(
