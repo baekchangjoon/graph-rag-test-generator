@@ -75,8 +75,26 @@ public class RouterFunctionIndexer {
                     if (inv.getArguments().size() >= 2) {
                         enrichFromHandler(model, inv.getArguments().get(1), params, bodyShapes);
                     }
-                    // non-GET 라우트에 PATH/BODY 파라미터가 없으면 explore 단계가 건너뜀.
-                    // 람다 핸들러처럼 바디 타입을 해석할 수 없는 경우 synthetic BODY + empty shape을 추가한다.
+                    // Fix B: back-extract path-template placeholders as PATH params.
+                    // After handler enrichment, any placeholder not already covered by an explicit
+                    // pathVariable("x") call is added as PATH (java.lang.String) — same convention
+                    // as EndpointIndexer.extractPlaceholders().
+                    java.util.Set<String> existingPathNames = new java.util.HashSet<>();
+                    for (EndpointParam p : params) {
+                        if (p.kind() == ParamKind.PATH) {
+                            existingPathNames.add(p.name());
+                        }
+                    }
+                    for (String placeholder : EndpointIndexer.extractPlaceholders(path)) {
+                        if (!existingPathNames.contains(placeholder)) {
+                            params.add(new EndpointParam(placeholder, "java.lang.String", ParamKind.PATH));
+                            existingPathNames.add(placeholder);
+                        }
+                    }
+                    // Synthetic-body fallback: non-GET with no PATH or BODY param still gets a
+                    // synthetic shape so the explore stage does not skip it. Note: PATH params from
+                    // back-extraction above count — so a route with only a path placeholder will
+                    // already have a PATH param and will NOT get a synthetic body here.
                     if (!"GET".equals(verb) && params.stream().noneMatch(
                             p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.BODY)) {
                         BodyShape synthShape = BodyShape.empty();
@@ -84,6 +102,14 @@ public class RouterFunctionIndexer {
                         bodyShapes.putIfAbsent(synthShape.javaType(), synthShape);
                         log.warn("functional route {} {}: body 타입 미해석 → synthetic shape (best-effort)", verb, path);
                     }
+                    // Fix C: sort params PATH → QUERY → FORM → BODY (stable, consistent with EndpointIndexer).
+                    params.sort(Comparator.comparingInt(p -> switch (p.kind()) {
+                        case PATH -> 0;
+                        case QUERY -> 1;
+                        case FORM -> 2;
+                        case BODY -> 3;
+                        default -> 4;
+                    }));
                     endpoints.add(new Endpoint(
                             EndpointIds.of(verb, path),
                             verb,
@@ -122,7 +148,18 @@ public class RouterFunctionIndexer {
                 if (accessed != null && !accessed.getQualifiedName().isBlank()) {
                     String fqn = accessed.getQualifiedName();
                     params.add(new EndpointParam("body", fqn, ParamKind.BODY));
-                    BodyShapeExtractor.extract(model, fqn).ifPresent(s -> bodyShapes.put(fqn, s));
+                    // Fix A: bodyToFlux receives a JSON array → register collection=true so
+                    // SampleInputSynthesizer emits an ArrayNode. bodyToMono keeps collection=false.
+                    boolean isFlux = "bodyToFlux".equals(name);
+                    BodyShapeExtractor.extract(model, fqn).ifPresent(extracted -> {
+                        BodyShape shape = isFlux
+                                ? new BodyShape(fqn, extracted.fields(), true)
+                                : extracted;
+                        // collection=true wins: a later bodyToMono on the same type must not
+                        // overwrite a collection shape already registered by bodyToFlux.
+                        bodyShapes.merge(fqn, shape, (existing, incoming) ->
+                                existing.collection() ? existing : incoming);
+                    });
                 }
             }
         }
