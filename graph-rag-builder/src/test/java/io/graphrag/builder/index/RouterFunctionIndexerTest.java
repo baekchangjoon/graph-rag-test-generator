@@ -118,9 +118,10 @@ class RouterFunctionIndexerTest {
 
         IndexResult result = new RouterFunctionIndexer().index(dir);
         io.graphrag.model.Endpoint ep = result.endpoints().get(0);
-        boolean hasPath = ep.params().stream().anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
-        boolean hasBody = ep.params().stream().anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.BODY);
-        assertThat(hasPath || hasBody).as("non-GET route must expose PATH or BODY so explore does not skip it").isTrue();
+        assertThat(ep.params()).extracting(p -> p.kind()).contains(io.graphrag.model.ParamKind.BODY);
+        BodyShape synth = result.bodyShapes().get("io.graphrag.synthetic.Body");
+        assertThat(synth).isNotNull();
+        assertThat(synth.fields()).isEmpty();
     }
 
     @Test
