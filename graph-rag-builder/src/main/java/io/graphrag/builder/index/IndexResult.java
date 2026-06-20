@@ -14,4 +14,15 @@ public record IndexResult(
         List<Endpoint> endpoints,
         Map<String, BodyShape> bodyShapes,
         Set<String> validBodyEndpointIds) {
+
+    /** 다른 IndexResult를 병합한 새 인스턴스(불변). endpoints concat, bodyShapes putAll, validBodyEndpointIds addAll. */
+    public IndexResult merge(IndexResult other) {
+        List<Endpoint> mergedEndpoints = new java.util.ArrayList<>(this.endpoints);
+        mergedEndpoints.addAll(other.endpoints);
+        Map<String, BodyShape> mergedShapes = new java.util.HashMap<>(this.bodyShapes);
+        mergedShapes.putAll(other.bodyShapes);
+        Set<String> mergedValid = new java.util.LinkedHashSet<>(this.validBodyEndpointIds);
+        mergedValid.addAll(other.validBodyEndpointIds);
+        return new IndexResult(mergedEndpoints, mergedShapes, mergedValid);
+    }
 }
