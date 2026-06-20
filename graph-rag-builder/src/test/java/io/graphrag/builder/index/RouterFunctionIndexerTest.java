@@ -41,6 +41,20 @@ class RouterFunctionIndexerTest {
     }
 
     @Test
+    void index_returnsEmpty_whenNoRouterPresent(@TempDir Path dir) throws Exception {  // REQ-001 negative
+        Path pkg = Files.createDirectories(dir.resolve("com/x"));
+        Files.writeString(pkg.resolve("Plain.java"),
+                "package com.x;\n"
+              + "public class Plain {\n"
+              + "  public void foo() {}\n"
+              + "}\n");
+
+        IndexResult result = new RouterFunctionIndexer().index(dir);
+
+        assertThat(result.endpoints()).isEmpty();
+    }
+
+    @Test
     void index_discoversFunctionalRoutes(@TempDir Path dir) throws Exception {  // REQ-001
         IndexResult result = new RouterFunctionIndexer().index(writeRouter(dir));
 

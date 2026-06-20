@@ -1,7 +1,6 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.Endpoint;
-import io.graphrag.model.EndpointParam;
 import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtInvocation;
@@ -49,14 +48,25 @@ public class RouterFunctionIndexer {
                             || !(lit.getValue() instanceof String path)) {
                         continue;
                     }
-                    List<EndpointParam> params = new ArrayList<>();
+                    // Fix 1: conservative receiver-type guard to cut false positives.
+                    // When the target type is resolvable, require it to be a RouterFunctions builder.
+                    // noClasspath 모드에서는 타입이 해석되지 않는 경우가 많다(빈 문자열);
+                    // 그 때는 보수적으로 통과시켜 미탐(false negative)을 막는다.
+                    var target = inv.getTarget();
+                    String targetType = (target != null && target.getType() != null)
+                            ? target.getType().getSimpleName() : "";
+                    if (!targetType.isEmpty()
+                            && !targetType.contains("RouterFunction")
+                            && !targetType.contains("RequestPredicates")) {
+                        continue;
+                    }
                     endpoints.add(new Endpoint(
                             EndpointIds.of(verb, path),
                             verb,
                             path,
                             type.getQualifiedName().replace('$', '.'),
                             method.getSimpleName(),
-                            params,
+                            List.of(),
                             false));
                 }
             }
