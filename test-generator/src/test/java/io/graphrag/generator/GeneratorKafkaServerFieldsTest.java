@@ -350,6 +350,8 @@ class GeneratorKafkaServerFieldsTest {
                 return trimmed.substring("class ".length()).split("[\\s{]")[0];
             }
         }
-        return "GeneratedTest";
+        // 생성 소스에서 class 선언을 못 찾으면 잘못된 파일명으로 컴파일이 모호하게 실패한다.
+        // 무음 fallback 대신 명시적으로 실패시켜 원인을 드러낸다 (review Issue 1).
+        throw new AssertionError("could not extract class name from generated source");
     }
 }
