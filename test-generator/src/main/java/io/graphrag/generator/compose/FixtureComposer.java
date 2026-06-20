@@ -271,14 +271,9 @@ public class FixtureComposer {
         return "id".equalsIgnoreCase(column);
     }
 
-    private static final java.util.regex.Pattern UUID_RE = java.util.regex.Pattern.compile(
-            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
-    private static final java.util.regex.Pattern TIMESTAMP_RE = java.util.regex.Pattern.compile(
-            "\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}.*");
-
     /** UUID/ISO-타임스탬프처럼 매 요청 달라지는 서버 생성 값인지. */
     private static boolean looksServerGenerated(String value) {
-        return UUID_RE.matcher(value).matches() || TIMESTAMP_RE.matcher(value).matches();
+        return ServerGeneratedDetector.looksServerGenerated(value);
     }
 
     private record DeleteTarget(String table, String column, String varName) {
