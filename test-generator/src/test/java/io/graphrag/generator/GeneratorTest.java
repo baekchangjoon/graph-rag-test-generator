@@ -331,9 +331,11 @@ class GeneratorTest {
 
         // 4. 중복 key 단언은 더 이상 생성하지 않는다(consumeNextRecord가 key로 필터링).
         assertThat(code).doesNotContain("record.key());");
-        // 5. payload 비교는 LENIENT(false) — strict(true) 단언은 없어야 한다.
+        // 5. payload 비교는 LENIENT CustomComparator — strict(true) 단언은 없어야 하고, CustomComparator LENIENT가 있어야 한다.
         assertThat(code).doesNotContain("record.value(), true);");
-        assertThat(code).contains("record.value(), false);");
+        assertThat(code).contains("record.value(),");
+        assertThat(code).contains("CustomComparator");
+        assertThat(code).contains("LENIENT");
     }
 
     static class FakeGraphRagClient implements io.graphrag.generator.client.GraphRagClient {
