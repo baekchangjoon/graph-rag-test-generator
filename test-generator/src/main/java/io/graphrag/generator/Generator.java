@@ -187,7 +187,10 @@ public class Generator {
             // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
             modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions(), fixture.nonDeterministicValues()));
             if (emit.payload() != null) {
-                modelEmit.put("payloadJson", jsonEscape(deterministicPayload(emit.payload(), fixture)));
+                KafkaPayloadModel model = deterministicPayload(emit.payload(), fixture);
+                modelEmit.put("payloadJson", jsonEscape(model.payloadJson()));
+                modelEmit.put("serverGeneratedFields", model.serverGeneratedFields());
+                modelEmit.put("substitutionFields", model.substitutionFields());
             }
             kafkaEmits.add(modelEmit);
         }
@@ -457,26 +460,67 @@ public class Generator {
     }
 
     /**
-     * emit payload에서 비결정 필드(입력 유래 치환값, DB 시퀀스 PK)를 제거해 결정적 필드만 남긴다.
-     * 남은 JSON은 JSONAssert LENIENT로 비교하므로, 환경/테스트마다 달라지는 값에 의한 거짓 실패를 막는다.
+     * Kafka emit payload 필드 분류 결과를 담는 캐리어.
+     * payloadJson: 결정적/입력유래/서버생성 필드만 남긴 JSON (DB-PK는 제거됨).
+     * serverGeneratedFields: UUID/타임스탬프로 판단된 필드 목록 (field + regex).
+     * substitutionFields: 입력 유래 치환 필드 목록 (field + var).
      */
-    private static String deterministicPayload(com.fasterxml.jackson.databind.JsonNode payload,
-                                               ComposedFixture fixture) {
+    private record KafkaPayloadModel(
+            String payloadJson,
+            List<Map<String, String>> serverGeneratedFields,
+            List<Map<String, String>> substitutionFields
+    ) {}
+
+    /**
+     * emit payload 필드를 4가지로 분류한다.
+     * - input-derived (치환 대상): payloadJson에 유지 + substitutionFields 항목 추가
+     * - DB-PK (비결정): payloadJson에서 제거 (기존 동작 유지)
+     * - server-generated (UUID/타임스탬프): payloadJson에 유지 + serverGeneratedFields 항목 추가
+     * - deterministic: payloadJson에 유지 (JSONAssert LENIENT literal equals)
+     */
+    private static KafkaPayloadModel deterministicPayload(com.fasterxml.jackson.databind.JsonNode payload,
+                                                          ComposedFixture fixture) {
         if (!(payload instanceof com.fasterxml.jackson.databind.node.ObjectNode obj)) {
-            return payload.toString();
+            return new KafkaPayloadModel(payload.toString(), List.of(), List.of());
         }
         com.fasterxml.jackson.databind.node.ObjectNode out = obj.deepCopy();
         List<String> toRemove = new ArrayList<>();
+        List<Map<String, String>> serverGeneratedFields = new ArrayList<>();
+        List<Map<String, String>> substitutionFields = new ArrayList<>();
+
         out.fields().forEachRemaining(e -> {
-            if (e.getValue().isTextual()) {
-                String v = e.getValue().asText();
-                if (fixture.substitutions().containsKey(v) || fixture.nonDeterministicValues().contains(v)) {
-                    toRemove.add(e.getKey());
-                }
+            if (!e.getValue().isTextual()) {
+                return;
             }
+            String fieldName = e.getKey();
+            String v = e.getValue().asText();
+
+            String substitutionExpr = fixture.substitutions().get(v);
+            if (substitutionExpr != null) {
+                // input-derived: keep in payloadJson, record substitution entry
+                substitutionFields.add(Map.of("field", fieldName, "var", substitutionExpr));
+            } else if (fixture.nonDeterministicValues().contains(v)) {
+                // DB-PK: remove from payloadJson
+                toRemove.add(fieldName);
+            } else if (io.graphrag.generator.compose.ServerGeneratedDetector.looksServerGenerated(v)) {
+                // server-generated: keep in payloadJson, record regex entry
+                String type = io.graphrag.generator.compose.ServerGeneratedDetector.patternType(v);
+                String regex = javaSourceRegex(
+                        io.graphrag.generator.compose.ServerGeneratedDetector.regexFor(type));
+                serverGeneratedFields.add(Map.of("field", fieldName, "regex", regex));
+            }
+            // else: deterministic — keep in payloadJson as-is
         });
         toRemove.forEach(out::remove);
-        return out.toString();
+        return new KafkaPayloadModel(out.toString(), serverGeneratedFields, substitutionFields);
+    }
+
+    /**
+     * regexFor()가 반환하는 raw 정규식 문자열을 Java 소스 문자열 리터럴로 삽입 가능한 형태로 이스케이프한다.
+     * 예: raw "\d{4}" → Java 소스 "\\d{4}" (백슬래시를 이중으로).
+     */
+    private static String javaSourceRegex(String rawRegex) {
+        return rawRegex.replace("\\", "\\\\");
     }
 
     /** 테이블의 PK 컬럼명 (Kafka side-effect 단언 키 우선순위). 없으면 null. */

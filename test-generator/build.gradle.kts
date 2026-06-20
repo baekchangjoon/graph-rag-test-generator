@@ -15,4 +15,7 @@ dependencies {
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
+    // 생성 소스 컴파일 검증(GeneratorKafkaServerFieldsTest): 생성된 테스트 코드가 참조하는
+    // 타입(TestScope, JSONAssert, ConsumerRecord, Hamcrest)을 컴파일타임에 리졸브하기 위한 의존.
+    testImplementation(project(":testlib"))
 }

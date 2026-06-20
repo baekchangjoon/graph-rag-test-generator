@@ -47,8 +47,14 @@ import static org.hamcrest.Matchers.notNullValue;
             org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record =
                 scope.kafka().consumeNextRecord("{{{topic}}}", {{{keyExpr}}}, java.time.Duration.ofSeconds(5));
             org.junit.jupiter.api.Assertions.assertNotNull(record);
-            org.skyscreamer.jsonassert.JSONAssert.assertEquals(
-                "{{{payloadJson}}}", record.value(), false);
+            org.skyscreamer.jsonassert.JSONAssert.assertEquals("{{{payloadJson}}}", record.value(),
+                new org.skyscreamer.jsonassert.comparator.CustomComparator(
+                    org.skyscreamer.jsonassert.JSONCompareMode.LENIENT{{#serverGeneratedFields}},
+                    new org.skyscreamer.jsonassert.Customization("{{field}}",
+                        (o1, o2) -> o2 != null && o2.toString().matches("{{{regex}}}")){{/serverGeneratedFields}}{{#substitutionFields}},
+                    new org.skyscreamer.jsonassert.Customization("{{field}}",
+                        (o1, o2) -> java.util.Objects.equals(o2 == null ? null : o2.toString(), String.valueOf({{{var}}}))){{/substitutionFields}}
+                ));
         }
 {{/kafkaEmits}}    }
 {{/methods}}
