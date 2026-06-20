@@ -113,8 +113,9 @@ class RouterFunctionIndexerTest {
         assertThat(fluxShape.fields()).extracting(BodyShape.BodyField::name).contains("title", "score");
         assertThat(fluxShape.collection()).as("bodyToFlux must register collection=true").isTrue();
 
-        // bodyToMono route (/item): shape collection must stay false (only one BodyShape per FQN key —
-        // flux wins since it writes collection=true; mono would write false, so ensure flux overwrites)
+        // bodyToMono route (/item): shape collection must stay false. Both routes reference the same DTO
+        // FQN → one BodyShape per key; Map.merge keeps collection=true regardless of extraction order
+        // (collection=true always wins over false), so the mono route's BODY shape may be the flux's.
         io.graphrag.model.Endpoint monoEp = result.endpoints().stream()
                 .filter(e -> e.path().equals("/item")).findFirst().orElseThrow();
         assertThat(monoEp.params()).extracting(io.graphrag.model.EndpointParam::name, io.graphrag.model.EndpointParam::kind)
