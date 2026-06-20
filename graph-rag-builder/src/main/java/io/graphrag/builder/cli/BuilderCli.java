@@ -16,6 +16,7 @@ import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
 import io.graphrag.builder.index.IndexResult;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
+import io.graphrag.builder.index.RouterFunctionIndexer;
 import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
@@ -160,6 +161,11 @@ public final class BuilderCli {
     public static GraphAsset build(BuildConfig config) throws Exception {
         log.info("indexing endpoints from {}", config.sutSrc());
         IndexResult index = new EndpointIndexer().index(config.sutSrc(), config.authConfig());
+        IndexResult functional = new RouterFunctionIndexer().index(config.sutSrc());
+        if (!functional.endpoints().isEmpty()) {
+            log.info("found {} functional route(s) (RouterFunction)", functional.endpoints().size());
+            index = index.merge(functional);
+        }
         io.graphrag.builder.index.WsIndexResult wsIndex =
                 new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
         io.graphrag.builder.index.KafkaIndexResult kafkaIndex =
