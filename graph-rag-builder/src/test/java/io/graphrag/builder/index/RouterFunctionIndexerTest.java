@@ -104,6 +104,26 @@ class RouterFunctionIndexerTest {
     }
 
     @Test
+    void index_unresolvedBodyPost_getsSyntheticShapeForExplore(@TempDir Path dir) throws Exception {  // REQ-003
+        Path pkg = Files.createDirectories(dir.resolve("com/x"));
+        Files.writeString(pkg.resolve("Routes.java"),
+                "package com.x;\n"
+              + "import org.springframework.context.annotation.Bean;\n"
+              + "import org.springframework.web.reactive.function.server.*;\n"
+              + "import static org.springframework.web.reactive.function.server.RouterFunctions.route;\n"
+              + "public class Routes {\n"
+              + "  @Bean RouterFunction<ServerResponse> r() {\n"
+              + "    return route().POST(\"/sessions\", req -> ServerResponse.ok().build()).build();\n"
+              + "  }\n}\n");   // 람다 handler — body 타입 해석 불가, path var 없음
+
+        IndexResult result = new RouterFunctionIndexer().index(dir);
+        io.graphrag.model.Endpoint ep = result.endpoints().get(0);
+        boolean hasPath = ep.params().stream().anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+        boolean hasBody = ep.params().stream().anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.BODY);
+        assertThat(hasPath || hasBody).as("non-GET route must expose PATH or BODY so explore does not skip it").isTrue();
+    }
+
+    @Test
     void index_extractsBodyShapeAndPathVar(@TempDir Path dir) throws Exception {  // REQ-002
         Path pkg = Files.createDirectories(dir.resolve("com/x"));
         Files.writeString(pkg.resolve("Dto.java"),
