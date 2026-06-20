@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -79,7 +80,7 @@ public class RouterFunctionIndexer {
                     // After handler enrichment, any placeholder not already covered by an explicit
                     // pathVariable("x") call is added as PATH (java.lang.String) — same convention
                     // as EndpointIndexer.extractPlaceholders().
-                    java.util.Set<String> existingPathNames = new java.util.HashSet<>();
+                    Set<String> existingPathNames = new HashSet<>();
                     for (EndpointParam p : params) {
                         if (p.kind() == ParamKind.PATH) {
                             existingPathNames.add(p.name());
