@@ -134,8 +134,17 @@ public class GatewayRouteIndexer {
             return null;
         }
 
-        // 람다 내부의 모든 CtInvocation 수집
-        List<CtInvocation<?>> lambdaInvocations = routeLambda.getElements(new TypeFilter<>(CtInvocation.class));
+        // 라우트 람다 직속(nearest-enclosing lambda == routeLambda) CtInvocation만 수집.
+        // getElements()는 중첩 람다까지 포함하는 DFS 전체 탐색이므로, 그 결과를
+        // 부모 람다가 routeLambda인 것만 남기도록 필터링한다.
+        // Spoon의 getElements()는 raw List<CtInvocation>을 반환하므로 명시적으로 캐스팅한다.
+        @SuppressWarnings("unchecked")
+        List<CtInvocation<?>> lambdaInvocations =
+                (List<CtInvocation<?>>) (List<?>) routeLambda
+                        .getElements(new TypeFilter<>(CtInvocation.class))
+                        .stream()
+                        .filter(inv -> ((CtInvocation<?>) inv).getParent(CtLambda.class) == routeLambda)
+                        .toList();
 
         String path = extractPath(lambdaInvocations);
         String targetUri = extractUri(lambdaInvocations);
@@ -151,11 +160,19 @@ public class GatewayRouteIndexer {
                 .orElse(null);
 
         if (filtersCall != null) {
-            // filters()의 인자도 람다 — 그 안에서 필터 메서드 호출 목록을 수집
+            // filters()의 인자도 람다 — 그 안에서 직속 필터 메서드 호출 목록을 수집.
+            // 마찬가지로 nearest-enclosing lambda == filterLambda인 것만 남긴다.
+            // 이렇게 하면 circuitBreaker(c -> c.setName("x")) 같은 중첩 config 람다 안의
+            // setName 등이 미지원 필터로 오인되는 것을 방지한다.
             List<?> filterArgs = filtersCall.getArguments();
             if (!filterArgs.isEmpty() && filterArgs.get(0) instanceof CtLambda<?> filterLambda) {
+                @SuppressWarnings("unchecked")
                 List<CtInvocation<?>> filterInvocations =
-                        filterLambda.getElements(new TypeFilter<>(CtInvocation.class));
+                        (List<CtInvocation<?>>) (List<?>) filterLambda
+                                .getElements(new TypeFilter<>(CtInvocation.class))
+                                .stream()
+                                .filter(inv -> ((CtInvocation<?>) inv).getParent(CtLambda.class) == filterLambda)
+                                .toList();
                 // 미지원 필터 감지 — 지원 판단만 하고 path는 변환하지 않는다
                 for (CtInvocation<?> filterInv : filterInvocations) {
                     String filterName = filterInv.getExecutable().getSimpleName();
