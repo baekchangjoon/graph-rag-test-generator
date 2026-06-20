@@ -35,11 +35,13 @@ class GatewayRouteIndexerTest {
     void index_discoversGatewayProxyRoutes_withAndWithoutFilters(@TempDir Path dir) throws Exception {  // REQ-005,006
         IndexResult result = new GatewayRouteIndexer().index(writeGatewayRoutes(dir));
 
-        // stripPrefix(1) on /api/v1/orders/** strips 1 segment ("api") -> /v1/orders/**
+        // stripPrefix is a SUPPORTED filter — route IS indexed.
+        // Endpoint.path must be the gateway PREDICATE path (verbatim), NOT the transformed downstream path.
+        // /api/v1/orders/** predicate is preserved (stripPrefix transform is NOT applied to path).
         assertThat(result.endpoints())
                 .extracting(Endpoint::path, Endpoint::targetUri)
                 .containsExactlyInAnyOrder(
-                        tuple("/v1/orders/**", "http://orders"),
+                        tuple("/api/v1/orders/**", "http://orders"),   // predicate preserved; stripPrefix supported → indexed
                         tuple("/api/v1/users/**", "lb://users"));
         assertThat(result.endpoints()).allSatisfy(e ->
                 assertThat(e.httpMethod()).isEqualTo("GET"));
@@ -49,6 +51,8 @@ class GatewayRouteIndexerTest {
 
     @Test
     void index_excludesRoute_withUnsupportedFilter(@TempDir Path dir) throws Exception {  // REQ-006 filter exclusion
+        // circuitBreaker is NOT in the supported whitelist (stripPrefix/rewritePath/setPath/addRequestHeader/addResponseHeader).
+        // A route using it cannot be trivially proxy-smoked, so it must be excluded.
         Path pkg = Files.createDirectories(dir.resolve("com/example"));
         Files.writeString(pkg.resolve("GatewayConfig.java"),
                 "package com.example;\n"
@@ -58,7 +62,7 @@ class GatewayRouteIndexerTest {
               + "public class GatewayConfig {\n"
               + "  @Bean RouteLocator routes(RouteLocatorBuilder b) {\n"
               + "    return b.routes()\n"
-              + "      .route(r -> r.path(\"/api/v1/orders/**\").filters(f -> f.addRequestHeader(\"X-Foo\", \"bar\")).uri(\"http://orders\"))\n"
+              + "      .route(r -> r.path(\"/api/v1/orders/**\").filters(f -> f.circuitBreaker(c -> c.setName(\"cb\"))).uri(\"http://orders\"))\n"
               + "      .route(r -> r.path(\"/api/v1/users/**\").uri(\"lb://users\"))\n"
               + "      .build();\n"
               + "  }\n"
@@ -66,7 +70,7 @@ class GatewayRouteIndexerTest {
 
         IndexResult result = new GatewayRouteIndexer().index(dir);
 
-        // The route with unsupported addRequestHeader filter is excluded;
+        // The route with unsupported circuitBreaker filter is excluded;
         // the plain route without filters is kept.
         assertThat(result.endpoints())
                 .extracting(Endpoint::path)

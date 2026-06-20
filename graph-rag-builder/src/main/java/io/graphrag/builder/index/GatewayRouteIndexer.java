@@ -15,13 +15,10 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Spring Cloud Gateway Java DSL(RouteLocatorBuilder) 라우트 인덱싱.
@@ -29,15 +26,25 @@ import java.util.stream.Collectors;
  * <p>{@code b.routes().route("id", r -> r.path(...).filters(...).uri(...)).build()} 패턴을
  * 정적으로 파싱하여 {@link Endpoint} 목록을 반환한다.
  *
- * <p>지원 필터: {@code stripPrefix(n)}, {@code rewritePath(...)}, {@code setPath(...)}.
- * 미지원 필터가 감지되면 해당 라우트를 결과에서 제외하고 경고 로그를 남긴다.
+ * <p>{@link io.graphrag.model.Endpoint#path()}는 게이트웨이 predicate 경로(요청 식별자)를
+ * 그대로 저장한다 — 필터 변환(stripPrefix 등)을 적용하지 않는다.
+ *
+ * <p>지원 필터(프록시 기본 동작을 방해하지 않는 것): {@code stripPrefix(n)},
+ * {@code rewritePath(...)}, {@code setPath(...)}, {@code addRequestHeader(...)},
+ * {@code addResponseHeader(...)}. 미지원 필터가 감지되면 해당 라우트를 결과에서 제외하고
+ * 경고 로그를 남긴다.
  */
 public class GatewayRouteIndexer {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayRouteIndexer.class);
 
-    /** 지원하는 필터 메서드명. */
-    private static final Set<String> SUPPORTED_FILTERS = Set.of("stripPrefix", "rewritePath", "setPath");
+    /**
+     * 프록시 smoke test를 방해하지 않는 필터 메서드명.
+     * 이 목록에 속하면 지원(라우트 인덱싱), 속하지 않으면 미지원(라우트 제외).
+     */
+    private static final Set<String> SUPPORTED_FILTERS = Set.of(
+            "stripPrefix", "rewritePath", "setPath",
+            "addRequestHeader", "addResponseHeader");
 
     public IndexResult index(Path sutSrcDir) {
         Launcher launcher = new Launcher();
@@ -149,7 +156,7 @@ public class GatewayRouteIndexer {
             if (!filterArgs.isEmpty() && filterArgs.get(0) instanceof CtLambda<?> filterLambda) {
                 List<CtInvocation<?>> filterInvocations =
                         filterLambda.getElements(new TypeFilter<>(CtInvocation.class));
-                // 미지원 필터 감지
+                // 미지원 필터 감지 — 지원 판단만 하고 path는 변환하지 않는다
                 for (CtInvocation<?> filterInv : filterInvocations) {
                     String filterName = filterInv.getExecutable().getSimpleName();
                     if (!SUPPORTED_FILTERS.contains(filterName)) {
@@ -158,8 +165,7 @@ public class GatewayRouteIndexer {
                         return null;
                     }
                 }
-                // stripPrefix 변환 적용
-                path = applyStripPrefix(path, filterInvocations);
+                // path는 predicate 경로(요청 식별자)를 그대로 유지 — 필터 변환 미적용
             }
         }
 
@@ -200,48 +206,4 @@ public class GatewayRouteIndexer {
         return null;
     }
 
-    /**
-     * 필터 람다 내 invocation 목록에서 stripPrefix(n)을 찾아 경로에 적용한다.
-     *
-     * <p>Spring Cloud Gateway {@code stripPrefix(n)}은 경로 앞에서 n개의 세그먼트를 제거한다.
-     * 예: {@code /api/v1/orders/**}, n=1 → {@code /v1/orders/**} (세그먼트 "api" 제거).
-     */
-    private static String applyStripPrefix(String path, List<CtInvocation<?>> filterInvocations) {
-        for (CtInvocation<?> inv : filterInvocations) {
-            if ("stripPrefix".equals(inv.getExecutable().getSimpleName())
-                    && !inv.getArguments().isEmpty()
-                    && inv.getArguments().get(0) instanceof CtLiteral<?> lit
-                    && lit.getValue() instanceof Number num) {
-                int n = num.intValue();
-                return stripPrefixSegments(path, n);
-            }
-        }
-        return path;
-    }
-
-    /**
-     * 경로 문자열에서 앞의 n개 세그먼트를 제거한다.
-     *
-     * <p>예: {@code /api/v1/orders/**}, n=1 → {@code /v1/orders/**}.
-     * 빈 문자열로 나뉘는 선행 '/'는 세그먼트로 간주하지 않는다.
-     */
-    static String stripPrefixSegments(String path, int n) {
-        // "/" 기준으로 분리; 첫 번째 요소는 "" (선행 슬래시로 인해)
-        String[] parts = path.split("/", -1);
-        // 비어 있지 않은 세그먼트 인덱스 목록 수집
-        List<Integer> nonEmptyIndices = new ArrayList<>();
-        for (int i = 0; i < parts.length; i++) {
-            if (!parts[i].isEmpty()) {
-                nonEmptyIndices.add(i);
-            }
-        }
-        // n개만큼 비어 있지 않은 세그먼트를 빈 문자열로 교체
-        int toRemove = Math.min(n, nonEmptyIndices.size());
-        for (int i = 0; i < toRemove; i++) {
-            parts[nonEmptyIndices.get(i)] = "";
-        }
-        // 다시 결합하되 연속 슬래시를 단일 슬래시로 정규화
-        String joined = String.join("/", parts);
-        return joined.replaceAll("/+", "/");
-    }
 }
