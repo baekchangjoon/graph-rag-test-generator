@@ -1,12 +1,18 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.Endpoint;
+import io.graphrag.model.EndpointParam;
+import io.graphrag.model.ParamKind;
 import spoon.Launcher;
 import spoon.reflect.CtModel;
+import spoon.reflect.code.CtExecutableReferenceExpression;
+import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLiteral;
+import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.reference.CtTypeReference;
 import spoon.reflect.visitor.filter.TypeFilter;
 
 import java.nio.file.Path;
@@ -60,18 +66,84 @@ public class RouterFunctionIndexer {
                             && !targetType.contains("RequestPredicates")) {
                         continue;
                     }
+                    List<EndpointParam> params = new ArrayList<>();
+                    if (inv.getArguments().size() >= 2) {
+                        enrichFromHandler(model, inv.getArguments().get(1), params, bodyShapes);
+                    }
                     endpoints.add(new Endpoint(
                             EndpointIds.of(verb, path),
                             verb,
                             path,
                             type.getQualifiedName().replace('$', '.'),
                             method.getSimpleName(),
-                            List.of(),
+                            List.copyOf(params),
                             false));
                 }
             }
         }
         endpoints.sort(Comparator.comparing(Endpoint::id));
         return new IndexResult(endpoints, bodyShapes, Set.of());
+    }
+
+    /**
+     * 핸들러 인자(h::add 형태의 메서드 참조)에서 PATH/BODY 파라미터를 추출한다 (best-effort).
+     * Spoon noClasspath 모드에서 참조 해석에 실패하면 params를 비운 채로 반환한다.
+     */
+    private static void enrichFromHandler(CtModel model, spoon.reflect.code.CtExpression<?> handlerArg,
+            List<EndpointParam> params, Map<String, BodyShape> bodyShapes) {
+        CtMethod<?> handlerMethod = resolveHandlerMethod(model, handlerArg);
+        if (handlerMethod == null || handlerMethod.getBody() == null) {
+            return;
+        }
+        for (CtInvocation<?> inv : handlerMethod.getElements(new TypeFilter<>(CtInvocation.class))) {
+            String name = inv.getExecutable().getSimpleName();
+            if ("pathVariable".equals(name) && !inv.getArguments().isEmpty()
+                    && inv.getArguments().get(0) instanceof CtLiteral<?> lit
+                    && lit.getValue() instanceof String varName) {
+                params.add(new EndpointParam(varName, "java.lang.String", ParamKind.PATH));
+            } else if ("bodyToMono".equals(name) && !inv.getArguments().isEmpty()
+                    && inv.getArguments().get(0) instanceof CtFieldRead<?> fieldRead
+                    && fieldRead.getTarget() instanceof CtTypeAccess<?> typeAccess) {
+                CtTypeReference<?> accessed = typeAccess.getAccessedType();
+                if (accessed != null && !accessed.getQualifiedName().isBlank()) {
+                    String fqn = accessed.getQualifiedName();
+                    params.add(new EndpointParam("body", fqn, ParamKind.BODY));
+                    BodyShapeExtractor.extract(model, fqn).ifPresent(s -> bodyShapes.put(fqn, s));
+                }
+            }
+        }
+    }
+
+    /**
+     * {@code h::add} 형태의 메서드 참조를 Spoon 모델에서 실제 {@link CtMethod}로 해석한다.
+     * noClasspath 모드에서는 선언 타입을 FQN으로 해석할 수 없는 경우가 많으므로,
+     * 선언 타입 심플 네임 + 메서드 심플 네임으로 매칭한다.
+     */
+    private static CtMethod<?> resolveHandlerMethod(CtModel model,
+            spoon.reflect.code.CtExpression<?> handlerArg) {
+        if (!(handlerArg instanceof CtExecutableReferenceExpression<?, ?> methodRef)) {
+            return null;
+        }
+        var execRef = methodRef.getExecutable();
+        if (execRef == null) {
+            return null;
+        }
+        String methodName = execRef.getSimpleName();
+        CtTypeReference<?> declaringTypeRef = execRef.getDeclaringType();
+        String declaringTypeSimpleName = (declaringTypeRef != null)
+                ? declaringTypeRef.getSimpleName() : null;
+
+        for (CtType<?> type : model.getAllTypes()) {
+            if (declaringTypeSimpleName != null
+                    && !type.getSimpleName().equals(declaringTypeSimpleName)) {
+                continue;
+            }
+            for (CtMethod<?> candidate : type.getMethods()) {
+                if (candidate.getSimpleName().equals(methodName)) {
+                    return candidate;
+                }
+            }
+        }
+        return null;
     }
 }
