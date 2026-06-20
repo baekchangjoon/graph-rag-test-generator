@@ -109,7 +109,7 @@ public class EndpointIndexer {
                 if (!rest && params.stream().noneMatch(p -> p.kind() == ParamKind.FORM)) {
                     continue;
                 }
-                String id = endpointId(httpMethod, fullPath);
+                String id = EndpointIds.of(httpMethod, fullPath);
                 // JSON @RequestBody에 @Valid/@Validated가 붙은 경우만 Spring이 검증 위반을 400으로 거부 →
                 // negative-validation pass 대상(B1). FORM(@ModelAttribute)은 비목표라 자동 제외.
                 if (rest && hasValidRequestBody(method)) {
@@ -317,8 +317,4 @@ public class EndpointIndexer {
         return joined.startsWith("/") ? joined : "/" + joined;
     }
 
-    static String endpointId(String method, String path) {
-        return (method + path).toLowerCase().replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("^-|-$", "");
-    }
 }
