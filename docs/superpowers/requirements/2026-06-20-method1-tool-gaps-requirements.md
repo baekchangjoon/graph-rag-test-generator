@@ -237,12 +237,12 @@
 
 ## 추적 매트릭스
 
-| REQ-ID  | 요구사항 | 수용 테스트 (제안) | Level | Status |
+| REQ-ID  | 요구사항 | 수용 테스트 | Level | Status |
 |---------|----------|--------------------|-------|--------|
-| REQ-001 | 함수형 라우트 발견 | `RouterFunctionFixtureE2E#discoversFunctionalRoutes` | E2E | 🔴 planned |
-| REQ-002 | 함수형 body/path-var 추출 | `RouterFunctionIndexerTest#extractsBodyAndPathVar` | integration | 🔴 planned |
-| REQ-003 | 시그니처 실패 폴백 | `RouterFunctionIndexerTest#fallsBackToPathMethodOnUnresolved` | integration | 🔴 planned |
-| REQ-004 | IndexResult merge | `RouterFunctionFixtureE2E#routesEnterGraphAndExplore` | E2E | 🔴 planned |
+| REQ-001 | 함수형 라우트 발견 | `RouterFunctionIndexerTest#index_discoversFunctionalRoutes` + `RouterFunctionFixtureIT#functionalRoutes_mergeIntoEndpointIndex` | integration + fixture | 🟢 green |
+| REQ-002 | 함수형 body/path-var 추출 | `RouterFunctionIndexerTest#index_extractsBodyShapeAndPathVar` + `RouterFunctionIndexerTest#index_extractsBodyShapeFromBodyToFlux` | integration | 🟢 green |
+| REQ-003 | 시그니처 실패 폴백 | `RouterFunctionIndexerTest#index_unresolvedBodyPost_getsSyntheticShapeForExplore` | integration | 🟢 green |
+| REQ-004 | IndexResult merge | `IndexResultMergeTest#merge_concatsEndpointsAndUnionsMaps` + `RouterFunctionFixtureIT#functionalRoutes_mergeIntoEndpointIndex` | integration + fixture | 🟢 green |
 | REQ-005 | 게이트웨이 라우트 발견 | `GatewayRouteFixtureE2E#discoversProxyRoutes` | E2E | 🔴 planned |
 | REQ-006 | 경로 변환 필터 파싱 | `GatewayRouteIndexerTest#parsesStripPrefixAndRejectsUnsupported` | integration | 🔴 planned |
 | REQ-007 | 프록시 스모크 테스트 | `GatewayRouteFixtureE2E#generatesProxyContractSmoke` | E2E | 🔴 planned |
@@ -259,13 +259,21 @@
 | REQ-018 | empty-path-var 인코딩 | `EmptyPathVarFixtureE2E#captureReproduceStatusMatch` | E2E | 🔴 planned |
 | REQ-019 | happy-auth(WebFilter) | (수동 실증) | manual | 🔵 deferred |
 | REQ-020 | 상태 의존 read-path | — | E2E | 🔵 deferred |
-| REQ-021 | 무-LLM·결정적 | `NewPathsArchUnitTest#noLlmOrNetworkImport` + 코드 리뷰 | integration | 🔴 planned |
-| REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 53 tests) | E2E | 🔴 planned |
+| REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
+| REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 0/18 green (0%) — target 100% (대상: Must 15 + 미연기 Should 3)
+Coverage: 6/18 green (33%) — target 100% (대상: Must 15 + 미연기 Should 3)
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
+
+### P1 진행 현황 (2026-06-20)
+- **완료(🟢): REQ-001, REQ-002, REQ-003, REQ-004, REQ-021** — RouterFunctionIndexer 구현 + IndexResult 병합 + ArchUnit LLM 금지 가드
+- **완료(🟢): REQ-022** — e2e/run-e2e.sh 통과 (54 tests, failures=0, errors=0; P1 변경으로 회귀 없음)
+- **잔여**: P2(REQ-005~007), P3(REQ-009~012), P4(REQ-013~015), P5(REQ-017~018) — 구현 대기
+
+### Known limitations (REQ-002 후보 정제)
+- `RouterFunctionIndexer`는 handler body에서 `req.pathVariable("x")` 텍스트 호출이 명시된 경우만 PATH 파라미터를 추출한다. 경로 템플릿 `{id}` 플레이스홀더가 있더라도 handler가 `pathVariable`을 textually 호출하지 않으면 PATH param으로 역추출되지 않는다(`EndpointIndexer` 스타일의 플레이스홀더 역추출이 함수형 라우트에는 아직 미적용). 비-GET 라우트는 synthetic body fallback으로 explore에 도달하며, GET 라우트는 skip 대상이 아니다. 향후 REQ-002 정제 후보.
 
 ---
 
