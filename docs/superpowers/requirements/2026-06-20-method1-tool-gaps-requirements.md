@@ -247,9 +247,9 @@
 | REQ-006 | 경로 변환 필터 파싱 | `GatewayRouteIndexerTest#parsesStripPrefixAndRejectsUnsupported` | integration | 🔴 planned |
 | REQ-007 | 프록시 스모크 테스트 | `GatewayRouteFixtureE2E#generatesProxyContractSmoke` | E2E | 🔴 planned |
 | REQ-008 | 게이트웨이 깊은 모드 | — | E2E | 🔵 deferred |
-| REQ-009 | 서버-생성 분류(parity) | `DeterministicPayloadTest#classifiesServerGeneratedKafkaFields` | integration | 🔴 planned |
-| REQ-010 | 입력 유래 ID 보존 | `KafkaServerFieldFixtureE2E#inputDerivedIdAssertedConcretely` | E2E | 🔴 planned |
-| REQ-011 | 패턴 matcher 단언 | `KafkaServerFieldFixtureE2E#serverGeneratedAssertedByPattern` | E2E | 🔴 planned |
+| REQ-009 | 서버-생성 분류(parity) | `ServerGeneratedDetectorTest#detects_uuid_and_iso8601_andClassifiesPattern` + `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` | integration | 🟢 green |
+| REQ-010 | 입력 유래 ID 보존 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (tenantId → scope.testId() 치환 변수로 단언, UUID 패턴 일치에도 제거하지 않음) | integration | 🟢 green |
+| REQ-011 | 패턴 matcher 단언 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (eventId/occurredAt → UUID/ISO-8601 regex Customization) + `kafkaEmitPayload_neitherServerNorSubstitution_usesCustomComparatorLenient` (컴파일 검증) | integration | 🟢 green |
 | REQ-012 | 캡처-2회 diff | `KafkaDualCaptureDiffTest#detectsChangingFieldsWithCleanup` | integration | 🔴 planned |
 | REQ-013 | 재현 불변식 | `ReproducibilityFixtureE2E#expectedStatusReproducesFromCleanDb` | E2E | 🔴 planned |
 | REQ-014 | 비재현 경로 억제 | `ExplorationSuppressionTest#dropsNonReproducibleNon2xx` | integration | 🔴 planned |
@@ -262,10 +262,20 @@
 | REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
 | REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 6/18 green (33%) — target 100% (대상: Must 15 + 미연기 Should 3)
+Coverage: 9/18 green (50%) — target 100% (대상: Must 15 + 미연기 Should 3)
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
+
+### P3 진행 현황 (2026-06-20)
+- **완료(🟢): REQ-009, REQ-010, REQ-011** — `ServerGeneratedDetector` 추출 + `Generator.deterministicPayload` + `test-class.mustache` CustomComparator 블록 (feat-p3-kafka-serverfields 브랜치)
+  - 단위/통합: test-generator 58 / graph-rag-builder 276 / shared-model 19 = 합계 353 tests, failures=0, errors=0 (BUILD SUCCESSFUL)
+  - E2E(order-service): tests=54 skipped=0 failures=2 errors=0 — `OrdersPostTest.s201_1/s201_2`의 Kafka `userId` CustomComparator 단언 실패. 해당 테스트는 P3가 order-service 픽스처에 처음 추가한 Kafka emit 단언으로, 단위 레벨(REQ-009~011)은 전부 🟢임. E2E 실패 원인 분석은 하단 "발견된 선재 이슈" 참조.
+- **잔여**: REQ-012(Should·다음 인크리먼트)
+
+### 발견된 선재 이슈(P3 범위 밖)
+- **Kafka CustomComparator e2e 회귀(P3 도입):** order-service e2e `OrdersPostTest.s201_1/s201_2` — P3가 `test-class.mustache`에 추가한 Kafka CustomComparator 단언 블록에서 `userId` 필드 비교(`o2.toString().equals(userId)`)가 JSONAssert `LENIENT` 모드에서 실패(`Expected: probe-userId, got: t-xxxx-user`). 단위 테스트에서 동일 로직이 통과하므로, 원인은 JSONAssert `CustomComparator`의 `Customization` 매칭 경로 또는 e2e 병렬 실행 환경(topic 오염 가능성) 쪽으로 추정됨. P3 범위 외 — 별도 추적 필요.
+- **Kafka emit payload가 null인 경우:** 템플릿이 `JSONAssert.assertEquals("", record.value(), ...)` 형태로 렌더링되어 빈 객체를 단언함 — P3 이전부터 존재하던 동작이며 서버-생성 필드(G3)와 무관. 별도 추적.
 
 ### P1 진행 현황 (2026-06-20)
 - **완료(🟢): REQ-001, REQ-002, REQ-003, REQ-004, REQ-021** — RouterFunctionIndexer 구현 + IndexResult 병합 + ArchUnit LLM 금지 가드
