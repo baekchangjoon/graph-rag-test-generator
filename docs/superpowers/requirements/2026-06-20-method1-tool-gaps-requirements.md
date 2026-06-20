@@ -117,10 +117,10 @@
 ### REQ-006 — 경로 변환 필터 파싱·미지원 필터 처리
 - 유형: Functional
 - 우선순위: Must
-- 설명: `StripPrefix`/`RewritePath`/`SetPath` 등 경로 변환 필터를 파싱해 인덱싱 path와 실제 다운스트림 도달 path를 일치시킨다. 미지원 필터/predicate 감지 시 해당 라우트를 제외하거나 경고 로그를 남긴다(화이트리스트).
+- 설명: `StripPrefix`/`RewritePath`/`SetPath` 등 경로 변환 필터를 파싱해 **지원/미지원을 판정**한다. **`Endpoint.path`는 게이트웨이 predicate path(=요청 식별자)로 보존**한다 — 변환된 다운스트림 path로 두면 게이트웨이 predicate와 불일치해 스모크 요청이 404가 된다(역전파 정정 2026-06-21). 미지원 필터/predicate 감지 시 해당 라우트를 제외하고 경고 로그를 남긴다(화이트리스트 — 지원: 경로변환·헤더 필터 등 프록시-스모크를 깨지 않는 것; 미지원: 알 수 없는/커스텀 필터). REQ-007 스모크는 다운스트림을 catch-all 스텁하므로 변환 path 자체를 저장할 필요는 없고, 필터는 "지원 여부 판정"에만 쓴다.
 - 수용기준:
-  - Given `StripPrefix=1` 필터를 가진 라우트, When 인덱싱, Then 변환 적용 후의 정확한 path가 산출된다.
-  - Given 미지원 커스텀 필터/SpEL predicate를 가진 라우트, When 인덱싱, Then 그 라우트는 제외되고 경고가 로그에 남는다.
+  - Given `/api/v1/orders/**` predicate + `StripPrefix=1`(지원 필터) 라우트, When 인덱싱, Then `Endpoint.path`는 predicate `/api/v1/orders/**`로 **보존**되고 라우트가 인덱싱된다.
+  - Given 미지원 커스텀/알 수 없는 필터를 가진 라우트, When 인덱싱, Then 그 라우트는 제외되고 경고가 로그에 남는다.
 - 검증 레벨: integration
 
 ### REQ-007 — 얕은 모드 프록시 계약 스모크 테스트 생성

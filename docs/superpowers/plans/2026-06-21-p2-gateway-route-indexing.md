@@ -64,8 +64,11 @@
 ```java
 IndexResult r = new GatewayRouteIndexer().index(dir);
 assertThat(r.endpoints()).extracting(Endpoint::path, Endpoint::targetUri)
-    .contains(tuple("/orders/**","http://orders"),   // stripPrefix(1) 적용 후
+    .contains(tuple("/api/v1/orders/**","http://orders"),   // 정정(2026-06-21): predicate path 보존(변환 적용 X)
               tuple("/api/v1/users/**","lb://users"));
+// 정정: Endpoint.path = 게이트웨이 predicate path(요청 식별자). 변환된 다운스트림 path로 두면
+// 게이트웨이 predicate 불일치로 스모크 요청이 404. 필터는 지원/미지원 판정에만 파싱(stripPrefix=지원→인덱싱,
+// unknown→제외+warn). REQ-007 스모크는 다운스트림 catch-all 스텁. (REQ-006 정정과 일관 — 구현 commit 2b57da1/6d267d2.)
 ```
 - [ ] Step 2 실패확인 → Step 3 구현(라우트 그룹핑 + path/uri 추출 + StripPrefix/RewritePath/SetPath 변환; 미지원 필터/SpEL predicate 감지 시 `log.warn` + 해당 라우트 제외(REQ-006); `Endpoint`의 targetUri 채움; `EndpointIds.of` 사용) → Step 4 통과 + 미지원 필터 제외 테스트 추가 → Step 5 commit `feat(index): GatewayRouteIndexer discovers proxy routes + path-transform filters (REQ-005,006)`.
   - **확인 필요(구현 시):** noClasspath에서 route 람다 그룹핑 방식(같은 `.route(...)` invocation의 인자 람다 내부 invocations만 한 라우트로). `lb://`(load-balanced) uri도 리터럴로 보존.
