@@ -255,14 +255,14 @@
 | REQ-014 | 비재현 비-2xx 경로 억제(builder) | `ReproVerifierRealDropIntegrationTest`(오염-500→clean-404 불일치→DROP) | integration | 🟢 green |
 | REQ-015 | 드롭 가시성(log + droppedPaths) | `ReproVerifierRealDropIntegrationTest`(droppedPaths capturedStatus≠replayStatus) | integration | 🟢 green |
 | REQ-016 | cross-endpoint 의존 | — | E2E | 🔵 deferred |
-| REQ-017 | 메서드-레벨 @RequestMapping | `EndpointIndexerTest#indexesMethodLevelRequestMapping` | integration | 🔴 planned |
-| REQ-018 | empty-path-var 인코딩 | `EmptyPathVarFixtureE2E#captureReproduceStatusMatch` | E2E | 🔴 planned |
+| REQ-017 | 메서드-레벨 @RequestMapping | `EndpointIndexerTest`(method-level single/multi/no-method/verb-precedence) | integration | 🟢 green |
+| REQ-018 | empty-path-var 인코딩(센티널 통일) | `EndpointExplorationRunnerUrlTest` + `GeneratorAbsentIdReadTest`(빈 path-var→센티널 parity) + order-service e2e(빈-var dedup, green) | integration | 🟢 green |
 | REQ-019 | happy-auth(WebFilter) | (수동 실증) | manual | 🔵 deferred |
 | REQ-020 | 상태 의존 read-path | — | E2E | 🔵 deferred |
 | REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
 | REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 15/18 green (83%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should), REQ-017/018(P5).
+Coverage: 17/18 green (94%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should, Kafka 2회-diff).
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
