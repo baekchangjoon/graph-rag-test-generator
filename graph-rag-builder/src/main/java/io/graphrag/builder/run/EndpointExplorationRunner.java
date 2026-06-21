@@ -284,6 +284,16 @@ public class EndpointExplorationRunner {
             }
         }
 
+        // REQ-012: Kafka 2회 발행 diff — 비-패턴 서버 생성 필드 검출.
+        // 탐색 완료(final bundle 확정) 후, 동일 happy 입력으로 2차 발행을 재현하고 두 payload를
+        // field-by-field diff해 비결정 값을 CapturedEventEmit.nonDeterministicValues에 기록한다.
+        // GRB_KAFKA_DIFF=off 또는 kafkaCapture 없음이면 skip.
+        final SynthesizedInput happyForDiff = happy;
+        if (kafkaCapture != null
+                && !"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_DIFF"))) {
+            bundle = enrichWithKafkaDiff(bundle, outcome, endpoint, readPath, happyForDiff);
+        }
+
         AttachResult attached = attachSeeds(endpoint, readPath, bundle.paths(), requiredSeeds);
 
         // Stage 4: 상태 의존 가드(저장 행 상태로 분기)의 반대 arm을 대체 시드 변종으로 연다.
@@ -613,6 +623,168 @@ public class EndpointExplorationRunner {
             };
         }
         return invoker;
+    }
+
+    /**
+     * REQ-012: happy 입력 재발행 + 2차 Kafka drain + field-by-field diff.
+     *
+     * <p>Kafka를 발행하는 happy(2xx) 경로가 있으면:
+     * <ol>
+     *   <li>write 경로(non-GET, 시드 없이 POST → entity 행 존재)는 1차 발행이 만든 행을
+     *       캡처 INSERT의 역 DELETE로 정리해 유니크 충돌을 막는다. 정리 불가 시 diff skip.</li>
+     *   <li>동일 happy 입력으로 raw HTTP 요청을 1회 재발행 → 2차 traceId 확보.</li>
+     *   <li>2차 records를 drainAllByTraceId로 수집 후 1차와 field-by-field diff.</li>
+     *   <li>diff된 비결정 값을 해당 CapturedEventEmit.nonDeterministicValues에 추가.</li>
+     * </ol>
+     *
+     * <p>best-effort: 2차 invoke 실패나 정리 불가 write 경로는 skip(P3 휴리스틱 유지, 회귀 0).
+     */
+    private PathsBundle enrichWithKafkaDiff(PathsBundle bundle, ExplorationOutcome outcome,
+                                            Endpoint endpoint, boolean readPath,
+                                            SynthesizedInput happy) {
+        // happy 2xx 경로 중 Kafka를 발행한 PathCandidate 탐색
+        PathCandidate happyCandidate = null;
+        for (PathCandidate c : outcome.paths()) {
+            if (c.status() / 100 == 2 && c.kafkaTraceId() != null) {
+                happyCandidate = c;
+                break;
+            }
+        }
+        if (happyCandidate == null) {
+            return bundle;   // Kafka 발행 happy path 없음 → skip
+        }
+
+        // 1차 emit 레코드 (bundle에서 pathId로 조회)
+        final String happyPathId = happyCandidate.pathId();
+        List<io.graphrag.model.CapturedEventEmit> firstEmits = bundle.capturedEventEmits().stream()
+                .filter(e -> e.pathId().equals(happyPathId))
+                .toList();
+        if (firstEmits.isEmpty()) {
+            return bundle;   // 1차 emit 없음 → skip
+        }
+
+        // write 경로: 1차 발행이 만든 entity 행을 삭제(유니크 충돌 방지).
+        // captured INSERT SQL에서 첫 번째 INSERT의 table + PK 컬럼 + 값으로 DELETE.
+        if (!readPath) {
+            boolean cleaned = tryDeleteFirstInsert(happyCandidate);
+            if (!cleaned) {
+                // 정리 불가(외부 부작용 또는 INSERT 미캡처) → 보수적 skip
+                log.debug("kafka-diff: skipping diff for write-path {} — cannot safely clean up first emit row",
+                        endpoint.id());
+                return bundle;
+            }
+        }
+
+        // 2차 invoke: raw httpInvoker(seed-reset 래핑 없음) — diff용 단순 재발행.
+        String secondTraceId = null;
+        try {
+            String authHeader = (authProvider != null && endpoint.authRequired())
+                    ? authConfig.headerValue(authProvider.token()) : null;
+            InvocationOutcome second = doSend(HttpClient.newHttpClient(), endpoint, happy.body(), authHeader);
+            secondTraceId = second.kafkaTraceId();
+            log.debug("kafka-diff: second invoke {} → status={} traceId={}",
+                    endpoint.id(), second.status(), secondTraceId);
+        } catch (Exception e) {
+            log.warn("kafka-diff: second invoke failed for {}, skipping diff: {}", endpoint.id(), e.getMessage());
+            return bundle;   // 2차 invoke 실패 → skip
+        }
+
+        if (secondTraceId == null) {
+            log.debug("kafka-diff: no traceId from second invoke for {}, skipping diff", endpoint.id());
+            return bundle;
+        }
+
+        // 2차 drain: 2차 invoke가 발행한 records를 수집
+        java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> secondByTrace =
+                kafkaCapture.drainAllByTraceId(300);
+        java.util.List<KafkaCaptureReceiver.CapturedRecord> secondRecords =
+                secondByTrace.getOrDefault(secondTraceId, java.util.List.of());
+        if (secondRecords.isEmpty()) {
+            log.debug("kafka-diff: no second records for {}, skipping diff", endpoint.id());
+            return bundle;
+        }
+
+        // 입력 유래 값(substitutions keys) — REQ-010 불변: 절대 비결정 표시 금지.
+        // body의 모든 스칼라 값을 input-derived 집합으로 사용(collectBodyValues 재사용).
+        Set<String> inputDerived = collectBodyValues(happy.body());
+
+        // field-by-field diff: 1차 emit과 2차 emit을 순서대로 비교(같은 topic 순).
+        // 복수 레코드는 순서 매칭(i번째 1차 ↔ i번째 2차).
+        java.util.Set<String> allNonDeterministic = new HashSet<>();
+        int compareCount = Math.min(firstEmits.size(), secondRecords.size());
+        for (int i = 0; i < compareCount; i++) {
+            io.graphrag.model.CapturedEventEmit emit1 = firstEmits.get(i);
+            KafkaCaptureReceiver.CapturedRecord rec2 = secondRecords.get(i);
+            if (emit1.payload() == null) {
+                continue;
+            }
+            Set<String> diff = KafkaPayloadDiffer.diffNonDeterministicValues(
+                    emit1.payload(), rec2.value(), inputDerived);
+            allNonDeterministic.addAll(diff);
+        }
+
+        if (allNonDeterministic.isEmpty()) {
+            log.debug("kafka-diff: no non-deterministic fields detected for {}", endpoint.id());
+            return bundle;
+        }
+        log.info("kafka-diff: detected {} non-deterministic value(s) for {}: {}",
+                allNonDeterministic.size(), endpoint.id(), allNonDeterministic);
+
+        // CapturedEventEmit에 nonDeterministicValues 주입 (happy path emits만)
+        final Set<String> finalNonDet = Set.copyOf(allNonDeterministic);
+        List<io.graphrag.model.CapturedEventEmit> updatedEmits = bundle.capturedEventEmits().stream()
+                .map(e -> e.pathId().equals(happyPathId)
+                        ? new io.graphrag.model.CapturedEventEmit(e.id(), e.pathId(), e.topic(), e.key(),
+                              e.payload(), finalNonDet)
+                        : e)
+                .toList();
+
+        return new PathsBundle(bundle.paths(), bundle.allSql(), bundle.httpCalls(), updatedEmits);
+    }
+
+    /**
+     * write 경로 1차 발행 정리: PathCandidate의 캡처 SQL에서 첫 INSERT를 찾아
+     * {@code DELETE FROM <table> WHERE <pk_col> = <pk_val>}을 실행한다.
+     *
+     * @return true이면 정리 성공(또는 불필요), false이면 정리 불가 → diff skip.
+     */
+    private boolean tryDeleteFirstInsert(PathCandidate candidate) {
+        for (io.graphrag.builder.capture.ParsedSql sql : candidate.capturedSql()) {
+            if (!"INSERT".equals(sql.kind())) {
+                continue;
+            }
+            String table = sql.tableName();
+            if (table == null || table.isBlank()) {
+                continue;
+            }
+            // 첫 번째 바인딩 값 = PK 값 (INSERT INTO t (pk_col, ...) VALUES (?, ...))
+            if (sql.bindings().isEmpty()) {
+                continue;
+            }
+            String pkCol = sql.columnForPosition(1);
+            String pkVal = sql.bindings().get(0).value();
+            if (pkCol.isBlank() || pkVal == null) {
+                continue;
+            }
+            String deleteSql = "DELETE FROM " + table + " WHERE " + pkCol + " = ?";
+            try (java.sql.PreparedStatement stmt = connection.prepareStatement(deleteSql)) {
+                // PK는 보통 숫자 — Long 변환 시도, 실패 시 String
+                try {
+                    stmt.setLong(1, Long.parseLong(pkVal));
+                } catch (NumberFormatException e) {
+                    stmt.setString(1, pkVal);
+                }
+                int rows = stmt.executeUpdate();
+                log.debug("kafka-diff: deleted {} row(s) from {} ({}={})", rows, table, pkCol, pkVal);
+                return true;
+            } catch (java.sql.SQLException e) {
+                log.warn("kafka-diff: write-path cleanup failed for table={} col={} val={}: {}",
+                        table, pkCol, pkVal, e.getMessage());
+                return false;
+            }
+        }
+        // INSERT 없음(read-only path이거나 SQL 미캡처) — write 경로에서 여기 도달하면 skip
+        return false;
     }
 
     /** outcome → ExploredPath/CapturedSql/CapturedHttpCall 묶음. */
