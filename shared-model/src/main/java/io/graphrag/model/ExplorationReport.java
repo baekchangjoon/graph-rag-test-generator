@@ -30,6 +30,37 @@ public record ExplorationReport(
             int coveredBranches,
             List<BranchRef> missedBranches,
             Map<String, Integer> pathsByEngine,
-            int solverRelevantMissed) {
+            int solverRelevantMissed,
+            List<DroppedPath> droppedPaths) {
+
+        /**
+         * 6-argument backward-compat constructor (no droppedPaths — legacy).
+         * 기존 호출자(BuilderCli, 테스트 등)는 이 생성자를 통해 droppedPaths=[] 기본값을 얻는다.
+         */
+        public EndpointExploration(String endpointId, int totalBranches, int coveredBranches,
+                                   List<BranchRef> missedBranches,
+                                   Map<String, Integer> pathsByEngine,
+                                   int solverRelevantMissed) {
+            this(endpointId, totalBranches, coveredBranches, missedBranches,
+                    pathsByEngine, solverRelevantMissed, List.of());
+        }
+
+        /** compact canonical constructor: null-guard droppedPaths. */
+        public EndpointExploration {
+            droppedPaths = droppedPaths == null ? List.of() : droppedPaths;
+        }
+    }
+
+    /**
+     * REQ-015: 재현 불가로 억제된 non-2xx 경로 기록.
+     * capturedStatus = 탐색 중 관측된 상태, replayStatus = 클린 DB + 선언 시드 재실행 상태.
+     * 두 값이 다를 때만 기록된다(억제 이유 = "status_mismatch").
+     */
+    public record DroppedPath(
+            String endpointId,
+            String pathId,
+            int capturedStatus,
+            int replayStatus,
+            String reason) {
     }
 }
