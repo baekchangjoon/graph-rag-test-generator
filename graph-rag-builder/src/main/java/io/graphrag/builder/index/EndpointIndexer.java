@@ -64,6 +64,7 @@ public class EndpointIndexer {
         List<Endpoint> endpoints = new ArrayList<>();
         Map<String, BodyShape> bodyShapes = new HashMap<>();
         java.util.Set<String> validBodyEndpointIds = new java.util.LinkedHashSet<>();
+        Map<String, List<FormFieldBinding>> formBindingIndex = new HashMap<>();
 
         for (CtType<?> type : model.getAllTypes()) {
             boolean rest = findAnnotation(type, REST_CONTROLLER) != null;
@@ -127,6 +128,10 @@ public class EndpointIndexer {
                 if (rest && hasValidRequestBody(method)) {
                     validBodyEndpointIds.add(id);
                 }
+                List<FormFieldBinding> formBindings = classifyFormBindings(params, bodyShapes, model);
+                if (!formBindings.isEmpty()) {
+                    formBindingIndex.put(id, formBindings);
+                }
                 endpoints.add(new Endpoint(
                         id,
                         httpMethod,
@@ -138,7 +143,7 @@ public class EndpointIndexer {
             }
         }
         endpoints.sort((a, b) -> a.id().compareTo(b.id()));
-        return new IndexResult(endpoints, bodyShapes, validBodyEndpointIds);
+        return new IndexResult(endpoints, bodyShapes, validBodyEndpointIds, formBindingIndex);
     }
 
     private static boolean authRequired(String path, AuthConfig authConfig) {
@@ -221,6 +226,72 @@ public class EndpointIndexer {
             }
         }
         return firstEligible;
+    }
+
+    private static final int MAX_FORM_NEST_DEPTH = 4;
+
+    /**
+     * 폼 커맨드(FORM 파라미터) 필드의 바인딩 종류를 정적 분류한다(Phase 2: NESTED/SCALAR).
+     * 컨버터 없는 바인딩가능 POJO 필드(비-enum, 해석되는 비어있지 않은 bodyShape 보유)는 NESTED로 분류하고
+     * 그 중첩 타입 shape를 bodyShapes에 재귀 수집(런타임 점-경로 평면화용). 그 외는 SCALAR.
+     * (REFERENCE 분류 — 컨버터/엔티티/editor 감지 — 는 Phase 3.)
+     */
+    private List<FormFieldBinding> classifyFormBindings(List<EndpointParam> params,
+            Map<String, BodyShape> bodyShapes, CtModel model) {
+        EndpointParam form = params.stream()
+                .filter(p -> p.kind() == ParamKind.FORM).findFirst().orElse(null);
+        if (form == null) {
+            return List.of();
+        }
+        BodyShape shape = bodyShapes.get(form.javaType());
+        if (shape == null) {
+            return List.of();
+        }
+        List<FormFieldBinding> bindings = new ArrayList<>();
+        for (BodyShape.BodyField field : shape.fields()) {
+            if (isNestedPojo(field.javaType(), model)) {
+                storeNestedShapes(field.javaType(), model, bodyShapes, new java.util.HashSet<>(), 0);
+                bindings.add(FormFieldBinding.nested(field.name(), field.javaType(), field.javaType()));
+            } else {
+                bindings.add(FormFieldBinding.scalar(field.name(), field.javaType()));
+            }
+        }
+        return bindings;
+    }
+
+    /** 바인딩가능 POJO(비-enum, 해석되는 비어있지 않은 bodyShape) 여부. enum/스칼라/미해석 타입은 false. */
+    private static boolean isNestedPojo(String typeFqn, CtModel model) {
+        if (isEnumType(typeFqn, model)) {
+            return false;
+        }
+        return BodyShapeExtractor.extract(model, typeFqn)
+                .map(s -> !s.fields().isEmpty()).orElse(false);
+    }
+
+    private static boolean isEnumType(String typeFqn, CtModel model) {
+        for (CtType<?> type : model.getAllTypes()) {
+            CtType<?> target = BodyShapeExtractor.findNested(type, typeFqn);
+            if (target != null) {
+                return target instanceof spoon.reflect.declaration.CtEnum;
+            }
+        }
+        return false;
+    }
+
+    /** 중첩 타입 shape를 재귀로 bodyShapes에 수집(깊이/순환 가드). 평면화는 런타임 FormBodySynthesizer가 수행. */
+    private static void storeNestedShapes(String typeFqn, CtModel model, Map<String, BodyShape> bodyShapes,
+                                          java.util.Set<String> visited, int depth) {
+        if (depth >= MAX_FORM_NEST_DEPTH || !visited.add(typeFqn)) {
+            return;
+        }
+        java.util.Optional<BodyShape> shape = BodyShapeExtractor.extract(model, typeFqn);
+        if (shape.isEmpty() || shape.get().fields().isEmpty()) {
+            return;
+        }
+        bodyShapes.putIfAbsent(typeFqn, shape.get());
+        for (BodyShape.BodyField sub : shape.get().fields()) {
+            storeNestedShapes(sub.javaType(), model, bodyShapes, visited, depth + 1);
+        }
     }
 
     private static CtAnnotation<?> findAnnotation(CtElement element, String qualifiedName) {

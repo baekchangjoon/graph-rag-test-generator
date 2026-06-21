@@ -609,7 +609,9 @@ public final class BuilderCli {
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions,
                                     endpointStateGuards,
-                                    index.validBodyEndpointIds().contains(endpoint.id()));
+                                    index.validBodyEndpointIds().contains(endpoint.id()),
+                                    index.bodyShapes(),
+                                    index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());
