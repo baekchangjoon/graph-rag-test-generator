@@ -95,12 +95,17 @@ if (!gateway.endpoints().isEmpty()) {
 
 **REQ-IDs:** REQ-007
 
-> 이 task는 generator/e2e 파이프라인 재그라운딩 후 확정한다(Task 1~3 머지 후). 설계 방향:
-> - 게이트웨이 Endpoint(targetUri 있음)에 대해, generator가 **proxy-smoke 시나리오**를 emit: WireMock(`--external-stubs`)에 targetUri 경로의 스텁(예: 200 + 헤더)을 두고, 게이트웨이 path로 요청 → status 일치 + 전파 헤더 존재 단언.
-> - **확인 필요(그라운딩):** generator가 ExploredPath 없이 Endpoint만으로 스모크를 emit하는 경로(기존 explore 우회) / `--external-stubs` 주입 방식 / e2e 게이트웨이 fixture(`RouteLocator` 미니 SUT) 위치. 기존 attach/external-stubs e2e(`e2e/run-attach-ext-http-e2e.sh` 등) 참조.
-> - **런타임 검증**(P3 교훈): 생성 스모크 테스트가 실제 스텁된 게이트웨이에 대해 green인지 e2e로 확인(빈 단언 금지).
+**확정 아키텍처(그라운딩 완료):** 별도 generator 경로를 신설하지 않는다. **게이트웨이 라우트를 기존 explore→generate 파이프라인에 그대로 태우되 다운스트림을 스텁**한다 — 이 메커니즘은 이미 존재(`--external-stubs <dir>` + `--sut-env KEY={{wiremock}}` → BuilderCli가 호스트 WireMock 기동 + SUT env의 `{{wiremock}}`을 도달가능 URL로 치환; BuilderCli L351~365). 게이트웨이 라우트는 P2 Task3에서 `index.endpoints()`에 합류했으므로, explorer가 predicate path로 요청 → 게이트웨이가 스텁 다운스트림으로 프록시 → 프록시 응답 캡처 → `ExploredPath` → 기존 generator가 정상 블랙박스 테스트 emit. 이것이 "프록시 계약 스모크"(게이트웨이가 다운스트림 status/헤더를 전파하는지 검증).
 
-- [ ] (상세 TDD는 Task 1~3 완료 후 generator/e2e 재그라운딩하여 이 plan에 추가.)
+**코드 갭 2개:**
+1. **`/**` 와일드카드 구체화 (Task 4a):** explorer `buildPathAndQuery`(EndpointExplorationRunner)와 generator `resolveLiteralPath`(Generator)는 `{id}` 센티널만 처리하고 **`**`/`*` Ant 와일드카드는 미처리** → `/api/v1/orders/**`를 리터럴로 보내 매칭 실패. predicate의 trailing `/**`(및 `/*`)를 **probe 세그먼트로 구체화**(예: `/api/v1/orders/probe`)해 게이트웨이 predicate에 매칭시킨다. 기존 센티널 로직과 동형, 단위 테스트.
+2. **e2e 게이트웨이 fixture (Task 4b):** `samples/gateway-service`(실행 가능한 Spring Cloud Gateway SUT) 신설 — `RouteLocator`의 route target을 env(`{{wiremock}}` 치환 대상, 예: `ORDERS_URI`)로 두고, `e2e/external-stubs`에 다운스트림 **catch-all 스텁**(200 + 전파 헤더) 추가. `e2e/run-gateway-e2e.sh`(또는 run-e2e.sh 확장)로 builder(`--external-stubs`+`--sut-env ORDERS_URI={{wiremock}}`)→generate→생성 테스트 실행. **런타임 green 확인(P3 교훈: e2e=최종 진실)**.
+
+**헤더 전파 단언(REQ-007 b):** 다운스트림 스텁이 응답 헤더(예: `X-Downstream: stub`)를 반환하고, 게이트웨이가 전파하면 캡처 응답에 포함 → 생성 테스트가 그 헤더 존재를 단언. (generator의 응답-헤더 단언 지원 여부 확인 필요 — 없으면 소규모 추가.)
+
+- [ ] **Task 4a — `/**`·`/*` 와일드카드 구체화** (explorer buildPathAndQuery + generator resolveLiteralPath, 단위 TDD: `/api/v1/orders/**`→`/api/v1/orders/probe`). REQ-007 prerequisite.
+- [ ] **Task 4b — 게이트웨이 e2e fixture + 스텁 + 스크립트**: `samples/gateway-service` SUT + external-stubs 다운스트림 catch-all + `run-gateway-e2e.sh`. 생성 스모크가 status 일치 + 헤더 전파 단언 + **재실행 green**(빈 단언 금지). E2E-2 임계(프록시 라우트 ≥1 발견 + 스모크 green).
+- [ ] **확인 필요(구현 시):** ① explorer가 응답 body 없는 프록시 응답을 ExploredPath로 정상 캡처하는지(SQL 0, coverage 0이어도 path 생성) ② generator의 응답 헤더 단언 지원 ③ `lb://` uri(load-balanced)는 e2e fixture에서 `http://` 직접 target으로 단순화.
 
 ---
 
