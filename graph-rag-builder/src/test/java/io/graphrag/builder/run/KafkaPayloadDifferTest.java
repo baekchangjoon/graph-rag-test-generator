@@ -100,20 +100,66 @@ class KafkaPayloadDifferTest {
     }
 
     @Test
-    @DisplayName("REQ-012: 숫자/불리언 필드는 비교 대상 제외 (textual 필드만)")
-    void nonTextualFields_areIgnored() {
+    @DisplayName("REQ-012 I1: number 필드(시퀀스 ID)가 두 발행 간 다르면 비결정으로 감지됨")
+    void numberField_seqId_diffsBetweenEmissions_detected() {
         ObjectNode payload1 = JsonNodeFactory.instance.objectNode();
         payload1.put("seqId", 1L);
-        payload1.put("active", true);
+        payload1.put("userId", "probe");
 
         ObjectNode payload2 = JsonNodeFactory.instance.objectNode();
         payload2.put("seqId", 2L);
+        payload2.put("userId", "probe");
+
+        Set<String> result = KafkaPayloadDiffer.diffNonDeterministicValues(
+                payload1, payload2, Set.of("probe"));
+
+        // seqId 두 값 모두 비결정으로 감지, userId(입력 유래)는 제외
+        assertThat(result).containsExactlyInAnyOrder("1", "2");
+    }
+
+    @Test
+    @DisplayName("REQ-012 I1: boolean 필드가 두 발행 간 다르면 비결정으로 감지됨")
+    void booleanField_diffsBetweenEmissions_detected() {
+        ObjectNode payload1 = JsonNodeFactory.instance.objectNode();
+        payload1.put("active", true);
+
+        ObjectNode payload2 = JsonNodeFactory.instance.objectNode();
         payload2.put("active", false);
 
         Set<String> result = KafkaPayloadDiffer.diffNonDeterministicValues(
                 payload1, payload2, Set.of());
 
-        // 숫자/불리언은 textual이 아니므로 제외
+        assertThat(result).containsExactlyInAnyOrder("true", "false");
+    }
+
+    @Test
+    @DisplayName("REQ-012 I1: number 필드이지만 입력 유래 값이면 비결정으로 표시 안 함 (REQ-010 불변)")
+    void numberField_inputDerived_notMarkedNonDeterministic() {
+        ObjectNode payload1 = JsonNodeFactory.instance.objectNode();
+        payload1.put("amount", 100);
+
+        ObjectNode payload2 = JsonNodeFactory.instance.objectNode();
+        payload2.put("amount", 200);
+
+        // 두 값이 모두 입력 유래면 제외
+        Set<String> result = KafkaPayloadDiffer.diffNonDeterministicValues(
+                payload1, payload2, Set.of("100", "200"));
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-012 I1: 두 발행의 number 값이 동일하면 비결정 아님")
+    void identicalNumberFields_notNonDeterministic() {
+        ObjectNode payload1 = JsonNodeFactory.instance.objectNode();
+        payload1.put("seqId", 42L);
+
+        ObjectNode payload2 = JsonNodeFactory.instance.objectNode();
+        payload2.put("seqId", 42L);
+
+        Set<String> result = KafkaPayloadDiffer.diffNonDeterministicValues(
+                payload1, payload2, Set.of());
+
         assertThat(result).isEmpty();
     }
 }

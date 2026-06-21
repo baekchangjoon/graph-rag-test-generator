@@ -291,7 +291,7 @@ public class EndpointExplorationRunner {
         final SynthesizedInput happyForDiff = happy;
         if (kafkaCapture != null
                 && !"off".equalsIgnoreCase(System.getenv("GRB_KAFKA_DIFF"))) {
-            bundle = enrichWithKafkaDiff(bundle, outcome, endpoint, readPath, happyForDiff);
+            bundle = enrichWithKafkaDiff(bundle, outcome, endpoint, readPath, happyForDiff, tables);
         }
 
         AttachResult attached = attachSeeds(endpoint, readPath, bundle.paths(), requiredSeeds);
@@ -630,10 +630,11 @@ public class EndpointExplorationRunner {
      *
      * <p>Kafka를 발행하는 happy(2xx) 경로가 있으면:
      * <ol>
-     *   <li>write 경로(non-GET, 시드 없이 POST → entity 행 존재)는 1차 발행이 만든 행을
-     *       캡처 INSERT의 역 DELETE로 정리해 유니크 충돌을 막는다. 정리 불가 시 diff skip.</li>
+     *   <li>write 경로(non-GET, POST → entity 행 존재)는 1차 발행이 만든 행을
+     *       캡처 INSERT의 역 DELETE(스키마 PK 기반)로 정리해 유니크 충돌을 막는다. 정리 불가 시 diff skip.</li>
      *   <li>동일 happy 입력으로 raw HTTP 요청을 1회 재발행 → 2차 traceId 확보.</li>
      *   <li>2차 records를 drainAllByTraceId로 수집 후 1차와 field-by-field diff.</li>
+     *   <li>2차 발행이 만든 행도 삭제해 DB를 diff 이전 상태로 완전 복원한다(C1).</li>
      *   <li>diff된 비결정 값을 해당 CapturedEventEmit.nonDeterministicValues에 추가.</li>
      * </ol>
      *
@@ -641,7 +642,8 @@ public class EndpointExplorationRunner {
      */
     private PathsBundle enrichWithKafkaDiff(PathsBundle bundle, ExplorationOutcome outcome,
                                             Endpoint endpoint, boolean readPath,
-                                            SynthesizedInput happy) {
+                                            SynthesizedInput happy,
+                                            List<io.graphrag.model.TableSchema> tables) {
         // happy 2xx 경로 중 Kafka를 발행한 PathCandidate 탐색
         PathCandidate happyCandidate = null;
         for (PathCandidate c : outcome.paths()) {
@@ -664,9 +666,9 @@ public class EndpointExplorationRunner {
         }
 
         // write 경로: 1차 발행이 만든 entity 행을 삭제(유니크 충돌 방지).
-        // captured INSERT SQL에서 첫 번째 INSERT의 table + PK 컬럼 + 값으로 DELETE.
+        // C2 fix: 스키마 PK 기반으로 컬럼을 결정(컬럼 위치 가정 제거).
         if (!readPath) {
-            boolean cleaned = tryDeleteFirstInsert(happyCandidate);
+            boolean cleaned = tryDeleteInsertRow(happyCandidate.capturedSql(), tables);
             if (!cleaned) {
                 // 정리 불가(외부 부작용 또는 INSERT 미캡처) → 보수적 skip
                 log.debug("kafka-diff: skipping diff for write-path {} — cannot safely clean up first emit row",
@@ -676,19 +678,19 @@ public class EndpointExplorationRunner {
         }
 
         // 2차 invoke: raw httpInvoker(seed-reset 래핑 없음) — diff용 단순 재발행.
-        String secondTraceId = null;
+        String authHeader = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        InvocationOutcome second;
         try {
-            String authHeader = (authProvider != null && endpoint.authRequired())
-                    ? authConfig.headerValue(authProvider.token()) : null;
-            InvocationOutcome second = doSend(HttpClient.newHttpClient(), endpoint, happy.body(), authHeader);
-            secondTraceId = second.kafkaTraceId();
+            second = doSend(HttpClient.newHttpClient(), endpoint, happy.body(), authHeader);
             log.debug("kafka-diff: second invoke {} → status={} traceId={}",
-                    endpoint.id(), second.status(), secondTraceId);
+                    endpoint.id(), second.status(), second.kafkaTraceId());
         } catch (Exception e) {
             log.warn("kafka-diff: second invoke failed for {}, skipping diff: {}", endpoint.id(), e.getMessage());
             return bundle;   // 2차 invoke 실패 → skip
         }
 
+        String secondTraceId = second.kafkaTraceId();
         if (secondTraceId == null) {
             log.debug("kafka-diff: no traceId from second invoke for {}, skipping diff", endpoint.id());
             return bundle;
@@ -699,6 +701,17 @@ public class EndpointExplorationRunner {
                 kafkaCapture.drainAllByTraceId(300);
         java.util.List<KafkaCaptureReceiver.CapturedRecord> secondRecords =
                 secondByTrace.getOrDefault(secondTraceId, java.util.List.of());
+
+        // C1 fix: write 경로에서 2차 invoke가 만든 행도 삭제해 DB를 완전 복원한다.
+        // diff 결과 계산 전/후와 무관하게 삭제를 먼저 시도(bestー effort: 실패해도 diff는 진행).
+        if (!readPath) {
+            boolean secondCleaned = tryDeleteInsertRow(second.capturedSql(), tables);
+            if (!secondCleaned) {
+                log.warn("kafka-diff: could not delete second-emit row for {} — DB may be in dirty state",
+                        endpoint.id());
+            }
+        }
+
         if (secondRecords.isEmpty()) {
             log.debug("kafka-diff: no second records for {}, skipping diff", endpoint.id());
             return bundle;
@@ -743,13 +756,25 @@ public class EndpointExplorationRunner {
     }
 
     /**
-     * write 경로 1차 발행 정리: PathCandidate의 캡처 SQL에서 첫 INSERT를 찾아
+     * write 경로 발행 정리: SQL 목록에서 첫 INSERT를 찾아 스키마 PK 컬럼 기반으로
      * {@code DELETE FROM <table> WHERE <pk_col> = <pk_val>}을 실행한다.
      *
-     * @return true이면 정리 성공(또는 불필요), false이면 정리 불가 → diff skip.
+     * <p>C2 fix:
+     * <ul>
+     *   <li>PK 컬럼은 {@code TableSchema}에서 조회한다 — 컬럼 위치(position 1) 가정 제거.</li>
+     *   <li>테이블 스키마에서 PK를 찾을 수 없으면 false 반환(보수적 skip).</li>
+     *   <li>PK가 INSERT 바인딩 목록에 없으면(Hibernate auto-increment: DB가 PK를 발급),
+     *       2차 invoke는 새 PK를 받아 충돌 없이 성공하므로 정리 불필요 → true 반환.</li>
+     *   <li>{@code executeUpdate() == 0}(삭제 0 행)은 실패로 간주 → false 반환.</li>
+     * </ul>
+     *
+     * @param sqlList capturedSql 목록 (InvocationOutcome 또는 PathCandidate 기원)
+     * @param tables  스키마 정보 (PK 컬럼 해석용)
+     * @return true이면 정리 성공(또는 불필요), false이면 정리 불가 → diff skip
      */
-    private boolean tryDeleteFirstInsert(PathCandidate candidate) {
-        for (io.graphrag.builder.capture.ParsedSql sql : candidate.capturedSql()) {
+    boolean tryDeleteInsertRow(List<io.graphrag.builder.capture.ParsedSql> sqlList,
+                               List<io.graphrag.model.TableSchema> tables) {
+        for (io.graphrag.builder.capture.ParsedSql sql : sqlList) {
             if (!"INSERT".equals(sql.kind())) {
                 continue;
             }
@@ -757,14 +782,23 @@ public class EndpointExplorationRunner {
             if (table == null || table.isBlank()) {
                 continue;
             }
-            // 첫 번째 바인딩 값 = PK 값 (INSERT INTO t (pk_col, ...) VALUES (?, ...))
             if (sql.bindings().isEmpty()) {
                 continue;
             }
-            String pkCol = sql.columnForPosition(1);
-            String pkVal = sql.bindings().get(0).value();
-            if (pkCol.isBlank() || pkVal == null) {
-                continue;
+            // C2: 스키마에서 PK 컬럼명 조회
+            String pkCol = resolvePkColumn(table, tables);
+            if (pkCol == null) {
+                log.debug("kafka-diff: no PK found in schema for table={}, skipping cleanup", table);
+                return false;
+            }
+            // INSERT 컬럼 목록에서 PK 컬럼의 위치를 찾아 바인딩 값 조회.
+            // PK가 없으면 Hibernate auto-increment(DB가 PK 발급) → 2차 invoke는 새 PK로 충돌 없이 성공.
+            // 이 경우 DB 정리 불필요이므로 true 반환(diff 진행).
+            String pkVal = findBindingValueForColumn(sql, pkCol);
+            if (pkVal == null) {
+                log.debug("kafka-diff: PK column {} not in INSERT for table={} — auto-generated PK, no cleanup needed",
+                        pkCol, table);
+                return true;
             }
             String deleteSql = "DELETE FROM " + table + " WHERE " + pkCol + " = ?";
             try (java.sql.PreparedStatement stmt = connection.prepareStatement(deleteSql)) {
@@ -775,6 +809,12 @@ public class EndpointExplorationRunner {
                     stmt.setString(1, pkVal);
                 }
                 int rows = stmt.executeUpdate();
+                if (rows == 0) {
+                    // C2: 0 행 삭제는 실패 — 행이 없거나 이미 삭제됨
+                    log.warn("kafka-diff: DELETE matched 0 rows from {} ({}={}) — treating as cleanup failure",
+                            table, pkCol, pkVal);
+                    return false;
+                }
                 log.debug("kafka-diff: deleted {} row(s) from {} ({}={})", rows, table, pkCol, pkVal);
                 return true;
             } catch (java.sql.SQLException e) {
@@ -785,6 +825,44 @@ public class EndpointExplorationRunner {
         }
         // INSERT 없음(read-only path이거나 SQL 미캡처) — write 경로에서 여기 도달하면 skip
         return false;
+    }
+
+    /**
+     * 스키마에서 지정 테이블의 PK 컬럼명을 반환한다. 없으면 null.
+     * 테이블명 비교는 대소문자 무시(DB 방언 대응).
+     */
+    static String resolvePkColumn(String tableName,
+                                  List<io.graphrag.model.TableSchema> tables) {
+        if (tables == null || tableName == null) {
+            return null;
+        }
+        for (io.graphrag.model.TableSchema schema : tables) {
+            if (schema.name().equalsIgnoreCase(tableName)) {
+                for (io.graphrag.model.ColumnSchema col : schema.columns()) {
+                    if (col.primaryKey()) {
+                        return col.name();
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * INSERT SQL의 컬럼 목록에서 {@code pkCol}과 일치하는 컬럼의 바인딩 값을 반환한다.
+     * 컬럼명 비교는 대소문자 무시. 없으면 null.
+     */
+    static String findBindingValueForColumn(io.graphrag.builder.capture.ParsedSql sql,
+                                            String pkCol) {
+        // INSERT INTO t (col1, col2, ...) VALUES (?, ?, ...) 형식에서
+        // columnForPosition(i)로 컬럼명을 구하고 pkCol과 비교한다.
+        for (int i = 1; i <= sql.bindings().size(); i++) {
+            String colName = sql.columnForPosition(i);
+            if (colName != null && colName.equalsIgnoreCase(pkCol)) {
+                return sql.bindings().get(i - 1).value();
+            }
+        }
+        return null;
     }
 
     /** outcome → ExploredPath/CapturedSql/CapturedHttpCall 묶음. */
