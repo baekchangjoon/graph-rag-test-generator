@@ -235,6 +235,7 @@ public class EndpointIndexer {
     private static final int MAX_FORM_NEST_DEPTH = 4;
     private static final String ENTITY       = "jakarta.persistence.Entity";
     private static final String JOIN_COLUMN  = "jakarta.persistence.JoinColumn";
+    private static final String TABLE        = "jakarta.persistence.Table";
 
     /**
      * 폼 커맨드(FORM 파라미터) 필드의 바인딩 종류를 정적 분류한다(spec §3).
@@ -265,7 +266,8 @@ public class EndpointIndexer {
         for (BodyShape.BodyField field : shape.fields()) {
             if (isReference(field.javaType(), registry, localEditors, model)) {
                 bindings.add(FormFieldBinding.reference(field.name(), field.javaType(),
-                        field.javaType(), joinColumn(commandType, field.name())));
+                        field.javaType(), joinColumn(commandType, field.name()),
+                        resolveRefTable(field.javaType(), model)));
             } else if (isNestedPojo(field.javaType(), model)) {
                 storeNestedShapes(field.javaType(), model, bodyShapes, new java.util.HashSet<>(), 0);
                 bindings.add(FormFieldBinding.nested(field.name(), field.javaType(), field.javaType()));
@@ -287,6 +289,16 @@ public class EndpointIndexer {
     private static boolean isEntityType(String typeFqn, CtModel model) {
         CtType<?> type = findTypeInModel(model, typeFqn);
         return type != null && findAnnotation(type, ENTITY) != null;
+    }
+
+    /** 참조 엔티티의 @Table(name=…) 테이블명(정적). 없으면 null → 런타임이 camelToSnake 폴백. */
+    private static String resolveRefTable(String typeFqn, CtModel model) {
+        CtType<?> type = findTypeInModel(model, typeFqn);
+        if (type == null) {
+            return null;
+        }
+        CtAnnotation<?> table = findAnnotation(type, TABLE);
+        return table == null ? null : annotationStringValue(table, "name");
     }
 
     /** 커맨드 필드의 @ManyToOne @JoinColumn(name=…) FK 컬럼명(없으면 null — 런타임이 @Table/camelToSnake 폴백). */
