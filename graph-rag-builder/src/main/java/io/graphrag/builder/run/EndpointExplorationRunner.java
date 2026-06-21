@@ -346,23 +346,24 @@ public class EndpointExplorationRunner {
             // 1. 탐색 중 쌓인 happy 시드를 제거(역순 child→parent)
             deleteSeeds(happyFinal);
             try {
-                // 2. 이 path의 선언 시드만 재삽입
+                // 2. 이 path의 선언 시드만 재삽입하고, 삽입된 행을 추적한다.
+                List<SynthesizedInput.SeedRow> insertedRows = new ArrayList<>();
                 for (RequiredSeed rs : declaredSeeds) {
                     SynthesizedInput.SeedRow row = new SynthesizedInput.SeedRow(
                             rs.table(), rs.columns(),
                             rs.values().stream().map(v -> (Object) v).toList());
                     Seeds.insert(connection, dbType, row);
+                    insertedRows.add(row);
                 }
-                // 3. 캡처된 입력으로 재실행 (커버리지 dump는 best-effort; 재현 검증만 목적)
-                int replayStatus = doSend(reproHttp, ep, path.sampleInput(), authHeaderForRepro).status();
-                // 4. 재삽입한 path 시드 정리(역순)
-                for (int i = declaredSeeds.size() - 1; i >= 0; i--) {
-                    RequiredSeed rs = declaredSeeds.get(i);
-                    Seeds.delete(connection, new SynthesizedInput.SeedRow(
-                            rs.table(), rs.columns(),
-                            rs.values().stream().map(v -> (Object) v).toList()));
+                // 3+4. 재실행 후 path 시드 정리 — doSend 예외 시에도 항상 삭제(누수 방지).
+                try {
+                    return doSend(reproHttp, ep, path.sampleInput(), authHeaderForRepro).status();
+                } finally {
+                    // 4. 재삽입한 path 시드 정리(역순 child→parent)
+                    for (int i = insertedRows.size() - 1; i >= 0; i--) {
+                        Seeds.delete(connection, insertedRows.get(i));
+                    }
                 }
-                return replayStatus;
             } finally {
                 // 5. happy 시드 복원(best-effort; 이후 탐색 없지만 DB 상태 일관성 유지)
                 reinsertSeeds(happyFinal);
