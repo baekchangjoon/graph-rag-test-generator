@@ -18,3 +18,5 @@ spring:
               order: -1
               predicates:
                 - Path=/api/v1/orders/**
+              filters:
+                - AddResponseHeader=X-Downstream, forwarded

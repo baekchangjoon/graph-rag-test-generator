@@ -34,3 +34,4 @@ e2e/agents/
 .work/
 **/.work/
 e2e/.attach*-out/
+e2e/.gateway-e2e-out/

@@ -87,6 +87,18 @@ if [ "$GENERATED_COUNT" -eq 0 ]; then
     exit 1
 fi
 
+# REQ-007(b): 생성된 소스에 X-Downstream (또는 x-downstream) 헤더 단언이 포함되어 있는지 검증.
+# Java HttpClient는 응답 헤더를 소문자로 반환하므로 case-insensitive grep 사용.
+echo "--- REQ-007(b): X-Downstream 헤더 단언 검증 ---"
+GENERATED_JAVA=$(find "$OUT/generated" -name "*.java" | head -1)
+if ! grep -qi 'header("x-downstream"' "$GENERATED_JAVA"; then
+    echo "ERROR: generated test does NOT contain .header(\"x-downstream\", ...) assertion" >&2
+    echo "--- 생성된 소스 내용 ---"
+    cat "$GENERATED_JAVA"
+    exit 1
+fi
+echo "OK: X-Downstream header assertion found in $(basename "$GENERATED_JAVA")"
+
 echo "=== [4/5] Docker Compose 기동 (gateway + WireMock) + 생성 테스트 실행 ==="
 # 생성 테스트를 e2e 모듈 소스 디렉터리로 복사
 mkdir -p "$E2E/build/generated-tests"
