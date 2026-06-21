@@ -224,6 +224,64 @@ class GatewayRouteIndexerTest {
     }
 
     @Test
+    void index_excludesRoute_whenFiltersArgIsNonLambda(@TempDir Path dir) throws Exception {  // Fix1: non-lambda filters bypass
+        // .filters(f) where f is a method parameter — not a lambda, cannot analyze statically
+        // The indexer must conservatively exclude the route (cannot verify it's smoke-safe)
+        Path pkg = Files.createDirectories(dir.resolve("com/example"));
+        Files.writeString(pkg.resolve("GatewayConfig.java"),
+                "package com.example;\n"
+              + "import org.springframework.context.annotation.Bean;\n"
+              + "import org.springframework.cloud.gateway.route.RouteLocator;\n"
+              + "import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;\n"
+              + "import org.springframework.cloud.gateway.route.builder.GatewayFilterSpec;\n"
+              + "import java.util.function.Function;\n"
+              + "public class GatewayConfig {\n"
+              + "  @Bean RouteLocator routes(RouteLocatorBuilder b, Function<GatewayFilterSpec,GatewayFilterSpec> extraFilters) {\n"
+              + "    return b.routes()\n"
+              + "      .route(r -> r.path(\"/api/v1/orders/**\").filters(extraFilters).uri(\"http://orders\"))\n"
+              + "      .route(r -> r.path(\"/api/v1/users/**\").uri(\"lb://users\"))\n"
+              + "      .build();\n"
+              + "  }\n"
+              + "}\n");
+
+        IndexResult result = new GatewayRouteIndexer().index(dir);
+
+        // Non-lambda .filters() arg → route excluded
+        assertThat(result.endpoints())
+                .extracting(Endpoint::path)
+                .containsExactly("/api/v1/users/**")
+                .doesNotContain("/api/v1/orders/**");
+    }
+
+    @Test
+    void index_varargsPaths_producesEndpointPerPattern(@TempDir Path dir) throws Exception {  // Fix3: varargs path
+        // .path("/a/**", "/b/**") should produce TWO endpoints, one per pattern
+        Path pkg = Files.createDirectories(dir.resolve("com/example"));
+        Files.writeString(pkg.resolve("GatewayConfig.java"),
+                "package com.example;\n"
+              + "import org.springframework.context.annotation.Bean;\n"
+              + "import org.springframework.cloud.gateway.route.RouteLocator;\n"
+              + "import org.springframework.cloud.gateway.route.builder.RouteLocatorBuilder;\n"
+              + "public class GatewayConfig {\n"
+              + "  @Bean RouteLocator routes(RouteLocatorBuilder b) {\n"
+              + "    return b.routes()\n"
+              + "      .route(\"multi\", r -> r.path(\"/api/v1/orders/**\", \"/api/v1/legacy/**\").uri(\"http://orders\"))\n"
+              + "      .build();\n"
+              + "  }\n"
+              + "}\n");
+
+        IndexResult result = new GatewayRouteIndexer().index(dir);
+
+        assertThat(result.endpoints()).hasSize(2);
+        assertThat(result.endpoints())
+                .extracting(Endpoint::path)
+                .containsExactlyInAnyOrder("/api/v1/orders/**", "/api/v1/legacy/**");
+        assertThat(result.endpoints())
+                .extracting(Endpoint::targetUri)
+                .containsOnly("http://orders");
+    }
+
+    @Test
     void index_returnsEmpty_whenNoRouteLocatorPresent(@TempDir Path dir) throws Exception {  // REQ-005 negative
         Path pkg = Files.createDirectories(dir.resolve("com/example"));
         Files.writeString(pkg.resolve("Plain.java"),
