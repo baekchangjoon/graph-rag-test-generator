@@ -28,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 도구 2 본체. LLM 없음 — 동일 입력은 항상 동일 출력 (docs/04).
@@ -177,6 +178,13 @@ public class Generator {
         String assertionsBlock = fixture.assertions().stream()
                 .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
                 .reduce("", String::concat);
+        // 커스텀 응답 헤더: 게이트웨이 프록시가 전파한 헤더가 있으면 notNullValue() 단언 추가.
+        // 빈 맵이면 기존 테스트에 영향 없음.
+        if (!path.responseHeaders().isEmpty()) {
+            assertionsBlock += path.responseHeaders().keySet().stream()
+                    .map(h -> "\n            .header(\"" + h + "\", org.hamcrest.Matchers.notNullValue())")
+                    .collect(Collectors.joining());
+        }
 
         // Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성.
         List<Map<String, Object>> kafkaEmits = new ArrayList<>();

@@ -51,6 +51,7 @@ import java.sql.Connection;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -70,6 +71,16 @@ public class EndpointExplorationRunner {
     /** trace-mode가 주입하는 상관 헤더 이름들(case-insensitive). backend 값이 사용자 값을 이긴다. */
     private static final java.util.Set<String> CORRELATION_HEADERS = java.util.Set.of(
             "traceparent", "x-b3-traceid", "x-b3-spanid", "x-b3-sampled", "b3");
+
+    /**
+     * 응답 헤더 캡처 차단 목록(case-insensitive). hop-by-hop + 표준 HTTP 헤더 + 불안정·유니버셜 헤더.
+     * 이 목록에 없는 헤더(예: X-Downstream)는 커스텀 헤더로 간주해 ExploredPath에 저장된다.
+     */
+    private static final java.util.Set<String> RESPONSE_HEADER_DENYLIST = java.util.Set.of(
+            "content-length", "transfer-encoding", "connection", "keep-alive", "upgrade",
+            "te", "trailer", "proxy-authorization", "proxy-authenticate",
+            "date", "server", "content-encoding", "vary", "cache-control", "pragma", "expires",
+            "content-type", "content-language", "host", "accept-ranges");
 
     /** 사용자 헤더에서 상관 헤더를 case-insensitive 제거 후 scope 상관 헤더를 덮어쓴다. */
     static java.util.LinkedHashMap<String, String> applyCorrelationPriority(
@@ -564,7 +575,8 @@ public class EndpointExplorationRunner {
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql),
                     List.of(),
-                    pathEventEmits.stream().map(io.graphrag.model.CapturedEventEmit::id).toList()));
+                    pathEventEmits.stream().map(io.graphrag.model.CapturedEventEmit::id).toList(),
+                    candidate.responseHeaders()));
         }
         return new PathsBundle(paths, allSql, allHttpCalls, allCapturedEventEmits);
     }
@@ -633,11 +645,34 @@ public class EndpointExplorationRunner {
                 np = new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
                         resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
                         np.branchesTaken(), np.discoveredBy(), np.constraints(),
-                        np.validationWarnings(), np.requiredSeedIds());
+                        np.validationWarnings(), np.requiredSeedIds(),
+                        np.capturedEventEmitIds(), np.responseHeaders());
             }
             paths.set(i, np);
         }
         return new AttachResult(paths, perPath);
+    }
+
+    /**
+     * SUT 응답 헤더 맵에서 커스텀 헤더만 추출한다. 다중값 헤더는 첫 번째 값만 취하고(flatten),
+     * RESPONSE_HEADER_DENYLIST에 포함된 표준/hop-by-hop 헤더는 제외한다(불안정 값·보일러플레이트 제거).
+     */
+    static Map<String, String> captureResponseHeaders(Map<String, java.util.List<String>> rawHeaders) {
+        java.util.LinkedHashMap<String, String> result = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, java.util.List<String>> entry : rawHeaders.entrySet()) {
+            String name = entry.getKey();
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            if (RESPONSE_HEADER_DENYLIST.contains(name.toLowerCase(java.util.Locale.ROOT))) {
+                continue;
+            }
+            java.util.List<String> values = entry.getValue();
+            if (values != null && !values.isEmpty()) {
+                result.put(name, values.get(0));
+            }
+        }
+        return result.isEmpty() ? Map.of() : java.util.Collections.unmodifiableMap(result);
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -765,11 +800,12 @@ public class EndpointExplorationRunner {
         }
         BranchCoverage requestCoverage = analyzer.analyze(delta);
         long logEnd = sut.logOffset();
+        Map<String, String> capturedResponseHeaders = captureResponseHeaders(response.headers().map());
         return new InvocationOutcome(response.statusCode(),
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
                 httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                coverageKey, drained, java.util.List.of(), traceId);
+                coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders);
     }
 
     /**
@@ -892,7 +928,8 @@ public class EndpointExplorationRunner {
     private static ExploredPath withSeedIds(ExploredPath p, List<String> seedIds) {
         return new ExploredPath(p.id(), p.endpointId(), p.sampleInput(), p.expectedStatus(),
                 p.sampleResponse(), p.capturedSqlIds(), p.capturedHttpCallIds(), p.branchesTaken(),
-                p.discoveredBy(), p.constraints(), p.validationWarnings(), seedIds);
+                p.discoveredBy(), p.constraints(), p.validationWarnings(), seedIds,
+                p.capturedEventEmitIds(), p.responseHeaders());
     }
 
     /** 정수 PK는 +i 오프셋(비충돌), 문자열 PK는 "_i" 접미사 — path별 고유 시드 id. */
