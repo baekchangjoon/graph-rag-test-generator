@@ -191,11 +191,14 @@ public class Generator {
         for (io.graphrag.model.CapturedEventEmit emit : client.capturedEventEmitsForPath(path.id())) {
             Map<String, Object> modelEmit = new HashMap<>();
             modelEmit.put("topic", emit.topic());
+            // REQ-012: emit별 diff-검출 비결정 값을 fixture의 DB-PK 기반 집합과 병합한다.
+            // 입력 유래 값(substitutions keys)은 이미 REQ-010 불변으로 보장됨(KafkaPayloadDiffer).
+            ComposedFixture emitFixture = mergeNonDeterministicValues(fixture, emit.nonDeterministicValues());
             // key는 consumeNextRecord의 expectedKey 인자로 쓴다(공유 토픽 오염 격리).
             // 입력 유래 값이면 테스트 런타임 변수로 치환, 일반 리터럴이면 따옴표 문자열.
-            modelEmit.put("keyExpr", emitKeyExpr(emit.key(), fixture.substitutions(), fixture.nonDeterministicValues()));
+            modelEmit.put("keyExpr", emitKeyExpr(emit.key(), emitFixture.substitutions(), emitFixture.nonDeterministicValues()));
             if (emit.payload() != null) {
-                KafkaPayloadModel model = deterministicPayload(emit.payload(), fixture);
+                KafkaPayloadModel model = deterministicPayload(emit.payload(), emitFixture);
                 modelEmit.put("payloadJson", jsonEscape(model.payloadJson()));
                 modelEmit.put("serverGeneratedFields", model.serverGeneratedFields());
                 modelEmit.put("substitutionFields", model.substitutionFields());
@@ -478,6 +481,22 @@ public class Generator {
             List<Map<String, String>> serverGeneratedFields,
             List<Map<String, String>> substitutionFields
     ) {}
+
+    /**
+     * REQ-012: fixture의 nonDeterministicValues에 emit별 diff-검출 값을 병합한 새 fixture를 반환한다.
+     * additionalValues가 비어 있으면 기존 fixture를 그대로 반환(불변 최적화).
+     */
+    private static ComposedFixture mergeNonDeterministicValues(ComposedFixture fixture,
+                                                               java.util.Set<String> additionalValues) {
+        if (additionalValues == null || additionalValues.isEmpty()) {
+            return fixture;
+        }
+        java.util.Set<String> merged = new java.util.HashSet<>(fixture.nonDeterministicValues());
+        merged.addAll(additionalValues);
+        return new ComposedFixture(fixture.vars(), fixture.inserts(), fixture.deletes(),
+                fixture.bodyFormat(), fixture.bodyArgExprs(), fixture.assertions(),
+                fixture.substitutions(), java.util.Set.copyOf(merged));
+    }
 
     /**
      * emit payload 필드를 4가지로 분류한다.
