@@ -251,9 +251,9 @@
 | REQ-010 | 입력 유래 ID 보존 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (tenantId → scope.testId() 치환 변수로 단언, UUID 패턴 일치에도 제거하지 않음) | integration | 🟢 green |
 | REQ-011 | 패턴 matcher 단언 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (eventId/occurredAt → UUID/ISO-8601 regex Customization) + `kafkaEmitPayload_neitherServerNorSubstitution_usesCustomComparatorLenient` (컴파일 검증) | integration | 🟢 green |
 | REQ-012 | 캡처-2회 diff | `KafkaDualCaptureDiffTest#detectsChangingFieldsWithCleanup` | integration | 🔴 planned |
-| REQ-013 | 재현 불변식 | `ReproducibilityFixtureE2E#expectedStatusReproducesFromCleanDb` | E2E | 🔴 planned |
-| REQ-014 | 비재현 경로 억제 | `ExplorationSuppressionTest#dropsNonReproducibleNon2xx` | integration | 🔴 planned |
-| REQ-015 | 드롭 가시성 로그 | `ExplorationSuppressionTest#logsDroppedPaths` | integration | 🔴 planned |
+| REQ-013 | 재현 불변식(clean-DB replay) | `ReproVerificationTest`(12) + `ReproVerifierRealDropIntegrationTest`(Testcontainers+실HTTP, 실 replay) | integration | 🟢 green |
+| REQ-014 | 비재현 비-2xx 경로 억제(builder) | `ReproVerifierRealDropIntegrationTest`(오염-500→clean-404 불일치→DROP) | integration | 🟢 green |
+| REQ-015 | 드롭 가시성(log + droppedPaths) | `ReproVerifierRealDropIntegrationTest`(droppedPaths capturedStatus≠replayStatus) | integration | 🟢 green |
 | REQ-016 | cross-endpoint 의존 | — | E2E | 🔵 deferred |
 | REQ-017 | 메서드-레벨 @RequestMapping | `EndpointIndexerTest#indexesMethodLevelRequestMapping` | integration | 🔴 planned |
 | REQ-018 | empty-path-var 인코딩 | `EmptyPathVarFixtureE2E#captureReproduceStatusMatch` | E2E | 🔴 planned |
@@ -262,7 +262,7 @@
 | REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
 | REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 12/18 green (67%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should), REQ-013~015(P4), REQ-017/018(P5).
+Coverage: 15/18 green (83%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should), REQ-017/018(P5).
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
