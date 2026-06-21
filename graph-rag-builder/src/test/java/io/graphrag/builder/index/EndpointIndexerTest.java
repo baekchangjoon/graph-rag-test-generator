@@ -167,6 +167,40 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void formBindingIndex_classifiesNestedPojoFieldAndCollectsNestedShape(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // 커맨드의 컨버터 없는 POJO 필드(Address)는 NESTED, 스칼라(quantity)는 SCALAR로 분류되고,
+        // 중첩 타입의 shape가 bodyShapes에 수집돼 런타임 점-경로 평면화에 쓰인다.
+        java.nio.file.Path src = dir.resolve("N.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Controller
+                @RequestMapping("/web/nested")
+                class N {
+                    static class Address { private String city;
+                        public String getCity(){return city;} public void setCity(String c){this.city=c;} }
+                    static class Cmd { private Address address; private Integer quantity;
+                        public Address getAddress(){return address;} public void setAddress(Address a){this.address=a;}
+                        public Integer getQuantity(){return quantity;} public void setQuantity(Integer q){this.quantity=q;} }
+                    @PostMapping
+                    String submit(Cmd cmd) { return "redirect:/ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/nested")).findFirst().orElseThrow();
+        List<FormFieldBinding> bindings = result.formBindingIndex().get(post.id());
+        assertThat(bindings).isNotNull();
+        assertThat(bindings).filteredOn(b -> b.field().equals("address"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.NESTED);
+        assertThat(bindings).filteredOn(b -> b.field().equals("quantity"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.SCALAR);
+        assertThat(result.bodyShapes()).containsKey("x.N$Address");
+    }
+
+    @Test
     void detectsValidRequestBody_onlyForAnnotatedBody(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
             throws Exception {
         java.nio.file.Path src = dir.resolve("S.java");

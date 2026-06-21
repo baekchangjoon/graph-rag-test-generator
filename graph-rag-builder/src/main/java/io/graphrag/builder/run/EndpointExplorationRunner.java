@@ -21,6 +21,7 @@ import io.graphrag.builder.explore.InvocationOutcome;
 import io.graphrag.builder.explore.PathCandidate;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
+import io.graphrag.builder.index.FormFieldBinding;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.builder.oracle.InputCandidates;
@@ -192,7 +193,9 @@ public class EndpointExplorationRunner {
                               Map<String, List<FieldConstraint>> fieldConstraints,
                               List<ConstraintExtractor.Conjunction> conjunctions,
                               List<ConstraintExtractor.StateGuard> stateGuards,
-                              boolean validBody) throws Exception {
+                              boolean validBody,
+                              Map<String, BodyShape> shapesByType,
+                              List<FormFieldBinding> formBindings) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
@@ -204,7 +207,8 @@ public class EndpointExplorationRunner {
         boolean seedResource = readPath || hasPathParam;
         Map<String, List<FieldConstraint>> happyConstraints =
                 mergeComparisonBounds(fieldConstraints, comparisons, shape);
-        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints);
+        SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints,
+                null, shapesByType, formBindings, Map.of());
 
         List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
 
@@ -260,7 +264,8 @@ public class EndpointExplorationRunner {
                 try {
                     deleteSeeds(pass1Happy);
                     SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
-                            enumConstants, enumColumns, happyConstraints, hint);
+                            enumConstants, enumColumns, happyConstraints, hint,
+                            shapesByType, formBindings, Map.of());
                     requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
                     coverage.dump(true);                          // baseline: 부팅+pass-1+시드 구간 컷
                     cumulativeCoverage = new ExecutionDataStore(); // 리포트를 pass-2(시드된 run)만 반영
@@ -1209,25 +1214,34 @@ public class EndpointExplorationRunner {
                                        Map<String, List<String>> enumConstants,
                                        Map<String, List<String>> enumColumns,
                                        Map<String, List<FieldConstraint>> fieldConstraints) {
-        return happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints, null);
+        return happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints, null,
+                Map.of(), List.of(), Map.of());
     }
 
-    // 제약-aware happy(Feature A: fieldConstraints) + SQL-driven seed 보정(hint)을 모두 받는 정본.
+    // 제약-aware happy(Feature A: fieldConstraints) + SQL-driven seed 보정(hint) + 폼 바인딩 컨텍스트를 받는 정본.
+    // 폼 엔드포인트(ParamKind.FORM 보유)는 body를 FormBodySynthesizer로 합성한다(중첩 점-경로 평면화 + 참조
+    // 토큰 refValues 주입). refValues는 러너가 백업행에서 산출(Phase 3); 비면 참조 필드 skip(스칼라/skip 폴백).
     static SynthesizedInput happyInput(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
                                        Map<String, List<String>> enumConstants,
                                        Map<String, List<String>> enumColumns,
                                        Map<String, List<FieldConstraint>> fieldConstraints,
-                                       ResolutionHint hint) {
+                                       ResolutionHint hint,
+                                       Map<String, BodyShape> shapesByType,
+                                       List<FormFieldBinding> formBindings,
+                                       Map<String, String> refValues) {
         boolean get = endpoint.httpMethod().equals("GET");
         boolean hasPath = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
+        boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
         if (get || hasPath) {
             SynthesizedInput pathPart =
                     new ReadInputSynthesizer(enumConstants, enumColumns).synthesize(endpoint, tables, hint);
             if (get || shape == null) {
                 return pathPart;
             }
-            SynthesizedInput bodyPart = new SampleInputSynthesizer(enumConstants)
-                    .synthesize(shape, tables, fieldConstraints);
+            SynthesizedInput bodyPart = form
+                    ? new FormBodySynthesizer(enumConstants)
+                            .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints)
+                    : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables, fieldConstraints);
             JsonNode bn = bodyPart.body();
             if (!(bn instanceof ObjectNode bo)) {
                 // 컬렉션 body(array)는 path/query와 병합 불가 — body를 그대로 둔다(by-id+컬렉션 body는
@@ -1247,8 +1261,12 @@ public class EndpointExplorationRunner {
             }
             return new SynthesizedInput(merged, seeds);
         }
-        return shape == null
-                ? new SynthesizedInput(Json.mapper().createObjectNode(), List.of())
+        if (shape == null) {
+            return new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
+        }
+        return form
+                ? new FormBodySynthesizer(enumConstants)
+                        .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints)
                 : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables, fieldConstraints);
     }
 
