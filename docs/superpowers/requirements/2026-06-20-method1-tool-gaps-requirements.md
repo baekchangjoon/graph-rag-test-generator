@@ -243,9 +243,9 @@
 | REQ-002 | 함수형 body/path-var 추출 | `RouterFunctionIndexerTest#index_extractsBodyShapeAndPathVar` + `RouterFunctionIndexerTest#index_extractsBodyShapeFromBodyToFlux` | integration | 🟢 green |
 | REQ-003 | 시그니처 실패 폴백 | `RouterFunctionIndexerTest#index_unresolvedBodyPost_getsSyntheticShapeForExplore` | integration | 🟢 green |
 | REQ-004 | IndexResult merge | `IndexResultMergeTest#merge_concatsEndpointsAndUnionsMaps` + `RouterFunctionFixtureIT#functionalRoutes_mergeIntoEndpointIndex` | integration + fixture | 🟢 green |
-| REQ-005 | 게이트웨이 라우트 발견 | `GatewayRouteFixtureE2E#discoversProxyRoutes` | E2E | 🔴 planned |
-| REQ-006 | 경로 변환 필터 파싱 | `GatewayRouteIndexerTest#parsesStripPrefixAndRejectsUnsupported` | integration | 🔴 planned |
-| REQ-007 | 프록시 스모크 테스트 | `GatewayRouteFixtureE2E#generatesProxyContractSmoke` | E2E | 🔴 planned |
+| REQ-005 | 게이트웨이 라우트 발견 | `GatewayRouteIndexerTest#index_discoversGatewayProxyRoutes_withAndWithoutFilters` + `GatewayRouteFixtureIT#gatewayRoutes_mergeIntoEndpointIndex` | integration | 🟢 green |
+| REQ-006 | 경로 변환 필터 파싱(predicate path 보존) | `GatewayRouteIndexerTest#index_excludesRoute_withUnsupportedFilter` + `#index_excludesRoute_circuitBreakerWithNestedConfig_notSetName` | integration | 🟢 green |
+| REQ-007 | 프록시 스모크(status+헤더 전파) | `e2e/run-gateway-e2e.sh` → `GatewayOrdersGetTest`(status 200 + X-Downstream 헤더 단언, 재실행 green) | E2E | 🟢 green |
 | REQ-008 | 게이트웨이 깊은 모드 | — | E2E | 🔵 deferred |
 | REQ-009 | 서버-생성 분류(parity) | `ServerGeneratedDetectorTest#detects_uuid_and_iso8601_andClassifiesPattern` + `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` | integration | 🟢 green |
 | REQ-010 | 입력 유래 ID 보존 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (tenantId → scope.testId() 치환 변수로 단언, UUID 패턴 일치에도 제거하지 않음) | integration | 🟢 green |
@@ -262,7 +262,7 @@
 | REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
 | REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 9/18 green (50%) — target 100% (대상: Must 15 + 미연기 Should 3)
+Coverage: 12/18 green (67%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should), REQ-013~015(P4), REQ-017/018(P5).
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
