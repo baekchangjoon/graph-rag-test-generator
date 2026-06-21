@@ -85,9 +85,10 @@ in-process 도구의 고유 가치는 **분기를 여는 입력 값을 찾아내
 - **교체가능 인터페이스 `InputOracle` 도입** — `analyze(SutCode) → InputCandidates`(필드별 numeric/
   string 후보). 구현 2종:
   - `StaticLiteralOracle` — 기존 Spoon 비교식/문자열동치 추출 흡수(소스 srcDir).
-  - `ConcolicOracle` — **ASM 심볼릭 스캔 + Z3**(bootJar 바이트코드). 입력 파생 정수 선형식을
-    추적해 각 분기 경계 `coeff*field+const==0`을 Z3로 풀어 **소스에 없는 값**(예: `score*2==84`→42)을
-    도출. 도구는 `org.ow2.asm`(JDK 추적)·`tools.aqua:z3-turnkey`(native 번들) — 버전 rot 없음.
+  - `ConcolicOracle` — **ASM 심볼릭 스캔 + Z3**(bootJar 바이트코드). 입력 파생 선형식(정수 +
+    float/double, 계수는 `Rational`)을 추적해 각 분기 경계를 Z3(정수는 IntExpr, float/double은 Real)로
+    풀어 **소스에 없는 값**(예: `score*2==84`→42)을 도출. 도구는 `org.ow2.asm`(JDK 추적)·
+    `tools.aqua:z3-turnkey`(native 번들) — 버전 rot 없음.
 - **배선** — BuilderCli가 두 오라클을 merge해 constraintDirected로 환류. **실증**: order-service
   promo에 파생 분기 `score*2==84` 추가 → concolic이 42 도출 → promo handler **10/10**(소스 리터럴로는
   불가능한 arm 커버). 전 단위 + BuilderIntegrationTest green.
@@ -169,8 +170,8 @@ InputOracle(ASM+Z3) 위에, 더 흔한 분기 종류를 여는 단계들을 쌓�
 - **Stage 4 — 상태 의존 가드 다-arm 시드**: `extractStateGuards`(TEMPORAL stale 과거날짜 + ENUM `!=`/`==`)
   + `ReadInputSynthesizer.synthesizeVariants`가 저장-행 상태별 대체 시드 변종을 합성해 by-id 엔드포인트의
   여러 전이 arm을 연다. ENUM은 NE 잔여 상수 + EQ positive 각 상수 + else 잔여 1개로 **상태머신 다중 전이**를
-  커버(order-service `advance` 200/409/410). inter-field 등식은 Z3 `solveTuple`(정수). float inter-field는
-  설계 보류(실측 SUT 부재, `2026-06-16-interfield-float-double.md`).
+  커버(order-service `advance` 200/409/410). inter-field 등식은 Z3 `solveTuple`(정수) / `solveTupleReal`
+  (float/double, `2026-06-16-interfield-float-double.md` — 작업 #4로 구현됨).
 
 ## ConcolicOracle 지원 범위 (확장 중)
 
@@ -183,12 +184,18 @@ order-service에 해당 분기를 추가해 distinct 테스트로 보존됨을 �
 | long 산술 `bonus*2==10000000000` | bonus=5000000000 (int 범위 밖) | `bonus=5e9 → -whale` |
 | 문자열 길이 `code.length()==5` | "xxxxx" (길이5 문자열) | `code=xxxxx → -c5` |
 | **2-필드 선형 inter-field** `loyaltyPoints==nights*600+7` | 튜플 `{loyaltyPoints:607, nights:1}` | `bookings 201`(필드별 변이로는 불가) |
+| **float/double 2-필드 선형** `base*2+surcharge*3 ∈ [99.5,100.5]` | real 튜플 `{base≈0, surcharge≈33.17}` | `pricing 201`(필드별 변이로는 불가) |
 
-`Sym`은 정수 선형식 `Σ(coeff·field)+const`를 **최대 2개 필드**까지 추적한다(3개째·진짜 곱 `x·y`는 top으로
-bail). 비교 opcode(EQ/NE/LT/LE/GT/GE)를 threading해, 단일 필드는 경계 ±1, **2-필드는 `solveTuple`**로
-동시충족 정수 튜플을 Z3 Optimize(합 최소화 → 작은·in-range 값)로 푼다. `InputMutator.interField`가 한
-atomic 변이로 적용. 결정적 in-repo 승리: `InputCandidates.tuples` 채널은 additive(단일 필드 무회귀).
+`Sym`은 선형식 `Σ(coeff·field)+const`(계수/상수는 `Rational`)를 **최대 2개 필드**까지 추적한다(3개째·진짜
+곱 `x·y`는 top으로 bail). 항의 값-도메인(INT/REAL)을 추적해 한 비교에 정수·float가 섞이면(MIXED) 보수적
+bail. 비교 opcode(EQ/NE/LT/LE/GT/GE)를 threading해, 단일 필드는 경계 ±1(real은 `{B-ε,B,B+ε}`),
+**2-필드는 `solveTuple`(정수 IntExpr) / `solveTupleReal`(float/double Real, `mkReal` 분수 정확)**로
+동시충족 튜플을 Z3 Optimize(합 최소화 → 작은·in-range 값)로 푼다. real 부등식 해는 margin(1e-3)으로
+경계 안쪽으로 밀어 SUT float 재계산 시 반올림으로 분기가 닫히는 것을 막는다. `InputMutator.interField`/
+`interFieldReal`이 한 atomic 변이로 적용. 결정적 in-repo 승리: `InputCandidates.tuples`/`realTuples` 채널은
+additive(정수·단일 필드 무회귀).
 
-구현 노트: `INVOKEDYNAMIC`(문자열 concat) 처리, `LCMP`→a-b, 미처리 opcode는 깔끔히 bail(앞선
-기록 보존). 미지원/보류(향후): 문자열 동치/접두사(Z3 string theory), **float rational 계수·enum 메서드
-grounding**(petclinic `deposit*1.1<nights*rate`는 best-effort), 3+변수 동시해, enum ordinal, interprocedural 전파.
+구현 노트: `INVOKEDYNAMIC`(문자열 concat) 처리, `LCMP`/`FCMP`/`DCMP`→a-b, overflow는 `Math.*Exact`로
+감지해 top bail, 미처리 opcode는 깔끔히 bail(앞선 기록 보존). 미지원/보류(향후): 문자열 동치/접두사(Z3
+string theory), **enum 메서드 grounding**, 변수×변수 비선형(`deposit*rate`), int↔float 혼합 비교(MIXED bail),
+3+변수 동시해, enum ordinal, interprocedural 전파.
