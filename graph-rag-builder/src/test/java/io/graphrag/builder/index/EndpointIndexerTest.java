@@ -201,6 +201,70 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void formBindingIndex_classifiesConvertedTypeAsReference(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // Formatter<Color> 대상 타입(Color)을 필드로 가진 커맨드 → color 필드 REFERENCE(refEntityFqn=Color).
+        java.nio.file.Files.writeString(dir.resolve("R.java"), """
+                package x;
+                import org.springframework.format.Formatter;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                class Color { private String name;
+                    public String getName(){return name;} public void setName(String n){this.name=n;} }
+                class ColorFormatter implements Formatter<Color> {
+                    public Color parse(String t, java.util.Locale l){return new Color();}
+                    public String print(Color c, java.util.Locale l){return "";}
+                }
+                @Controller @RequestMapping("/web/r")
+                class R {
+                    static class Cmd { private Color color; private Integer quantity;
+                        public Color getColor(){return color;} public void setColor(Color c){this.color=c;}
+                        public Integer getQuantity(){return quantity;} public void setQuantity(Integer q){this.quantity=q;} }
+                    @PostMapping String submit(Cmd cmd){return "redirect:/ok";}
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/r")).findFirst().orElseThrow();
+        List<FormFieldBinding> bindings = result.formBindingIndex().get(post.id());
+        assertThat(bindings).filteredOn(b -> b.field().equals("color"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.REFERENCE);
+        assertThat(bindings).filteredOn(b -> b.field().equals("color"))
+                .extracting(FormFieldBinding::refEntityFqn).containsExactly("x.Color");
+        assertThat(bindings).filteredOn(b -> b.field().equals("quantity"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.SCALAR);
+    }
+
+    @Test
+    void formBindingIndex_classifiesEntityWithManyToOneJoinColumnAsReference(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // @Entity 타입은 컨버터 미감지여도 REFERENCE(best-effort) + @ManyToOne @JoinColumn(name)에서 FK 컬럼 추출.
+        java.nio.file.Files.writeString(dir.resolve("J.java"), """
+                package x;
+                import jakarta.persistence.*;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                @Entity class Pet { @Id Long id; }
+                @Controller @RequestMapping("/web/j")
+                class J {
+                    static class Cmd {
+                        @ManyToOne @JoinColumn(name="type_id") private Pet pet;
+                        public Pet getPet(){return pet;} public void setPet(Pet p){this.pet=p;} }
+                    @PostMapping String submit(Cmd cmd){return "redirect:/ok";}
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/j")).findFirst().orElseThrow();
+        List<FormFieldBinding> bindings = result.formBindingIndex().get(post.id());
+        assertThat(bindings).filteredOn(b -> b.field().equals("pet")).allSatisfy(b -> {
+            assertThat(b.kind()).isEqualTo(FormFieldBinding.Kind.REFERENCE);
+            assertThat(b.refEntityFqn()).isEqualTo("x.Pet");
+            assertThat(b.joinColumn()).isEqualTo("type_id");
+        });
+    }
+
+    @Test
     void detectsValidRequestBody_onlyForAnnotatedBody(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
             throws Exception {
         java.nio.file.Path src = dir.resolve("S.java");

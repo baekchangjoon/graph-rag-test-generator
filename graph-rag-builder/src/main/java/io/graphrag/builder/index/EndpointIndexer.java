@@ -12,6 +12,7 @@ import spoon.reflect.code.CtLiteral;
 import spoon.reflect.code.CtNewArray;
 import spoon.reflect.declaration.CtAnnotation;
 import spoon.reflect.declaration.CtElement;
+import spoon.reflect.declaration.CtField;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtType;
@@ -22,6 +23,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Spoon(noClasspath) 기반 L1 구조 인덱싱.
@@ -60,6 +62,7 @@ public class EndpointIndexer {
         launcher.getEnvironment().setCommentEnabled(false);
         launcher.getEnvironment().setComplianceLevel(17);
         CtModel model = launcher.buildModel();
+        ConverterRegistryIndexer.Registry converterRegistry = new ConverterRegistryIndexer().index(model);
 
         List<Endpoint> endpoints = new ArrayList<>();
         Map<String, BodyShape> bodyShapes = new HashMap<>();
@@ -128,7 +131,8 @@ public class EndpointIndexer {
                 if (rest && hasValidRequestBody(method)) {
                     validBodyEndpointIds.add(id);
                 }
-                List<FormFieldBinding> formBindings = classifyFormBindings(params, bodyShapes, model);
+                List<FormFieldBinding> formBindings = classifyFormBindings(
+                        params, bodyShapes, model, converterRegistry, type.getQualifiedName());
                 if (!formBindings.isEmpty()) {
                     formBindingIndex.put(id, formBindings);
                 }
@@ -229,15 +233,23 @@ public class EndpointIndexer {
     }
 
     private static final int MAX_FORM_NEST_DEPTH = 4;
+    private static final String ENTITY       = "jakarta.persistence.Entity";
+    private static final String JOIN_COLUMN  = "jakarta.persistence.JoinColumn";
 
     /**
-     * 폼 커맨드(FORM 파라미터) 필드의 바인딩 종류를 정적 분류한다(Phase 2: NESTED/SCALAR).
-     * 컨버터 없는 바인딩가능 POJO 필드(비-enum, 해석되는 비어있지 않은 bodyShape 보유)는 NESTED로 분류하고
-     * 그 중첩 타입 shape를 bodyShapes에 재귀 수집(런타임 점-경로 평면화용). 그 외는 SCALAR.
-     * (REFERENCE 분류 — 컨버터/엔티티/editor 감지 — 는 Phase 3.)
+     * 폼 커맨드(FORM 파라미터) 필드의 바인딩 종류를 정적 분류한다(spec §3).
+     * <ul>
+     *   <li>REFERENCE: 타입 ∈ 전역 convertedTypes(Formatter/Converter) ∪ 컨트롤러-local editor ∪ @Entity →
+     *       런타임 토큰 trial(refEntityFqn + @ManyToOne @JoinColumn(name) static 보유).</li>
+     *   <li>NESTED: 컨버터 없는 바인딩가능 POJO(비-enum, 해석되는 비어있지 않은 bodyShape) → 중첩 타입 shape를
+     *       bodyShapes에 재귀 수집(런타임 점-경로 평면화).</li>
+     *   <li>SCALAR: 그 외.</li>
+     * </ul>
+     * 분류 우선순위는 REFERENCE → NESTED → SCALAR(엔티티/컨버티드도 bodyShape를 가지므로 REFERENCE를 먼저 본다).
      */
     private List<FormFieldBinding> classifyFormBindings(List<EndpointParam> params,
-            Map<String, BodyShape> bodyShapes, CtModel model) {
+            Map<String, BodyShape> bodyShapes, CtModel model,
+            ConverterRegistryIndexer.Registry registry, String controllerFqn) {
         EndpointParam form = params.stream()
                 .filter(p -> p.kind() == ParamKind.FORM).findFirst().orElse(null);
         if (form == null) {
@@ -247,9 +259,14 @@ public class EndpointIndexer {
         if (shape == null) {
             return List.of();
         }
+        CtType<?> commandType = findTypeInModel(model, form.javaType());
+        Set<String> localEditors = registry.controllerEditors().getOrDefault(controllerFqn, Set.of());
         List<FormFieldBinding> bindings = new ArrayList<>();
         for (BodyShape.BodyField field : shape.fields()) {
-            if (isNestedPojo(field.javaType(), model)) {
+            if (isReference(field.javaType(), registry, localEditors, model)) {
+                bindings.add(FormFieldBinding.reference(field.name(), field.javaType(),
+                        field.javaType(), joinColumn(commandType, field.name())));
+            } else if (isNestedPojo(field.javaType(), model)) {
                 storeNestedShapes(field.javaType(), model, bodyShapes, new java.util.HashSet<>(), 0);
                 bindings.add(FormFieldBinding.nested(field.name(), field.javaType(), field.javaType()));
             } else {
@@ -257,6 +274,42 @@ public class EndpointIndexer {
             }
         }
         return bindings;
+    }
+
+    /** 참조 타입 여부: 전역 convertedTypes ∪ 컨트롤러-local editor ∪ @Entity(best-effort). */
+    private static boolean isReference(String typeFqn, ConverterRegistryIndexer.Registry registry,
+                                       Set<String> localEditors, CtModel model) {
+        return registry.convertedTypes().contains(typeFqn)
+                || localEditors.contains(typeFqn)
+                || isEntityType(typeFqn, model);
+    }
+
+    private static boolean isEntityType(String typeFqn, CtModel model) {
+        CtType<?> type = findTypeInModel(model, typeFqn);
+        return type != null && findAnnotation(type, ENTITY) != null;
+    }
+
+    /** 커맨드 필드의 @ManyToOne @JoinColumn(name=…) FK 컬럼명(없으면 null — 런타임이 @Table/camelToSnake 폴백). */
+    private static String joinColumn(CtType<?> commandType, String fieldName) {
+        if (commandType == null) {
+            return null;
+        }
+        CtField<?> field = commandType.getField(fieldName);
+        if (field == null) {
+            return null;
+        }
+        CtAnnotation<?> joinCol = findAnnotation(field, JOIN_COLUMN);
+        return joinCol == null ? null : annotationStringValue(joinCol, "name");
+    }
+
+    private static CtType<?> findTypeInModel(CtModel model, String typeFqn) {
+        for (CtType<?> type : model.getAllTypes()) {
+            CtType<?> target = BodyShapeExtractor.findNested(type, typeFqn);
+            if (target != null) {
+                return target;
+            }
+        }
+        return null;
     }
 
     /** 바인딩가능 POJO(비-enum, 해석되는 비어있지 않은 bodyShape) 여부. enum/스칼라/미해석 타입은 false. */
