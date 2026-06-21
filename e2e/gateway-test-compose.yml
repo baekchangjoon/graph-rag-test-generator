@@ -1,0 +1,19 @@
+# 게이트웨이 생성 테스트 실행 환경.
+# gateway-service → wiremock (다운스트림 스텁).
+services:
+  wiremock:
+    image: wiremock/wiremock:3.13.0
+    command: ["--global-response-templating"]
+    ports:
+      - "59191:8080"
+    volumes:
+      - ./gateway-stubs:/home/wiremock/mappings:ro
+
+  gateway:
+    build: ../samples/gateway-service
+    environment:
+      ORDERS_URI: http://wiremock:8080
+    ports:
+      - "59180:8080"
+    depends_on:
+      - wiremock

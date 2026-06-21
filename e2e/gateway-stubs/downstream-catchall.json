@@ -1,0 +1,14 @@
+{
+  "request": {
+    "method": "ANY",
+    "urlPattern": ".*"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Downstream": "stub"
+    },
+    "jsonBody": { "status": "ok" }
+  }
+}
