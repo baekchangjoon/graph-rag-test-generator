@@ -582,7 +582,9 @@ public final class ConcolicOracle implements InputOracle {
             if (d.signum() == 0) {
                 return Optional.empty();
             }
-            double val = n.divide(d, MathContext.DECIMAL64).doubleValue();
+            // DECIMAL128(34 sig-digits): double round-trip(최대 17 sig-digits)을 보장 — DECIMAL64(16)는
+            // 마지막 자리에서 최근접 double을 놓칠 수 있어, exact-rational 불변식(D1/D4)을 약화시킨다(리뷰).
+            double val = n.divide(d, MathContext.DECIMAL128).doubleValue();
             return Double.isFinite(val) ? Optional.of(val) : Optional.empty();
         }
         return Optional.empty();
