@@ -250,7 +250,7 @@
 | REQ-009 | 서버-생성 분류(parity) | `ServerGeneratedDetectorTest#detects_uuid_and_iso8601_andClassifiesPattern` + `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` | integration | 🟢 green |
 | REQ-010 | 입력 유래 ID 보존 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (tenantId → scope.testId() 치환 변수로 단언, UUID 패턴 일치에도 제거하지 않음) | integration | 🟢 green |
 | REQ-011 | 패턴 matcher 단언 | `GeneratorKafkaServerFieldsTest#kafkaEmitPayload_classifiesAndAsserts_perField` (eventId/occurredAt → UUID/ISO-8601 regex Customization) + `kafkaEmitPayload_neitherServerNorSubstitution_usesCustomComparatorLenient` (컴파일 검증) | integration | 🟢 green |
-| REQ-012 | 캡처-2회 diff | `KafkaDualCaptureDiffTest#detectsChangingFieldsWithCleanup` | integration | 🔴 planned |
+| REQ-012 | 캡처-2회 diff(비-패턴 서버생성 필드) | `KafkaPayloadDifferTest`(9, textual/number/boolean diff·REQ-010 제외) + `KafkaDiffCleanupTest`(12, 스키마 PK·정리) + order-service e2e(DB 시퀀스 ID `eventId` 검출) | integration | 🟢 green |
 | REQ-013 | 재현 불변식(clean-DB replay) | `ReproVerificationTest`(12) + `ReproVerifierRealDropIntegrationTest`(Testcontainers+실HTTP, 실 replay) | integration | 🟢 green |
 | REQ-014 | 비재현 비-2xx 경로 억제(builder) | `ReproVerifierRealDropIntegrationTest`(오염-500→clean-404 불일치→DROP) | integration | 🟢 green |
 | REQ-015 | 드롭 가시성(log + droppedPaths) | `ReproVerifierRealDropIntegrationTest`(droppedPaths capturedStatus≠replayStatus) | integration | 🟢 green |
@@ -262,7 +262,7 @@
 | REQ-021 | 무-LLM·결정적 | `NoLlmDependencyTest#indexers_haveNoLlmOrDirectHttpClientImports` + 코드 리뷰 | integration | 🟢 green |
 | REQ-022 | 기존 e2e 회귀 0 | `e2e/run-e2e.sh` (order-service 54 tests) | E2E | 🟢 green |
 
-Coverage: 17/18 green (94%) — target 100% (대상: Must 15 + 미연기 Should 3). 남음: REQ-012(P3 Should, Kafka 2회-diff).
+Coverage: 18/18 green (100%) ✅ — 대상(Must 15 + 미연기 Should 3) 전부 green. 캠페인 완료. 연기(🔵): REQ-008·016·019·020.
 - 분모(18): REQ-001,002,003,004,005,006,007,009,010,011,013,014,015,021,022 (Must 15) + REQ-012,017,018 (Should 3)
   - 주: REQ-002는 Should→Must 승격(explore skip 통과 필수 — Cursor I2).
 - 제외(🔵, 4): REQ-008(Could), REQ-016(Could), REQ-019(Should·CI 게이트 제외), REQ-020(Could)
