@@ -265,6 +265,68 @@ class EndpointIndexerTest {
     }
 
     @Test
+    void formBindingIndex_controllerLocalEditorScopesReferenceToThatControllerOnly(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // @InitBinder registerCustomEditor(Sku.class)를 등록한 컨트롤러 A의 Sku 필드만 REFERENCE,
+        // editor 미등록 컨트롤러 B의 동일 Sku 필드는 NESTED(컨트롤러-local 스코프 회귀 가드, spec §5-5).
+        java.nio.file.Files.writeString(dir.resolve("E.java"), """
+                package x;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.WebDataBinder;
+                import org.springframework.web.bind.annotation.*;
+                class Sku { private String code;
+                    public String getCode(){return code;} public void setCode(String c){this.code=c;} }
+                @Controller @RequestMapping("/web/a")
+                class A {
+                    @InitBinder void init(WebDataBinder b){
+                        b.registerCustomEditor(Sku.class, new java.beans.PropertyEditorSupport()); }
+                    static class Cmd { private Sku sku;
+                        public Sku getSku(){return sku;} public void setSku(Sku s){this.sku=s;} }
+                    @PostMapping String submit(Cmd cmd){return "redirect:/ok";}
+                }
+                @Controller @RequestMapping("/web/b")
+                class B {
+                    static class Cmd { private Sku sku;
+                        public Sku getSku(){return sku;} public void setSku(Sku s){this.sku=s;} }
+                    @PostMapping String submit(Cmd cmd){return "redirect:/ok";}
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint a = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/a")).findFirst().orElseThrow();
+        Endpoint b = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/b")).findFirst().orElseThrow();
+        assertThat(result.formBindingIndex().get(a.id())).filteredOn(x -> x.field().equals("sku"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.REFERENCE);
+        assertThat(result.formBindingIndex().get(b.id())).filteredOn(x -> x.field().equals("sku"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.NESTED);
+    }
+
+    @Test
+    void formBindingIndex_collectionFieldFallsBackToScalar_nonTarget(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // 컬렉션 필드(List<Y>)는 v1 비목표 → 스칼라/skip 폴백(NESTED·REFERENCE 아님).
+        java.nio.file.Files.writeString(dir.resolve("C.java"), """
+                package x;
+                import java.util.List;
+                import org.springframework.stereotype.Controller;
+                import org.springframework.web.bind.annotation.*;
+                class Item { private String n; public String getN(){return n;} public void setN(String v){this.n=v;} }
+                @Controller @RequestMapping("/web/c")
+                class C {
+                    static class Cmd { private List<Item> items;
+                        public List<Item> getItems(){return items;} public void setItems(List<Item> i){this.items=i;} }
+                    @PostMapping String submit(Cmd cmd){return "redirect:/ok";}
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        Endpoint post = result.endpoints().stream()
+                .filter(e -> e.path().equals("/web/c")).findFirst().orElseThrow();
+        assertThat(result.formBindingIndex().get(post.id())).filteredOn(x -> x.field().equals("items"))
+                .extracting(FormFieldBinding::kind).containsExactly(FormFieldBinding.Kind.SCALAR);
+    }
+
+    @Test
     void detectsValidRequestBody_onlyForAnnotatedBody(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
             throws Exception {
         java.nio.file.Path src = dir.resolve("S.java");

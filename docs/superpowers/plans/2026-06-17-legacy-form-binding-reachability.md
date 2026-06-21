@@ -140,6 +140,13 @@
 ## 9. 상태
 설계 승인(2026-06-16). spec + 3-모델 리뷰 + triage 반영 완료 → writing-plans(Phase별) → Phase 0부터 double-loop TDD.
 
+**구현 완료(2026-06-21).** Phase 0~4 전부 GREEN. 5종 메커니즘(다중-커맨드/참조-name/참조-id/중첩/PropertyEditor)
+모두 `BuilderIntegrationTest`에서 양 arm(302) 도달. 핵심 산출물: `FormFieldBinding`(static 메타), `selectFormCommand`
+(@Valid/@Validated 우선), `ConverterRegistryIndexer`(Formatter/Converter/@InitBinder), `EndpointIndexer.classifyFormBindings`
+(REFERENCE→NESTED→SCALAR), `FormBodySynthesizer`(중첩 점-경로 평면화 + refValues 주입), 러너 런타임 trial
+(백업테이블 해석 FK→@Table→camelToSnake, SELECT/seed, name 1순위 + PK backtrack `discoveredBy="form-ref-trial"`).
+컬렉션 필드는 v1 비목표 → 스칼라/skip 폴백(확정). 전체 회귀 0.
+
 ## 10. 3-모델 리뷰 triage (Sonnet design-doc-reviewer / Gemini 3.5 Flash / GPT-5.5)
 Sonnet=approved_with_conditions, Gemini=needs_revision, GPT=needs_revision. 수렴·근거 기반 지적 전부 반영:
 - **반영**: 참조 필드 값 직접 배선(javaType≠String이라 stringCandidates 미동작 — GPT I2) + reference-aware base/다필드
