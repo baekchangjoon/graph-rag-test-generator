@@ -17,6 +17,7 @@ awaitility = "4.2.2"
 mybatisStarter = "3.0.5"
 jacoco = "0.8.13"
 wiremock = "3.13.0"
+h2 = "2.3.232"
 otelAgent = "2.16.0"
 otelProto = "1.3.2-alpha"
 asm = "9.7"
@@ -55,6 +56,7 @@ opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", v
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+h2 = { module = "com.h2database:h2", version.ref = "h2" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

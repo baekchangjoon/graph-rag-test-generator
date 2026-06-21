@@ -37,6 +37,7 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
     testImplementation(libs.testcontainers.junit)   // @Testcontainers/@Container 확장
+    testImplementation(libs.h2)                     // in-memory JDBC for unit tests
 }
 
 tasks.processResources {
