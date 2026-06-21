@@ -60,7 +60,10 @@ class BuilderIntegrationTest {
                         "post-api-orders-batch", "post-api-orders-by-ids",
                         "post-api-orders-search", "post-api-pricing",
                         "post-api-promo", "post-api-signups",
+                        "post-web-editor", "post-web-idref", "post-web-multi",
+                        "post-web-nested",
                         "post-web-orders",
+                        "post-web-ref",
                         "post-web-users-userid-submit",
                         "put-api-bookings-id");
 
@@ -333,6 +336,33 @@ class BuilderIntegrationTest {
         assertThat(webUserValidPaths.stream().map(ExploredPath::expectedStatus).distinct())
                 .containsExactly(302);
 
+        // ===== 레거시 @Controller 폼 바인딩 도달성(spec §5 메커니즘 1–5) =====
+        // 각 폼은 quantity[1,100] 스칼라 가드 + (참조/중첩/editor) 바인딩이 모두 성공해야 ok arm(302) 도달.
+        // 바인딩 미합성으로 되돌리면 참조 필드 null → 항상 error arm(분기집합 1개) → assertFormBothArms FAIL.
+
+        // 1. 다중-커맨드(Phase 1): 빌더가 첫 후보 HelperForm이 아니라 @Valid CmdForm을 커맨드로 선택.
+        io.graphrag.model.Endpoint webMulti = endpoint(asset, "post-web-multi");
+        assertThat(webMulti.params()).extracting(io.graphrag.model.EndpointParam::kind)
+                .containsExactly(io.graphrag.model.ParamKind.FORM);
+        assertThat(webMulti.params().get(0).javaType())
+                .isEqualTo("io.graphrag.sample.orders.MultiCommandWebController$CmdForm");
+        assertFormBothArms(asset, "post-web-multi");
+
+        // 2. 참조-name-Formatter(Phase 3): Color 필드가 colors 행 name 토큰으로 바인딩.
+        assertThat(endpoint(asset, "post-web-ref").params())
+                .extracting(io.graphrag.model.EndpointParam::kind)
+                .containsExactly(io.graphrag.model.ParamKind.FORM);
+        assertFormBothArms(asset, "post-web-ref");
+
+        // 3. 참조-id-Converter(Phase 3): Brand 필드가 PK 토큰(name 실패 → PK backtrack)으로 바인딩.
+        assertFormBothArms(asset, "post-web-idref");
+
+        // 4. 중첩 POJO(Phase 2): address.city/address.street 점-경로 스칼라로 바인딩.
+        assertFormBothArms(asset, "post-web-nested");
+
+        // 5. PropertyEditor(Phase 4): @InitBinder registerCustomEditor(Sku.class)로 sku 행 code 토큰 바인딩.
+        assertFormBothArms(asset, "post-web-editor");
+
         // MyBatis mapper 사실 + still_missing 리포트
         assertThat(asset.mappers()).extracting(m -> m.statementId()).contains("search");
         assertThat(Files.exists(out.resolve("exploration-report.json"))).isTrue();
@@ -346,5 +376,27 @@ class BuilderIntegrationTest {
 
     private static List<ExploredPath> pathsOf(GraphAsset asset, String endpointId) {
         return asset.paths().stream().filter(p -> p.endpointId().equals(endpointId)).toList();
+    }
+
+    private static io.graphrag.model.Endpoint endpoint(GraphAsset asset, String endpointId) {
+        return asset.endpoints().stream().filter(e -> e.id().equals(endpointId))
+                .findFirst().orElseThrow(() -> new AssertionError("endpoint not indexed: " + endpointId));
+    }
+
+    /**
+     * 폼 엔드포인트가 양 arm(redirect 302 — 분기집합 ≥2)에 도달함을 단언한다. valid-token path만(negative-auth 제외)
+     * 중 302만 본다: 참조/중첩/editor 필드는 BindingResult 파라미터가 없어 바인딩 실패가 400을 내므로(스칼라
+     * quantity와 달리 parse 실패), 탐색이 실패-parse 변이로 400 noise를 일부 만든다. 그 400을 무시하고 302
+     * arm의 분기집합만 센다. ok arm(302)은 참조/중첩/editor 바인딩 성공 + quantity 유효일 때만, error arm(302)은
+     * quantity 경계일 때. 미바인딩이면 참조 필드 null로 첫 조건 단락 → 302 분기집합 1개 → FAIL(= 합성 회귀 가드).
+     */
+    private static void assertFormBothArms(GraphAsset asset, String endpointId) {
+        List<ExploredPath> valid302 = pathsOf(asset, endpointId).stream()
+                .filter(p -> !p.discoveredBy().equals("negative-auth"))
+                .filter(p -> p.expectedStatus() == 302)
+                .toList();
+        assertThat(valid302.stream().map(ExploredPath::branchesTaken).distinct().count())
+                .as("%s should reach both 302 arms (form binding succeeded)", endpointId)
+                .isGreaterThanOrEqualTo(2L);
     }
 }
