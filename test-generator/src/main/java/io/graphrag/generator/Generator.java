@@ -611,7 +611,11 @@ public class Generator {
                 } else {
                     // 404 등 path param이 누락된 read-path도 유효한 URL을 만들어야 한다.
                     // 빌더의 buildPathAndQuery와 동일한 센티널로 {id} 미바인딩 오류를 방지한다.
-                    v = input.has(p.name()) ? input.get(p.name()).asText() : pathSentinel(p, notFoundRead);
+                    // 입력값이 없거나 blank(빈 문자열·공백)이면 sentinel을 사용한다.
+                    // blank 입력을 그대로 치환하면 double-slash가 생겨 캡처(explorer)와
+                    // 재현(generator) 간 경로 불일치가 발생한다(s404_2 버그). REQ-018.
+                    String rawV = input.has(p.name()) ? input.get(p.name()).asText() : null;
+                    v = (rawV == null || rawV.isBlank()) ? pathSentinel(p, notFoundRead) : rawV;
                 }
                 path = path.replace("{" + p.name() + "}", v);
             } else if (p.kind() == ParamKind.QUERY && input.has(p.name())) {

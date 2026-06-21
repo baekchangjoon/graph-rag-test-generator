@@ -7,7 +7,9 @@ import io.graphrag.model.ParamKind;
 import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtExpression;
+import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtLiteral;
+import spoon.reflect.code.CtNewArray;
 import spoon.reflect.declaration.CtAnnotation;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtMethod;
@@ -85,7 +87,17 @@ public class EndpointIndexer {
                         break;
                     }
                 }
-                if (httpMethod == null) continue;
+                if (httpMethod == null) {
+                    // 폴백: 메서드-레벨 @RequestMapping(method=RequestMethod.XXX) 처리.
+                    // 기존 verb 어노테이션(@GetMapping 등) 루프가 매칭하지 못한 경우에만 진입.
+                    // method 속성이 없는 @RequestMapping(모든 verbs 매치)은 스코프 밖 → skip 유지.
+                    CtAnnotation<?> rm = findAnnotation(method, REQUEST_MAPPING);
+                    if (rm == null) continue;
+                    String resolved = resolveRequestMappingMethod(rm);
+                    if (resolved == null) continue;   // method 속성 없음 → skip
+                    httpMethod = resolved;
+                    mapping = rm;
+                }
 
                 String fullPath = joinPaths(basePath, annotationPath(mapping));
                 List<EndpointParam> params = extractParams(method, model, bodyShapes, !rest);
@@ -307,6 +319,49 @@ public class EndpointIndexer {
             return s;
         }
         return "";
+    }
+
+    /**
+     * 메서드-레벨 @RequestMapping의 {@code method} 속성에서 첫 번째 HTTP 메서드 이름(대문자)을 읽는다.
+     *
+     * <p>Spoon noClasspath 모드에서 {@code RequestMethod.POST}는 {@code CtFieldRead}로 파싱되며,
+     * 필드명(simple name)이 enum 상수명(POST/GET/…)이다. 배열({@code RequestMethod[]})인 경우
+     * {@code CtNewArray}로 파싱되며, 첫 번째 원소만 사용한다(복수 메서드는 첫 원소 우선 정책).
+     * method 속성이 없거나 읽을 수 없으면 {@code null}을 반환한다(호출자가 skip).
+     */
+    private static String resolveRequestMappingMethod(CtAnnotation<?> annotation) {
+        CtExpression<?> methodAttr = annotation.getValues().get("method");
+        if (methodAttr == null) {
+            return null;   // method 속성 없음 → 모든 verbs 매치 → 스코프 밖
+        }
+        // 단일 enum 값: @RequestMapping(method = RequestMethod.POST)
+        if (methodAttr instanceof CtFieldRead<?> fieldRead) {
+            return requestMethodEnumToHttpMethod(fieldRead.getVariable().getSimpleName());
+        }
+        // 배열 enum 값: @RequestMapping(method = {RequestMethod.GET, RequestMethod.POST})
+        // → 배열의 첫 번째 원소를 사용한다.
+        if (methodAttr instanceof CtNewArray<?> array && !array.getElements().isEmpty()) {
+            CtExpression<?> first = array.getElements().get(0);
+            if (first instanceof CtFieldRead<?> fieldRead) {
+                return requestMethodEnumToHttpMethod(fieldRead.getVariable().getSimpleName());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * RequestMethod enum 상수명(POST/GET/PUT/DELETE/PATCH) → HTTP 메서드 대문자 문자열.
+     * 인식하지 못한 값(HEAD/OPTIONS 등 비목표)은 {@code null}.
+     */
+    private static String requestMethodEnumToHttpMethod(String enumConstant) {
+        return switch (enumConstant) {
+            case "GET"    -> "GET";
+            case "POST"   -> "POST";
+            case "PUT"    -> "PUT";
+            case "DELETE" -> "DELETE";
+            case "PATCH"  -> "PATCH";
+            default       -> null;
+        };
     }
 
     private static String joinPaths(String base, String sub) {
