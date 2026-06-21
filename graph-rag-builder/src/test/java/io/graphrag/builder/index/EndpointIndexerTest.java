@@ -379,4 +379,94 @@ class EndpointIndexerTest {
         assertThat(get.params()).extracting(EndpointParam::name, EndpointParam::kind)
                 .containsExactly(org.assertj.core.api.Assertions.tuple("userId", ParamKind.PATH));
     }
+
+    // ── REQ-017: method-level @RequestMapping(method=…) indexing ──────────────
+
+    @Test
+    void req017_methodLevelRequestMappingPostIsIndexed(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // @RequestMapping(value="/x", method=RequestMethod.POST) → POST /x 발견되어야 한다.
+        // 기존 verb 어노테이션 루프에서는 @RequestMapping을 처리하지 않아 건너뛰었던 케이스.
+        java.nio.file.Path src = dir.resolve("RmPost.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                import org.springframework.web.bind.annotation.RequestMethod;
+                @RestController
+                class RmPost {
+                    @RequestMapping(value = "/x", method = RequestMethod.POST)
+                    String create(@RequestBody String body) { return "ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        assertThat(result.endpoints()).hasSize(1);
+        Endpoint ep = result.endpoints().get(0);
+        assertThat(ep.httpMethod()).isEqualTo("POST");
+        assertThat(ep.path()).isEqualTo("/x");
+    }
+
+    @Test
+    void req017_methodLevelRequestMappingMultiMethodUsesFirst(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // method={RequestMethod.GET, RequestMethod.POST} → 배열의 첫 원소(GET)를 사용한다.
+        java.nio.file.Path src = dir.resolve("RmMulti.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                import org.springframework.web.bind.annotation.RequestMethod;
+                @RestController
+                class RmMulti {
+                    @RequestMapping(value = "/multi", method = {RequestMethod.GET, RequestMethod.POST})
+                    String handle() { return "ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+
+        assertThat(result.endpoints()).hasSize(1);
+        Endpoint ep = result.endpoints().get(0);
+        assertThat(ep.httpMethod()).isEqualTo("GET");
+        assertThat(ep.path()).isEqualTo("/multi");
+    }
+
+    @Test
+    void req017_methodLevelRequestMappingWithoutMethodAttributeIsSkipped(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // method 속성 없는 메서드-레벨 @RequestMapping(모든 verbs 매치)은 스코프 밖 → skip.
+        java.nio.file.Path src = dir.resolve("RmNoMethod.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                class RmNoMethod {
+                    @RequestMapping("/open")
+                    String open() { return "ok"; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        assertThat(result.endpoints()).isEmpty();
+    }
+
+    @Test
+    void req017_verbAnnotationStillTakesPrecedenceOverRequestMapping(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        // @PostMapping이 있으면 기존 루프에서 처리 → @RequestMapping 폴백 코드가 실행되지 않아야 한다(회귀 0).
+        java.nio.file.Path src = dir.resolve("RmRegression.java");
+        java.nio.file.Files.writeString(src, """
+                package x;
+                import org.springframework.web.bind.annotation.*;
+                @RestController
+                @RequestMapping("/api")
+                class RmRegression {
+                    @PostMapping("/orders")
+                    String create(@RequestBody String b) { return null; }
+                    @GetMapping("/orders/{id}")
+                    String get(@PathVariable Long id) { return null; }
+                }
+                """);
+        IndexResult result = new EndpointIndexer().index(dir, null);
+        assertThat(result.endpoints()).hasSize(2);
+        assertThat(result.endpoints()).anyMatch(e -> e.httpMethod().equals("POST") && e.path().equals("/api/orders"));
+        assertThat(result.endpoints()).anyMatch(e -> e.httpMethod().equals("GET") && e.path().equals("/api/orders/{id}"));
+    }
 }

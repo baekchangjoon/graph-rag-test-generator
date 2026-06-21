@@ -96,4 +96,64 @@ class GeneratorAbsentIdReadTest {
         String path = Generator.resolveLiteralPath(ep, input("{\"id\":42}"), false);
         assertThat(path).isEqualTo("/api/bookings/42");
     }
+
+    // ── REQ-018: empty path-var → sentinel (capture/reproduce parity) ──────────
+
+    @Test
+    void req018_emptyStringPathVarUsesSentinelNotDoubleSlash() {
+        // input.id="" → path.replace("{id}", "") → double-slash を防ぐ.
+        // Generator.resolveLiteralPath: 빈 문자열 입력도 sentinel 사용(parity).
+        Endpoint ep = new Endpoint("get-x-id-content", "GET", "/x/{id}/content",
+                "io.sample.C", "h",
+                List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)), false);
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":\"\"}"), false);
+        assertThat(path).doesNotContain("//");
+        assertThat(path).isEqualTo("/x/0/content");
+    }
+
+    @Test
+    void req018_emptyStringPathVarEquivalentToMissingPathVar() {
+        // 빈 문자열과 필드 누락이 동일한 sentinel 경로를 생성해야 한다(parity).
+        Endpoint ep = new Endpoint("get-x-id-content", "GET", "/x/{id}/content",
+                "io.sample.C", "h",
+                List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)), false);
+        String emptyPath = Generator.resolveLiteralPath(ep, input("{\"id\":\"\"}"), false);
+        String missingPath = Generator.resolveLiteralPath(ep, M.createObjectNode(), false);
+        assertThat(emptyPath).isEqualTo(missingPath);
+    }
+
+    @Test
+    void req018_whitespaceOnlyPathVarUsesSentinel() {
+        // 공백만 있는 값도 blank로 취급해 sentinel 사용.
+        Endpoint ep = new Endpoint("get-a-x-b", "GET", "/a/{x}/b",
+                "io.sample.C", "h",
+                List.of(new EndpointParam("x", "java.lang.String", ParamKind.PATH)), false);
+        String path = Generator.resolveLiteralPath(ep, input("{\"x\":\"   \"}"), false);
+        assertThat(path).doesNotContain("//");
+        assertThat(path).doesNotContain("   ");
+    }
+
+    @Test
+    void req018_nonEmptyPathVarUnchanged() {
+        // 회귀: 비어있지 않은 값은 그대로 사용해야 한다.
+        Endpoint ep = getById("java.lang.Long");
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":\"99\"}"), false);
+        assertThat(path).isEqualTo("/api/bookings/99");
+    }
+
+    @Test
+    void req018_emptyStringPathVarSentinelMatchesBuilderSentinel() {
+        // capture/reproduce parity 계약 검증: Generator(reproduce)에서 빈 문자열 id의 sentinel이
+        // EndpointExplorationRunner(capture)의 sentinel과 동일하다.
+        // 두 모듈은 동일한 sentinel 값("0" for Long, "missing" for String)을 사용해야 한다.
+        // 모듈 경계로 직접 교차 호출은 불가하지만, 두 쪽 모두 동일 sentinel을 생성함을 각자 검증.
+        // (EndpointExplorationRunnerUrlTest의 req018_emptyStringPathVarUsesSentinelNotDoubleSlash
+        //  도 동일한 "/x/0/content"를 assert → 양쪽 sentinel "0"이 일치.)
+        Endpoint ep = new Endpoint("get-api-bookings-id", "GET", "/api/bookings/{id}",
+                "io.sample.BookingController", "getById",
+                List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH)), false);
+        String generatorPath = Generator.resolveLiteralPath(ep, input("{\"id\":\"\"}"), false);
+        // 기대값: Explorer도 "0"(sentinel for Long, non-notFoundRead) → "/api/bookings/0"
+        assertThat(generatorPath).isEqualTo("/api/bookings/0");
+    }
 }

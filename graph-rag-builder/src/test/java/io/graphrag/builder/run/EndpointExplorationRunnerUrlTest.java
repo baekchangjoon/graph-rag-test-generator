@@ -87,6 +87,56 @@ class EndpointExplorationRunnerUrlTest {
                 .isEqualTo("/api/orders/7");
     }
 
+    // ── REQ-018: empty path-var → sentinel (capture/reproduce parity) ──────────
+
+    @Test
+    void req018_emptyStringPathVarUsesSentinelNotDoubleSlash() {
+        // input.id="" → path.replace("{id}", "") → "/x//content" (double-slash) を防ぐ.
+        // 빈 문자열 입력은 누락과 동일하게 취급해 sentinel을 사용해야 한다.
+        Endpoint ep = endpoint("/x/{id}/content",
+                new EndpointParam("id", "java.lang.Long", ParamKind.PATH));
+        ObjectNode input = Json.mapper().createObjectNode();
+        input.put("id", "");
+        String url = EndpointExplorationRunner.buildPathAndQuery(ep, input);
+        assertThat(url).doesNotContain("//");
+        assertThat(url).isEqualTo("/x/0/content");
+    }
+
+    @Test
+    void req018_emptyStringPathVarEquivalentToMissingPathVar() {
+        // 빈 문자열과 필드 누락 모두 동일한 sentinel 경로를 생성해야 한다(parity).
+        Endpoint ep = endpoint("/x/{id}/content",
+                new EndpointParam("id", "java.lang.Long", ParamKind.PATH));
+        ObjectNode emptyInput = Json.mapper().createObjectNode();
+        emptyInput.put("id", "");
+        ObjectNode missingInput = Json.mapper().createObjectNode();
+        assertThat(EndpointExplorationRunner.buildPathAndQuery(ep, emptyInput))
+                .isEqualTo(EndpointExplorationRunner.buildPathAndQuery(ep, missingInput));
+    }
+
+    @Test
+    void req018_whitespaceOnlyPathVarUsesSentinel() {
+        // 공백만 있는 값도 blank로 취급해 sentinel 사용.
+        Endpoint ep = endpoint("/a/{x}/b",
+                new EndpointParam("x", "java.lang.String", ParamKind.PATH));
+        ObjectNode input = Json.mapper().createObjectNode();
+        input.put("x", "   ");
+        String url = EndpointExplorationRunner.buildPathAndQuery(ep, input);
+        assertThat(url).doesNotContain("//");
+        assertThat(url).doesNotContain("   ");
+    }
+
+    @Test
+    void req018_nonEmptyPathVarUnchanged() {
+        // 회귀: 비어있지 않은 값은 그대로 사용해야 한다.
+        Endpoint ep = endpoint("/x/{id}/content",
+                new EndpointParam("id", "java.lang.Long", ParamKind.PATH));
+        ObjectNode input = Json.mapper().createObjectNode();
+        input.put("id", 42);
+        assertThat(EndpointExplorationRunner.buildPathAndQuery(ep, input))
+                .isEqualTo("/x/42/content");
+    }
+
     @Test
     void formEncodeProducesUrlEncodedFlatScalarsSkippingNullAndContainers() {
         ObjectNode body = Json.mapper().createObjectNode();

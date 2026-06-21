@@ -1043,9 +1043,11 @@ public class EndpointExplorationRunner {
                 // 변이가 path param을 지웠어도 URL은 항상 유효해야 한다.
                 // 누락 시 라우트 모양을 유지하는 센티널을 넣어 SUT가 404/400을
                 // 반환하게 한다 ({id}를 남기면 URI.create가 깨진다).
-                String value = input.has(param.name())
-                        ? input.get(param.name()).asText()
-                        : pathSentinel(param);
+                // 입력값이 없거나 blank(빈 문자열·공백)이면 sentinel을 사용한다.
+                // blank 입력을 그대로 치환하면 double-slash(/x//content)가 생겨
+                // 캡처(explorer)와 재현(generator) 간 경로 불일치가 발생한다(s404_2 버그).
+                String raw = input.has(param.name()) ? input.get(param.name()).asText() : null;
+                String value = (raw == null || raw.isBlank()) ? pathSentinel(param) : raw;
                 path = path.replace("{" + param.name() + "}", value);
             } else if (param.kind() == ParamKind.QUERY) {
                 if (!input.has(param.name())) {
