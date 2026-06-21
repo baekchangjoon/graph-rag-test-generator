@@ -109,6 +109,26 @@ public class EndpointExplorationRunner {
                                  List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
     }
 
+    /**
+     * REQ-013: non-2xx path의 재현 가능 여부를 판별하는 전략 인터페이스.
+     * 실 구현: HTTP clean-replay (httpInvokerForRepro). 테스트: 스텁(mock status).
+     * 예외를 던지면 conservative KEEP(억제하지 않음).
+     */
+    @FunctionalInterface
+    public interface ReproVerifier {
+        /**
+         * path를 클린 DB + 선언 시드 상태에서 재실행하고 HTTP 상태 코드를 반환한다.
+         * @throws Exception 재실행 불가(연결 거부, 타임아웃 등)
+         */
+        int replay(Endpoint endpoint, ExploredPath path, List<RequiredSeed> requiredSeeds)
+                throws Exception;
+    }
+
+    /** verifyAndFilterNonTwoxx 의 결과: 유지된 경로 + 억제된 경로 기록. */
+    public record FilterResult(List<ExploredPath> kept,
+                               List<ExplorationReport.DroppedPath> dropped) {
+    }
+
     private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
@@ -308,11 +328,75 @@ public class EndpointExplorationRunner {
             finalPaths.addAll(exploreNegativeValidationVariants(endpoint, shape, fieldConstraints, ob));
         }
 
+        // REQ-013/014/015: non-2xx path 재현 검증.
+        // GET 경로에 대해 클린 DB + 선언 시드 상태로 재실행하고 상태 코드가 일치하는지 확인한다.
+        // 불일치(오염된 DB로 인한 500 등) → 억제(drop) + 로그 + DroppedPath 기록.
+        // non-GET mutating, negative 마커, 2xx path는 검증 범위 외(conservative KEEP).
+        // GRB_REPRO_VERIFY=off면 검증 단계 완전 skip(ablation/회귀 제어용).
+        // happy는 이 시점에서 최종 확정된 SynthesizedInput(pass-2 완료 후 또는 pass-1 유지).
+        final SynthesizedInput happyFinal = happy;
+        final HttpClient reproHttp = HttpClient.newHttpClient();
+        final String authHeaderForRepro = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        final Map<String, RequiredSeed> seedById = finalSeeds.stream()
+                .collect(java.util.stream.Collectors.toMap(RequiredSeed::id, s -> s,
+                        (a, b) -> a, java.util.LinkedHashMap::new));
+
+        ReproVerifier httpReproVerifier = (ep, path, declaredSeeds) -> {
+            // 1. 탐색 중 쌓인 happy 시드를 제거(역순 child→parent)
+            deleteSeeds(happyFinal);
+            try {
+                // 2. 이 path의 선언 시드만 재삽입
+                for (RequiredSeed rs : declaredSeeds) {
+                    SynthesizedInput.SeedRow row = new SynthesizedInput.SeedRow(
+                            rs.table(), rs.columns(),
+                            rs.values().stream().map(v -> (Object) v).toList());
+                    Seeds.insert(connection, dbType, row);
+                }
+                // 3. 캡처된 입력으로 재실행 (커버리지 dump는 best-effort; 재현 검증만 목적)
+                int replayStatus = doSend(reproHttp, ep, path.sampleInput(), authHeaderForRepro).status();
+                // 4. 재삽입한 path 시드 정리(역순)
+                for (int i = declaredSeeds.size() - 1; i >= 0; i--) {
+                    RequiredSeed rs = declaredSeeds.get(i);
+                    Seeds.delete(connection, new SynthesizedInput.SeedRow(
+                            rs.table(), rs.columns(),
+                            rs.values().stream().map(v -> (Object) v).toList()));
+                }
+                return replayStatus;
+            } finally {
+                // 5. happy 시드 복원(best-effort; 이후 탐색 없지만 DB 상태 일관성 유지)
+                reinsertSeeds(happyFinal);
+            }
+        };
+
+        boolean skipReproVerify = "off".equalsIgnoreCase(System.getenv("GRB_REPRO_VERIFY"));
+        List<ExplorationReport.DroppedPath> drops;
+        if (skipReproVerify) {
+            drops = List.of();
+        } else {
+            // declaredSeeds per path: path.requiredSeedIds()로 조회
+            FilterResult filterResult = verifyAndFilterNonTwoxx(endpoint, finalPaths, finalSeeds,
+                    (ep, path, ignored) -> {
+                        // path 별 선언 시드는 path.requiredSeedIds()로 직접 조회
+                        List<RequiredSeed> pathSeeds = path.requiredSeedIds().stream()
+                                .map(seedById::get)
+                                .filter(java.util.Objects::nonNull)
+                                .toList();
+                        return httpReproVerifier.replay(ep, path, pathSeeds);
+                    });
+            finalPaths = new ArrayList<>(filterResult.kept());
+            drops = filterResult.dropped();
+            if (!drops.isEmpty()) {
+                log.warn("endpoint {}: suppressed {} non-reproducible non-2xx path(s) — see exploration-report.json droppedPaths",
+                        endpoint.id(), drops.size());
+            }
+        }
+
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
         return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
-                finalSeeds, report(endpoint, outcome, comparisons), cumulativeCoverage, bundle.capturedEventEmits());
+                finalSeeds, report(endpoint, outcome, comparisons, drops), cumulativeCoverage, bundle.capturedEventEmits());
     }
 
     /**
@@ -1114,6 +1198,13 @@ public class EndpointExplorationRunner {
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
                                                          ExplorationOutcome outcome,
                                                          List<ConstraintExtractor.Comparison> comparisons) {
+        return report(endpoint, outcome, comparisons, List.of());
+    }
+
+    private ExplorationReport.EndpointExploration report(Endpoint endpoint,
+                                                         ExplorationOutcome outcome,
+                                                         List<ConstraintExtractor.Comparison> comparisons,
+                                                         List<ExplorationReport.DroppedPath> drops) {
         // 누적 exec data 분석 → arm-level 정확 커버리지 (양쪽 arm 합산).
         // 리포트 범위는 handler 메서드의 분기 (형제 메서드 분기 희석 방지).
         BranchCoverage all = analyzer.analyze(cumulativeCoverage);
@@ -1137,7 +1228,7 @@ public class EndpointExplorationRunner {
                 .filter(b -> comparisonLines.contains(b.line())).count();
         return new ExplorationReport.EndpointExploration(
                 endpoint.id(), total, covered.size(), missed,
-                outcome.pathsByEngine(), solverRelevantMissed);
+                outcome.pathsByEngine(), solverRelevantMissed, drops);
     }
 
     /**
@@ -1167,6 +1258,75 @@ public class EndpointExplorationRunner {
                 values.add(e.getValue().asText());
             }
         });
+    }
+
+    /**
+     * REQ-013/014/015: non-2xx 경로의 재현 가능 여부를 검증하고, 재현 불가 경로를 억제(drop)한다.
+     *
+     * <p><b>정책:</b>
+     * <ul>
+     *   <li>2xx path → 검증 없이 KEEP (attachSeeds가 이미 시드를 붙였으므로 재현 가능).
+     *   <li>negative-auth / negative-validation 마커 path → 검증 없이 KEEP
+     *       (discoveredBy 필드로 식별; 이 경로는 DB 상태와 독립적인 인증/검증 거부).
+     *   <li>GET(read) non-2xx → verifier.replay() 호출:
+     *       replay 상태 == 캡처 상태 → KEEP; 다르면 → DROP + DroppedPath 기록.
+     *   <li>non-GET non-2xx (mutating) → conservative KEEP: 재실행 자체가 DB를 변이시켜
+     *       신뢰할 수 없으므로, 검증 불가 = DROP 금지. 진짜 버그가 묻히는 것보다 나쁜 쪽이므로
+     *       억제하지 않는다.
+     *   <li>verifier 예외 → conservative KEEP (연결 오류 등): DROP 없이 경고만 남긴다.
+     * </ul>
+     *
+     * <p>이 메서드는 패키지-private static으로 단위 테스트 가능하다. 실 HTTP client는 호출자가
+     * ReproVerifier 구현으로 주입한다.
+     */
+    static FilterResult verifyAndFilterNonTwoxx(
+            Endpoint endpoint, List<ExploredPath> paths,
+            List<RequiredSeed> requiredSeeds, ReproVerifier verifier) {
+        List<ExploredPath> kept = new ArrayList<>();
+        List<ExplorationReport.DroppedPath> dropped = new ArrayList<>();
+        boolean readPath = endpoint.httpMethod().equals("GET");
+
+        for (ExploredPath path : paths) {
+            int status = path.expectedStatus();
+            // 2xx → 검증 범위 외, 항상 KEEP
+            if (status / 100 == 2) {
+                kept.add(path);
+                continue;
+            }
+            // 마커 path(negative-auth, negative-validation, state-guard) → 검증 범위 외, 항상 KEEP
+            String discoveredBy = path.discoveredBy();
+            if (discoveredBy != null
+                    && (discoveredBy.startsWith("negative-") || discoveredBy.startsWith("state-guard"))) {
+                kept.add(path);
+                continue;
+            }
+            // non-GET mutating non-2xx → conservative KEEP (재실행 자체가 부작용)
+            if (!readPath) {
+                kept.add(path);
+                continue;
+            }
+            // GET non-2xx → 재현 검증
+            try {
+                int replayStatus = verifier.replay(endpoint, path, requiredSeeds);
+                if (replayStatus == status) {
+                    // 재현 가능 → KEEP (결정론적 404/400/5xx = 진짜 경로 또는 진짜 버그)
+                    kept.add(path);
+                } else {
+                    // 재현 불가 → DROP + 기록 (REQ-015: 무음 손실 금지)
+                    log.warn("suppressing non-reproducible path {} (endpoint={}): "
+                                    + "captured={} replay={} — path excluded from graph",
+                            path.id(), endpoint.id(), status, replayStatus);
+                    dropped.add(new ExplorationReport.DroppedPath(
+                            endpoint.id(), path.id(), status, replayStatus, "status_mismatch"));
+                }
+            } catch (Exception e) {
+                // 검증 자체 실패 → conservative KEEP (버그를 잃는 것이 오탐보다 낫다)
+                log.warn("repro-verify failed for path {} (endpoint={}), keeping conservatively: {}",
+                        path.id(), endpoint.id(), e.getMessage());
+                kept.add(path);
+            }
+        }
+        return new FilterResult(List.copyOf(kept), List.copyOf(dropped));
     }
 
     private static JsonNode parseJsonOrNull(String body) {
