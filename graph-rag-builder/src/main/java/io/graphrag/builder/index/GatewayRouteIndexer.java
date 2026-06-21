@@ -61,10 +61,7 @@ public class GatewayRouteIndexer {
                 // 메서드 바디에서 직접(최상위) .route(...) 호출만 수집 — 람다 내부 중첩 route는 제외
                 List<CtInvocation<?>> routeCalls = collectDirectRouteCalls(method);
                 for (CtInvocation<?> routeCall : routeCalls) {
-                    Endpoint ep = parseRouteCall(routeCall, type, method);
-                    if (ep != null) {
-                        endpoints.add(ep);
-                    }
+                    endpoints.addAll(parseRouteCall(routeCall, type, method));
                 }
             }
         }
@@ -112,8 +109,9 @@ public class GatewayRouteIndexer {
     }
 
     /**
-     * .route(...) 호출 하나를 파싱하여 Endpoint를 반환한다.
-     * 미지원 필터 감지 시 null 반환 (해당 라우트 제외).
+     * .route(...) 호출 하나를 파싱하여 Endpoint 목록을 반환한다.
+     * 미지원 필터 감지 시 빈 목록 반환 (해당 라우트 제외).
+     * path() varargs 지원: 여러 경로 패턴이 있으면 각각 별도 Endpoint로 반환한다.
      *
      * <p>호출 형태:
      * <ul>
@@ -122,16 +120,16 @@ public class GatewayRouteIndexer {
      * </ul>
      * 마지막 인자가 항상 Predicate 람다다.
      */
-    private static Endpoint parseRouteCall(CtInvocation<?> routeCall,
+    private static List<Endpoint> parseRouteCall(CtInvocation<?> routeCall,
             CtType<?> declaringType, CtMethod<?> declaringMethod) {
         List<?> args = routeCall.getArguments();
         if (args.isEmpty()) {
-            return null;
+            return List.of();
         }
         // 마지막 인자가 람다여야 한다
         Object lastArg = args.get(args.size() - 1);
         if (!(lastArg instanceof CtLambda<?> routeLambda)) {
-            return null;
+            return List.of();
         }
 
         // 라우트 람다 직속(nearest-enclosing lambda == routeLambda) CtInvocation만 수집.
@@ -146,11 +144,11 @@ public class GatewayRouteIndexer {
                         .filter(inv -> ((CtInvocation<?>) inv).getParent(CtLambda.class) == routeLambda)
                         .toList();
 
-        String path = extractPath(lambdaInvocations);
+        List<String> paths = extractPaths(lambdaInvocations);
         String targetUri = extractUri(lambdaInvocations);
-        if (path == null || targetUri == null) {
+        if (paths.isEmpty() || targetUri == null) {
             log.warn("GatewayRouteIndexer: path 또는 uri를 찾을 수 없어 라우트를 건너뜁니다.");
-            return null;
+            return List.of();
         }
 
         // filters(...) 호출 처리
@@ -178,36 +176,50 @@ public class GatewayRouteIndexer {
                     String filterName = filterInv.getExecutable().getSimpleName();
                     if (!SUPPORTED_FILTERS.contains(filterName)) {
                         log.warn("GatewayRouteIndexer: 미지원 필터 '{}' 감지 — 라우트 '{}' 제외",
-                                filterName, path);
-                        return null;
+                                filterName, paths.get(0));
+                        return List.of();
                     }
                 }
                 // path는 predicate 경로(요청 식별자)를 그대로 유지 — 필터 변환 미적용
+            } else if (!filterArgs.isEmpty()) {
+                // 비람다 filters() 인자 — 정적으로 분석 불가, 보수적으로 라우트 제외
+                log.warn("GatewayRouteIndexer: filters() 인자가 람다가 아님 (분석 불가) — 라우트 '{}' 제외",
+                        paths.get(0));
+                return List.of();
             }
         }
 
-        return new Endpoint(
-                EndpointIds.of("GET", path),
-                "GET",
-                path,
-                declaringType.getQualifiedName().replace('$', '.'),
-                declaringMethod.getSimpleName(),
-                List.of(),
-                false,
-                targetUri);
+        String handlerClass = declaringType.getQualifiedName().replace('$', '.');
+        String handlerMethod = declaringMethod.getSimpleName();
+        List<Endpoint> result = new ArrayList<>();
+        for (String path : paths) {
+            result.add(new Endpoint(
+                    EndpointIds.of("GET", path),
+                    "GET",
+                    path,
+                    handlerClass,
+                    handlerMethod,
+                    List.of(),
+                    false,
+                    targetUri));
+        }
+        return result;
     }
 
-    /** 람다 내 invocation 목록에서 path(...) 문자열 리터럴을 추출한다. */
-    private static String extractPath(List<CtInvocation<?>> invocations) {
+    /** 람다 내 invocation 목록에서 path(...) 의 모든 문자열 리터럴 인자를 추출한다 (varargs 지원). */
+    private static List<String> extractPaths(List<CtInvocation<?>> invocations) {
+        List<String> paths = new ArrayList<>();
         for (CtInvocation<?> inv : invocations) {
-            if ("path".equals(inv.getExecutable().getSimpleName())
-                    && !inv.getArguments().isEmpty()
-                    && inv.getArguments().get(0) instanceof CtLiteral<?> lit
-                    && lit.getValue() instanceof String value) {
-                return value;
+            if ("path".equals(inv.getExecutable().getSimpleName())) {
+                for (Object arg : inv.getArguments()) {
+                    if (arg instanceof CtLiteral<?> lit && lit.getValue() instanceof String value) {
+                        paths.add(value);
+                    }
+                }
+                break;  // path() 호출은 첫 번째 것만 처리 (중복 path() 호출은 비정상)
             }
         }
-        return null;
+        return paths;
     }
 
     /** 람다 내 invocation 목록에서 uri(...) 문자열 리터럴을 추출한다. */

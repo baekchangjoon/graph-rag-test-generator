@@ -83,7 +83,7 @@ public class EndpointExplorationRunner {
             "content-type", "content-language", "host", "accept-ranges",
             // 민감 헤더(보안 리뷰): 값은 어차피 저장하지 않지만(아래 ""), 이름조차 graph.json에 남기지 않는다.
             "set-cookie", "set-cookie2", "authorization", "www-authenticate",
-            "x-csrf-token", "x-xsrf-token", "x-auth-token");
+            "x-csrf-token", "x-xsrf-token", "x-auth-token", "cookie", "x-api-key");
 
     /** 사용자 헤더에서 상관 헤더를 case-insensitive 제거 후 scope 상관 헤더를 덮어쓴다. */
     static java.util.LinkedHashMap<String, String> applyCorrelationPriority(
@@ -983,17 +983,10 @@ public class EndpointExplorationRunner {
 
     /**
      * Ant-style wildcard 세그먼트를 구체 probe 값으로 치환한다.
-     * 세그먼트 단위로 정확히 {@code **} 또는 {@code *}인 경우만 대상으로 하며, 일반 경로는 변경하지 않는다.
-     * NOTE: test-generator의 Generator.concretizeAntWildcards와 동일한 로직 (모듈 분리로 공유 불가, 중복 관리).
+     * 위임: {@link io.graphrag.model.PathPatterns#concretizeAntWildcards(String)}.
      */
     static String concretizeAntWildcards(String path) {
-        String[] segments = path.split("/", -1);
-        for (int i = 0; i < segments.length; i++) {
-            if ("**".equals(segments[i]) || "*".equals(segments[i])) {
-                segments[i] = "probe";
-            }
-        }
-        return String.join("/", segments);
+        return io.graphrag.model.PathPatterns.concretizeAntWildcards(path);
     }
 
     private static String pathSentinel(EndpointParam param) {

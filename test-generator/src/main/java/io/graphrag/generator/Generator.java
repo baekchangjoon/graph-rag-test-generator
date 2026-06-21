@@ -175,16 +175,16 @@ public class Generator {
             String json = jsonBodyFromInput(endpoint, path.sampleInput());
             bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         }
-        String assertionsBlock = fixture.assertions().stream()
-                .map(a -> "\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")")
-                .reduce("", String::concat);
+        List<String> assertionParts = new ArrayList<>();
+        for (var a : fixture.assertions()) {
+            assertionParts.add("\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")");
+        }
         // 커스텀 응답 헤더: 게이트웨이 프록시가 전파한 헤더가 있으면 notNullValue() 단언 추가.
         // 빈 맵이면 기존 테스트에 영향 없음.
-        if (!path.responseHeaders().isEmpty()) {
-            assertionsBlock += path.responseHeaders().keySet().stream()
-                    .map(h -> "\n            .header(\"" + h + "\", org.hamcrest.Matchers.notNullValue())")
-                    .collect(Collectors.joining());
+        for (String h : path.responseHeaders().keySet()) {
+            assertionParts.add("\n            .header(\"" + h + "\", org.hamcrest.Matchers.notNullValue())");
         }
+        String assertionsBlock = String.join("", assertionParts);
 
         // Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성.
         List<Map<String, Object>> kafkaEmits = new ArrayList<>();
@@ -627,18 +627,10 @@ public class Generator {
 
     /**
      * Ant-style wildcard 세그먼트를 구체 probe 값으로 치환한다.
-     * 세그먼트 단위로 정확히 {@code **} 또는 {@code *}인 경우만 대상으로 하며, 일반 경로는 변경하지 않는다.
-     * NOTE: graph-rag-builder의 EndpointExplorationRunner.concretizeAntWildcards와 동일한 로직
-     * (모듈 분리로 공유 불가, 중복 관리).
+     * 위임: {@link io.graphrag.model.PathPatterns#concretizeAntWildcards(String)}.
      */
     static String concretizeAntWildcards(String path) {
-        String[] segments = path.split("/", -1);
-        for (int i = 0; i < segments.length; i++) {
-            if ("**".equals(segments[i]) || "*".equals(segments[i])) {
-                segments[i] = "probe";
-            }
-        }
-        return String.join("/", segments);
+        return io.graphrag.model.PathPatterns.concretizeAntWildcards(path);
     }
 
     private static boolean isNumericParam(EndpointParam param) {
