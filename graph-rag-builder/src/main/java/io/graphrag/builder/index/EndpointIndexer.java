@@ -336,17 +336,23 @@ public class EndpointIndexer {
         }
         // 단일 enum 값: @RequestMapping(method = RequestMethod.POST)
         if (methodAttr instanceof CtFieldRead<?> fieldRead) {
-            return requestMethodEnumToHttpMethod(fieldRead.getVariable().getSimpleName());
+            return enumSimpleNameToHttpMethod(fieldRead);
         }
         // 배열 enum 값: @RequestMapping(method = {RequestMethod.GET, RequestMethod.POST})
         // → 배열의 첫 번째 원소를 사용한다.
         if (methodAttr instanceof CtNewArray<?> array && !array.getElements().isEmpty()) {
             CtExpression<?> first = array.getElements().get(0);
             if (first instanceof CtFieldRead<?> fieldRead) {
-                return requestMethodEnumToHttpMethod(fieldRead.getVariable().getSimpleName());
+                return enumSimpleNameToHttpMethod(fieldRead);
             }
         }
         return null;
+    }
+
+    /** noClasspath에서 변수 참조가 미해석이면 getVariable()이 null일 수 있으므로 방어한다. */
+    private static String enumSimpleNameToHttpMethod(CtFieldRead<?> fieldRead) {
+        var ref = fieldRead.getVariable();
+        return ref == null ? null : requestMethodEnumToHttpMethod(ref.getSimpleName());
     }
 
     /**

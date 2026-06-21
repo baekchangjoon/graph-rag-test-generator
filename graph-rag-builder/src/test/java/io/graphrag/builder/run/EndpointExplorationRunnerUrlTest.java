@@ -91,7 +91,7 @@ class EndpointExplorationRunnerUrlTest {
 
     @Test
     void req018_emptyStringPathVarUsesSentinelNotDoubleSlash() {
-        // input.id="" → path.replace("{id}", "") → "/x//content" (double-slash) を防ぐ.
+        // input.id="" → path.replace("{id}", "") → "/x//content" (double-slash) 방지.
         // 빈 문자열 입력은 누락과 동일하게 취급해 sentinel을 사용해야 한다.
         Endpoint ep = endpoint("/x/{id}/content",
                 new EndpointParam("id", "java.lang.Long", ParamKind.PATH));

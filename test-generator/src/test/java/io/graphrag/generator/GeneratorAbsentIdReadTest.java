@@ -101,7 +101,7 @@ class GeneratorAbsentIdReadTest {
 
     @Test
     void req018_emptyStringPathVarUsesSentinelNotDoubleSlash() {
-        // input.id="" → path.replace("{id}", "") → double-slash を防ぐ.
+        // input.id="" → path.replace("{id}", "") → double-slash 방지.
         // Generator.resolveLiteralPath: 빈 문자열 입력도 sentinel 사용(parity).
         Endpoint ep = new Endpoint("get-x-id-content", "GET", "/x/{id}/content",
                 "io.sample.C", "h",
