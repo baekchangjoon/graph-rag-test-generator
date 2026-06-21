@@ -1,0 +1,9 @@
+# 게이트웨이 SUT 분석 환경 — builder가 DB config 감지에 사용 (postgres entry만).
+# gateway-service 자체는 DB 불요 — SutProcess가 주입하는 SPRING_DATASOURCE_* 환경변수는 무시된다.
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app

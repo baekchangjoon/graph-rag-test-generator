@@ -1,0 +1,20 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+# Runtime downstream routing: ORDERS_URI is injected by the builder ({{wiremock}} → actual WireMock URL).
+# This YAML route overrides the Java DSL bean in GatewayConfig at runtime.
+# order: -1 makes it higher priority than the Java DSL bean's default order (0).
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: orders-runtime
+              uri: ${ORDERS_URI:http://orders-service}
+              order: -1
+              predicates:
+                - Path=/api/v1/orders/**
