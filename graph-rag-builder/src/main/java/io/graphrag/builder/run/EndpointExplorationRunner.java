@@ -80,7 +80,10 @@ public class EndpointExplorationRunner {
             "content-length", "transfer-encoding", "connection", "keep-alive", "upgrade",
             "te", "trailer", "proxy-authorization", "proxy-authenticate",
             "date", "server", "content-encoding", "vary", "cache-control", "pragma", "expires",
-            "content-type", "content-language", "host", "accept-ranges");
+            "content-type", "content-language", "host", "accept-ranges",
+            // 민감 헤더(보안 리뷰): 값은 어차피 저장하지 않지만(아래 ""), 이름조차 graph.json에 남기지 않는다.
+            "set-cookie", "set-cookie2", "authorization", "www-authenticate",
+            "x-csrf-token", "x-xsrf-token", "x-auth-token");
 
     /** 사용자 헤더에서 상관 헤더를 case-insensitive 제거 후 scope 상관 헤더를 덮어쓴다. */
     static java.util.LinkedHashMap<String, String> applyCorrelationPriority(
@@ -667,9 +670,11 @@ public class EndpointExplorationRunner {
             if (RESPONSE_HEADER_DENYLIST.contains(name.toLowerCase(java.util.Locale.ROOT))) {
                 continue;
             }
+            // 생성기는 헤더 **이름**만 쓴다(존재 단언 `.header(name, notNullValue())`). 따라서 라이브
+            // 헤더 **값**(쿠키·토큰 등 민감값일 수 있음)을 graph.json에 저장하지 않고 빈 sentinel만 남긴다(보안 리뷰).
             java.util.List<String> values = entry.getValue();
             if (values != null && !values.isEmpty()) {
-                result.put(name, values.get(0));
+                result.put(name, "");
             }
         }
         return result.isEmpty() ? Map.of() : java.util.Collections.unmodifiableMap(result);
