@@ -25,9 +25,9 @@
 - `graph-rag-builder/.../run/EndpointExplorationRunner.java` (수정): 참조 백업테이블 런타임 해석 + 행 read/seed → refValues 산출 → reference-aware base + backtrack trial(budget 내, path discoveredBy="form-ref-trial" 귀속).
 - `graph-rag-builder/.../cli/BuilderCli.java` (수정): `formBindingIndex.getOrDefault(endpoint.id(),List.of())`를 run()에 새 파라미터로 전달(생성자 아님 — I11).
 - `samples/order-service/.../orders/*` (신규 픽스처, 기존 OrderWebController와 같은 패키지 — I9): 5종 폼 컨트롤러. 참조 행은 **러너 런타임 seed-if-empty로 생성**(전역 data.sql 미사용 — ddl-auto 순서·E2E 부작용 회피, Gemini I3/GPT I5).
-- `graph-rag-builder/.../cli/BuilderE2eTest.java` (수정): 5종 수용 단언 + `containsExactly` 신규 ID 갱신.
+- `graph-rag-builder/.../cli/BuilderIntegrationTest.java` (수정): 5종 수용 단언 + `containsExactly` 신규 ID 갱신.
 
-> **참고(E2E 실행 환경)**: `BuilderE2eTest`는 `@EnabledIfSystemProperty(sut.jar)` + Docker 필요 → 환경 없으면 SKIP(FAIL 아님).
+> **참고(E2E 실행 환경)**: `BuilderIntegrationTest`는 `@EnabledIfSystemProperty(sut.jar)` + Docker 필요 → 환경 없으면 SKIP(FAIL 아님).
 > 본 환경엔 Docker+sut.jar 배선됨(`:graph-rag-builder:test`가 bootJar 후 실행). petclinic `.work/run-suites.sh`는
 > 메인 체크아웃의 **로컬 미커밋 하니스 → 선택적 수동 회귀**. 필수 게이트 = in-repo E2E(5종) + `./gradlew test`.
 
@@ -46,9 +46,9 @@
 - [ ] Step 2: `./gradlew :samples:order-service:compileJava`. Expected: PASS. commit.
 
 ### Task 0.3: E2E 수용 단언 (RED)
-**Files:** Modify `graph-rag-builder/src/test/java/io/graphrag/builder/cli/BuilderE2eTest.java`
+**Files:** Modify `graph-rag-builder/src/test/java/io/graphrag/builder/cli/BuilderIntegrationTest.java`
 - [ ] Step 1: `containsExactly` endpoint 목록에 신규 ID **알파벳 순 병합**(`post-web-multi`, `post-web-ref`, `post-web-idref`, `post-web-nested`, `post-web-editor` 등 — 픽스처 @RequestMapping 기준 실제 ID로) + spec §5 1–5 단언(커맨드=Cmd 타입, 참조/중첩/editor happy arm 존재) 작성.
-- [ ] Step 2: 실행 `./gradlew :graph-rag-builder:test --tests "*BuilderE2eTest"`(Docker+sut.jar 환경). Expected: **FAIL**(미구현). 환경 없으면 단위 RED로 대체.
+- [ ] Step 2: 실행 `./gradlew :graph-rag-builder:test --tests "*BuilderIntegrationTest"`(Docker+sut.jar 환경). Expected: **FAIL**(미구현). 환경 없으면 단위 RED로 대체.
 - [ ] Step 3: commit (RED 기록).
 
 ### Task 0.4 (선택): petclinic 베이스라인

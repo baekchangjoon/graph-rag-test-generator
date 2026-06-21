@@ -599,11 +599,16 @@ public class EndpointExplorationRunner {
     }
 
     private static boolean isStringType(String jdbcType) {
+        if (jdbcType == null) {
+            return false;
+        }
         String t = jdbcType.toUpperCase();
         return t.contains("CHAR") || t.contains("TEXT") || t.contains("CLOB");
     }
 
     private RefCandidate querySingleRow(String table, String pkColumn, String nameColumn) throws SQLException {
+        // 식별자(table/pkColumn/nameColumn)는 모두 TableSchema(스키마 introspection)·정적 @Table 유래로
+        // HTTP/사용자 입력이 아니다 → 식별자 연결은 안전(값은 없음). Seeds.insert/delete 패턴과 동일.
         String columns = nameColumn == null ? pkColumn : pkColumn + ", " + nameColumn;
         String sql = "SELECT " + columns + " FROM " + table + " LIMIT 1";   // POSTGRES/MYSQL/MARIADB 공통
         try (Statement statement = connection.createStatement();
