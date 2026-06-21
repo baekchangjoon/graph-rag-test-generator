@@ -316,8 +316,9 @@ base (변이 없음)         →                            → 201
 
 **여전히 미해결(Stage 4 잔여)**:
 - **결합 다변수 중 비선형·interprocedural**(`deposit*1.1 < nights*priceTier.getNightlyRate()`):
-  float 계수(rational 스케일)·enum 메서드 grounding(`priceTier.getNightlyRate()`)·3+변수는 **best-effort/보류**
-  (petclinic Reservation은 아직 휴리스틱 의존). 2-필드 **정수 선형**은 위 ✅로 정공.
+  변수×변수 비선형(`nights*rate`)·enum 메서드 grounding(`priceTier.getNightlyRate()`)·3+변수는 **best-effort/보류**
+  (petclinic Reservation은 아직 휴리스틱 의존). 2-필드 **선형**은 정수 + **float/double**(작업 #4, rational 계수 +
+  Z3 Real, `2026-06-16-interfield-float-double.md`) 모두 위 ✅로 정공.
 - **정규식 일반 생성·불투명 값**(`hashCode`): solver로도 어려움 / 영구 비목표.
 
 관련 문서: `docs/22`(정적 한계), `docs/23`(입력 생성 흐름), `docs/24`(탐색 백엔드·단계별 진행).

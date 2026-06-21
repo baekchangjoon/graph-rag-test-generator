@@ -69,14 +69,20 @@
 - **#5는 petclinic 무변·order-service에서 실증**: petclinic엔 enum 상태 전이 가드가 없어 APP-AGGREGATE는
   그대로지만, order-service `BookingController.advance`(200/409/410)로 다중 전이 arm 캡처를 결정적으로 검증.
 
+## 작업 #4 — float inter-field (구현 완료)
+
+| 작업 | 상태 | 비고 |
+|---|---|---|
+| **#4** float/double inter-field | **구현·머지** | `Sym` Rational 일반화 + domain(INT/REAL/MIXED) 추적 + Z3 Real(`solveTupleReal`, 경계 margin). order-service `PricingController` band 벤치마크로 실증(`BuilderIntegrationTest`). 정수 경로 무회귀. `2026-06-16-interfield-float-double.md` |
+
 ## 보류 작업 (ROI 평가)
 
 | 작업 | 상태 | 사유 |
 |---|---|---|
-| **#4** float inter-field | 설계+`Rational` 코어 보존(미머지) | 실측 SUT 8종에 순수 float inter-field 가드 부재, enum은 conjunction이 이미 커버 |
 | **(b)** entity-Formatter | 설계 노트만 | "폼 커맨드 정확 선택" 선결 + Formatter parse SUT-특화 + petclinic 한정 실효 |
 
-두 작업 모두 3-모델 리뷰로 **큰 코어 비용 대비 실측 실효가 낮음**이 확인되어, 설계를 보존하고 구현을 보류했다.
+(b)는 3-모델 리뷰로 **큰 코어 비용 대비 실측 실효가 낮음**이 확인되어 설계를 보존하고 구현을 보류했다.
+#4는 ROI 보류였으나 후속 세션에서 코어 일반화(향후 float-heavy SUT 대비) + 정수 경로 무회귀를 조건으로 구현했다.
 
 ## 방법론
 
