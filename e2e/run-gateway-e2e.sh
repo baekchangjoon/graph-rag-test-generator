@@ -15,10 +15,16 @@ LOG="$OUT/builder.log"
 GW="$ROOT/gradlew"
 COMPOSE_PROJECT="grb-gateway-e2e"
 
-# Java 17 필수 (gateway-service = Spring Boot 3.5 / Spring Cloud 2025.0)
-JAVA17="/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home/bin/java"
-if [ ! -x "$JAVA17" ]; then
-    echo "ERROR: Java 17 not found at $JAVA17" >&2
+# Java 17 필수 (gateway-service = Spring Boot 3.5 / Spring Cloud 2025.0).
+# 이식성: JAVA_HOME(CI의 setup-java) → PATH의 java → mac 기본 경로 순으로 해석. 하드코딩 금지(CI=Linux).
+if [ -n "${JAVA_HOME:-}" ] && [ -x "${JAVA_HOME}/bin/java" ]; then
+    JAVA17="${JAVA_HOME}/bin/java"
+elif [ -x "/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home/bin/java" ]; then
+    JAVA17="/Library/Java/JavaVirtualMachines/openjdk-17.jdk/Contents/Home/bin/java"
+elif command -v java >/dev/null 2>&1; then
+    JAVA17="$(command -v java)"
+else
+    echo "ERROR: Java 17 not found (set JAVA_HOME or put java 17 on PATH)" >&2
     exit 1
 fi
 
