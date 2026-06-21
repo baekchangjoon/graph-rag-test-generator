@@ -50,22 +50,36 @@ enum inter-field는 이미 `ConstraintExtractor.extractConjunctions`(다필드 `
 - **D3 float 후보 채널**: `InputCandidates`에 `Map<String, Set<Double>> reals` 추가(numeric은 Long 유지,
   무회귀). 합성기(`ReadInputSynthesizer`/`SampleInputSynthesizer`)가 float 필드에 reals 후보 주입.
   튜플도 `tuples`(현재 `Map<String,Long>`)와 별도로 `realTuples`(`Map<String,Double>`).
-- **D4 정확도**: Z3 Real 해는 rational. 필드 JDBC/Java 타입이 float면 `floatValue`, double면 `doubleValue`로
-  변환. 경계 ±1은 float에서 ±1.0(또는 ε)로 — 단일필드 경계는 `{B-ε, B, B+ε}` 대신 실용적으로 `{B-1, B, B+1}`
-  (대부분 가드가 정수 단위 임계) + 필요 시 ε. 1차: `{B-1.0, B, B+1.0}`.
+- **D4 정확도**: Z3 Real 해는 rational(`RatNum`)→`BigDecimal`(DECIMAL64)→`Double`, finite만 채택. 단일필드 경계는
+  `{B-ε, B, B+ε}`(ε=max(ulp(B),1e-3)) — `B+ε`가 한 방향 분기를 robust하게 연다.
+- **D5 부등식 해의 경계 margin(impl에서 추가)**: `solveTupleReal`은 합 최소화 때문에 부등식 해가 제약 **경계
+  (==0)에 수렴**한다. 경계의 real 튜플을 SUT가 float로 재계산하면 반올림으로 분기가 닫히는 **band-edge 취약성**이
+  생긴다(E2E에서 `combined==99.5`가 float로 99.49999가 돼 422). → 부등식(GE/GT→`sum≥margin`, LE/LT→`sum≤−margin`,
+  margin=1e-3)을 써 해를 half-plane **안쪽**으로 민다. 1e-3 ≫ ulp(100f) 이고 band 폭(1.0) ≫ margin 이라 안전.
+  등식(EQ/NE)은 정확해만 존재해 margin 불가(float 등식 inter-field는 비목표, §2).
 
-## 5. E2E / 수용 테스트 (정의된 done)
-**outer-loop(먼저 RED)**: in-repo 결정적 벤치마크를 order-service에 추가.
+## 5. E2E / 수용 테스트 (정의된 done) — 구현 확정본
+**outer-loop(먼저 RED)**: in-repo 결정적 벤치마크를 order-service에 추가 → 신규 `PricingController`.
 
-신규 또는 기존 컨트롤러에 **float 2-필드 선형 가드**(예: `PromoController` 인접 또는 신규
-`PricingController`): `@PostMapping` 핸들러가 `if (req.getBasePrice() * req.getRate() < req.getMinMargin())`
-같은 게 아니라 — **변수×변수는 비선형**이므로 — **상수×변수 2개**의 선형 가드를 쓴다:
-`if (base * 2.0 + surcharge * 3.0 < 100.0) return 422; else 201` (base, surcharge가 float 입력 필드).
-필드별 경계/large 변이로는 두 float 동시충족이 어렵고 **Real solveTuple이 푼 튜플만** 201을 연다.
+`@PostMapping /api/pricing` 핸들러가 **상수×변수 2개의 순수 선형**(변수×변수 비선형 회피) **양측 band 가드**:
+```java
+float combined = req.base() * 2.0f + req.surcharge() * 3.0f;   // base, surcharge: float record 필드
+if (combined < 99.5f)  throw 422;   // 하한
+if (combined > 100.5f) throw 422;   // 상한
+return 201;                          // band [99.5, 100.5]
+```
+설계 변경(원안 `== 100` 단일 등식에서 교체) 근거 2가지:
+- **단측 부등식 금지(GPT I1)**: `combined < 100`은 happy 기본값/large 변이로 우연 충족돼 solver 없이 201이 열려
+  귀속이 무너진다. **양측 band**로 가두면 한 필드만 바꾸는 generic 변이로는 두 필드를 동시에 band로 못 몰고,
+  **Real solveTuple이 푼 (base,surcharge) 튜플만** 201을 연다.
+- **float 등식/경계 취약성(impl에서 발견)**: float `==`나 band edge는 solver 해를 SUT가 float로 재계산할 때
+  반올림(~ulp(100f)≈7.6e-6)으로 분기가 닫힌다. → **band 폭 1.0**이 반올림을 흡수하고, 추가로 **solveTupleReal이
+  부등식 해를 경계에 붙이지 않고 안쪽으로 margin=1e-3 민다**(§4 D5). 둘이 함께 robust.
 
-`BuilderE2eTest` 수용 단언:
-- 해당 endpoint가 201 path를 가진다(real 튜플 충족). real solve 없이는 422만 → 201 사라져 FAIL(회귀 가드).
-- 201 입력의 두 float 필드가 가드 `base*2 + surcharge*3 >= 100`(201 arm)을 실제로 만족.
+`BuilderIntegrationTest`(=문서의 BuilderE2eTest) 수용 단언:
+- `post-api-pricing`가 201 path를 가진다(real 튜플 충족). real solve 없으면 422만 → 201 사라져 FAIL(회귀+ablation 가드).
+- 201 입력의 두 float 필드가 band `99.5 <= base*2 + surcharge*3 <= 100.5`를 실제로 만족.
+- ablation은 단위(`ConcolicFloatTest`)가 함께 보장: oracle이 realTuple을 안 내면 주입 자체가 없어 201 미발생.
 
 **inner-loop(단위 TDD)**: `ConcolicOracle` 단위(또는 신규 `ConcolicFloatTest`) — (i) `FCMPL`+`IFGE`로 단일
 float 필드 경계 추출, (ii) 두 float 필드 선형 `FADD(FMUL const,var)` inter-field → real 튜플, (iii) `DCMP`

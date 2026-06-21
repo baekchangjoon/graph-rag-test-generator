@@ -80,6 +80,38 @@ class InputMutatorTest {
         return m.apply().apply(MAPPER.createObjectNode());
     }
 
+    private static final List<BodyShape.BodyField> FLOAT_FIELDS = List.of(
+            new BodyShape.BodyField("base", "float"),
+            new BodyShape.BodyField("surcharge", "java.lang.Float"));
+
+    @Test
+    void interFieldReal_setsAllFieldsAsDoubles() {
+        List<Map<String, Double>> tuples = List.of(Map.of("base", 48.5, "surcharge", 1.0));
+        List<InputMutator.Mutation> ms = InputMutator.interFieldReal(FLOAT_FIELDS, tuples);
+        assertThat(ms).hasSize(1);
+        ObjectNode out = ms.get(0).apply().apply(MAPPER.createObjectNode());
+        assertThat(out.get("base").asDouble()).isEqualTo(48.5);
+        assertThat(out.get("surcharge").asDouble()).isEqualTo(1.0);
+        assertThat(ms.get(0).name()).contains("base").contains("surcharge");
+    }
+
+    @Test
+    void interFieldReal_skipsTupleWhenFieldMissing() {
+        // surcharge 가 body 필드에 없으면 atomic 튜플 적용 불가 → skip.
+        List<BodyShape.BodyField> onlyBase = List.of(new BodyShape.BodyField("base", "float"));
+        List<Map<String, Double>> tuples = List.of(Map.of("base", 48.5, "surcharge", 1.0));
+        assertThat(InputMutator.interFieldReal(onlyBase, tuples)).isEmpty();
+    }
+
+    @Test
+    void realBounds_emitsMutationPerCandidate() {
+        Map<String, Set<Double>> reals = Map.of("base", new TreeSet<>(Set.of(99.0, 100.0, 101.0)));
+        List<InputMutator.Mutation> ms = InputMutator.realBounds(FLOAT_FIELDS, reals);
+        assertThat(applied(ms, "realbound-base-99.0").get("base").asDouble()).isEqualTo(99.0);
+        assertThat(applied(ms, "realbound-base-100.0").get("base").asDouble()).isEqualTo(100.0);
+        assertThat(applied(ms, "realbound-base-101.0").get("base").asDouble()).isEqualTo(101.0);
+    }
+
     @Test
     void enumValues_emitsMutationPerConstant() {
         List<BodyShape.BodyField> fields = List.of(new BodyShape.BodyField("tier", "io.x.Tier"));

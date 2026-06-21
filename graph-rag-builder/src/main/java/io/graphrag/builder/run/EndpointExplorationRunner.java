@@ -222,6 +222,8 @@ public class EndpointExplorationRunner {
         Map<String, Set<Long>> conditionBounds = candidates.numeric();
         Map<String, Set<String>> stringCandidates = candidates.strings();
         List<Map<String, Long>> interFieldTuples = candidates.tuples();   // inter-field 동시충족 해
+        Map<String, Set<Double>> realBounds = candidates.reals();         // float/double 단일필드 경계(작업 #4)
+        List<Map<String, Double>> realInterFieldTuples = candidates.realTuples();   // float inter-field 튜플
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
                 budgetRequests);
@@ -229,7 +231,7 @@ public class EndpointExplorationRunner {
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                 invoker, literalCandidates,
                 fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
-                interFieldTuples);
+                interFieldTuples, realBounds, realInterFieldTuples);
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
@@ -266,7 +268,7 @@ public class EndpointExplorationRunner {
                     EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
                             tables, invoker2, literalCandidates,
                             fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
-                            interFieldTuples);
+                            interFieldTuples, realBounds, realInterFieldTuples);
                     outcome = orchestrator.explore(target2);
                     log.info("re-explored {} (SQL hint table={}): {} path(s)",
                             endpoint.id(), hint.table(), outcome.paths().size());
