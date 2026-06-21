@@ -28,8 +28,10 @@ import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
+import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
+import io.graphrag.model.ForeignKey;
 import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.Json;
@@ -49,10 +51,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -207,8 +213,11 @@ public class EndpointExplorationRunner {
         boolean seedResource = readPath || hasPathParam;
         Map<String, List<FieldConstraint>> happyConstraints =
                 mergeComparisonBounds(fieldConstraints, comparisons, shape);
+        // 폼 참조 필드: 백업 행 SELECT/seed → name 1순위 후보로 reference-aware happy base 합성(Phase 3).
+        Map<String, RefCandidate> formRefCandidates = resolveFormRefCandidates(formBindings, tables);
+        Map<String, String> nameRefValues = nameTokens(formRefCandidates);
         SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints,
-                null, shapesByType, formBindings, Map.of());
+                null, shapesByType, formBindings, nameRefValues);
 
         List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
 
@@ -265,7 +274,7 @@ public class EndpointExplorationRunner {
                     deleteSeeds(pass1Happy);
                     SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
                             enumConstants, enumColumns, happyConstraints, hint,
-                            shapesByType, formBindings, Map.of());
+                            shapesByType, formBindings, nameRefValues);
                     requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
                     coverage.dump(true);                          // baseline: 부팅+pass-1+시드 구간 컷
                     cumulativeCoverage = new ExecutionDataStore(); // 리포트를 pass-2(시드된 run)만 반영
@@ -343,6 +352,13 @@ public class EndpointExplorationRunner {
         if (validBody && baseInput instanceof ObjectNode ob && shape != null && !shape.collection()
                 && !"off".equalsIgnoreCase(System.getenv("GRB_NEGATIVE_VALIDATION"))) {
             finalPaths.addAll(exploreNegativeValidationVariants(endpoint, shape, fieldConstraints, ob));
+        }
+
+        // 폼 참조-id backtrack 패스(Phase 3): name 1순위로 안 열리는 참조 필드(예: Converter<String,E> PK 조회)를
+        // 필드별 PK 후보로 재발행 → bound arm 커버. discoveredBy 마커로 생성 제외, POST라 repro-verify 대상 외.
+        if (!formRefCandidates.isEmpty() && shape != null) {
+            finalPaths.addAll(exploreFormReferenceTrials(endpoint, shape, tables, formBindings,
+                    happyConstraints, shapesByType, formRefCandidates, nameRefValues));
         }
 
         // REQ-013/014/015: non-2xx path 재현 검증.
@@ -467,6 +483,217 @@ public class EndpointExplorationRunner {
 
     private record VariantResult(List<ExploredPath> paths, List<RequiredSeed> seeds,
                                  List<CapturedSql> sql) {
+    }
+
+    // ===== 폼 참조 토큰 런타임 trial(Phase 3, spec §3.2) =====
+
+    /** 참조 필드의 백업행 후보. */
+    private record RefCandidate(String pk, String name) {
+    }
+
+    /**
+     * 각 REFERENCE 폼 필드의 백업 테이블을 해석하고 행을 SELECT(없으면 default 행 seed 후 재조회)해 후보를
+     * 산출한다. 후보 = {PK 값, name-류 컬럼 값}. best-effort(미해석/실패 필드는 skip → 스칼라/skip 폴백).
+     */
+    private Map<String, RefCandidate> resolveFormRefCandidates(List<FormFieldBinding> formBindings,
+                                                               List<TableSchema> tables) {
+        Map<String, RefCandidate> out = new HashMap<>();
+        if (formBindings == null) {
+            return out;
+        }
+        for (FormFieldBinding binding : formBindings) {
+            if (binding.kind() != FormFieldBinding.Kind.REFERENCE) {
+                continue;
+            }
+            String table = resolveBackupTable(binding, tables);
+            if (table == null) {
+                continue;
+            }
+            TableSchema schema = tables.stream().filter(t -> t.name().equals(table)).findFirst().orElse(null);
+            if (schema == null) {
+                continue;
+            }
+            try {
+                RefCandidate candidate = selectOrSeedRefRow(schema);
+                if (candidate != null) {
+                    out.put(binding.field(), candidate);
+                }
+            } catch (Exception e) {   // best-effort: 참조 해석 실패는 회귀 아님(스칼라/skip 폴백)
+                log.warn("form-ref resolve failed for field {} (table {}): {}",
+                        binding.field(), table, e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    /** 후보 → name 1순위 토큰 맵(name 없으면 PK). reference-aware happy base 합성에 사용. */
+    private static Map<String, String> nameTokens(Map<String, RefCandidate> candidates) {
+        Map<String, String> out = new HashMap<>();
+        candidates.forEach((field, c) -> out.put(field, c.name() != null ? c.name() : c.pk()));
+        return out;
+    }
+
+    /**
+     * 백업 테이블 해석 우선순위(결정적, spec §3.2): (1) @ManyToOne @JoinColumn FK → 스키마 부모 테이블,
+     * (2) 정적 @Table(name), (3) camelToSnake(참조 엔티티 simple-name). 어느 것도 스키마에 없으면 null.
+     */
+    static String resolveBackupTable(FormFieldBinding binding, List<TableSchema> tables) {
+        if (binding.joinColumn() != null) {
+            for (TableSchema table : tables) {
+                for (ForeignKey fk : table.foreignKeys()) {
+                    if (fk.column().equals(binding.joinColumn())) {
+                        return fk.referencedTable();
+                    }
+                }
+            }
+        }
+        if (binding.refTable() != null && hasTable(tables, binding.refTable())) {
+            return binding.refTable();
+        }
+        if (binding.refEntityFqn() != null) {
+            String fqn = binding.refEntityFqn();
+            String simple = fqn.substring(Math.max(fqn.lastIndexOf('.'), fqn.lastIndexOf('$')) + 1);
+            String snake = SampleInputSynthesizer.camelToSnake(simple);
+            if (hasTable(tables, snake)) {
+                return snake;
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasTable(List<TableSchema> tables, String name) {
+        return tables.stream().anyMatch(t -> t.name().equals(name));
+    }
+
+    /** 백업 테이블의 기존 행 후보 — 없으면 default 행 seed 후 재조회. PK 없는 테이블은 null. */
+    private RefCandidate selectOrSeedRefRow(TableSchema schema) throws Exception {
+        String pkColumn = schema.columns().stream().filter(ColumnSchema::primaryKey)
+                .map(ColumnSchema::name).findFirst().orElse(null);
+        if (pkColumn == null) {
+            return null;
+        }
+        String nameColumn = pickNameColumn(schema, pkColumn);
+        RefCandidate existing = querySingleRow(schema.name(), pkColumn, nameColumn);
+        if (existing != null) {
+            return existing;
+        }
+        seedDefaultRow(schema, pkColumn);
+        return querySingleRow(schema.name(), pkColumn, nameColumn);
+    }
+
+    /** name-류 컬럼: "name" 우선, 없으면 첫 non-PK 문자열 컬럼(CHAR/TEXT/CLOB). 없으면 null. */
+    private static String pickNameColumn(TableSchema schema, String pkColumn) {
+        String firstString = null;
+        for (ColumnSchema column : schema.columns()) {
+            if (column.name().equals(pkColumn) || !isStringType(column.jdbcType())) {
+                continue;
+            }
+            if (column.name().equalsIgnoreCase("name")) {
+                return column.name();
+            }
+            if (firstString == null) {
+                firstString = column.name();
+            }
+        }
+        return firstString;
+    }
+
+    private static boolean isStringType(String jdbcType) {
+        String t = jdbcType.toUpperCase();
+        return t.contains("CHAR") || t.contains("TEXT") || t.contains("CLOB");
+    }
+
+    private RefCandidate querySingleRow(String table, String pkColumn, String nameColumn) throws SQLException {
+        String columns = nameColumn == null ? pkColumn : pkColumn + ", " + nameColumn;
+        String sql = "SELECT " + columns + " FROM " + table + " LIMIT 1";   // POSTGRES/MYSQL/MARIADB 공통
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            if (!rs.next()) {
+                return null;
+            }
+            return new RefCandidate(rs.getString(1), nameColumn == null ? null : rs.getString(2));
+        }
+    }
+
+    /** PK + 모든 NOT NULL 컬럼을 채운 default 행을 멱등 INSERT. 토큰은 재조회한 실제 값을 쓰므로 값 자체는 무관. */
+    private void seedDefaultRow(TableSchema schema, String pkColumn) throws Exception {
+        List<String> columns = new ArrayList<>();
+        List<Object> values = new ArrayList<>();
+        for (ColumnSchema column : schema.columns()) {
+            if (column.name().equals(pkColumn)) {
+                columns.add(column.name());
+                values.add(defaultColumnValue(column, true));
+            } else if (!column.nullable()) {
+                columns.add(column.name());
+                values.add(defaultColumnValue(column, false));
+            }
+        }
+        Seeds.insert(connection, dbType, new SynthesizedInput.SeedRow(schema.name(), columns, values));
+    }
+
+    private static Object defaultColumnValue(ColumnSchema column, boolean pk) {
+        String type = column.jdbcType().toUpperCase();
+        if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) {
+            return pk ? "ref-1" : "sample-" + column.name();
+        }
+        if (type.contains("BOOL")) {
+            return true;
+        }
+        if (type.contains("UUID")) {
+            return java.util.UUID.fromString("00000000-0000-0000-0000-000000000001");
+        }
+        if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
+            return java.time.LocalDateTime.of(2037, 1, 1, 0, 0);
+        }
+        if (type.contains("DATE")) {
+            return java.time.LocalDate.of(2037, 1, 1);
+        }
+        return 1;   // 수치 PK/컬럼
+    }
+
+    /**
+     * 참조 필드별 PK backtrack trial: 해당 필드를 PK 토큰으로(나머지는 name 1순위) 합성해 1회씩 재발행한다.
+     * name 1순위로 안 열리는 참조(예: {@code Converter<String,E>} PK 조회)의 bound arm을 연다. budget ≤
+     * min(budgetRequests/2, 10). discoveredBy="form-ref-trial"(생성 제외).
+     */
+    private List<ExploredPath> exploreFormReferenceTrials(
+            Endpoint endpoint, BodyShape shape, List<TableSchema> tables, List<FormFieldBinding> formBindings,
+            Map<String, List<FieldConstraint>> fieldConstraints, Map<String, BodyShape> shapesByType,
+            Map<String, RefCandidate> candidates, Map<String, String> nameRefValues) {
+        List<ExploredPath> paths = new ArrayList<>();
+        List<FormFieldBinding> refs = formBindings.stream()
+                .filter(b -> b.kind() == FormFieldBinding.Kind.REFERENCE)
+                .filter(b -> candidates.containsKey(b.field()) && candidates.get(b.field()).pk() != null)
+                .toList();
+        if (refs.isEmpty()) {
+            return paths;
+        }
+        HttpClient http = HttpClient.newHttpClient();
+        String authHeader = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        int budget = Math.min(budgetRequests / 2, 10);
+        int issued = 0;
+        for (FormFieldBinding ref : refs) {
+            if (issued >= budget) {
+                break;
+            }
+            Map<String, String> trial = new HashMap<>(nameRefValues);
+            trial.put(ref.field(), candidates.get(ref.field()).pk());   // 이 필드 → PK 후보
+            try {
+                SynthesizedInput input = happyInput(endpoint, shape, tables, enumConstants, enumColumns,
+                        fieldConstraints, null, shapesByType, formBindings, trial);
+                InvocationOutcome out = doSend(http, endpoint, input.body(), authHeader);
+                paths.add(new ExploredPath(endpoint.id() + "-formref-" + ref.field(), endpoint.id(),
+                        input.body(), out.status(), out.response(), List.of(), List.of(),
+                        List.copyOf(out.coveredBranches()), "form-ref-trial",
+                        List.of("form-ref-trial:" + ref.field()), List.of(), List.of()));
+                issued++;
+                log.info("form-ref-trial {} ({}=pk) -> status {}", endpoint.id(), ref.field(), out.status());
+            } catch (Exception e) {   // best-effort: trial 실패는 회귀 아님
+                log.warn("form-ref-trial failed for {} ({}): {}", endpoint.id(), ref.field(), e.getMessage());
+            }
+        }
+        return paths;
     }
 
     /**

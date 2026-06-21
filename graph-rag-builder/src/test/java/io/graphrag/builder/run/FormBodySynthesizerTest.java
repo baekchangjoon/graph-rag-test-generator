@@ -78,7 +78,7 @@ class FormBodySynthesizerTest {
     void referenceField_usesRefValueWhenPresent() {
         BodyShape command = new BodyShape("Cmd", List.of(new BodyField("color", "io.x.Color")));
         List<FormFieldBinding> bindings = List.of(
-                FormFieldBinding.reference("color", "io.x.Color", "io.x.Color", null));
+                FormFieldBinding.reference("color", "io.x.Color", "io.x.Color", null, null));
 
         ObjectNode body = (ObjectNode) synth.synthesize(
                 command, Map.of(), bindings, Map.of("color", "red"), List.of(), Map.of()).body();
@@ -90,7 +90,7 @@ class FormBodySynthesizerTest {
     void referenceField_skippedWhenNoRefValue() {
         BodyShape command = new BodyShape("Cmd", List.of(new BodyField("color", "io.x.Color")));
         List<FormFieldBinding> bindings = List.of(
-                FormFieldBinding.reference("color", "io.x.Color", "io.x.Color", null));
+                FormFieldBinding.reference("color", "io.x.Color", "io.x.Color", null, null));
 
         ObjectNode body = (ObjectNode) synth.synthesize(
                 command, Map.of(), bindings, Map.of(), List.of(), Map.of()).body();
