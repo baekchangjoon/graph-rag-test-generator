@@ -92,7 +92,7 @@
 
 ## 5. E2E / 수용 테스트 (정의된 done)
 **outer-loop (먼저 RED) — in-repo `@Controller` 픽스처**(order-service, B1 SignupController 정신). 각 폼은 **happy arm이
-올바른 파라미터 합성일 때만 도달**(오합성 시 바인딩 실패 arm). `BuilderE2eTest` 단언(메커니즘 5종):
+올바른 파라미터 합성일 때만 도달**(오합성 시 바인딩 실패 arm). `BuilderIntegrationTest` 단언(메커니즘 5종):
 
 1. **다중-커맨드**: `(HelperObj, @Valid CmdObj)` → 커맨드=CmdObj 인덱싱(FORM 타입·javaType 단언) + CmdObj 필드 바인딩 happy arm.
 2. **참조-name-Formatter**: 엔티티 필드 ← `Formatter<E>`(이름 조회) → 유효 name 토큰 바인딩 성공 arm.
@@ -125,7 +125,7 @@
 - **Phase 4**: PropertyEditor(@InitBinder, 컨트롤러-local) 레지스트리 합류 → Phase 3 trial 재사용. 컬렉션 비목표 확정.
 
 ## 7. 회귀 (regression-on-sut-expansion)
-- order-service: 전 e2e + `BuilderE2eTest`(기존 happy/422/state-guard/negative-validation/폼 양-arm 단언 유지 + 신규 폼 5종).
+- order-service: 전 e2e + `BuilderIntegrationTest`(기존 happy/422/state-guard/negative-validation/폼 양-arm 단언 유지 + 신규 폼 5종).
 - petclinic/diary/community: 폼 도달 증가, 비-폼 무변. 컨버터/중첩 없는 SUT 무변(정적+실측).
 
 ## 8. 위험
