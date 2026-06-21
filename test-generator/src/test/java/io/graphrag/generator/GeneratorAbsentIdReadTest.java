@@ -60,4 +60,40 @@ class GeneratorAbsentIdReadTest {
         String path = Generator.resolveLiteralPath(ep, input("{\"id\":\"abc\"}"), true);
         assertThat(path).isEqualTo("/api/bookings/abc");
     }
+
+    @Test
+    void trailingDoubleWildcardConcretizedToProbeSegment() {
+        // 게이트웨이 predicate path: /api/v1/orders/** → /api/v1/orders/probe
+        Endpoint ep = new Endpoint("gw-orders", "GET", "/api/v1/orders/**",
+                "io.sample.GatewayController", "forwardOrders", List.of(), false);
+        String path = Generator.resolveLiteralPath(ep, M.createObjectNode(), false);
+        assertThat(path).isEqualTo("/api/v1/orders/probe");
+        assertThat(path).doesNotContain("**");
+    }
+
+    @Test
+    void trailingSingleWildcardConcretizedToProbeSegment() {
+        Endpoint ep = new Endpoint("gw-items", "GET", "/api/v1/items/*",
+                "io.sample.GatewayController", "forwardItems", List.of(), false);
+        String path = Generator.resolveLiteralPath(ep, M.createObjectNode(), false);
+        assertThat(path).isEqualTo("/api/v1/items/probe");
+        assertThat(path).doesNotContain("*");
+    }
+
+    @Test
+    void midPathWildcardConcretized() {
+        // 중간 세그먼트 wildcard: /a/*/b → /a/probe/b
+        Endpoint ep = new Endpoint("gw-mid", "GET", "/a/*/b",
+                "io.sample.GatewayController", "forwardMid", List.of(), false);
+        String path = Generator.resolveLiteralPath(ep, M.createObjectNode(), false);
+        assertThat(path).isEqualTo("/a/probe/b");
+    }
+
+    @Test
+    void nonWildcardPathUnchangedByWildcardNormalization() {
+        // 회귀: 일반 captured id 경로는 wildcard 치환 영향 없음
+        Endpoint ep = getById("java.lang.Long");
+        String path = Generator.resolveLiteralPath(ep, input("{\"id\":42}"), false);
+        assertThat(path).isEqualTo("/api/bookings/42");
+    }
 }

@@ -51,6 +51,43 @@ class EndpointExplorationRunnerUrlTest {
     }
 
     @Test
+    void trailingDoubleWildcardConcretizedToProbeSegment() {
+        // 게이트웨이 predicate path: /api/v1/orders/** → /api/v1/orders/probe
+        Endpoint ep = endpoint("/api/v1/orders/**");
+        String url = EndpointExplorationRunner.buildPathAndQuery(ep, Json.mapper().createObjectNode());
+        assertThat(url).isEqualTo("/api/v1/orders/probe");
+        assertThat(url).doesNotContain("**");
+    }
+
+    @Test
+    void trailingSingleWildcardConcretizedToProbeSegment() {
+        // 단일 * wildcard도 probe로 치환
+        Endpoint ep = endpoint("/api/v1/items/*");
+        String url = EndpointExplorationRunner.buildPathAndQuery(ep, Json.mapper().createObjectNode());
+        assertThat(url).isEqualTo("/api/v1/items/probe");
+        assertThat(url).doesNotContain("*");
+    }
+
+    @Test
+    void midPathWildcardConcretized() {
+        // 중간 세그먼트 wildcard: /a/*/b → /a/probe/b
+        Endpoint ep = endpoint("/a/*/b");
+        String url = EndpointExplorationRunner.buildPathAndQuery(ep, Json.mapper().createObjectNode());
+        assertThat(url).isEqualTo("/a/probe/b");
+    }
+
+    @Test
+    void nonWildcardPathUnchangedByWildcardNormalization() {
+        // 회귀: 일반 path param({id})은 wildcard 치환 영향 없음
+        Endpoint ep = endpoint("/api/orders/{id}",
+                new EndpointParam("id", "java.lang.Long", ParamKind.PATH));
+        ObjectNode input = Json.mapper().createObjectNode();
+        input.put("id", 7);
+        assertThat(EndpointExplorationRunner.buildPathAndQuery(ep, input))
+                .isEqualTo("/api/orders/7");
+    }
+
+    @Test
     void formEncodeProducesUrlEncodedFlatScalarsSkippingNullAndContainers() {
         ObjectNode body = Json.mapper().createObjectNode();
         body.put("customer", "a b");          // 공백 → %20 인코딩

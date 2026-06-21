@@ -933,7 +933,25 @@ public class EndpointExplorationRunner {
         // URI.create가 깨진다. 매칭 안 된 placeholder는 센티널("0")로 치환해 URL을 항상 유효하게 둔다
         // (해당 리소스 미시드 → SUT가 not-found/4xx arm 반환).
         path = path.replaceAll("\\{[^/}]+}", "0");
+        // 게이트웨이 predicate path의 Ant wildcard(**/*) → 구체 probe 세그먼트로 치환해
+        // Spring Ant 매처가 실제 요청 경로와 일치하도록 한다.
+        path = concretizeAntWildcards(path);
         return path + query;
+    }
+
+    /**
+     * Ant-style wildcard 세그먼트를 구체 probe 값으로 치환한다.
+     * 세그먼트 단위로 정확히 {@code **} 또는 {@code *}인 경우만 대상으로 하며, 일반 경로는 변경하지 않는다.
+     * NOTE: test-generator의 Generator.concretizeAntWildcards와 동일한 로직 (모듈 분리로 공유 불가, 중복 관리).
+     */
+    static String concretizeAntWildcards(String path) {
+        String[] segments = path.split("/", -1);
+        for (int i = 0; i < segments.length; i++) {
+            if ("**".equals(segments[i]) || "*".equals(segments[i])) {
+                segments[i] = "probe";
+            }
+        }
+        return String.join("/", segments);
     }
 
     private static String pathSentinel(EndpointParam param) {
