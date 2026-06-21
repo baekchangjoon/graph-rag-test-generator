@@ -58,7 +58,8 @@ class BuilderIntegrationTest {
                         "post-api-bookings-id-advance",
                         "post-api-orders",
                         "post-api-orders-batch", "post-api-orders-by-ids",
-                        "post-api-orders-search", "post-api-promo", "post-api-signups",
+                        "post-api-orders-search", "post-api-pricing",
+                        "post-api-promo", "post-api-signups",
                         "post-web-orders",
                         "post-web-users-userid-submit",
                         "put-api-bookings-id");
@@ -107,6 +108,21 @@ class BuilderIntegrationTest {
         assertThat(bookingInput.has("loyaltyPoints") && bookingInput.has("nights")).isTrue();
         assertThat(bookingInput.get("loyaltyPoints").asLong())
                 .isEqualTo(bookingInput.get("nights").asLong() * 600 + 7);
+
+        // float inter-field 가드(작업 #4, Real solveTuple): POST /api/pricing 의 201 입력은 두 float 필드가
+        // band 99.5 <= base*2 + surcharge*3 <= 100.5 를 만족해야 한다. 한 필드만 바꾸는 generic 변이로는
+        // 두 필드 동시 band 진입 불가 → Real solveTuple이 푼 (base, surcharge) 튜플만 201을 연다.
+        // (solver 회귀/oracle off 시 201 자체가 사라져 contains(201)이 먼저 FAIL — '솔버 덕'을 못박는다.)
+        List<ExploredPath> pricingPaths = pathsOf(asset, "post-api-pricing");
+        assertThat(pricingPaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .contains(201);
+        ExploredPath pricingHappy = pricingPaths.stream()
+                .filter(p -> p.expectedStatus() == 201).findFirst().orElseThrow();
+        var pricingInput = pricingHappy.sampleInput();
+        assertThat(pricingInput.has("base") && pricingInput.has("surcharge")).isTrue();
+        double combined = pricingInput.get("base").asDouble() * 2.0
+                + pricingInput.get("surcharge").asDouble() * 3.0;
+        assertThat(combined).isBetween(99.5, 100.5);
 
         // 분기/엔진/제약 메타데이터
         assertThat(orderHappy.branchesTaken()).isNotEmpty();

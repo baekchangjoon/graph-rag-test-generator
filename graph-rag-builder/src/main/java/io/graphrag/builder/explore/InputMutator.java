@@ -75,6 +75,8 @@ public final class InputMutator {
         all.addAll(enumValues(target.mutableFields(), target.enumConstants()));
         all.addAll(joint(target.mutableFields(), target.conjunctions()));
         all.addAll(interField(target.mutableFields(), target.interFieldTuples()));
+        all.addAll(interFieldReal(target.mutableFields(), target.realInterFieldTuples()));
+        all.addAll(realBounds(target.mutableFields(), target.realBounds()));
         all.addAll(firstOrder(target.mutableFields(), target.literalCandidates()));
         return dedupeByName(all);
     }
@@ -99,6 +101,49 @@ public final class InputMutator {
                 t.forEach((field, value) -> body.put(field, value.longValue()));
                 return body;
             }));
+        }
+        return out;
+    }
+
+    /** float/double inter-field 튜플(필드→double 동시충족 해)을 한 atomic 변이로(작업 #4). 튜플 전 필드가 body에 있을 때만. */
+    public static List<Mutation> interFieldReal(List<BodyShape.BodyField> fields,
+                                                List<Map<String, Double>> realTuples) {
+        HashSet<String> fieldNames = new HashSet<>();
+        for (BodyShape.BodyField f : fields) {
+            fieldNames.add(f.name());
+        }
+        List<Mutation> out = new ArrayList<>();
+        for (Map<String, Double> tuple : realTuples) {
+            if (tuple.isEmpty() || !fieldNames.containsAll(tuple.keySet())) {
+                continue;
+            }
+            String name = "interfield-real-" + new java.util.TreeMap<>(tuple);
+            Map<String, Double> t = tuple;
+            out.add(new Mutation(name, body -> {
+                t.forEach(body::put);
+                return body;
+            }));
+        }
+        return out;
+    }
+
+    /** float/double 단일필드 경계 후보(Real solveBoundary 해)를 필드별 세팅 변이로(작업 #4). */
+    public static List<Mutation> realBounds(List<BodyShape.BodyField> fields,
+                                            Map<String, Set<Double>> reals) {
+        HashSet<String> fieldNames = new HashSet<>();
+        for (BodyShape.BodyField f : fields) {
+            fieldNames.add(f.name());
+        }
+        List<Mutation> out = new ArrayList<>();
+        for (var e : new java.util.TreeMap<>(reals).entrySet()) {
+            String field = e.getKey();
+            if (!fieldNames.contains(field)) {
+                continue;
+            }
+            for (Double v : new java.util.TreeSet<>(e.getValue())) {
+                out.add(new Mutation("realbound-" + field + "-" + v,
+                        body -> body.put(field, v)));
+            }
         }
         return out;
     }

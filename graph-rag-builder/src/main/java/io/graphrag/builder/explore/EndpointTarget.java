@@ -24,13 +24,16 @@ public record EndpointTarget(
         Map<String, Set<String>> stringCandidates,
         Map<String, List<String>> enumConstants,
         List<ConstraintExtractor.Conjunction> conjunctions,
-        List<Map<String, Long>> interFieldTuples) {
+        List<Map<String, Long>> interFieldTuples,
+        Map<String, Set<Double>> realBounds,
+        List<Map<String, Double>> realInterFieldTuples) {
 
     public EndpointTarget(Endpoint endpoint, JsonNode baseInput,
                           List<BodyShape.BodyField> mutableFields,
                           List<TableSchema> tables, EndpointInvoker invoker) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                List.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of());
+                List.of(), Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of(),
+                Map.of(), List.of());
     }
 
     public EndpointTarget(Endpoint endpoint, JsonNode baseInput,
@@ -38,6 +41,7 @@ public record EndpointTarget(
                           List<TableSchema> tables, EndpointInvoker invoker,
                           List<String> literalCandidates) {
         this(endpoint, baseInput, mutableFields, tables, invoker,
-                literalCandidates, Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of());
+                literalCandidates, Map.of(), Map.of(), Map.of(), Map.of(), List.of(), List.of(),
+                Map.of(), List.of());
     }
 }
