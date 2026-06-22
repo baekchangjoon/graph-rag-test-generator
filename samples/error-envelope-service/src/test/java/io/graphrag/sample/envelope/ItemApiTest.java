@@ -39,5 +39,7 @@ class ItemApiTest {
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).contains("\"errorCode\":\"404\"");
         assertThat(response.getBody()).contains("BizException");
+        assertThat(response.getBody()).contains("\"errorServer\":");
+        assertThat(response.getBody()).contains("\"errorMsg\":");
     }
 }
