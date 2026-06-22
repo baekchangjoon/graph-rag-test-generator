@@ -22,9 +22,9 @@ public final class BodyShapeExtractor {
     /**
      * 중첩 depth 상한 (컴포넌트 depth=0이 첫 번째 레벨).
      * depth >= MAX_NESTING_DEPTH 이면 expand 없이 타입 자체를 리프로 emit.
-     * 결과 dot-path는 최대 MAX_NESTING_DEPTH개 세그먼트(예: "b.c.d").
+     * 결과 dot-path는 최대 5개 dot-세그먼트(depth 4 경로 = "a.b.c.d.e").
      */
-    private static final int MAX_NESTING_DEPTH = 2;
+    private static final int MAX_NESTING_DEPTH = 4;
 
     /**
      * 타입 이름으로 BodyShape를 추출한다 (비평탄화 — 직접 필드만).
