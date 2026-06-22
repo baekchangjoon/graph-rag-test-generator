@@ -31,7 +31,10 @@ import io.graphrag.builder.oracle.ClassifierConfig;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
+import io.graphrag.builder.store.IndexCache;
+import io.graphrag.builder.store.IndexManifest;
 import io.graphrag.builder.store.JsonFileGraphStore;
+import io.graphrag.builder.store.StaticIndex;
 import io.graphrag.model.CapturedHttpCall;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.Endpoint;
@@ -49,6 +52,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.util.ArrayList;
+import java.util.Optional;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -172,7 +176,7 @@ public final class BuilderCli {
 
     public static GraphAsset build(BuildConfig config) throws Exception {
         log.info("indexing endpoints from {}", config.sutSrc());
-        StaticIndexBundle si = indexStatically(config.sutSrc(), config.sutResources(), config.authConfig());
+        StaticIndex si = staticIndexWithCache(config);
         IndexResult index = si.index();
         WsIndexResult wsIndex = si.ws();
         KafkaIndexResult kafkaIndex = si.kafka();
@@ -324,6 +328,24 @@ public final class BuilderCli {
     /** 테스트 전용 단순 오버로드. */
     static StaticIndexBundle indexStatically(Path sutSrc) {
         return indexStatically(sutSrc, sutSrc.resolveSibling("resources"), null);
+    }
+
+    /** 캐시 우선 정적 인덱싱: 신선하면 복원(Spoon 0회), 미스 또는 noIncremental이면 풀 리빌드 후 저장. */
+    static StaticIndex staticIndexWithCache(BuildConfig config) {
+        Path cacheDir = config.out().resolve("index-cache");
+        IndexManifest current = IndexCache.scan(config.sutSrc(), config.sutResources());
+        if (!config.noIncremental()) {
+            Optional<StaticIndex> hit = IndexCache.load(cacheDir, current);
+            if (hit.isPresent()) {
+                log.info("static index: cache hit (no source change) — skipping Spoon parse");
+                return hit.get();
+            }
+        }
+        StaticIndexBundle b = indexStatically(config.sutSrc(), config.sutResources(), config.authConfig());
+        StaticIndex result = new StaticIndex(b.index(), b.ws(), b.kafka(), b.mappers(),
+                b.responseDtoFieldSets(), b.enumConstants());
+        IndexCache.save(cacheDir, current, result);
+        return result;
     }
 
     /** explore()가 채우는 mutable 누적기. */
