@@ -6,7 +6,7 @@
 
 **Architecture:** 기존 `CoverageClient`(JaCoCo tcpserver dump)를 pjacoco 제어 엔드포인트(`/__coverage__/test/start|stop` + `destfile` `.exec`)로 대체하는 **PoC 전용 하니스**를 만든다. 본 빌더 코드(`EndpointExplorationRunner` 등)는 PoC 단계에선 직접 수정하지 않고, 측정에 필요한 최소 경로만 하니스/스크립트로 재현한다. `CoverageFingerprint.of(ExecutionDataStore, Set)`는 입력이 store라 `.exec`를 `ExecFileLoader`로 로드해 그대로 재사용한다. 측정 결과는 design spec §11에 기록하고, A 불가 시 **B로 자동 회귀하지 않고 중단**한다.
 
-**Tech Stack:** Java(JDK 17+ 빌드/Java8 호환 agent), Gradle, JaCoCo `org.jacoco.core`(ExecFileLoader/ExecutionDataStore), pjacoco `io.pjacoco:pjacoco-agent:1.3.0`, OpenTelemetry javaagent, Docker Compose(petclinic·order-service SUT), JUnit5 + 셸 e2e.
+**Tech Stack:** Java(JDK 17+ 빌드/Java8 호환 agent), Gradle, JaCoCo `org.jacoco.core`(ExecFileLoader/ExecutionDataStore), pjacoco `io.pjacoco:pjacoco-agent:1.3.0`, OpenTelemetry javaagent, Docker Compose(spring-petclinic·tainted-spring MSA SUT), JUnit5 + 셸 e2e.
 
 ## Global Constraints
 
@@ -19,6 +19,7 @@
 - **A 불가 시 중단·재논의** — 어떤 V-게이트든 A를 불가로 만들면 B 인프라/코드 자동 착수 금지. spec §11에 기록 후 종료.
 - 커밋 author/committer: `baekchangjoon <changjoon.baek@icloud.com>` (env vars).
 - PoC 산출물 위치: `graph-rag-builder/src/test/java/io/graphrag/builder/poc/fanout/` (JUnit 하니스) + `e2e/poc-fanout/` (셸 e2e).
+- **SUT(외부 repo, spec §3.1 확정)**: V1~V3 = spring-petclinic `~/github_spring-petclinic/spring-petclinic`(단일 Spring 앱, 자체 jar 빌드). V4 = tainted-spring `~/github_tainted-spring`, 멀티 JVM OTel은 `tainted-spring-platform/docker-compose.pjacoco-otel.yml`(diary:6310→Kafka→mindgraph:6311, OTel→pjacoco 이중주입 기배선). 오버레이의 pjacoco jar 볼륨 경로는 제거된 `ptc-trace-context`를 가리켜 깨져 있으니 main `agent/build/libs/` 산출물로 갱신할 것.
 
 ---
 
@@ -326,7 +327,7 @@ echo "V1 PASS"
 
 - [ ] **Step 2: petclinic 기동 래퍼 작성**
 
-`e2e/poc-fanout/lib-launch-petclinic.sh` — 기존 `e2e/`의 petclinic 기동 경로(compose 또는 jar)를 `launch_petclinic <JAVA_TOOL_OPTIONS>`로 감싼다. (기존 `run-attach-otel-e2e.sh`의 SUT 기동 부분을 참조해 동일 compose override 패턴 사용. JAVA_TOOL_OPTIONS만 주입점.)
+`e2e/poc-fanout/lib-launch-petclinic.sh` — **외부** spring-petclinic(`~/github_spring-petclinic/spring-petclinic`)을 빌드(`./mvnw -q package -DskipTests` 또는 `./gradlew bootJar`)해 그 jar를 `JAVA_TOOL_OPTIONS=$JTO java -jar <petclinic.jar>`로 기동하는 `launch_petclinic <JAVA_TOOL_OPTIONS>`를 작성한다. petclinic은 H2 임베디드 기본 프로파일이라 별도 DB compose 불요(JAVA_TOOL_OPTIONS만 주입점, classfiles 경로는 빌드 산출물 `target/classes` 또는 `build/classes`).
 
 - [ ] **Step 3: V1 실행 → 실패/성공 관측**
 
@@ -548,7 +549,7 @@ git commit -m "poc(fanout): V2 동시 seeding 무사고 + per-worker Connection 
 
 ---
 
-### Task 8: V4 — 분산 트레이스 귀속 (order-service: 단일 JVM + 멀티 JVM/C3)
+### Task 8: V4 — 분산 트레이스 귀속 (tainted-spring diary→mindgraph: 단일 + 멀티 JVM/OTel)
 
 **REQ-IDs:** REQ-006, REQ-007
 
@@ -557,15 +558,15 @@ git commit -m "poc(fanout): V2 동시 seeding 무사고 + per-worker Connection 
 - Create: `graph-rag-builder/src/test/java/io/graphrag/builder/poc/fanout/V4DistributedAttributionPoc.java`
 
 **Interfaces:**
-- Consumes: 기존 order-service OTEL e2e 자산(`e2e/run-attach-otel-e2e.sh`, `e2e/request-order-events.json`). pjacoco `traceKeyAutoCreate=true` + OTel javaagent 이중주입. C3 분산 병합(shared-volume drain)은 pjacoco repo 워크플로 참조.
+- Consumes: tainted-spring `~/github_tainted-spring/tainted-spring-platform/docker-compose.pjacoco-otel.yml`(diary:6310, mindgraph:6311, OTel→pjacoco 이중주입 기배선) + HANDOFF 재현 절차(`HANDOFF-from-pjacoco-c3-otel-kafka-2026-06-20.md`). pjacoco main `agent/build/libs/` 산출물로 오버레이 jar 경로 갱신 필요.
 
-- [ ] **Step 1: order-service consumer 토폴로지 확정**
+- [ ] **Step 1: 오버레이 jar 경로 복구 + 기동**
 
-order-service의 Kafka consumer가 **동일 JVM인지 별도 JVM인지** compose/소스로 확정해 스크립트 상단에 기록. 단일이면 REQ-007은 🔵(해당 없음, §11 명시), 멀티면 REQ-006+007 둘 다 필수.
+`docker-compose.pjacoco-otel.yml`의 깨진 pjacoco jar 볼륨 경로(제거된 `ptc-trace-context`)를 main 빌드 산출물(`~/github_parallel-per-test-coverage/parallel-per-test-coverage/agent/build/libs/<shadowJar>`)로 sed 치환. `docker compose -f docker-compose.yml -f docker-compose.pjacoco-otel.yml up -d zookeeper kafka postgres redis auth-user diary mindgraph` 후 두 서비스 로그에 `[pjacoco] agent installed` 확인.
 
-- [ ] **Step 2: V4 e2e 스크립트**
+- [ ] **Step 2: V4 e2e 스크립트 (HANDOFF 재현 절차)**
 
-`e2e/poc-fanout/v4-distributed-attribution.sh`: OTel+pjacoco(`traceKeyAutoCreate=true`,`OTEL_PROPAGATORS=tracecontext,baggage`) 이중주입으로 order-service 기동, 한 엔드포인트 요청이 consumer 비동기 코드를 유발하게 한 뒤, consumer 전용 분기가 그 testId/traceId `.exec`에 귀속되는 바이트를 측정. 멀티 JVM이면 C3 shared-volume drain 병합 절차 수행.
+`e2e/poc-fanout/v4-distributed-attribution.sh`: diary `POST /internal/diaries`(traceparent `00-1111…-01`) → Kafka `diary.created` → mindgraph consumer. 잠시 대기 후 `POST http://localhost:6310/__coverage__/test/stop?testId=<traceId>` + mindgraph 6311 stop. diary `.exec`(in-process, REQ-006)와 mindgraph `<traceId>.exec`의 `DiaryCreatedConsumer` 등 귀속 바이트(REQ-007) 측정.
 
 - [ ] **Step 3: 귀속 JUnit 게이트**
 
@@ -577,7 +578,7 @@ order-service의 Kafka consumer가 **동일 JVM인지 별도 JVM인지** compose
 void consumerCoverageAttributedToRequestTestId() {
     long bytes = consumerOnlyProbeBytes(loadAttributed("v4"));
     assertThat(bytes).isGreaterThan(0L);   // 단일 JVM (REQ-006)
-    // 멀티 JVM(REQ-007): C3 병합 후 downstream consumer 분기 귀속 > 0 (order-service가 멀티면 활성)
+    // 멀티 JVM(REQ-007): C3 병합 후 downstream consumer 분기 귀속 > 0 (tainted-spring diary→mindgraph 멀티 JVM)
 }
 ```
 
@@ -617,7 +618,7 @@ design spec §11에 V1~V4 각 pass/fail, V3(a) 등가 집합 비교, V3(b) 오�
 
 - [ ] **Step 3: 매트릭스 최종 갱신 + 일치 점검**
 
-요구사항명세 매트릭스를 실제 테스트 결과로 갱신(🟢/🔵). 각 green REQ가 실제 통과 테스트(@DisplayName REQ-ID)와 대응하는지 대조. order-service 단일 JVM이면 REQ-007 🔵 + 분모 조정(8/8).
+요구사항명세 매트릭스를 실제 테스트 결과로 갱신(🟢/🔵). 각 green REQ가 실제 통과 테스트(@DisplayName REQ-ID)와 대응하는지 대조. REQ-007은 tainted-spring 멀티 JVM OTel SUT 확보로 분모 9/9 유지(🔵 해당 없음).
 
 - [ ] **Step 4: Commit**
 
