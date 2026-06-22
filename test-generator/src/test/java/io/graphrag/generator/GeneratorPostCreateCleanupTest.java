@@ -3,6 +3,7 @@ package io.graphrag.generator;
 import io.graphrag.generator.compose.ComposedFixture;
 import io.graphrag.model.CapturedSql;
 import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.Outcome;
 import io.graphrag.model.TableSchema;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +40,7 @@ class GeneratorPostCreateCleanupTest {
     @Test
     void post201_autoIncPk_noExistingDelete_emitsCleanup() {
         Map<String, Object> c = Generator.postCreateCleanup("POST", 201,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(bookings(true)), respHasId(), List.of());
         assertThat(c).isNotNull();
         assertThat(c.get("table")).isEqualTo("bookings");
@@ -49,6 +51,7 @@ class GeneratorPostCreateCleanupTest {
     @Test
     void post201_nonAutoIncPk_noCleanup() {
         assertThat(Generator.postCreateCleanup("POST", 201,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(bookings(false)), respHasId(), List.of())).isNull();
     }
 
@@ -56,18 +59,21 @@ class GeneratorPostCreateCleanupTest {
     void post201_tableAlreadyCleaned_noCleanup() {
         var existing = List.of(new ComposedFixture.Stmt("DELETE FROM bookings WHERE customer_email = ?", List.of("e")));
         assertThat(Generator.postCreateCleanup("POST", 201,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(bookings(true)), respHasId(), existing)).isNull();
     }
 
     @Test
     void get200_notCreate_noCleanup() {
         assertThat(Generator.postCreateCleanup("GET", 200,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(bookings(true)), respHasId(), List.of())).isNull();
     }
 
     @Test
     void post404_notSuccess_noCleanup() {
         assertThat(Generator.postCreateCleanup("POST", 404,
+                Outcome.Kind.FAILURE,
                 List.of(insertBookings()), List.of(bookings(true)), respHasId(), List.of())).isNull();
     }
 
@@ -75,6 +81,7 @@ class GeneratorPostCreateCleanupTest {
     void post201_responseLacksPk_noCleanup() {
         var noId = List.of(new ComposedFixture.Assertion("status", "equalTo(\"PENDING\")"));
         assertThat(Generator.postCreateCleanup("POST", 201,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(bookings(true)), noId, List.of())).isNull();
     }
 
@@ -84,6 +91,7 @@ class GeneratorPostCreateCleanupTest {
                 new ColumnSchema("booking_id", "BIGINT", false, true, true)), List.of(), List.of());
         var resp = List.of(new ComposedFixture.Assertion("bookingId", "notNullValue()"));
         Map<String, Object> c = Generator.postCreateCleanup("POST", 201,
+                Outcome.Kind.SUCCESS,
                 List.of(insertBookings()), List.of(t), resp, List.of());
         assertThat(c).isNotNull();
         assertThat(c.get("pkColumn")).isEqualTo("booking_id");
