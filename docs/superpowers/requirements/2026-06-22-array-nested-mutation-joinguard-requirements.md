@@ -53,8 +53,9 @@
 
 ### REQ-005 — BodyShapeExtractor 재귀 dot-path 평탄화(깊이·cycle)
 - 유형: Functional · 우선순위: Must
-- 설명: `BodyShapeExtractor`가 중첩 DTO 컴포넌트를 dot-path 스칼라 리프로 재귀 전개하되, 깊이
-  상한(3)과 **경로별** cycle guard를 적용한다.
+- 설명: `BodyShapeExtractor.extractFromTypeFlattened`(JSON `@RequestBody` 전용 변형; `extract()`는
+  un-flattened 유지 — 역전파 v3)가 중첩 DTO 컴포넌트를 dot-path 스칼라 리프로 재귀 전개하되, 깊이
+  상한(3)과 **경로별** cycle guard를 적용한다. `extract()`는 form 분류 계약상 평탄화하지 않는다.
 - 수용기준:
   - Given 중첩/순환 DTO 타입을, When `extract`하면, Then (a) `address.city` dot-path 리프 산출,
     (b) 깊이 3 초과 경로 절단, (c) 순환 타입 경로별 차단, (d) 같은 타입 형제 필드 둘 다 전개.
@@ -114,14 +115,16 @@
     변경 전과 **같거나 많다**(축소 없음). And 전 모듈 단위/통합 GREEN.
 - 검증 레벨: E2E black-box / regression
 
-### REQ-011 — SampleInputSynthesizer dot-path happy 합성 + FK 휴리스틱 carve-out
+### REQ-011 — JSON happy 바디 중첩(runner nestDottedKeys) + FK 휴리스틱 carve-out
 - 유형: Functional · 우선순위: Must
-- 설명: `synthesizeObject`가 dot-path 필드명을 putPath로 중첩 materialize하고, 점이 포함된 이름엔
-  FK 휴리스틱(`endsWith("Id")`)을 적용하지 않는다.
+- 설명(역전파 v3): `SampleInputSynthesizer`는 리터럴 키 유지하되 FK 휴리스틱은 점 포함 이름에 미적용.
+  JSON happy 바디 중첩은 `JsonPaths.nestDottedKeys`(순수 변환)로 처리하고, `run()`이 non-form JSON
+  object 바디에만 적용한다.
 - 수용기준:
-  - Given dot-path 필드(`address.city`, `shipTo.userId`)를 가진 shape를, When `synthesize`하면,
-    Then 결과 JSON이 `{"address":{"city":…}}` 중첩 구조이고, `shipTo.userId`에 대해 최상위 평면 키나
-    FK probe가 생성되지 않는다.
+  - Given `{"address.city":"x","shipTo.userId":"y"}` object를, When `JsonPaths.nestDottedKeys`,
+    Then `{"address":{"city":"x"},"shipTo":{"userId":"y"}}`가 된다(점 없는 키는 불변).
+  - Given dot-path 필드를 가진 shape를, When `SampleInputSynthesizer.synthesize`, Then `shipTo.userId`에
+    대해 FK probe row가 생성되지 않는다(carve-out).
 - 검증 레벨: unit
 
 ## 추적 매트릭스
