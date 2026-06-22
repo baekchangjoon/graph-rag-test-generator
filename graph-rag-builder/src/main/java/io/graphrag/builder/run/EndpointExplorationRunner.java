@@ -275,8 +275,14 @@ public class EndpointExplorationRunner {
 
         JsonNode baseInput = happy.body();
         boolean formBody = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
-        if (!formBody && baseInput instanceof ObjectNode jsonBody) {
-            JsonPaths.nestDottedKeys(jsonBody);   // JSON @RequestBody: dot-path 키 → 중첩 객체
+        if (!formBody) {
+            if (baseInput instanceof ObjectNode jsonBody) {
+                JsonPaths.nestDottedKeys(jsonBody);   // JSON @RequestBody: dot-path 키 → 중첩 객체
+            } else if (baseInput instanceof ArrayNode arr) {
+                for (JsonNode el : arr) {
+                    if (el instanceof ObjectNode oel) JsonPaths.nestDottedKeys(oel);
+                }
+            }
         }
         List<BodyShape.BodyField> mutableFields = readPath
                 ? endpoint.params().stream()
