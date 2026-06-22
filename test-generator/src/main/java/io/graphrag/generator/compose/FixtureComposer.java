@@ -296,7 +296,7 @@ public class FixtureComposer {
         if (!path.capturedHttpCallIds().isEmpty()) {
             return true;
         }
-        return path.expectedStatus() / 100 == 2;
+        return path.outcome() == io.graphrag.model.Outcome.Kind.SUCCESS;
     }
 
     /** 자식 테이블 seed 전에 같은 var 값으로 FK 부모 행을 재귀적으로 seed한다. */
