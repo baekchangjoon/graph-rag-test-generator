@@ -131,24 +131,21 @@
 
 | REQ-ID  | 요구사항 | 수용 테스트 | Level | Status |
 |---------|----------|-------------|-------|--------|
-| REQ-001  | 배열 원소 필드 변이 | `OrderBatchArrayMutationE2E#elementFieldMutationOpensBranch` | E2E | 🔴 planned |
-| REQ-002  | 빈 배열 구조 변이 | `HeuristicExplorerTest#emptyArrayVariantForCollectionBody` | integration | 🔴 planned |
-| REQ-003  | 중첩 dot-path 변이 가드 도달 | `NestedBodyMutationE2E#nullNestedFieldOpens400` | E2E | 🔴 planned |
-| REQ-004  | 중첩 happy 합성 구조 | `NestedBodyMutationE2E#happyBodyIsNestedJson` | E2E | 🔴 planned |
-| REQ-005  | BodyShapeExtractor 평탄화 | `BodyShapeExtractorNestedTest#nestedField_flattensToDotPath` | unit | 🔴 planned |
-| REQ-005  | (depth cap) | `BodyShapeExtractorNestedTest#nestedDepth_cappedAtMax` | unit | 🔴 planned |
-| REQ-005  | (per-path cycle) | `BodyShapeExtractorNestedTest#cyclicNested_perPathGuard` | unit | 🔴 planned |
-| REQ-005  | (sibling same type) | `BodyShapeExtractorNestedTest#siblingSameType_bothExpanded` | unit | 🔴 planned |
-| REQ-006  | 숫자 조인 가드 추출 | `ConstraintExtractorJoinGuardTest#fieldToFieldNumericExtracted` | unit | 🔴 planned |
-| REQ-007  | 숫자 조인 가드 변이 3-arm | `InputMutatorTest#joinGuards_numericEmitsThreeArms` | unit | 🔴 planned |
-| REQ-008a | 문자열 조인 가드 추출 | `ConstraintExtractorJoinGuardTest#equalsFieldToFieldExtracted` | unit | 🔴 planned |
-| REQ-008b | 문자열 조인 가드 변이 2-arm | `InputMutatorTest#joinGuards_stringEmitsTwoArms` | unit | 🔴 planned |
-| REQ-009  | putPath 안전성 | `InputMutatorPathTest#putPathMaterializesNonObject` / `#removePathLeafOnly` / `#flatNameUnchanged` | unit | 🔴 planned |
-| REQ-010  | 평면 바디 회귀 불변 | 기존 `e2e` 전체 GREEN + 생성 테스트 수 비축소 | E2E/regression | 🔴 planned |
-| REQ-011  | synthesizer dot-path + FK carve-out | `SampleInputSynthesizerNestedTest#nestedHappyAndFkCarveOut` | unit | 🔴 planned |
+| REQ-001  | 배열 원소 필드 변이 | E2E `OrdersBatchPostTest`(원소 변이 9종: negative-amount/remove-userId/empty-userId/missing-ref/remove-amount/remove-type/empty-type 등) + `ArrayBodyMutationIntegrationTest#elementFieldMutationsAppliedToArrayBody` | E2E+integration | 🟢 green |
+| REQ-002  | 빈 배열 구조 변이 | E2E `OrdersBatchPostTest`(`[]`) + `ArrayBodyMutationIntegrationTest`(emptyArray 단언) | E2E+integration | 🟢 green |
+| REQ-003  | 중첩 dot-path 변이 가드 도달 | E2E `OrdersShipPostTest`(remove/null/empty-`address.city` → 400) | E2E | 🟢 green |
+| REQ-004  | 중첩 happy 합성 구조 | E2E `OrdersShipPostTest`(`{"address":{"city":…}}` → 200) | E2E | 🟢 green |
+| REQ-005  | BodyShapeExtractor 평탄화(extractFromTypeFlattened) | `BodyShapeExtractorNestedTest#{nestedField_flattensToDotPath,nestedDepth_cappedAtMax,cyclicNested_perPathGuard,siblingSameType_bothExpanded}` | unit | 🟢 green |
+| REQ-006  | 숫자 조인 가드 추출 | `ConstraintExtractorJoinGuardTest#fieldToFieldNumericExtracted` (+ `#enumConstantComparisonNotExtractedAsJoinGuard`) | unit | 🟢 green |
+| REQ-007  | 숫자 조인 가드 변이 3-arm | `InputMutatorTest#joinGuards_numericEmitsThreeArms` | unit | 🟢 green |
+| REQ-008a | 문자열 조인 가드 추출 | `ConstraintExtractorJoinGuardTest#equalsFieldToFieldExtracted` | unit | 🟢 green |
+| REQ-008b | 문자열 조인 가드 변이 2-arm | `InputMutatorTest#joinGuards_stringEmitsTwoArms` (+ `#joinGuards_skipWhenFieldMissing`) | unit | 🟢 green |
+| REQ-009  | putPath/removePath 안전성 | `JsonPathsTest#{putPathMaterializesNonObject,removePathLeafOnly,flatNameUnchanged}` | unit | 🟢 green |
+| REQ-010  | 평면 바디 회귀 불변 | 전 모듈 392 tests GREEN + E2E 66 tests/14 classes GREEN(신규 ship/batch 포함, 기존 무손실·증가) | E2E/regression | 🟢 green |
+| REQ-011  | JSON 중첩(nestDottedKeys) + FK carve-out | `JsonPathsTest#nestDottedKeys` + `SampleInputSynthesizerNestedTest#nestedHappyAndFkCarveOut`(리터럴 키 + FK 미생성) | unit | 🟢 green |
 
-Coverage: 0/12 green (0%) — target 100% (대상: Must 12 + 미연기 Should 0). 제외: 없음.
-(REQ-005는 4개 메서드로 검증되나 1개 REQ로 집계; 전 메서드 green 시 green.)
+Coverage: 12/12 green (100%) — target 100% (대상: Must 12 + 미연기 Should 0). 제외: 없음.
+(REQ-005는 4개 메서드로 검증되나 1개 REQ로 집계; 전 메서드 green.)
 
 ## 커버리지 규칙
 - 분모 = Must(12). Could/Won't/연기 없음.
