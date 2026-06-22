@@ -357,3 +357,25 @@ production fan-out에서는 모든 커버리지가 pjacoco 경로에서 나와 r
 - 각 요청: `traceparent: 00-<traceId(deterministic)>-0000000000000001-01` 헤더 전송
 - flush: `POST /__coverage__/test/stop?testId=<traceId>&result=passed` (start 불필요 — auto-create)
 - 신규 파일: `PjacocoOtelScopeClient.java` (reusable helper, V2/V3b/V4에서 재사용)
+
+---
+
+### V2 결과 — 2026-06-23 (REQ-002)
+
+| 항목 | 측정값 |
+|---|---|
+| **동시 요청** | 5라운드 × 2 워커 (A: `/owners?lastName=`, B: `/vets.html`), CompletableFuture.allOf |
+| **traceId 격리** | OTel-scope/traceId 경로, `traceKeyAutoCreate=true` |
+| **A의 전용 클래스 (OwnerController) probe in A.exec** | **14** (own coverage 정상) |
+| **B의 전용 클래스 (VetController) probe in B.exec** | **12** (own coverage 정상) |
+| **OwnerController probe in B.exec** | **0** (오염 없음) |
+| **VetController probe in A.exec** | **0** (오염 없음) |
+| **JUnit 게이트 (`V2CrossContaminationPoc`)** | ✅ PASS, ~27s, failures=0, errors=0 |
+
+**V2 판정: PASS** — OTel traceId 격리로 동시 2EP 커버리지 교차오염 = 0. V3(b) 오버헤드 게이트 계속.
+
+#### 환경 메모
+- 엔드포인트 A: `GET /owners?lastName=` → `OwnerController` (`org/springframework/samples/petclinic/owner/OwnerController`)
+- 엔드포인트 B: `GET /vets.html` → `VetController` (`org/springframework/samples/petclinic/vet/VetController`)
+- 동시성: `ExecutorService` (2 threads) + `CompletableFuture.allOf`, 5 rounds
+- 신규 파일: `V2CrossContaminationPoc.java`, `v2-cross-contamination.sh`
