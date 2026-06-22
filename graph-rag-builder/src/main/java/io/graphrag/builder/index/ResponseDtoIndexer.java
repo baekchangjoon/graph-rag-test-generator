@@ -1,6 +1,5 @@
 package io.graphrag.builder.index;
 
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtInvocation;
@@ -26,13 +25,10 @@ public class ResponseDtoIndexer {
             "getForObject", "postForObject", "getForEntity", "postForEntity", "exchange");
 
     public List<Set<String>> extract(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return extract(SharedSpoonModel.build(srcDir));
+    }
 
+    public List<Set<String>> extract(CtModel model) {
         List<Set<String>> fieldSets = new ArrayList<>();
         for (CtInvocation<?> invocation : model.getRootPackage()
                 .getElements(new TypeFilter<>(CtInvocation.class))) {

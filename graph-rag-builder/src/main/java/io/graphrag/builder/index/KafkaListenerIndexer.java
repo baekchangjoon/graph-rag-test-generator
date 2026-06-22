@@ -1,7 +1,6 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.KafkaConsumer;
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtInvocation;
@@ -30,13 +29,10 @@ public class KafkaListenerIndexer {
     private static final String KAFKA_LISTENER = "org.springframework.kafka.annotation.KafkaListener";
 
     public KafkaIndexResult index(Path sutSrcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(sutSrcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return index(SharedSpoonModel.build(sutSrcDir));
+    }
 
+    public KafkaIndexResult index(CtModel model) {
         List<KafkaConsumer> consumers = new ArrayList<>();
         Map<String, BodyShape> shapes = new HashMap<>();
         for (CtType<?> type : model.getAllTypes()) {
