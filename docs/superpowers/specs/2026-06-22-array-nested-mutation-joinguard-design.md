@@ -210,9 +210,12 @@ HeuristicExplorer / CoverageGuidedFuzzer:                                       
   `getCity/getStreet` POJO), 가드 `if (req.address()==null || req.address().getCity()==null ||
   req.address().getCity().isBlank()) → 400`. dot-path `null-address.city`/`remove-address.city` 변이가
   400 arm을 연다. (값-가드가 아니라 **존재/blank 가드** → fieldRef 체인 불요.)
-- AC-3: **기존** 단위 fixture `BoundsController.handle`의 `if (req.amount() > req.score())`. 추출
+- AC-3(숫자): **기존** 단위 fixture `BoundsController.handle`의 `if (req.amount() > req.score())`. 추출
   단위 테스트로 검증하고, 현재 "무시"를 단언하는 `ConstraintExtractorComparisonsTest`를 **JoinGuard
   추출을 단언하도록 갱신**(주석 "리터럴 없음 → 무시"도 정정).
+- AC-3(문자열): **신규** 단위 fixture `sample-src/.../bounds/StringJoinController.java` — `String a,b`를
+  `a.equals(b)`로 비교(양변 field-ref, 리터럴 없음). in-repo에 field-to-field `equals` 픽스처가 없어
+  신규 추가. JoinGuard(STRING) 추출 + 2-arm 변이 단위 검증.
 
 **수용 기준.**
 - **AC-1(배열)**: `OrderBatchController.batch` 탐색에서 원소 필드 변이(예: `null-userId`,
