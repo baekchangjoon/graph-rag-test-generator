@@ -1,6 +1,5 @@
 package io.graphrag.builder.index;
 
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.declaration.CtEnum;
 import spoon.reflect.visitor.filter.TypeFilter;
@@ -17,13 +16,10 @@ import java.util.TreeMap;
 public class EnumConstantExtractor {
 
     public Map<String, List<String>> extract(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return extract(SharedSpoonModel.build(srcDir));
+    }
 
+    public Map<String, List<String>> extract(CtModel model) {
         Map<String, List<String>> result = new TreeMap<>();
         for (CtEnum<?> e : model.getElements(new TypeFilter<>(CtEnum.class))) {
             result.put(e.getQualifiedName(),

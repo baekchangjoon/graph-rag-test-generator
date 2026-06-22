@@ -1,7 +1,6 @@
 package io.graphrag.builder.index;
 
 import io.graphrag.model.WsEndpoint;
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLiteral;
@@ -31,13 +30,10 @@ public class WsEndpointIndexer {
             "org.springframework.messaging.handler.annotation.SendTo";
 
     public WsIndexResult index(Path sutSrcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(sutSrcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return index(SharedSpoonModel.build(sutSrcDir));
+    }
 
+    public WsIndexResult index(CtModel model) {
         String wsPath = configLiteral(model, "addEndpoint", "/ws");
         String appPrefix = configLiteral(model, "setApplicationDestinationPrefixes", "/app");
 

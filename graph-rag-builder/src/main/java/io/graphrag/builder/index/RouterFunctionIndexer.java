@@ -3,7 +3,6 @@ package io.graphrag.builder.index;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ParamKind;
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
@@ -39,13 +38,10 @@ public class RouterFunctionIndexer {
     private static final Set<String> HTTP_METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
 
     public IndexResult index(Path sutSrcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(sutSrcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return index(SharedSpoonModel.build(sutSrcDir));
+    }
 
+    public IndexResult index(CtModel model) {
         List<Endpoint> endpoints = new ArrayList<>();
         Map<String, BodyShape> bodyShapes = new HashMap<>();
 

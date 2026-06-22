@@ -4,7 +4,6 @@ import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ParamKind;
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldRead;
@@ -56,12 +55,10 @@ public class EndpointIndexer {
     }
 
     public IndexResult index(Path sutSrcDir, AuthConfig authConfig) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(sutSrcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+        return index(SharedSpoonModel.build(sutSrcDir), authConfig);
+    }
+
+    public IndexResult index(CtModel model, AuthConfig authConfig) {
         ConverterRegistryIndexer.Registry converterRegistry = new ConverterRegistryIndexer().index(model);
 
         List<Endpoint> endpoints = new ArrayList<>();
