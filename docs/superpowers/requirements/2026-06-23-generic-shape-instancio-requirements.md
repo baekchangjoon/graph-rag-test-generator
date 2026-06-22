@@ -97,7 +97,7 @@
 |--------|----------|-------------|-------|--------|
 | REQ-001 | 깊이3 중첩 | E2E `DeepPostTest`(happy `{"l1":{"l2":{"value":…,"count":1}}}` 200; `count:-1`→422; `remove-l1.l2.value`→400) + `BodyShapeExtractorGenericTest#deepNested` | E2E+unit | 🟢 green |
 | REQ-002 | 중첩-배열 원소 nest | `JsonPathsTest#nestDottedKeys_perArrayElement` | unit | 🟢 green |
-| REQ-003 | Map 바디 | E2E `PrefsPostTest`(`{"sampleKey":…}` 200; `{}`→400) + `BodyShapeExtractorTest#mapBody_stringKey/nonStringKey_empty` | E2E+unit | 🟢 green |
+| REQ-003 | Map 바디(scalar·DTO value) | E2E `PrefsPostTest`(Map<String,String>) + `ProfilesMapPostTest`(Map<String,DTO> happy `{"sampleKey":{name,age}}` 200, `remove-sampleKey.name`→422) + `BodyShapeExtractorTest#mapBody_stringKey` + `BodyShapeExtractorGenericTest#mapBody_dtoValue` | E2E+unit | 🟢 green |
 | REQ-004 | List<scalar> 원소 | E2E `TagsPostTest`(`["sample"]` 200; `[]`→400) + `SampleInputSynthesizerTest#scalarList_alreadyWorks` | E2E+unit | 🟢 green |
 | REQ-005 | concolic lifter | `CandidateLifterTest`(8 tests: leaf→dot-path, fan-out, tuple unique-only 등) | unit | 🟢 green |
 | REQ-006 | Instancio 폴백 | `ReflectiveBodyInstantiatorTest#{resolvesPlainJarType,deterministicSeed,disabledReturnsEmpty}` | unit | 🟢 green |
