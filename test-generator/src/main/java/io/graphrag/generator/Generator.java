@@ -19,6 +19,7 @@ import io.graphrag.model.GeneratedFile;
 import io.graphrag.model.GenerationRequest;
 import io.graphrag.model.GenerationResult;
 import io.graphrag.model.ParallelSafetyReport;
+import io.graphrag.model.Outcome;
 import io.graphrag.model.ParamKind;
 
 import java.io.StringWriter;
@@ -207,7 +208,7 @@ public class Generator {
         }
 
         Map<String, Object> postCreateCleanup = postCreateCleanup(
-                endpoint.httpMethod(), path.expectedStatus(), sql, client.tables(),
+                endpoint.httpMethod(), path.expectedStatus(), path.outcome(), sql, client.tables(),
                 fixture.assertions(), fixture.deletes());
         return new ScenarioMethod(
                 deriveMethodName(endpoint.id(), path.id()),
@@ -681,9 +682,10 @@ public class Generator {
      * (Fix#1의 보조 위생). autoIncrement PK가 아니면 트리거하지 않으므로 기존 골든/일반 경로는 불변.
      */
     static Map<String, Object> postCreateCleanup(String httpMethod, int expectedStatus,
+            Outcome.Kind outcome,
             List<CapturedSql> sqlList, List<TableSchema> tables,
             List<ComposedFixture.Assertion> assertions, List<ComposedFixture.Stmt> existingDeletes) {
-        if (!"POST".equals(httpMethod) || expectedStatus < 200 || expectedStatus >= 300) {
+        if (!"POST".equals(httpMethod) || outcome != Outcome.Kind.SUCCESS) {
             return null;
         }
         Map<String, TableSchema> byName = new HashMap<>();
