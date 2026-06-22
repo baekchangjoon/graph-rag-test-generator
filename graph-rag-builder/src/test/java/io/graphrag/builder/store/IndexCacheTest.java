@@ -83,4 +83,28 @@ class IndexCacheTest {
         IndexManifest manifestB = IndexCache.scan(src, res, authB);
         assertThat(IndexCache.load(cache, manifestB)).isEmpty();
     }
+
+    @Test
+    void publicPathsCommaDoesNotCollide() throws Exception {  // delimiter 충돌 방지 검증
+        Path cache = Files.createTempDirectory("cache-delimiter");
+        Path src = Files.createTempDirectory("src-delimiter");
+        Path res = Files.createTempDirectory("res-delimiter");
+        Files.writeString(src.resolve("A.java"), "class A {}");
+
+        // 동일 loginPath, 다른 publicPaths (한 경로에 쉼표 vs 두 개의 경로)
+        AuthConfig authWithCommaInPath = new AuthConfig("/login", "user", "pass", "token", "Authorization",
+                "Bearer", List.of("/public,/admin"));  // 단일 경로, 쉼표 포함
+        AuthConfig authWithSplitPaths = new AuthConfig("/login", "user", "pass", "token", "Authorization",
+                "Bearer", List.of("/public", "/admin"));  // 두 경로
+
+        IndexManifest manifestA = IndexCache.scan(src, res, authWithCommaInPath);
+        IndexCache.save(cache, manifestA, empty());
+
+        // 서로 다른 auth fingerprint → 캐시 미스 (충돌 없음)
+        IndexManifest manifestB = IndexCache.scan(src, res, authWithSplitPaths);
+        assertThat(IndexCache.load(cache, manifestB)).isEmpty();
+
+        // fingerprint 자체도 다른지 확인
+        assertThat(manifestA.authFingerprint()).isNotEqualTo(manifestB.authFingerprint());
+    }
 }

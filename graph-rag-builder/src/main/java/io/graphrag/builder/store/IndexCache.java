@@ -45,8 +45,8 @@ public final class IndexCache {
         String loginPath = authConfig.loginPath() != null ? authConfig.loginPath() : "";
         String publicPaths = authConfig.publicPaths().stream()
                 .sorted()
-                .collect(Collectors.joining(","));
-        return "loginPath=" + loginPath + ";publicPaths=" + publicPaths;
+                .collect(Collectors.joining("\0"));  // NUL: 경로에 절대 포함 불가
+        return "loginPath=" + loginPath + "\0\0publicPaths=" + publicPaths;  // \0\0: 두 섹션 구분
     }
 
     private static void collect(Path root, String ext, String label,
