@@ -246,6 +246,7 @@ public class EndpointExplorationRunner {
                               InputCandidates candidates,
                               Map<String, List<FieldConstraint>> fieldConstraints,
                               List<ConstraintExtractor.Conjunction> conjunctions,
+                              List<ConstraintExtractor.JoinGuard> joinGuards,
                               List<ConstraintExtractor.StateGuard> stateGuards,
                               boolean validBody,
                               Map<String, BodyShape> shapesByType,
@@ -292,7 +293,7 @@ public class EndpointExplorationRunner {
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                 invoker, literalCandidates,
                 fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
-                interFieldTuples, realBounds, realInterFieldTuples);
+                interFieldTuples, realBounds, realInterFieldTuples, joinGuards);
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
@@ -337,7 +338,7 @@ public class EndpointExplorationRunner {
                         EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
                                 tables, invoker2, literalCandidates,
                                 fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
-                                interFieldTuples, realBounds, realInterFieldTuples);
+                                interFieldTuples, realBounds, realInterFieldTuples, joinGuards);
                         outcome = orchestrator.explore(target2);
                         bundle = buildPaths(outcome, endpoint, conditions);
                         happy = happy2;

@@ -504,6 +504,9 @@ public final class BuilderCli {
             // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
             List<ConstraintExtractor.Conjunction> allConjunctions =
                     constraintExtractor.extractConjunctions(config.sutSrc());
+            // 양변 모두 필드 참조인 비교 가드(REQ-006, REQ-008a) — joinGuards 변이 합성 근거. 전 계층 1회.
+            List<ConstraintExtractor.JoinGuard> allJoinGuards =
+                    constraintExtractor.extractJoinGuards(config.sutSrc());
             // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
             Map<String, List<String>> enumColumns =
                     constraintExtractor.extractEnumColumns(config.sutSrc());
@@ -618,10 +621,15 @@ public final class BuilderCli {
                             .filter(g -> g.classFqn().equals(endpoint.handlerClass())
                                     && g.method().equals(endpoint.handlerMethod()))
                             .toList();
+                    // 이 엔드포인트 handler에 귀속된 joinGuard만 전달(per-endpoint 필터).
+                    List<ConstraintExtractor.JoinGuard> endpointJoinGuards = allJoinGuards.stream()
+                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
+                                    && g.method().equals(endpoint.handlerMethod()))
+                            .toList();
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                    endpointStateGuards,
+                                    endpointJoinGuards, endpointStateGuards,
                                     index.validBodyEndpointIds().contains(endpoint.id()),
                                     index.bodyShapes(),
                                     index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
