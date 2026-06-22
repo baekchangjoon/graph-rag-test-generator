@@ -40,8 +40,6 @@ import java.time.Instant;
 public final class PjacocoOtelScopeClient {
 
     private static final int EXEC_AWAIT_MS = 5_000;
-    private static final long TRACE_ID_BASE = 0x0000_0000_0000_0001L;
-
     private final String host;
     private final int controlPort;
     private final Path destfileDir;
@@ -140,7 +138,7 @@ public final class PjacocoOtelScopeClient {
         Instant deadline = Instant.now().plusMillis(EXEC_AWAIT_MS);
         while (Instant.now().isBefore(deadline)) {
             try {
-                if (Files.exists(execFile) && Files.size(execFile) > 32) return;
+                if (Files.exists(execFile) && Files.size(execFile) > 0) return;
             } catch (IOException ignored) { /* retry */ }
             Thread.sleep(300);
         }
