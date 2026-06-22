@@ -98,8 +98,18 @@ node.put(leaf, value);   // 타입별 오버로드: int→IntNode, long→LongNo
 
 ### 변경 2 — `BodyShapeExtractor` 중첩 dot-path 평탄화 (중첩 필드 공급)
 
-`extract`에 **재귀 평탄화**를 추가한다. DTO/record 컴포넌트 타입이 scalar/enum/collection이 아니고
-모델 내 해석 가능한 DTO면, 재귀로 `parent.child` **스칼라 리프**를 전개한다.
+> **역전파 정정(v3, 구현 중 회귀 발견).** 최초 설계는 `extract()`를 전역 평탄화했으나, 이는
+> `EndpointIndexer.classifyFormBindings`(필드 타입이 nested POJO여야 NESTED/REFERENCE 분류)와
+> `FormBodySynthesizer`(dotted 이름→리터럴 form 키 위임)를 깨뜨린다(form-body 기능과 공유 컴포넌트
+> 충돌). 따라서 평탄화를 **JSON `@RequestBody` 경로 전용으로 scope**한다:
+> - `extract()`/`extractFromType()`는 **un-flattened 복원**(form 분류·합성 계약 보존).
+> - 재귀 평탄화는 **별도 메서드** `extractFromTypeFlattened(model, type)`로 분리.
+> - `EndpointIndexer`에서 `@RequestBody`(ParamKind.BODY)만 flattened 변형으로 bodyShape를 저장;
+>   form 커맨드(ParamKind.FORM)는 un-flattened `extractFromType` 유지.
+> - REQ-005 검증은 `extract()`가 아니라 `extractFromTypeFlattened`를 대상으로 한다.
+
+`extractFromTypeFlattened`에 **재귀 평탄화**를 둔다. DTO/record 컴포넌트 타입이 scalar/enum/collection이
+아니고 모델 내 해석 가능한 DTO면, 재귀로 `parent.child` **스칼라 리프**를 전개한다.
 
 - **scalar 판정**: 기존 `SCALAR_TYPES` 재사용. enum·collection·미해결(shadow/외부)·**깊이 상한 도달**은
   리프로 종료.
@@ -115,11 +125,13 @@ node.put(leaf, value);   // 타입별 오버로드: int→IntNode, long→LongNo
   `nestedDepth_cappedAtMax`, `cyclicNested_perPathGuard`(`record Node(Node parent, String name)` →
   깊이 내 `parent.…name` 전개 + cycle 차단), `siblingSameType_bothExpanded`.
 
-**happy 합성 호환 (변경 1과 연동).** `SampleInputSynthesizer.synthesizeObject`(현재
-`body.put(field.name(), …)`/`body.set(field.name(), …)` 직접)는 dot-path 이름을 만나면 **putPath로
-중첩 구조를 materialize**해야 한다(아니면 `{"address.city":…}` 평면 키 → @RequestBody 역직렬화 실패).
-또한 FK 휴리스틱(`field.name().endsWith("Id")`)은 **점이 있는 이름엔 적용하지 않는다**(`a.b`는 단순 FK
-컬럼일 수 없음). AC-2가 nested happy body가 `{"address":{"city":…}}` 형태임을 검증.
+**happy 합성 호환 (역전파 v3).** `SampleInputSynthesizer`는 **리터럴 키 유지**한다(FormBodySynthesizer가
+dotted 이름→리터럴 form 키로 위임하므로 중첩하면 form이 깨진다). FK 휴리스틱만 **점이 있는 이름에
+미적용**(`a.b`는 FK 컬럼 아님 — carve-out 유지). JSON happy 바디의 중첩은 **runner에서 scope**:
+`run()`이 non-form JSON object 바디(`!form && baseInput instanceof ObjectNode`)에 한해
+`JsonPaths.nestDottedKeys(body)`(점 포함 최상위 키 → 중첩 객체로 이동, 순수 변환)를 적용한다. mutableFields는
+JSON-flattened shape의 dot-path 필드이고, 변이는 `JsonPaths.putPath`로 이미 중첩 생성. AC-2가 nested happy
+body `{"address":{"city":…}}`를 검증.
 
 ### 변경 3 — 배열 원소 변이 어댑터 (최상위 컬렉션 #1 해결)
 
