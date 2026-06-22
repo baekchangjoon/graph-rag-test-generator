@@ -80,10 +80,14 @@ class V3AsyncFlushPoc {
     private static final int PJACOCO_CTL_PORT = 6310;
     private static final int BOOT_TIMEOUT_S   = 90;
 
-    private static final int WARMUP_COUNT  = 5;
+    /** 각 코드 경로(no-traceparent / traceparent+flush)를 동등하게 워밍업 */
+    private static final int WARMUP_COUNT_EACH = 20;
     private static final int REQUEST_COUNT = 60;
 
-    /** 비동기 flush 임계경로 오버헤드 목표: < 5% */
+    /**
+     * 비동기 flush 임계경로 오버헤드 목표: |overhead| < 5%.
+     * 양방향 워밍업 후 honest 측정 기대값은 ≈ 0 (baseline 근처).
+     */
     private static final double ASYNC_OVERHEAD_THRESHOLD_PCT = 5.0;
     /** 참고: 동기 flush 실측 오버헤드 (task-5b-report.md) */
     private static final double SYNC_OVERHEAD_REFERENCE_PCT  = 15.80;
@@ -122,10 +126,17 @@ class V3AsyncFlushPoc {
 
         Process proc = launchPetclinicWithOtel(repoRoot, combinedJto);
         try {
-            // ── 1. Warm-up (버림: JIT + connection) ──────────────────────────────
-            System.out.println("[REQ-010] === warm-up (" + WARMUP_COUNT + "회, 버림) ===");
+            // ── 1. Warm-up (버림: JIT + connection) — 두 코드 경로 동등 워밍업 ─────
+            // C1 수정: baseline 경로(no-traceparent)와 async 경로(traceparent+flush) 각 WARMUP_COUNT_EACH회씩
+            // 워밍업해 측정 시 두 경로가 동등하게 JIT-warm 상태가 되도록 보장.
+            System.out.println("[REQ-010] === warm-up 양방향 각 " + WARMUP_COUNT_EACH + "회, 버림 ===");
+            // 1a. baseline 경로 워밍업 (no-traceparent)
+            for (int i = 0; i < WARMUP_COUNT_EACH; i++) {
+                hitPetclinicNoTraceparent(http);
+            }
+            // 1b. traceparent+flush 경로 워밍업 (fire-and-forget)
             List<Future<?>> warmupFutures = new ArrayList<>();
-            for (int i = 0; i < WARMUP_COUNT; i++) {
+            for (int i = 0; i < WARMUP_COUNT_EACH; i++) {
                 String traceId = PjacocoOtelScopeClient.traceIdFor(-1 - i);
                 hitPetclinic(http, PjacocoOtelScopeClient.traceparentFor(traceId));
                 String tid = traceId;
@@ -136,40 +147,45 @@ class V3AsyncFlushPoc {
                 try { f.get(30, TimeUnit.SECONDS); } catch (Exception ignored) { /* warm-up best-effort */ }
             }
 
-            // ── 2. Baseline: 60 requests, no traceparent, no flush ────────────────
-            System.out.println("[REQ-010] === ① Baseline (60회, traceparent/flush 없음) ===");
-            long baselineStart = System.nanoTime();
-            for (int i = 0; i < REQUEST_COUNT; i++) {
-                hitPetclinicNoTraceparent(http);
-            }
-            double baselineMs = (System.nanoTime() - baselineStart) / 1_000_000.0;
-            System.out.printf("[REQ-010] baseline=%.1fms (%.2fms/req)%n",
-                    baselineMs, baselineMs / REQUEST_COUNT);
-
-            // ── 3. Async-flush measured: flush is fire-and-forget ─────────────────
-            System.out.println("[REQ-010] === ② Async-flush measured (60회, flush=background, loop NOT waiting) ===");
+            // ── 2+3. 교차 측정(interleaved): baseline/async를 번갈아 실행해 JVM drift 제거 ──
+            // C1 최종 수정: 순차(baseline→async) 방식은 JVM이 계속 warm해져 두 번째 단계가
+            // 체계적으로 빠르게 보이는 순서 편향이 남는다. 교차 실행하면 두 경로가 동일한
+            // JVM 상태에서 번갈아 측정되어 drift를 평균화한다.
+            System.out.println("[REQ-010] === ①② 교차 측정 — baseline/async 각 " + REQUEST_COUNT + "회 인터리빙 ===");
             List<String> measuredTraceIds = new ArrayList<>(REQUEST_COUNT);
             List<Future<?>> flushFutures = new ArrayList<>(REQUEST_COUNT);
+            long totalBaselineNs = 0L;
+            long totalAsyncNs    = 0L;
 
-            long asyncStart = System.nanoTime();
             for (int i = 0; i < REQUEST_COUNT; i++) {
+                // baseline 1회
+                long t0 = System.nanoTime();
+                hitPetclinicNoTraceparent(http);
+                totalBaselineNs += System.nanoTime() - t0;
+
+                // async 1회 (fire-and-forget flush)
                 String traceId = PjacocoOtelScopeClient.traceIdFor(3000 + i);
                 measuredTraceIds.add(traceId);
-                // Critical path: request only — flush dispatch is non-blocking
+                long t1 = System.nanoTime();
                 hitPetclinic(http, PjacocoOtelScopeClient.traceparentFor(traceId));
+                totalAsyncNs += System.nanoTime() - t1;
                 // Dispatch flush to background (fire-and-forget — critical path does NOT await)
                 String tid = traceId;
                 flushFutures.add(flushPool.submit(() -> client.flush(tid)));
             }
-            double asyncCriticalPathMs = (System.nanoTime() - asyncStart) / 1_000_000.0;
 
+            double baselineMs = totalBaselineNs / 1_000_000.0;
+            double asyncCriticalPathMs = totalAsyncNs / 1_000_000.0;
             double overheadMs  = asyncCriticalPathMs - baselineMs;
             double overheadPct = (overheadMs / baselineMs) * 100.0;
-            System.out.printf("[REQ-010] async critical-path=%.1fms (%.2fms/req)%n",
+            double absOverheadPct = Math.abs(overheadPct);
+            System.out.printf("[REQ-010] baseline (interleaved)=%.1fms (%.2fms/req)%n",
+                    baselineMs, baselineMs / REQUEST_COUNT);
+            System.out.printf("[REQ-010] async critical-path (interleaved)=%.1fms (%.2fms/req)%n",
                     asyncCriticalPathMs, asyncCriticalPathMs / REQUEST_COUNT);
             System.out.printf("[REQ-010] overhead vs baseline: %.1fms (%.2f%%)  " +
-                            "(target < %.1f%%  vs sync +%.2f%%)%n",
-                    overheadMs, overheadPct, ASYNC_OVERHEAD_THRESHOLD_PCT, SYNC_OVERHEAD_REFERENCE_PCT);
+                            "(|overhead|=%.2f%%  target < %.1f%%  vs sync +%.2f%%)%n",
+                    overheadMs, overheadPct, absOverheadPct, ASYNC_OVERHEAD_THRESHOLD_PCT, SYNC_OVERHEAD_REFERENCE_PCT);
 
             // ── 4. Drain: await all background flush futures ──────────────────────
             System.out.println("[REQ-010] === ③ Drain — background flush 완료 대기 ===");
@@ -268,41 +284,70 @@ class V3AsyncFlushPoc {
             System.out.printf("[REQ-010] async-flush partition=%s (distinct-paths=%d)%n",
                     partitionStr(keyMap), asyncPartition.size());
 
-            // Non-triviality: must have at least one non-singleton group (arm merging)
-            boolean hasNonSingleton = asyncPartition.stream().anyMatch(g -> g.size() > 1);
+            // ── 6. Vanilla partition (baseline 경로, 동일 4-시퀀스 순차 실행) ──────
+            // C2 수정: async partition과 비교할 vanilla partition을 동일 petclinic 인스턴스에서
+            // 직접 수집. dump/reset 대신 pjacoco flush를 순차 사용(traceId 기반).
+            System.out.println("[REQ-010] === ⑥ Vanilla partition (baseline 경로, 직접 수집) ===");
+            Map<Integer, String> vanillaKeyMap = new LinkedHashMap<>();
+            for (int i = 0; i < PARTITION_SEQUENCE.size(); i++) {
+                String query   = PARTITION_SEQUENCE.get(i);
+                String traceId = PjacocoOtelScopeClient.traceIdFor(5000 + i);
+                hitPetclinicQuery(http, PjacocoOtelScopeClient.traceparentFor(traceId), query);
+                client.flush(traceId);                // 순차(동기): vanilla은 flush 왕복 포함
+                ExecutionDataStore store = client.awaitAndLoad(traceId);
+                String key = CoverageFingerprint.of(store, appClasses);
+                vanillaKeyMap.put(i, key);
+                System.out.printf("[REQ-010] vanilla req-%d [%s] traceId=%s key=%s%n",
+                        i, query, traceId.substring(0, 8) + "...", key);
+            }
+            Set<Set<Integer>> vanillaPartition = toPartition(vanillaKeyMap);
+            System.out.printf("[REQ-010] vanilla partition=%s (distinct-paths=%d)%n",
+                    partitionStr(vanillaKeyMap), vanillaPartition.size());
 
-            // ── 6. Final verdict ──────────────────────────────────────────────────
+            // ── 7. Final verdict ──────────────────────────────────────────────────
             System.out.println("[REQ-010] === 최종 판정 ===");
-            boolean overheadPass  = overheadPct < ASYNC_OVERHEAD_THRESHOLD_PCT;
+            // C1: |overhead| < threshold (작은 양수 또는 음수 측정 노이즈 모두 허용)
+            boolean overheadPass  = absOverheadPct < ASYNC_OVERHEAD_THRESHOLD_PCT;
             boolean execPass      = execMissing == 0 && flushErrors == 0;
-            boolean partitionPass = hasNonSingleton;
+            // C2: async partition이 vanilla partition과 정확히 일치 (동등성 하드 어서트)
+            boolean partitionEqualityPass = asyncPartition.equals(vanillaPartition);
+            // 추가: partition이 비자명해야 함(at least one non-singleton — arm merge 입증)
+            boolean hasNonSingleton = asyncPartition.stream().anyMatch(g -> g.size() > 1);
+            boolean partitionPass = partitionEqualityPass && hasNonSingleton;
             boolean pass = overheadPass && execPass && partitionPass;
 
-            System.out.printf("[REQ-010] ① critical-path overhead=%.2f%% %s  (target < %.1f%%  sync-ref=+%.2f%%)%n",
-                    overheadPct, overheadPass ? "✅ PASS" : "❌ FAIL", ASYNC_OVERHEAD_THRESHOLD_PCT, SYNC_OVERHEAD_REFERENCE_PCT);
+            System.out.printf("[REQ-010] ① critical-path |overhead|=%.2f%% %s  " +
+                            "(raw overhead=%.2f%%  target |x| < %.1f%%  sync-ref=+%.2f%%)%n",
+                    absOverheadPct, overheadPass ? "✅ PASS" : "❌ FAIL",
+                    overheadPct, ASYNC_OVERHEAD_THRESHOLD_PCT, SYNC_OVERHEAD_REFERENCE_PCT);
             System.out.printf("[REQ-010] ② exec present=%d/%d  errors=%d  %s%n",
                     execPresent, REQUEST_COUNT, flushErrors, execPass ? "✅ PASS" : "❌ FAIL");
-            System.out.printf("[REQ-010] ③ partition non-trivial=%s  distinct-paths=%d  %s%n",
-                    hasNonSingleton, asyncPartition.size(), partitionPass ? "✅ PASS" : "❌ FAIL");
+            System.out.printf("[REQ-010] ③ partition equality=%s  non-trivial=%s  async=%s  vanilla=%s  %s%n",
+                    partitionEqualityPass, hasNonSingleton,
+                    partitionStr(keyMap), partitionStr(vanillaKeyMap),
+                    partitionPass ? "✅ PASS" : "❌ FAIL");
             System.out.printf("[REQ-010] drain=%.1fms  total-exec=%dB%n", drainMs, totalExecBytes);
 
             // summary line for grep
-            System.out.printf("ASYNC-FLUSH baseline=%.1fms async-cp=%.1fms overhead=+%.2f%% exec=%d/%d " +
-                            "partition=%s distinct=%d drain=%.1fms%n",
-                    baselineMs, asyncCriticalPathMs, overheadPct, execPresent, REQUEST_COUNT,
-                    partitionStr(keyMap), asyncPartition.size(), drainMs);
+            System.out.printf("ASYNC-FLUSH baseline=%.1fms async-cp=%.1fms overhead=%.2f%% |overhead|=%.2f%% " +
+                            "exec=%d/%d async-partition=%s vanilla-partition=%s equal=%s drain=%.1fms%n",
+                    baselineMs, asyncCriticalPathMs, overheadPct, absOverheadPct,
+                    execPresent, REQUEST_COUNT,
+                    partitionStr(keyMap), partitionStr(vanillaKeyMap), partitionEqualityPass, drainMs);
 
             if (pass) {
-                System.out.println("[REQ-010] ✅ REQ-010 PASS — flush IS movable off critical path; " +
-                        "V3b overhead is flush-method issue, not an A limit.");
+                System.out.println("[REQ-010] ✅ REQ-010 PASS — flush 임계경로 밖 이동 가능 확정; " +
+                        "오버헤드 ≈ 0 (flush off critical path vs synchronous +15.8%). " +
+                        "partition 동등성 확인.");
             } else {
                 System.out.println("[REQ-010] ❌ DONE_WITH_CONCERNS — see numbers above.");
             }
 
             // Assertions
-            assertThat(overheadPct)
-                    .as("REQ-010 ①: async critical-path overhead < %.1f%% (actual=%.2f%%)  " +
-                                    "[sync-ref=+%.2f%%; this confirms flush is movable off critical path]",
+            // C1: |overhead| < 5% (양방향 워밍업 후 honest 측정 — 작은 + 또는 - 모두 PASS)
+            assertThat(absOverheadPct)
+                    .as("REQ-010 ①: async critical-path |overhead| < %.1f%% (raw=%.2f%%)  " +
+                                    "[flush off critical path vs sync +%.2f%%; 양방향 워밍업 후 ≈ 0 expected]",
                             ASYNC_OVERHEAD_THRESHOLD_PCT, overheadPct, SYNC_OVERHEAD_REFERENCE_PCT)
                     .isLessThan(ASYNC_OVERHEAD_THRESHOLD_PCT);
 
@@ -315,15 +360,31 @@ class V3AsyncFlushPoc {
                     .as("REQ-010 ②: no flush errors during drain")
                     .isZero();
 
+            // C2: async partition이 vanilla partition과 정확히 동일해야 함
+            assertThat(asyncPartition)
+                    .as("REQ-010 ③: async-flush partition must EQUAL vanilla partition " +
+                            "(async=%s  vanilla=%s)", partitionStr(keyMap), partitionStr(vanillaKeyMap))
+                    .isEqualTo(vanillaPartition);
+
             assertThat(hasNonSingleton)
-                    .as("REQ-010 ③: async-flush partition must be non-trivial " +
-                            "(at least one group with >1 request; actual partition=%s)", partitionStr(keyMap))
+                    .as("REQ-010 ③: partition must be non-trivial (at least one group >1 request; " +
+                            "actual partition=%s)", partitionStr(keyMap))
                     .isTrue();
 
             System.out.println("[REQ-010] REQ-010 PASS");
 
         } finally {
-            flushPool.shutdownNow();
+            // I1: shutdown() + awaitTermination() — 예외 발생 시에도 in-flight flush가 완료되도록 보장
+            flushPool.shutdown();
+            try {
+                if (!flushPool.awaitTermination(DRAIN_TIMEOUT_S, TimeUnit.SECONDS)) {
+                    System.out.println("[REQ-010] ⚠ flushPool did not terminate in " + DRAIN_TIMEOUT_S + "s — forcing");
+                    flushPool.shutdownNow();
+                }
+            } catch (InterruptedException ie) {
+                flushPool.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
             stopProcess(proc, "petclinic-async-flush");
         }
     }

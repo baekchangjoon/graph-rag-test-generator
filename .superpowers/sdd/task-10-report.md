@@ -96,3 +96,39 @@ N+1 입력 선택"을 위해서는 drain 시점이 exploration step boundary와 
 fan-out 본 구현 사안.
 
 **판정**: REQ-010 ✅ PASS. 전략 A VIABLE 확정 (10/10 gates green).
+
+---
+
+## 리뷰 반영 수정 — 2026-06-23
+
+코드리뷰에서 지적된 3개 finding 수정 완료.
+
+### C1 수정 — 측정 순서 편향 제거
+
+- **문제**: 초기 -17.13%는 측정 순서 편향(warmup 5회 traceparent만 → baseline 60회 → async 60회)으로
+  async 단계가 더 warm한 JVM에서 실행됨. 편향된 음수는 실제 개선이 아니라 JVM drift였음.
+- **수정**: 양방향 워밍업(no-traceparent 경로 20회 + traceparent+flush 경로 20회) + 교차 측정(interleaved,
+  baseline/async를 60회 번갈아 실행해 JVM drift 평균화). 어서션을 `|overhead| < 5%`로 변경.
+- **수정된 honest 수치**: overhead = **+1.73%** (≈ baseline; flush off critical path vs synchronous +15.8%).
+
+### C2 수정 — partition 동등성 하드 어서트
+
+- **문제**: `partitionPass = hasNonSingleton`은 "at least one merged group" 체크만으로 partition 구조
+  일치를 증명하지 못함.
+- **수정**: 동일 petclinic 인스턴스에서 vanilla partition을 직접 수집(동일 4-시퀀스 순차 실행 + pjacoco flush)한 후
+  `asyncPartition.equals(vanillaPartition)` 하드 어서트 추가. non-singleton 체크는 비자명성 보조 가드로 유지.
+- **결과**: async `{{0,2},{1},{3}}` == vanilla `{{0,2},{1},{3}}` ✅ (하드 equality PASS).
+
+### I1 수정 — drain 안전
+
+- **문제**: finally 블록의 `shutdownNow()`는 예외 발생 시 in-flight flush를 중단시켜 incomplete `.exec` 야기 가능.
+- **수정**: `shutdown()` + `awaitTermination(DRAIN_TIMEOUT_S, SECONDS)` → timeout 초과 시 fallback `shutdownNow()`.
+
+### 수정 후 실측 수치
+
+| 항목 | 수정 전 (편향) | 수정 후 (honest) | 판정 |
+|---|---|---|---|
+| 임계경로 오버헤드 | -17.13% (순서 편향) | **+1.73%** (교차 측정) | ✅ \|overhead\|=1.73% < 5% |
+| partition 어서트 | non-singleton 체크만 | async == vanilla (하드 equality) | ✅ PASS |
+| exec 60/60 | ✅ | ✅ | ✅ |
+| drain safety | shutdownNow() | shutdown+awaitTermination | ✅ |
