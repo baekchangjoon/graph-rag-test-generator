@@ -90,7 +90,9 @@ echo "=== [4/4] 도구 2: 테스트 생성 + 에러 계약 단언 검증 (AC2) =
   --graph $OUT \
   --out $OUT/generated"
 
-mapfile -t GEN_JAVA_FILES < <(find "$OUT/generated" -name "*.java")
+# bash 3.2 호환(macOS 기본 셸): mapfile 대신 while-read 누적
+GEN_JAVA_FILES=()
+while IFS= read -r f; do GEN_JAVA_FILES+=("$f"); done < <(find "$OUT/generated" -name "*.java")
 [ "${#GEN_JAVA_FILES[@]}" -gt 0 ] || { echo "AC2 FAIL: 생성된 .java 없음"; exit 1; }
 echo "생성된 테스트: ${GEN_JAVA_FILES[*]}"
 
