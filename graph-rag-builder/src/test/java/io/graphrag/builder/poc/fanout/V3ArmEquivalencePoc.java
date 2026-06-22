@@ -5,6 +5,7 @@ import io.graphrag.builder.coverage.CoverageFingerprint;
 import io.graphrag.builder.coverage.JacocoAgent;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.jacoco.core.tools.ExecFileLoader;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -62,6 +63,7 @@ class V3ArmEquivalencePoc {
     private static final int BOOT_TIMEOUT_S   = 90;
 
     @Test
+    @Disabled("superseded by perRequestOtelScope_yieldsSamePartition — key equality intentionally rejected per design §5.1; baggage path drops pre-servlet filter probes")
     @DisplayName("REQ-004: per-request testId arm 등가 = vanilla coverageKey 집합과 일치 (V3(a) 게이트)")
     void perRequestTestId_yieldsSameCoverageKeySet() throws Exception {
         Path repoRoot  = Paths.get("").toAbsolutePath().getParent();

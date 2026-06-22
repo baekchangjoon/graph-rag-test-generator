@@ -94,10 +94,12 @@ CSV_B="$DEST/b.csv"
 echo "[V2] === per-class covered LINE counts ===" >&2
 
 # Extract covered lines for OwnerController and VetController from each CSV
-# CSV columns: GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,...,LINE_MISSED,LINE_COVERED,...
+# CSV columns: GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,
+#              BRANCH_COVERED,LINE_MISSED,LINE_COVERED,...
+# $9 = LINE_COVERED
 extract_covered() {
     local csv="$1" classname="$2"
-    awk -F, -v cls="$classname" 'NR>1 && $3==cls {print $0}' "$csv" | awk -F, '{print $7}' | head -1
+    awk -F, -v cls="$classname" 'NR>1 && $3==cls {print $0}' "$csv" | awk -F, '{print $9}' | head -1
 }
 
 OWNER_IN_A=$(extract_covered "$CSV_A" "OwnerController")
