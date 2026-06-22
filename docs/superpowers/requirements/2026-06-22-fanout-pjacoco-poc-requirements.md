@@ -83,28 +83,28 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 ### REQ-006 — 분산 트레이스 귀속: 단일 JVM consumer (V4-단일)
 - 유형: Functional
 - 우선순위: Must
-- 설명: order-service에서 동일 JVM Kafka consumer가 유발한 비동기 분기 커버리지가 요청
+- 설명: tainted-spring diary의 동일 JVM(in-process) 코드가 유발한 분기 커버리지가 요청
   traceId/testId store에 귀속된다(pjacoco C1 scope 훅).
 - 수용기준:
   - Given OTel+pjacoco 이중주입(`traceKeyAutoCreate=true`, `OTEL_PROPAGATORS=tracecontext,baggage`,
-    traceparent 주입)된 order-service(consumer 단일 JVM 확정),
-  - When 한 엔드포인트 요청이 Kafka consumer 비동기 코드를 유발하면,
-  - Then consumer 전용 분기 귀속 바이트 > 0(해당 testId `.exec`).
-- 검증 레벨: E2E black-box (order-service OTEL e2e 자산 재사용)
+    traceparent 주입)된 tainted-spring diary(`docker-compose.pjacoco-otel.yml`),
+  - When diary `POST /internal/diaries` 요청을 보내면,
+  - Then diary in-process 분기 귀속 바이트 > 0(해당 traceId `.exec`).
+- 검증 레벨: E2E black-box (tainted-spring `docker-compose.pjacoco-otel.yml` 재사용)
 
 ### REQ-007 — 분산 트레이스 귀속: 멀티 JVM consumer (V4-분산, C3)
 - 유형: Functional
 - 우선순위: Must
-- 설명: order-service의 Kafka consumer가 별도 JVM인 경우, pjacoco C3(shared-volume drain 분산
-  병합) 워크플로가 graph-rag attach 모드에서 동작해 downstream 커버리지가 동일 testId/traceId로
-  귀속된다. (사용자 결정: 분산까지 A 필수 게이트.)
+- 설명: 별도 JVM Kafka consumer(tainted-spring mindgraph `DiaryCreatedConsumer`)의 커버리지가
+  pjacoco C3(OTel scope weave) 워크플로로 동일 testId/traceId에 귀속된다. (사용자 결정: 분산까지
+  A 필수 게이트. SUT 확보 — tainted-spring diary→Kafka→mindgraph.)
 - 수용기준:
-  - Given OTel+pjacoco 이중주입 + C3 분산 병합 구성된 멀티 JVM order-service,
-  - When 한 엔드포인트 요청이 별도 JVM consumer를 유발하면,
-  - Then downstream consumer 분기가 동일 testId/traceId로 귀속(귀속 바이트 > 0). 안 되면 A 불가
-    판정(REQ-008 중단 트리거). order-service가 단일 JVM이면 본 REQ는 🔵(해당 없음)으로 표시하고
-    분모에서 제외하되, 그 사실을 §11에 명시한다.
-- 검증 레벨: E2E black-box
+  - Given OTel+pjacoco 이중주입된 멀티 JVM tainted-spring(diary:6310, mindgraph:6311),
+  - When diary 요청(traceparent)이 Kafka `diary.created` → 별도 JVM mindgraph consumer를 유발하면,
+  - Then mindgraph consumer 분기(`DiaryCreatedConsumer` 등)가 동일 traceId `.exec`에 귀속
+    (귀속 바이트 > 0; pjacoco PR #13로 입증된 classCount>0 재검증). 안 되면 A 불가 판정
+    (REQ-008 중단 트리거).
+- 검증 레벨: E2E black-box (멀티 JVM, OTel 벡터)
 
 ### REQ-008 — A 종합 판정 + 중단·재논의 정책 (no auto-fallback)
 - 유형: Functional
@@ -140,12 +140,13 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc` | E2E | 🔴 planned |
 | REQ-004 | per-request testId arm 등가 | `V3ArmEquivalencePoc` | int+E2E | 🔴 planned |
 | REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🔴 planned |
-| REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (order-service) | E2E | 🔴 planned |
-| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` | E2E | 🔴 planned |
+| REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (tainted-spring diary) | E2E | 🔴 planned |
+| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` (diary→mindgraph) | E2E | 🔴 planned |
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
 Coverage: 0/9 green (0%) — target 100% (대상: Must REQ-001~008 + Should REQ-009).
 REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
-REQ-007은 order-service가 단일 JVM으로 확정되면 🔵 처리되어 분모에서 제외될 수 있음(그 경우
-8/8 대상). Could/Won't 없음.
+SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
+V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). REQ-007은 멀티 JVM
+OTel SUT 확보로 더 이상 🔵 위험 없음(분모 9/9 유지). Could/Won't 없음.

@@ -60,6 +60,19 @@ PoC가 통과하면 본 fan-out 설계로 진행한다. **A가 불가로 판명�
 | arm 정확도 | **요청마다 새 고유 testId** | 요청마다 빈 store로 `/test/start`→요청 1건→`/test/stop` → per-request `.exec` = 현 dump(reset=true) delta와 등가 (등가성은 V3 correctness 게이트가 검증) |
 | `none` 모드 | 병렬 제외 | trace key 부재로 동시 흐름 분리 불가. 병렬은 otel/sleuth 전제 |
 
+## 3.1 SUT 매핑 (확정 — 외부 repo)
+
+| 게이트 | SUT | 경로/자산 |
+|---|---|---|
+| V1~V3 | **spring-petclinic** (단일 Spring 앱) | `~/github_spring-petclinic/spring-petclinic` |
+| V4 단일 JVM(REQ-006) | tainted-spring **diary** (in-process) | `~/github_tainted-spring` diary 서비스 |
+| V4 멀티 JVM(REQ-007) | tainted-spring **diary→Kafka→mindgraph** (별도 JVM, OTel) | `~/github_tainted-spring/tainted-spring-platform/docker-compose.pjacoco-otel.yml` |
+
+8개 tainted-spring MSA(analytics·auth-user·bff-gateway·community·counseling·diary·mindgraph·
+notification) 전부 OTel 활용 가능. 멀티 JVM OTel 분산 귀속 SUT 갭이 이로써 해소(legacy-tram/
+Sleuth 폴백 불요). diary·mindgraph는 `docker-compose.pjacoco-otel.yml`에 OTel→pjacoco 이중주입이
+이미 배선돼 있다.
+
 ## 4. PoC 검증 항목 (수용 기준)
 
 각 항목은 Given-When-Then 수용 기준을 가진다. **V1~V4 전부 pass해야 A로 진행**한다.
@@ -105,23 +118,26 @@ PoC가 통과하면 본 fan-out 설계로 진행한다. **A가 불가로 판명�
   없는 baseline 대비 증가율(**목표 < 10%**). ③ `.exec` 파일 개수·총 용량, pjacoco
   `maxStores`/heap 압박(요청마다 새 store 생성·flush가 한계 내인지). 임계 초과 시 §7 (b).
 
-### V4 — 분산 트레이스 귀속 (order-service, Kafka/async)
-- **Given** order-service에 OTel javaagent + pjacoco 이중주입(**`traceKeyAutoCreate=true`,
-  `OTEL_PROPAGATORS=tracecontext,baggage`, 빌더의 traceparent 주입 필수**)을. **order-service의
-  Kafka consumer가 동일 JVM(in-process)인지 별도 JVM(멀티 서비스)인지 먼저 확정**한다.
-- **When** 한 엔드포인트 요청이 Kafka consumer 비동기 코드를 유발하면
-- **Then** consumer 분기 커버리지가 **요청 traceId store 또는 testId store에 귀속**되어 그
-  엔드포인트의 `.exec`에 들어간다.
-- **측정**: consumer 전용 분기 귀속 바이트 > 0. **단일 JVM·멀티 JVM consumer 둘 다 A의 필수
-  pass 게이트다(사용자 결정 — 분산까지 필수).**
-  - **단일 JVM consumer**: pjacoco C1(`traceKeyAutoCreate` scope 훅)으로 귀속.
-  - **멀티 JVM consumer**: pjacoco C3(shared-volume drain 분산 병합) 단계에 의존한다. PoC는
-    graph-rag attach 모드에서 **C3 분산 워크플로가 실제로 동작하는지** 검증한다. pjacoco 자체
-    결정기록(`docs/superpowers/decisions/2026-06-20-otel-weave-kafka-consumer-gap.md`)에
-    OTel scope weave의 Kafka consumer 전파 갭이 기록돼 있는데, 이는 **회피 사유가 아니라 PoC가
-    풀거나 막힘을 확인할 대상**이다. **C3 분산 귀속이 안 되면 V4 FAIL = A 불가 → 중단**(§7).
-  - otel-mode(traceparent)가 1차 벡터, sleuth-mode(B3)도 점검(Brave는 앱 클래스패스 상주 →
-    별도 weave 불요). order-service의 consumer가 단일/멀티 JVM 중 무엇인지 V4 착수 전 확정한다.
+### V4 — 분산 트레이스 귀속 (tainted-spring diary→Kafka→mindgraph, OTel)
+- **Given** tainted-spring(`~/github_tainted-spring`)의 diary·mindgraph에 OTel javaagent +
+  pjacoco 이중주입(OTel 먼저)을 — 기존 `tainted-spring-platform/docker-compose.pjacoco-otel.yml`
+  사용(`traceKeyAutoCreate=true`, `OTEL_PROPAGATORS=tracecontext,baggage`, diary:6310/mindgraph:6311).
+- **When** diary `POST /internal/diaries`(traceparent 주입) 요청이 Kafka `diary.created`를
+  발행하고 별도 JVM mindgraph `DiaryCreatedConsumer`가 소비하면
+- **Then** diary 자체 커버리지(in-process, REQ-006)와 mindgraph consumer 분기 커버리지
+  (별도 JVM, REQ-007)가 **동일 traceId/testId store에 귀속**된다.
+- **측정**: 귀속 바이트 > 0. **단일 JVM(diary in-process)·멀티 JVM(mindgraph 별도 JVM) 둘 다
+  A의 필수 pass 게이트(사용자 결정 — 분산까지 필수).**
+  - **선례·기지 사실**: pjacoco가 이 repo로 멀티 JVM OTel Kafka consumer 갭을 이미 재현·수정
+    (pjacoco PR #13, `ca3f32c`; mindgraph per-trace exec classCount 0→14 — `DiaryCreatedConsumer`·
+    `GraphService`·`RuleBasedGraphExtractor` 귀속). 근인은 비관용 OTel jar 파일명 매칭 실패였고
+    jar 내부 shaded `ThreadLocalContextStorage` 식별로 수정됨
+    (`tainted-spring-platform/HANDOFF-from-pjacoco-c3-otel-kafka-2026-06-20.md`). 따라서 PoC는
+    **이미 동작 입증된 경로를 graph-rag attach 맥락에서 재검증**한다. 재검증 실패 시 V4 FAIL =
+    A 불가 → 중단(§7).
+  - **재현 전제**: 오버레이의 pjacoco jar 경로가 제거된 `ptc-trace-context` worktree를 가리켜
+    깨져 있으니, main 빌드 산출물(`~/github_parallel-per-test-coverage/parallel-per-test-coverage/
+    agent/build/libs/`)로 갱신해야 한다(§6-5). otel-mode(traceparent)가 1차 벡터.
 
 ## 5. arm 정확도 메커니즘 (요청마다 새 testId)
 
@@ -163,8 +179,14 @@ PoC/A 모델 — **명시적 절차**(리뷰 발견 I1/I6 반영):
 5. **pjacoco jar 해소·추출(리뷰 발견 I14)** — `JacocoAgent.prepare`의 `AgentJar.extractTo`
    대응으로 **`PjacocoAgent.prepare`**(가칭) 신설: PoC 단계는 **jar 경로를 시스템 프로퍼티/
    인자로 주입**(`-Dpjacoco.agent.jar=...`)해 메인 빌드 파이프라인 변경을 피한다. PoC 스크립트가
-   `install-local.sh`로 pjacoco 빌드 후 jar 경로를 하니스에 전달. attach는 jar를 `agentsDir`로
-   복사 + published control port 노출을 `JacocoAgent.containerJavaToolOptions`와 대칭으로.
+   `:agent:shadowJar`로 pjacoco 빌드(`~/github_parallel-per-test-coverage/parallel-per-test-coverage`)
+   후 jar 경로를 하니스에 전달. attach는 jar를 `agentsDir`로 복사 + published control port 노출을
+   `JacocoAgent.containerJavaToolOptions`와 대칭으로.
+   - **jar 이름 스큐 주의**: pjacoco README/v1.3.0 좌표는 `pjacoco-agent.jar`(`io.pjacoco:pjacoco-agent`)
+     이나, tainted-spring 오버레이는 구이름 `jacocoagent-parallel.jar`를 참조한다. shadowJar 산출물
+     이름을 확인해 V1(petclinic)·V4(tainted-spring) 양쪽 경로를 실제 산출물로 맞춘다.
+   - **V4 오버레이 경로 갱신**: `docker-compose.pjacoco-otel.yml`의 pjacoco jar 볼륨 경로가 제거된
+     `ptc-trace-context` worktree를 가리켜 깨져 있으니, main 체크아웃의 `agent/build/libs/...`로 갱신.
 6. **per-worker `java.sql.Connection`(리뷰 발견 I2/I4 — A의 전제조건)** — `BuilderCli.explore()`
    가 연 **단일 `java.sql.Connection`을 모든 `EndpointExplorationRunner`가 공유**한다(현재
    순차라 안전). `java.sql.Connection`은 thread-safe가 아니므로 fan-out 워커가 공유하면
