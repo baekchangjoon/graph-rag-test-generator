@@ -60,35 +60,40 @@ class BodyShapeExtractorNestedTest {
     }
 
     /**
-     * REQ-005: MAX_NESTING_DEPTH(=2)를 초과하는 체인은 depth 2에서 타입 자체를 리프로 emit.
-     * 예: A.b.c.d 경로에서 d(depth=2)는 확장되지 않고 타입 FQN을 javaType으로 가진 리프.
+     * REQ-001, REQ-005: MAX_NESTING_DEPTH(=4)를 초과하는 체인은 depth 4에서 타입 자체를 리프로 emit.
+     * 체인 A→B→C→D→E→F→G(String x) 7단 — cap=4이므로 depth=4 지점(e.f.g)에서 잘린다.
+     * 최대 dot-segment 수 ≤ 5 (depth4 경로 = "b.c.d.e.f" 5개).
      */
     @Test
     void nestedDepth_cappedAtMax() {
-        // A -> B -> C -> D (스칼라 아님) : depth 0=A, 1=B, 2=C, 3=D
-        // D는 depth=2이므로 expand 안 됨 → path "b.c.d" 가 리프
+        // A -> B -> C -> D -> E -> F -> G (스칼라 필드 x) : depth 0=B, 1=C, 2=D, 3=E, 4=F, 5=G
+        // depth=4에서 F가 expand 안 됨 → path "b.c.d.e.f" 가 리프(F 타입)로 emit
         String src = "package p; "
                 + "record A(p.B b) {} "
                 + "record B(p.C c) {} "
                 + "record C(p.D d) {} "
-                + "record D(String x) {} "
+                + "record D(p.E e) {} "
+                + "record E(p.F f) {} "
+                + "record F(p.G g) {} "
+                + "record G(String x) {} "
                 + "class In { void h(p.A b){} }";
         CtModel m = model(src);
 
         var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
 
         assertThat(shape).isPresent();
-        // depth cap: "b.c.d" 가 리프(D 타입)로 emit되어야 하고, "b.c.d.x" 는 없어야 한다
+        // depth cap=4: "b.c.d.e.f" 가 리프(F 타입)로 emit되어야 하고, 더 깊은 경로는 없어야 한다
         assertThat(shape.get().fields())
                 .extracting(BodyShape.BodyField::name)
-                .contains("b.c.d")
-                .doesNotContain("b.c.d.x");
-        // dot-segment 수: 최대 3개 (root=0이므로 depth2 경로 = 3 dot-segments "b.c.d")
+                .contains("b.c.d.e.f")
+                .doesNotContain("b.c.d.e.f.g")
+                .doesNotContain("b.c.d.e.f.g.x");
+        // dot-segment 수: 최대 5개 (depth4 경로 = 5 dot-segments "b.c.d.e.f")
         assertThat(shape.get().fields())
                 .extracting(BodyShape.BodyField::name)
                 .allSatisfy(name -> {
                     long dots = name.chars().filter(ch -> ch == '.').count();
-                    assertThat(dots).isLessThanOrEqualTo(3);
+                    assertThat(dots).isLessThanOrEqualTo(5);
                 });
     }
 
