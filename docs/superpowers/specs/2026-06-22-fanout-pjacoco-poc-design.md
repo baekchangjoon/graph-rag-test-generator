@@ -427,14 +427,53 @@ SQLException 0건, 행 수 일관. per-worker Connection 원칙이 JDBC thread-s
 벽시계 증가율이 23.83%로 10% 임계를 초과한다. 주된 원인은 `awaitAndLoad`의 `.exec` 파일 대기(poll 300ms 간격)
 비용으로, 이 대기 비용을 포함할지 여부가 설계 결정 사항이다. §7 (b) 성능 판정: 완화 시도 가능, 재논의 필요.
 
-#### 완화 후보 (재논의 시)
-- `awaitAndLoad`를 비동기화(flush 후 즉시 다음 요청, load는 배치로)하면 측정 범위에서 load 비용 제거 가능.
-- flush만 per-request, load는 탐색 종료 후 일괄 처리로 분리 → 벽시계 순수 증가분은 flush 왕복 100×3.5ms ≈ 350ms (60요청 기준: 200ms) 수준으로 감소 예상.
-- 현재 측정 대로 "flush+load 전부 per-request"로 운용하면 latency는 ~24% 증가한다. 이를 수용할지·완화할지는 §7 (b) 정책에 따라 사용자와 재논의.
-
 #### 환경 메모
 - 신규 파일: `V3OverheadPoc.java`, `v3-overhead.sh`
 - `PjacocoOtelScopeClient` 재사용 (flush/awaitAndLoad 모두 해당 클래스 경유)
+
+---
+
+### V3(b) production-model 재측정 — 2026-06-23 (REQ-005) — .exec load off critical path
+
+§7(b) 결정(secretary safe_default: escalate if still over)에 따라 production-accurate 모델로 재측정.
+
+**재측정 근거**: 이전 측정은 per-request 루프 안에서 `awaitAndLoad`(300ms poll)를 호출해 load 비용이
+critical-path에 포함됐다. Production fan-out에서 `.exec` 로드는 run 종료 후 post-processing 단계에서
+일괄 처리되므로, flush만 per-request critical-path에 포함하는 것이 production-accurate다.
+
+| 항목 | 측정값 |
+|---|---|
+| **측정 환경** | petclinic 4.0.0-SNAPSHOT, OTel 2.11.0 + pjacoco `traceKeyAutoCreate=true`, JDK Corretto 17.0.18, loopback |
+| **포함 범위 (baseline)** | `GET /owners?lastName=` 60회, traceparent/flush/load 없음 |
+| **포함 범위 (production-model measured)** | 동일 60회 + traceparent 헤더 + `flush(traceId)` — `awaitAndLoad`는 **루프 밖** |
+| **① flush 왕복 지연 (100회 평균)** | **4.113ms** (p95=7.314ms) — 임계 < 5ms ✅ PASS |
+| **② 벽시계 baseline** | 1028.4ms (60회) |
+| **② 벽시계 production-model measured** | 1190.9ms (60회) |
+| **② 증가율 (production-model)** | **+162.5ms (+15.80%)** — 임계 < 10% ❌ **FAIL** |
+| **④ post-run load (60개 .exec 일괄, off critical path)** | **28.2ms** |
+| **③ .exec 파일 수** | 165개 (warm-up 5 + probe 100 + measured 60) |
+| **③ .exec 총 크기** | 100,155 bytes (97.8 KB) |
+| **③ pathological** | 없음 (파일당 ~607 bytes 수준, 정상) |
+| **JUnit 게이트 (`V3OverheadProductionPoc`)** | ❌ FAIL (production-model wall-clock 15.80% > 10%) |
+
+**V3(b) production-model 판정: STILL-OVER — 에스컬레이션** — load를 off critical path로 이동해도
+wall-clock 증가율이 15.80%로 여전히 10% 임계를 초과한다. 10% 초과의 원인은
+flush 왕복(4ms) × 60회 ≈ 240ms의 누적 비용 자체다.
+
+이전 동기 모델(+23.83%) vs production-model(+15.80%): 8.03%p 개선. 그러나 10% 임계 미달성.
+post-run load(28.2ms)는 off critical path라 임계 적용 없음.
+
+#### 에스컬레이션 항목 (사용자 재논의 필요)
+1. **임계 재협의**: flush 4ms × N이 실환경에서 수용 가능한지. 실제 fan-out에서는 worker당 요청
+   수가 적어(총 요청을 N개 worker로 분산) 각 worker의 flush 누적이 줄어드는 효과가 있다.
+2. **flush 비동기화**: fire-and-forget flush → critical-path 완전 제거. 단 실패 감지 불가.
+3. **flush 배치화**: run 종료 시 일괄 flush → coverage 완전성 트레이드오프.
+4. **임계 완화**: 로컬 loopback 기준 10%는 flush 1-2회 수준. 실환경 LAN flush 0.5ms 내외라면
+   N회 누적도 10% 이하 가능. 임계를 환경 기반으로 재정의할 수 있다.
+
+#### 환경 메모
+- 신규 파일: `V3OverheadProductionPoc.java`
+- 리포트: `.superpowers/sdd/task-5b-report.md`
 
 ---
 
