@@ -1,0 +1,6 @@
+{
+  "endpointId": "post-api-prefs",
+  "testClassName": "PrefsPostTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}
