@@ -55,18 +55,21 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
     REQ는 fail이며 per-worker Connection/seeding 직렬화가 A 전제조건임을 §11에 기록한다.)
 - 검증 레벨: E2E black-box
 
-### REQ-004 — per-request testId arm 등가 (V3-correctness)
+### REQ-004 — per-request arm partition 등가 (V3-correctness) [rev.4]
 - 유형: Functional
 - 우선순위: Must
-- 설명: 요청마다 빈 store의 새 고유 testId로 `/test/start`→요청 1건→`/test/stop`해 얻은
-  per-request `.exec`를 `ExecFileLoader`로 로드해 `CoverageFingerprint.of(...)`에 넣으면,
-  vanilla sequential 탐색이 내던 path key(`coverageKey`) 집합과 일치한다.
+- 설명: 요청마다 고유 traceparent로 OTel-scope store를 띄워 얻은 per-request `<traceId>.exec`를
+  `ExecFileLoader`로 로드해 `CoverageFingerprint.of(...)`에 넣으면, vanilla sequential 탐색과
+  **동일한 partition**(요청→키 그룹핑)을 만든다. (rev.4 (나): 절대 키 동일성이 아니라 partition
+  등가 — design §5.1. canonical 경로 = OTel-scope/traceId, pre-servlet 필터 probe 캡처.)
 - 수용기준:
-  - Given 같은 라인 true/false arm을 여는 두 입력과, vanilla 순차 탐색으로 수집한 `coverageKey` 집합,
-  - When 동일 입력 시퀀스를 pjacoco per-request `.exec`→`ExecFileLoader.load`→`CoverageFingerprint.of`로 재산출하면,
-  - Then 두 집합이 일치한다(같은 distinct path 수·같은 arm 분리). 불일치 시 A architecturally
-    incompatible로 판정(REQ-008 중단 트리거).
+  - Given 여러 arm을 여는 입력 시퀀스와, vanilla 순차 탐색으로 수집한 `coverageKey` partition,
+  - When 동일 시퀀스를 pjacoco OTel-scope `<traceId>.exec`→`ExecFileLoader.load`→`CoverageFingerprint.of`로 재산출하면,
+  - Then 두 **partition**이 일치한다(같은 distinct path 수 + 같은 요청 그룹핑). partition 불일치 시
+    A architecturally incompatible로 판정(REQ-008 중단 트리거).
 - 검증 레벨: integration (Fingerprint 파이프라인) + E2E black-box (탐색)
+- 한계(문서화): 절대 키는 vanilla와 비호환(pjacoco OTel-scope는 JPA·async 추가 귀속). run 내부
+  일관성만 보장(graph-rag 요구 범위). OTel 추가 귀속이 arm을 잘못 merge/split하지 않는지는 V2/V4가 추가 확인.
 
 ### REQ-005 — per-request 오버헤드 임계 이내 (V3-성능)
 - 유형: Non-functional
@@ -138,14 +141,15 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-001 | OTel→pjacoco 공존 부팅 + 바닐라 `.exec` | `V1AgentCoexistencePoc` (petclinic) | E2E | 🟢 PASS (lines=253, port6300=closed) |
 | REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc` | E2E | 🔴 planned |
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc` | E2E | 🔴 planned |
-| REQ-004 | per-request testId arm 등가 | `V3ArmEquivalencePoc` | int+E2E | ❌ FAIL — vanilla집합≠pjacoco집합 (vanilla=3, pjacoco=3, 교집합=0); pre-servlet probe drop |
-| REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🔵 deferred (REQ-004 FAIL → V3(b) 측정 불필요) |
-| REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (tainted-spring diary) | E2E | 🔵 deferred (REQ-004 FAIL → V4 중단) |
-| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` (diary→mindgraph) | E2E | 🔵 deferred (REQ-004 FAIL → V4 중단) |
-| REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | ⚠️ partial — REQ-004 FAIL로 A incompatible 확인, §11 기록 완료. 재논의 필요. |
+| REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc` (partition) | int+E2E | 🟡 재정의 — partition 등가로 재측정 진행(키 동일성 FAIL은 §5.1로 흡수) |
+| REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🔴 planned (재개) |
+| REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (tainted-spring diary) | E2E | 🔴 planned (재개) |
+| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` (diary→mindgraph) | E2E | 🔴 planned (재개) |
+| REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
-Coverage: 1/9 green (11%) — REQ-004 FAIL(❌) + REQ-005/006/007 deferred(🔵) + REQ-008 partial(⚠️). A architecturally incompatible 판정 → PoC 중단 후 사용자와 재논의.
+Coverage: 1/9 green (11%) — 진행 중. rev.4 (나) 결정으로 V3(a)를 partition 등가로 재정의하고
+V2/V3b/V4 재개. REQ-004는 partition 재측정 중(🟡), REQ-005/006/007 재개(🔴).
 REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
 V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). REQ-007은 멀티 JVM
