@@ -1,6 +1,7 @@
 package io.graphrag.builder.cli;
 
 import io.graphrag.builder.env.DbConfig;
+import io.graphrag.builder.oracle.ClassifierConfig;
 import io.graphrag.builder.run.AuthConfig;
 
 import java.nio.file.Path;
@@ -29,7 +30,8 @@ public record BuildConfig(
         BuilderCli.AttachConfig attach,
         io.graphrag.model.RequestHeaders requestHeaders,
         List<String> endpointSelectors,
-        String traceMode) {
+        String traceMode,
+        ClassifierConfig classifierConfig) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -37,6 +39,7 @@ public record BuildConfig(
         requestHeaders = requestHeaders == null ? io.graphrag.model.RequestHeaders.empty() : requestHeaders;
         endpointSelectors = endpointSelectors == null ? List.of() : endpointSelectors;
         traceMode = traceMode == null ? "otel" : traceMode;   // 기본 otel (sleuth/none은 명시)
+        classifierConfig = classifierConfig == null ? ClassifierConfig.from(Map.of()) : classifierConfig;
     }
 
     /** 풀빌드 설정 (증분 옵션 없음). */
@@ -46,7 +49,7 @@ public record BuildConfig(
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, false, null,
-                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel");
+                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null);
     }
 
     /** attach/requestHeaders 를 생략하는 편의 생성자 (기존 17-arg 호출부 호환). */
@@ -58,6 +61,20 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, null, io.graphrag.model.RequestHeaders.empty(),
-                List.of(), "otel");
+                List.of(), "otel", null);
+    }
+
+    /** classifierConfig를 생략하는 편의 생성자 (기존 21-arg 호출부 호환). */
+    public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
+                       String sutId, String commitSha, DbConfig dbConfig,
+                       int budgetRequests, Path manualPathsDir, Path externalStubsDir,
+                       Map<String, String> sutEnv, Path incrementalBase, List<String> changedFiles,
+                       AuthConfig authConfig, boolean withRedis, boolean withKafka, String sutJavaHome,
+                       BuilderCli.AttachConfig attach, io.graphrag.model.RequestHeaders requestHeaders,
+                       List<String> endpointSelectors, String traceMode) {
+        this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
+                authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
+                endpointSelectors, traceMode, null);
     }
 }
