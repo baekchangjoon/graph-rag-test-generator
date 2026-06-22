@@ -35,6 +35,19 @@ public class FixtureComposer {
         return compose(path, sqlList, tables, List.of(), false);
     }
 
+    /**
+     * 에러 계약 단언 오버로드. semanticStatusField/errorDetailField/errorDetailContains는
+     * ClassifierConfig에서 오며, FAILURE path에서 에러 계약 단언을 생성할 때 쓴다.
+     * null이면 에러 계약 단언 없이 기존 로직(SUCCESS와 동일)을 쓴다.
+     */
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables,
+                                   String semanticStatusField, String errorDetailField,
+                                   String errorDetailContains) {
+        return compose(path, sqlList, tables, List.of(), false, java.util.Map.of(),
+                semanticStatusField, errorDetailField, errorDetailContains);
+    }
+
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds) {
         return compose(path, sqlList, tables, seeds, false);
@@ -58,6 +71,19 @@ public class FixtureComposer {
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath,
                                    Map<String, String> knownByField) {
+        return compose(path, sqlList, tables, seeds, readPath, knownByField, null, null, null);
+    }
+
+    /**
+     * 에러 계약 단언을 포함하는 전체 파라미터 오버로드.
+     * semanticStatusField: FAILURE 응답의 상태 코드 필드명 (예: "errorCode"). null이면 에러 계약 미적용.
+     * errorDetailField/errorDetailContains: 둘 다 non-null·non-blank일 때만 containsString 단언 추가.
+     */
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath,
+                                   Map<String, String> knownByField,
+                                   String semanticStatusField, String errorDetailField,
+                                   String errorDetailContains) {
         if (readPath || !seeds.isEmpty()) {
             Map<String, TableSchema> seedTables = new HashMap<>();
             tables.forEach(t -> seedTables.put(t.name(), t));
@@ -78,7 +104,8 @@ public class FixtureComposer {
                     .toList());
             java.util.Collections.reverse(seedDeletes);
             return new ComposedFixture(List.of(), seedInserts, seedDeletes, "", List.of(),
-                    assertionsFromResponse(path, sqlList, knownByField));
+                    assertionsFromResponse(path, sqlList, knownByField,
+                            semanticStatusField, errorDetailField, errorDetailContains));
         }
 
         Map<String, TableSchema> tablesByName = new HashMap<>();
@@ -155,7 +182,8 @@ public class FixtureComposer {
         return new ComposedFixture(
                 new ArrayList<>(new LinkedHashSet<>(varsByFieldValue.values())),
                 inserts, deletes, bodyFormat, bodyArgs,
-                assertionsFromResponse(path, sqlList, knownByField),
+                assertionsFromResponse(path, sqlList, knownByField,
+                        semanticStatusField, errorDetailField, errorDetailContains),
                 substitutions, collectInsertPkLiterals(sqlList));
     }
 
@@ -206,6 +234,48 @@ public class FixtureComposer {
     private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
                                                                            List<CapturedSql> sqlList,
                                                                            Map<String, String> knownByField) {
+        return assertionsFromResponse(path, sqlList, knownByField, null, null, null);
+    }
+
+    /**
+     * outcome==FAILURE かつ semanticStatusField が設定されている場合はエラー契約アサーションを生成する。
+     * outcome==SUCCESS または semanticStatusField が null の場合は既存の決定論的ロジックを使用する。
+     *
+     * REQ-006: FAILURE path → エラー契約アサーション
+     *  1. `.body("<semanticStatusField>", equalTo("<semanticStatusText>"))` — 文字列マッチャー
+     *  2. errorDetailField + errorDetailContains が両方 non-null/non-blank の場合のみ:
+     *     `.body("<errorDetailField>", org.hamcrest.Matchers.containsString("<errorDetailContains>"))`
+     */
+    private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
+                                                                           List<CapturedSql> sqlList,
+                                                                           Map<String, String> knownByField,
+                                                                           String semanticStatusField,
+                                                                           String errorDetailField,
+                                                                           String errorDetailContains) {
+        List<ComposedFixture.Assertion> assertions = new ArrayList<>();
+        if (path.sampleResponse() == null || path.sampleResponse().isNull()) {
+            return assertions;
+        }
+
+        // REQ-006: FAILURE path + semanticStatusField 설정 시 에러 계약 단언 분기
+        if (path.outcome() == io.graphrag.model.Outcome.Kind.FAILURE
+                && semanticStatusField != null && !semanticStatusField.isBlank()) {
+            // 1. statusField → equalTo("<semanticStatusText>") — 반드시 문자열 매처(JSON string "404")
+            assertions.add(new ComposedFixture.Assertion(
+                    semanticStatusField,
+                    "equalTo(\"" + path.semanticStatusText().replace("\\", "\\\\").replace("\"", "\\\"") + "\")"));
+            // 2. errorDetail containsString — 둘 다 non-null·non-blank일 때만
+            if (errorDetailField != null && !errorDetailField.isBlank()
+                    && errorDetailContains != null && !errorDetailContains.isBlank()) {
+                assertions.add(new ComposedFixture.Assertion(
+                        errorDetailField,
+                        "org.hamcrest.Matchers.containsString(\""
+                                + errorDetailContains.replace("\\", "\\\\").replace("\"", "\\\"") + "\")"));
+            }
+            return assertions;
+        }
+
+        // SUCCESS path(または semanticStatusField 未設定): 既存の決定論的ロジック
         // 서버가 SQL에 literal로 쓴 값(예: status='PENDING')은 필드 무관하게 결정적.
         // 단, INSERT의 PK 컬럼에 바인딩된 LITERAL 값은 DB 시퀀스(auto-increment)로 생성된 후
         // 재사용된 것이므로 제외한다 — 환경마다 달라지는 비결정적 값이다.
@@ -215,10 +285,6 @@ public class FixtureComposer {
                 .filter(b -> b.origin() == BindingOrigin.LITERAL)
                 .filter(b -> !insertPkLiterals.contains(b.value()))
                 .forEach(b -> literalValues.add(b.value())));
-        List<ComposedFixture.Assertion> assertions = new ArrayList<>();
-        if (path.sampleResponse() == null || path.sampleResponse().isNull()) {
-            return assertions;
-        }
         path.sampleResponse().fields().forEachRemaining(entry -> {
             JsonNode v = entry.getValue();
             if (v.isNull()) {
