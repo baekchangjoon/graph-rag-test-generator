@@ -101,18 +101,23 @@ Sleuth 폴백 불요). diary·mindgraph는 `docker-compose.pjacoco-otel.yml`에 
   + **값 고유화**(§6-3) 포함. seeding 실패가 관측되면 **V2 fail**로 처리하고 per-worker
   Connection·seeding 직렬화를 본 설계 전제조건으로 확정(별도 이슈로 미루지 않음).
 
-### V3 — per-request testId의 arm 등가(correctness) + 오버헤드 (petclinic)
-- **Given** 같은 엔드포인트의 같은 라인 true/false arm을 여는 두 입력을
-- **When** 요청마다 **빈 store의 새 고유 testId**로 `/test/start`→요청 1건→`/test/stop`을
-  돌려 per-request `.exec`를 얻고, `ExecFileLoader`로 로드해 `CoverageFingerprint.of(...)`를
-  적용하면
-- **Then (correctness)** vanilla sequential 탐색이 내던 path key 집합과 pjacoco per-request
-  `.exec`→Fingerprint 집합이 **일치**한다(같은 distinct path 수·같은 arm 분리).
+### V3 — per-request arm partition 등가(correctness) + 오버헤드 (petclinic)
+> **rev.4 (사용자 결정 (나)):** 게이트를 **cross-vector 키 동일성 → partition 등가**로 재정의.
+> 근거·한계는 §5.1 참조. per-request 경계는 **OTel-scope/traceId 경로**(요청별 고유 traceparent
+> → traceKeyAutoCreate store → `<traceId>.exec`)를 canonical로 채택 — baggage `test.id` 경로가
+> 놓치던 pre-servlet 필터 probe를 잡기 때문(조사 commit `71e4657`).
+- **Given** 같은 엔드포인트의 여러 arm(같은 라인 true/false 포함)을 여는 입력 시퀀스를
+- **When** 요청마다 **고유 traceparent**로 OTel-scope store를 띄워 `<traceId>.exec`를 얻고,
+  `ExecFileLoader`로 로드해 `CoverageFingerprint.of(...)`를 적용하면
+- **Then (correctness)** pjacoco per-request 지문이 vanilla와 **동일한 partition**을 만든다 —
+  distinct path 개수가 같고, 어떤 요청들이 같은 path로 묶이는지(그룹핑)가 vanilla와 일치한다.
+  (절대 키 값 동일성은 요구하지 않음 — production fan-out에선 모든 커버리지가 pjacoco 경로에서
+  나와 **run 내부 일관성**만 필요하기 때문. §5.1.)
 - **Then (성능)** 오버헤드가 절대 임계값 이내다.
-- **측정 (a) 등가**: 단계 — ① vanilla 순차 탐색으로 엔드포인트의 `coverageKey` 집합 수집
-  → ② 동일 입력 시퀀스를 pjacoco per-request `.exec`→`ExecFileLoader.load`→
-  `CoverageFingerprint.of(delta, appClasses)`로 재산출 → ③ 두 집합 동일성 비교.
-  **불일치면 V3 correctness FAIL**(아래 §7 (a)).
+- **측정 (a) partition 등가**: 단계 — ① vanilla 순차 탐색으로 입력 시퀀스의 `coverageKey` 집합과
+  **그 partition**(요청→키 그룹핑) 수집 → ② 동일 시퀀스를 pjacoco OTel-scope `<traceId>.exec`→
+  `ExecFileLoader.load`→`CoverageFingerprint.of`로 재산출 → ③ 두 **partition** 동일성 비교
+  (distinct 개수 + 그룹핑). **partition 불일치면 V3 correctness FAIL**(아래 §7 (a)).
 - **측정 (b) 오버헤드**: ① 제어 엔드포인트(`/__coverage__/test/start|stop`) 왕복 지연을
   단독 측정(목표 **요청당 < 5ms** 로컬 loopback). ② 60-요청 1엔드포인트 벽시계가 start/stop
   없는 baseline 대비 증가율(**목표 < 10%**). ③ `.exec` 파일 개수·총 용량, pjacoco
@@ -158,6 +163,33 @@ PoC/A 모델 — **명시적 절차**(리뷰 발견 I1/I6 반영):
 
 **핵심 리스크**: 요청당 start/stop 왕복 2회 추가 HTTP + 요청마다 store 생성/flush. V3 (b)가
 지연·`.exec` 폭발·heap을 정량 측정한다.
+
+## 5.1 partition 등가로의 게이트 재정의 (rev.4 — 사용자 결정 (나))
+
+**관측(commit `973599a`·`71e4657`):** V3(a)를 cross-vector **키 동일성**으로 보면 두 pjacoco 경로
+모두 vanilla와 교집합 0으로 FAIL이었다. 원인은 arm 분리 실패가 아니라 **probe 집합의 체계적 차이**:
+- baggage `test.id` 경로 — pre-servlet `JwtAuthenticationFilter` probe 4개를 **drop**
+  (`incompleteAttribution: true`; store가 servlet 진입에서 활성화).
+- OTel-scope/traceId 경로 — 필터 probe는 **정상 캡처**(`incompleteAttribution: false`)하나, OTel
+  계측이 JPA 엔티티 등 **추가 probe를 귀속**시켜 vanilla의 reset-delta와 절대 키가 달라짐.
+
+**그러나 두 경로 모두 partition은 vanilla와 동일했다** — distinct path 개수(3)와 어떤 요청이 같은
+path로 묶이는지의 그룹핑이 일치. 이는 arm 분리가 **올바르게** 동작함을 뜻한다.
+
+**재정의 근거:** production fan-out에선 모든 커버리지가 pjacoco 경로에서 나오고, graph-rag는
+pjacoco 키를 옛 vanilla 키와 비교하지 않는다. 한 탐색 run 내부에서 **같은 arm→같은 키, 다른
+arm→다른 키**(=run 내부 일관성 = partition)만 성립하면 path dedup·distinct 보존이 동작한다.
+따라서 게이트를 **partition 등가**로 정의한다. 이는 통과를 위한 약화가 아니라, A가 실제로
+요구하는 속성으로 기준을 맞춘 것이다.
+
+**정직한 한계(문서화):**
+1. **절대 키 비호환** — pjacoco 지문은 vanilla dump(reset) 지문과 byte-동일하지 않다. 키는 한
+   run 내부에서만 비교 가능(graph-rag가 필요로 하는 범위).
+2. **canonical 경로 = OTel-scope/traceId** — pre-servlet 필터 커버리지를 잡으므로 baggage 경로보다
+   완전. 단 OTel이 넓게 귀속(JPA·async)하므로, **이 추가 귀속이 arm을 잘못 merge/split하지 않는지**가
+   SUT별 잔여 리스크. 본 PoC(petclinic)에선 partition 보존 확인. V2(교차오염)·V4가 추가 확인.
+3. **probe 완전성 != 등가** — 필터 분기처럼 vanilla만 보던 probe가 production fan-out에서 어떻게
+   다뤄지는지는 partition 기준 아래에서 run 내부 일관성으로 흡수된다(다른 run과 키를 안 맞추므로).
 
 ## 6. 통합 지점 (A로 갈 때 손댈 곳 — PoC가 검증할 표면)
 
@@ -212,9 +244,10 @@ appClasses)` → `coverageKey` → `cumulativeCoverage` OR-병합. pjacoco 전�
 
 - **PASS(V1~V4 전부)** → 본 fan-out 설계(spec→requirements→plan)로. A 채택.
 - **V3 FAIL을 두 종류로 구분(리뷰 발견 I4)**:
-  - **(a) correctness 실패** — per-request `.exec`→Fingerprint 집합이 vanilla와 불일치(arm
-    분리 상실). additive 모델이 구조적으로 안 맞는 경우 → **A는 아키텍처적으로 부적합 →
-    PoC 중단**. 결과를 "A architecturally incompatible"로 §11에 기록하고 재논의(자동 B 아님).
+  - **(a) correctness 실패** — pjacoco per-request 지문의 **partition이 vanilla와 불일치**(arm
+    분리 실패: distinct 개수·그룹핑이 다름). 이 경우 A는 아키텍처적으로 부적합 → **PoC 중단**,
+    §11 기록·재논의(자동 B 아님). (rev.4: 절대 키 동일성이 아니라 partition 기준 — §5.1.
+    키 동일성만 다르고 partition이 같으면 PASS.)
   - **(b) 성능 실패** — 등가는 성립하나 오버헤드가 §4 V3(b) 임계 초과 → 완화 시도 가능,
     안 되면 중단·재논의.
 - **V4 FAIL**(분산 귀속): 단일 JVM·멀티 JVM(C3 분산 병합) **둘 다 필수**. 어느 쪽이든 귀속이
