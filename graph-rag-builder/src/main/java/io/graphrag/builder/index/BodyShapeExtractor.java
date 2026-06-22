@@ -143,7 +143,7 @@ public final class BodyShapeExtractor {
     /**
      * 타입 참조로 BodyShape를 추출한다 (dot-path 평탄화 — JSON @RequestBody 전용).
      * 컬렉션이면 element 타입의 shape를 평탄화해서 collection=true로 반환,
-     * Map<String,V>이면 단일 synthetic 필드 "sampleKey"로 모델링,
+     * Map<String,V>이면 value 타입을 "sampleKey" prefix로 평탄화 (DTO면 dot-path 리프, scalar면 단일 리프),
      * 아니면 타입 필드를 재귀적으로 평탄화해서 반환.
      * 중첩 DTO 필드는 "parent.child" dot-path 스칼라 리프로 전개된다.
      */
@@ -152,7 +152,7 @@ public final class BodyShapeExtractor {
         var element = elementType(type);
         if (element == null) {
             // Map<K,V> 지원: String 키만 허용, value 타입을 sampleKey 필드로 모델링
-            var mapShape = extractMapShape(type);
+            var mapShape = extractMapShape(model, type);
             if (mapShape != null) {
                 return mapShape;
             }
@@ -165,11 +165,13 @@ public final class BodyShapeExtractor {
 
     /**
      * Map<K,V> 타입을 인식해 BodyShape를 반환한다.
-     * String 키면 value 타입을 가리키는 "sampleKey" 필드 1개짜리 shape 반환.
+     * String 키면 value 타입을 "sampleKey" prefix로 재귀 평탄화:
+     *   - scalar/enum/미해결 → 단일 리프 "sampleKey" (기존 동작)
+     *   - 모델에서 해결되는 DTO → "sampleKey.<f1>", "sampleKey.<f2>", ... dot-path 리프
      * non-String 키면 Optional.empty() 반환.
      * Map이 아니면 null 반환(호출자가 일반 처리로 진행).
      */
-    private static Optional<BodyShape> extractMapShape(
+    private static Optional<BodyShape> extractMapShape(CtModel model,
             spoon.reflect.reference.CtTypeReference<?> type) {
         if (!"java.util.Map".equals(type.getQualifiedName())) {
             return null;
@@ -182,10 +184,10 @@ public final class BodyShapeExtractor {
         if (!"java.lang.String".equals(keyType)) {
             return Optional.empty();
         }
-        String valueType = args.get(1).getQualifiedName();
-        return Optional.of(new BodyShape(
-                type.getQualifiedName(),
-                List.of(new BodyShape.BodyField("sampleKey", valueType))));
+        var valueTypeRef = args.get(1);
+        List<BodyShape.BodyField> fields = new ArrayList<>();
+        flatten(model, "", "sampleKey", valueTypeRef, 0, new HashSet<>(), fields);
+        return Optional.of(new BodyShape(type.getQualifiedName(), fields));
     }
 
     /**
