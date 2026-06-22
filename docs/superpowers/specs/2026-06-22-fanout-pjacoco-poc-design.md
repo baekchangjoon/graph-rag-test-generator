@@ -38,7 +38,8 @@ OpenTelemetry Baggage(`baggage: test.id=...`)로 받아, ThreadLocal per-test �
 ## 2. 목표 / 비목표
 
 **목표**: 격리 전략 **A**(pjacoco 단일 SUT fan-out)의 **실현성을 pass/fail로 확정**한다.
-PoC가 통과하면 본 fan-out 설계로 진행하고, 막히면 **B**(SUT/DB 워커별 복제)로 회귀한다.
+PoC가 통과하면 본 fan-out 설계로 진행한다. **A가 불가로 판명되면 자동으로 B(SUT/DB 워커별
+복제)로 회귀하지 않고 PoC를 중단**하고, B 착수 여부·대안은 사용자와 재논의한다(사용자 결정).
 
 **비목표(PoC 범위 밖)**:
 - 실제 fan-out 병렬 실행 엔진 구현(본 설계 단계에서).
@@ -55,7 +56,7 @@ PoC가 통과하면 본 fan-out 설계로 진행하고, 막히면 **B**(SUT/DB �
 | 결정 | 값 | 근거 |
 |---|---|---|
 | 입자도 | 엔드포인트 단위(1차) | 엔드포인트별 probe id 격리 기존재 → 가장 단순·안전. 입력 단위는 후속 |
-| 격리 전략 | D → A | pjacoco PoC 선행으로 A 실현성 확정 후 단일 SUT fan-out. 막히면 B 회귀 |
+| 격리 전략 | D → A | pjacoco PoC 선행으로 A 실현성 확정 후 단일 SUT fan-out. A 불가 시 **중단·재논의**(B 자동회귀 안 함) |
 | arm 정확도 | **요청마다 새 고유 testId** | 요청마다 빈 store로 `/test/start`→요청 1건→`/test/stop` → per-request `.exec` = 현 dump(reset=true) delta와 등가 (등가성은 V3 correctness 게이트가 검증) |
 | `none` 모드 | 병렬 제외 | trace key 부재로 동시 흐름 분리 불가. 병렬은 otel/sleuth 전제 |
 
@@ -111,15 +112,16 @@ PoC가 통과하면 본 fan-out 설계로 진행하고, 막히면 **B**(SUT/DB �
 - **When** 한 엔드포인트 요청이 Kafka consumer 비동기 코드를 유발하면
 - **Then** consumer 분기 커버리지가 **요청 traceId store 또는 testId store에 귀속**되어 그
   엔드포인트의 `.exec`에 들어간다.
-- **측정**: consumer 전용 분기 귀속 바이트 > 0.
-  - **단일 JVM consumer**: pjacoco C1(`traceKeyAutoCreate` scope 훅)으로 커버. **이게 V4의
-    1차 pass 게이트(otel-mode primary)**.
-  - **멀티 JVM consumer**: pjacoco 자체 결정기록
-    (`docs/superpowers/decisions/2026-06-20-otel-weave-kafka-consumer-gap.md`)에 OTel scope
-    weave의 Kafka consumer 전파 갭이 있고, 분산 병합은 C3(shared-volume drain) 단계다. order-service가
-    멀티 JVM이면 **OTel 벡터 V4는 known-gap으로 expected-fail일 수 있으므로** A 차단 요인으로
-    세지 않고, 분산 귀속은 본 fan-out의 후속 또는 sleuth/B3 벡터로 한정한다.
-  - sleuth-mode(B3)는 stretch 점검(Brave는 앱 클래스패스 상주 → 별도 weave 불요).
+- **측정**: consumer 전용 분기 귀속 바이트 > 0. **단일 JVM·멀티 JVM consumer 둘 다 A의 필수
+  pass 게이트다(사용자 결정 — 분산까지 필수).**
+  - **단일 JVM consumer**: pjacoco C1(`traceKeyAutoCreate` scope 훅)으로 귀속.
+  - **멀티 JVM consumer**: pjacoco C3(shared-volume drain 분산 병합) 단계에 의존한다. PoC는
+    graph-rag attach 모드에서 **C3 분산 워크플로가 실제로 동작하는지** 검증한다. pjacoco 자체
+    결정기록(`docs/superpowers/decisions/2026-06-20-otel-weave-kafka-consumer-gap.md`)에
+    OTel scope weave의 Kafka consumer 전파 갭이 기록돼 있는데, 이는 **회피 사유가 아니라 PoC가
+    풀거나 막힘을 확인할 대상**이다. **C3 분산 귀속이 안 되면 V4 FAIL = A 불가 → 중단**(§7).
+  - otel-mode(traceparent)가 1차 벡터, sleuth-mode(B3)도 점검(Brave는 앱 클래스패스 상주 →
+    별도 weave 불요). order-service의 consumer가 단일/멀티 JVM 중 무엇인지 V4 착수 전 확정한다.
 
 ## 5. arm 정확도 메커니즘 (요청마다 새 testId)
 
@@ -181,18 +183,21 @@ appClasses)` → `coverageKey` → `cumulativeCoverage` OR-병합. pjacoco 전�
 - 누적·OR-병합·지문 산출 로직은 불변 재사용. 이 전환의 정확성이 **V3 (a) correctness**가
   검증하는 대상이다.
 
-## 7. Pass/Fail 게이트와 fallback
+## 7. Pass/Fail 게이트 (A 불가 시 중단·재논의)
+
+**원칙(사용자 결정)**: V1~V4 중 하나라도 A를 불가로 만들면 **B로 자동 회귀하지 않고 PoC를
+중단**하고, 결과를 §11에 기록해 사용자와 다음 방향(B/대안/포기)을 재논의한다.
 
 - **PASS(V1~V4 전부)** → 본 fan-out 설계(spec→requirements→plan)로. A 채택.
 - **V3 FAIL을 두 종류로 구분(리뷰 발견 I4)**:
   - **(a) correctness 실패** — per-request `.exec`→Fingerprint 집합이 vanilla와 불일치(arm
-    분리 상실). additive 모델이 구조적으로 안 맞는 경우 → **A는 아키텍처적으로 부적합**,
-    오버헤드 튜닝으로 못 고침 → **즉시 B**. 결과를 "A architecturally incompatible"로 기록.
+    분리 상실). additive 모델이 구조적으로 안 맞는 경우 → **A는 아키텍처적으로 부적합 →
+    PoC 중단**. 결과를 "A architecturally incompatible"로 §11에 기록하고 재논의(자동 B 아님).
   - **(b) 성능 실패** — 등가는 성립하나 오버헤드가 §4 V3(b) 임계 초과 → 완화 시도 가능,
-    안 되면 B.
-- **V4 FAIL**(분산 귀속): 단일 JVM은 1차 게이트(필수), 멀티 JVM OTel known-gap은 A 차단으로
-  세지 않음(§4 V4) — 분산 SUT는 후속/sleuth 한정.
-- **V1/V2 FAIL** → pjacoco-graph-rag 부적합 확정 → B 회귀.
+    안 되면 중단·재논의.
+- **V4 FAIL**(분산 귀속): 단일 JVM·멀티 JVM(C3 분산 병합) **둘 다 필수**. 어느 쪽이든 귀속이
+  안 되면 **A 불가 → 중단**(분산까지 A 필수 — 사용자 결정).
+- **V1/V2 FAIL** → pjacoco-graph-rag 부적합 확정 → **중단·재논의**.
 
 ## 8. 산출물
 
@@ -216,10 +221,11 @@ appClasses)` → `coverageKey` → `cumulativeCoverage` OR-병합. pjacoco 전�
   과제로 분리하되, V2가 동시 구간 seeding 실패를 pass 기준에 포함해 숨기지 않는다.
 - **pjacoco 미배포·로컬 설치 의존** — Maven Central 미배포 → `install-local.sh` mavenLocal
   설치 + jar 경로 주입(§6-5). CI 재현성에 pre-install 단계 추가.
-- **B를 건너뛴 비용** — D 선행으로 B 인프라 미착수 → **V3가 (a) correctness로 실패하면 B는
-  불가피하고 전부 순연**된다. 단 B는 어차피 헛작업 1회를 보장하는 구조였고, V1~V4 통과 확률이
-  낮지 않다는 판단(pjacoco가 동일 문제 전용 + 분산 선례 보유)에서 D 선행의 기대값 우위를 택함.
-  이 판단은 V3 (a) 결과로 사후 검증된다.
+- **A 불가 시 중단 정책의 비용** — A가 불가로 판명되면(특히 V3 (a) correctness 또는 V4 분산
+  귀속) **B로 자동 회귀하지 않고 멈춰** 사용자와 재논의한다(사용자 결정). 따라서 fan-out
+  병렬 이득은 그 시점까지 미실현이고, B 착수는 별도 결정으로 순연된다. 이를 감수하는 근거는
+  pjacoco가 동일 문제 전용이고 분산 선례를 보유해 A 성공 가능성이 낮지 않다는 판단이며,
+  V3 (a)·V4 결과로 사후 검증된다.
 
 ## 10. PoC 이후 본 fan-out 설계 스케치 (참고, 별도 spec 대상)
 
