@@ -138,6 +138,25 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
   - Then graph-rag-builder 메인 build 의존성 변경 없이 pjacoco agent가 부착되고 PoC가 재현된다.
 - 검증 레벨: E2E black-box (PoC 스크립트 재실행)
 
+### REQ-010 — flush 아키텍처: 비동기 flush로 per-request 임계경로 오버헤드 제거 [범위확장 2026-06-23]
+- 유형: Non-functional
+- 우선순위: Must
+- 설명: V3b 측정(REQ-005)에서 **동기 per-request flush**가 petclinic +15.8%, diary +108%(macOS Docker
+  ~190ms 브리지 + pjacoco 내부 86ms)로 현실적 서비스에 부적합함이 실측됐다. flush를 **요청 임계경로
+  밖(비동기/디커플)** 으로 옮기면 per-request 오버헤드가 baseline 근처로 떨어지고 커버리지 정확성
+  (모든 `<traceId>.exec` 생성 + partition 보존)은 유지됨을 검증한다. V3b 오버헤드가 flush *방식*의
+  문제(튜닝 가능)이지 A의 한계가 아님을 확정.
+- 수용기준:
+  - Given pjacoco 부착 SUT(1차 petclinic, host — Docker 브리지 노이즈 배제),
+  - When per-request flush를 동기 대신 **백그라운드 비동기**로 디스패치(요청 루프는 flush 응답을 안 기다림)하면,
+  - Then ① per-request 임계경로 오버헤드가 동기 +15.8% → **baseline 근처(목표 < 5%)** 로 하락하고,
+    ② 60개 `<traceId>.exec`가 모두 생성되며 partition이 vanilla와 보존(커버리지 무손실)된다.
+  - 보조(diary): 무거운 SUT에서 백그라운드 flush 큐 throughput/lag 정량화 + macOS Docker 브리지 인플레이션 분리.
+- 한계(문서화): graph-rag 탐색은 coverage-guided(요청 N 커버리지로 N+1 입력 선택)라 완전 post-run
+  배치 flush는 부적합. 비동기 flush와 coverage-guided 양립(파이프라인·lag)은 fan-out 본 구현 설계 사안
+  — 본 PoC는 "flush가 임계경로 밖 이동 가능 + 커버리지 무손실"까지만 검증.
+- 검증 레벨: E2E black-box (측정 하니스)
+
 ---
 
 ## 추적 매트릭스
@@ -148,13 +167,17 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc.concurrentEndpoints_noCrossContamination` | E2E | 🟢 PASS (contamination=0, ownA=14 ownB=12, 2026-06-23) |
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc.perWorkerConnection_concurrentSeeding_noFailures` | E2E | 🟢 PASS (workers=8 exceptions=0 finalRows=0, 2026-06-23) |
 | REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition` | int+E2E | 🟢 PASS (partition 등가 — OTel-scope traceId 경로, {{0,2},{1},{3}} 일치, 2026-06-23) |
-| REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc`, `V3OverheadProductionPoc` | E2E | 🟡 STILL-OVER — 에스컬레이션 필요 (flush ①: 4.1ms ✅, production-model wall-clock +15.80% ❌ > 10%; 이전 동기 모델 +23.83% ❌; post-run load 28.2ms off-crit; 2026-06-23) |
+| REQ-005 | per-request 오버헤드 임계 이내 (동기 flush) | `V3OverheadPoc`, `V3OverheadProductionPoc` | E2E | 🟡 동기 flush over-threshold (petclinic +15.80%, diary +108% [Docker브리지~190ms+pjacoco86ms]) → REQ-010(비동기)로 해소 검증 중. 2026-06-23 |
 | REQ-006 | 분산 귀속 단일 JVM | `V4DistributedAttributionPoc` (tainted-spring diary) | E2E | 🟢 PASS (diary 118 probes, 13 classes, 2026-06-23) |
 | REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4DistributedAttributionPoc` (diary→mindgraph) | E2E | 🟢 PASS (mindgraph 72 probes, consumer 58 probes, 14 classes, 2026-06-23) |
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🟢 PASS (§11 종합 판정 기록 완료 2026-06-23 — A viable, V3b 오버헤드 재논의) |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟢 unit-green |
+| REQ-010 | 비동기 flush로 임계경로 오버헤드 제거 [범위확장] | `V3AsyncFlushPoc` (petclinic + diary 보조) | E2E | 🔴 planned |
 
-Coverage: 8/9 gates green; REQ-005 over-threshold (재논의) — REQ-001·002·003·004·006·007·008·009 green. REQ-005: ⚠️ 측정 완료 (flush ✅ 4.1ms, production-model 벽시계 +15.80% > 10% 임계 초과 — 사용자 재논의 필요, NOT green).
+Coverage: 8/10 gates green; REQ-005 동기-flush over-threshold → REQ-010(비동기 flush)로 해소 검증 중.
+REQ-001·002·003·004·006·007·008·009 green. REQ-010 진행 중(범위확장: V3b 측정이 동기 flush 부적합을
+드러내 비동기 flush 검증 요구사항 도출). REQ-005는 REQ-010 결과로 최종 판정(비동기로 baseline 근처면
+"동기는 부적합/비동기 채택"으로 종결).
 종합 판정(REQ-008) 2026-06-23 기록 완료: 전략 A 아키텍처적으로 실현 가능. V3(b) 오버헤드는 §7(b) 성능 항목(재논의)으로, A 불가 트리거 아님. 자동 B 회귀 없음.
 V4(REQ-006·007) 2026-06-23 PASS — 동일 traceId `ff6033b5cd763a028e0dfc0fd62ced45`가 diary(단일 JVM, 118 probes)·mindgraph(멀티 JVM, 72 probes / consumer 58 probes) 양쪽 귀속 확인. pjacoco PR #13 수정(OTel jar 구조적 식별)으로 크로스-JVM 귀속 정상.
 REQ-009: unit 테스트 통과(🟢).
