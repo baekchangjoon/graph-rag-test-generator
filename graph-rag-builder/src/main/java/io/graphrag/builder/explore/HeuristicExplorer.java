@@ -1,9 +1,10 @@
 package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import io.graphrag.builder.oracle.ResponseClassifier;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
+import io.graphrag.model.Json;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,10 +34,12 @@ public class HeuristicExplorer implements PathExplorer {
         JsonNode base = target.baseInput().deepCopy();
 
         tryInput(base, target, budget, known, inputs);            // happy ALWAYS runs (array or object)
-        if (base instanceof ObjectNode objBase) {                 // mutations only for object bodies
-            for (InputMutator.Mutation mutation : InputMutator.forTarget(target)) {
-                tryInput(mutation.apply().apply(InputMutator.copy(objBase)), target, budget, known, inputs);
-            }
+        for (InputMutator.Mutation mutation : InputMutator.forTarget(target)) {
+            tryInput(InputMutator.applyToBody(InputMutator.copy(base), mutation),
+                    target, budget, known, inputs);
+        }
+        if (base instanceof ArrayNode) {                          // empty-array 구조 변이
+            tryInput(Json.mapper().createArrayNode(), target, budget, known, inputs);
         }
         return new ExplorationResult(inputs);
     }
