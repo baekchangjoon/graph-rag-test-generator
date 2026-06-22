@@ -18,7 +18,30 @@ public record ExplorationReport(
         List<EndpointExploration> endpoints,
         int coveredAppBranches,
         int totalAppBranches,
-        List<String> coveredAppClasses) {
+        List<String> coveredAppClasses,
+        List<UnsupportedShape> unsupportedShapes) {
+
+    /** compact constructor: null-guard unsupportedShapes. */
+    public ExplorationReport {
+        unsupportedShapes = unsupportedShapes == null ? List.of() : unsupportedShapes;
+    }
+
+    /**
+     * 4-argument backward-compat constructor (no unsupportedShapes).
+     * 기존 호출자는 unsupportedShapes=[] 기본값을 얻는다.
+     */
+    public ExplorationReport(List<EndpointExploration> endpoints,
+                             int coveredAppBranches,
+                             int totalAppBranches,
+                             List<String> coveredAppClasses) {
+        this(endpoints, coveredAppBranches, totalAppBranches, coveredAppClasses, List.of());
+    }
+
+    /**
+     * REQ-008: 타입 레벨 실패로 인해 건너뛴 엔드포인트를 기록하는 loud-failure 채널.
+     * DroppedPath(HTTP 상태 기반)와 분리된 독립 레코드.
+     */
+    public record UnsupportedShape(String endpointId, String typeFqn, String reason) {}
 
     /**
      * solverRelevantMissed: 미커버 분기 중 handler 비교식(field op literal) 라인과
