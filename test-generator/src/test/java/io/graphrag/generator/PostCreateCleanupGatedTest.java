@@ -37,7 +37,7 @@ class PostCreateCleanupGatedTest {
 
     /**
      * 핵심: 200이지만 outcome=FAILURE인 에러 엔벨로프 응답 → cleanup 주입 금지.
-     * 현재 구현은 expectedStatus 200이 [200,300) 범위라 게이트를 통과해 cleanup을 반환한다(BUG).
+     * outcome 기준 게이트가 적용되므로 expectedStatus가 200이어도 FAILURE이면 null을 반환한다.
      */
     @Test
     void post200_outcomeFailure_envelopedError_noCleanup() {
