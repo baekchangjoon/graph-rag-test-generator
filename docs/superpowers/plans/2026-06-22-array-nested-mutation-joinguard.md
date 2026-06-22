@@ -34,19 +34,21 @@
 
 ---
 
-### Task 1: JsonPaths 유틸(path-aware put) + copy()→JsonNode (REQ-009)
+### Task 1: JsonPaths 유틸(path-aware put) (REQ-009 일부)
 
 **REQ-IDs:** REQ-009
 
 **Files:**
 - Create: `graph-rag-builder/src/main/java/io/graphrag/builder/index/JsonPaths.java`
-- Modify: `graph-rag-builder/src/main/java/io/graphrag/builder/explore/InputMutator.java` (`copy` 반환형)
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/index/JsonPathsTest.java`
 
 **Interfaces:**
 - Produces: `io.graphrag.builder.index.JsonPaths` — `public static void putPath(ObjectNode root, String path, int|long|double|String value)`,
-  `putNullPath(ObjectNode, String)`, `removePath(ObjectNode, String)`; `InputMutator.copy(JsonNode):JsonNode` (반환형 변경).
+  `putNullPath(ObjectNode, String)`, `removePath(ObjectNode, String)`.
 - 근거: `InputMutator`(explore)와 `SampleInputSynthesizer`(run) 양쪽이 공유 → `index` 패키지의 public 유틸로 둔다.
+- **주의(시퀀싱)**: `InputMutator.copy()`→JsonNode 변경은 호출부(`HeuristicExplorer:26`,
+  `CoverageGuidedFuzzer:46`)가 ObjectNode를 기대해 **즉시 컴파일 깨짐**을 유발하므로 **Task 2**에서
+  call-site와 함께 변경한다. Task 1은 신규 파일만 추가(ripple 0).
 
 - [ ] **Step 1: 실패 테스트 작성** — `JsonPathsTest.java`
 
@@ -96,7 +98,7 @@ class JsonPathsTest {
 Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.index.JsonPathsTest' -q`
 Expected: FAIL (`JsonPaths` not defined).
 
-- [ ] **Step 3: 구현** — `JsonPaths.java` 신규 + `InputMutator.copy` 반환형 변경.
+- [ ] **Step 3: 구현** — `JsonPaths.java` 신규 (`InputMutator.copy` 변경은 Task 2).
 
 ```java
 package io.graphrag.builder.index;
@@ -145,25 +147,17 @@ public final class JsonPaths {
 }
 ```
 
-`InputMutator.copy` 반환형 변경(+ `import com.fasterxml.jackson.databind.JsonNode;`):
-```java
-public static JsonNode copy(JsonNode body) {
-    return body.deepCopy();
-}
-```
-
 - [ ] **Step 4: 통과 확인**
 Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.index.JsonPathsTest' -q`
-Expected: PASS. (`copy()` 호출부 타입은 Task 2에서 정리.)
+Expected: PASS.
 
 - [ ] **Step 5: 커밋**
 ```bash
 git add graph-rag-builder/src/main/java/io/graphrag/builder/index/JsonPaths.java \
-        graph-rag-builder/src/main/java/io/graphrag/builder/explore/InputMutator.java \
         graph-rag-builder/src/test/java/io/graphrag/builder/index/JsonPathsTest.java
 GIT_AUTHOR_NAME=baekchangjoon GIT_AUTHOR_EMAIL=changjoon.baek@icloud.com \
 GIT_COMMITTER_NAME=baekchangjoon GIT_COMMITTER_EMAIL=changjoon.baek@icloud.com \
-git commit -m "feat(index): JsonPaths dot-path put/remove + copy()->JsonNode (REQ-009)"
+git commit -m "feat(index): JsonPaths dot-path put/remove (REQ-009)"
 ```
 
 ---
@@ -178,8 +172,9 @@ git commit -m "feat(index): JsonPaths dot-path put/remove + copy()->JsonNode (RE
 - Test: `explore/HeuristicExplorerTest.java`(신규), `explore/ArrayBodyMutationIntegrationTest.java`(신규)
 
 **Interfaces:**
-- Consumes: Task 1의 `putPath`/`copy`.
-- Produces: `static JsonNode applyToBody(JsonNode body, Mutation m)`.
+- Consumes: Task 1의 `JsonPaths.putPath`.
+- Produces: `static JsonNode applyToBody(JsonNode body, Mutation m)`; `InputMutator.copy(JsonNode):JsonNode`
+  (반환형 ObjectNode→JsonNode; 본 task에서 호출부와 함께 변경).
 
 - [ ] **Step 1: 실패 테스트 작성** — `ArrayBodyMutationIntegrationTest.java`
 
@@ -236,7 +231,11 @@ Expected: FAIL (zeroAmount/emptyArray false — 배열 변이 미적용).
 - [ ] **Step 3: 구현**
 (a) `InputMutator`의 모든 `body.put(name,…)`→`JsonPaths.putPath(body,name,…)`,
 `body.putNull(name)`→`JsonPaths.putNullPath`, `body.remove(name)`→`JsonPaths.removePath`.
-`interField`/`joint`/`realBounds` 등 동시세팅 람다도 동일 치환.
+`interField`/`joint`/`realBounds` 등 동시세팅 람다도 동일 치환. `copy()` 반환형을 `JsonNode`로 변경
+(`import com.fasterxml.jackson.databind.JsonNode;`):
+```java
+public static JsonNode copy(JsonNode body) { return body.deepCopy(); }
+```
 (b) `applyToBody` 추가:
 ```java
 public static JsonNode applyToBody(JsonNode body, Mutation m) {
