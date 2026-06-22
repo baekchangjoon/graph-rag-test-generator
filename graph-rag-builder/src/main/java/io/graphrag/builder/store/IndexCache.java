@@ -1,5 +1,6 @@
 package io.graphrag.builder.store;
 
+import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.Json;
 
 import java.io.IOException;
@@ -12,12 +13,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /** 정적 인덱싱 whole-result 캐시(manifest.json + static-index.json). */
 public final class IndexCache {
 
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
     private static final String MANIFEST = "manifest.json";
     private static final String INDEX = "static-index.json";
 
@@ -25,10 +27,26 @@ public final class IndexCache {
     }
 
     public static IndexManifest scan(Path sutSrc, Path sutResources) {
+        return scan(sutSrc, sutResources, null);
+    }
+
+    public static IndexManifest scan(Path sutSrc, Path sutResources, AuthConfig authConfig) {
         Map<String, IndexManifest.FileEntry> files = new LinkedHashMap<>();
         collect(sutSrc, ".java", "sutSrc", files);
         collect(sutResources, ".xml", "sutResources", files);
-        return new IndexManifest(SCHEMA_VERSION, files);
+        String authFingerprint = buildAuthFingerprint(authConfig);
+        return new IndexManifest(SCHEMA_VERSION, authFingerprint, files);
+    }
+
+    private static String buildAuthFingerprint(AuthConfig authConfig) {
+        if (authConfig == null) {
+            return "";
+        }
+        String loginPath = authConfig.loginPath() != null ? authConfig.loginPath() : "";
+        String publicPaths = authConfig.publicPaths().stream()
+                .sorted()
+                .collect(Collectors.joining(","));
+        return "loginPath=" + loginPath + ";publicPaths=" + publicPaths;
     }
 
     private static void collect(Path root, String ext, String label,
@@ -63,6 +81,7 @@ public final class IndexCache {
     public static boolean isFresh(IndexManifest cached, IndexManifest current) {
         return cached != null
                 && cached.schemaVersion() == current.schemaVersion()
+                && cached.authFingerprint().equals(current.authFingerprint())
                 && cached.files().equals(current.files());
     }
 

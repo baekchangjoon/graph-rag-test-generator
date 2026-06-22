@@ -31,11 +31,12 @@ class StaticIndexSerdeTest {
 
     @Test
     void manifestRoundTrips() throws Exception {
-        IndexManifest m = new IndexManifest(1,
+        IndexManifest m = new IndexManifest(2, "loginPath=/login;publicPaths=/health",
                 Map.of("a/Foo.java", new IndexManifest.FileEntry("sutSrc", "h1")));
         String json = Json.mapper().writeValueAsString(m);
         IndexManifest back = Json.mapper().readValue(json, IndexManifest.class);
-        assertThat(back.schemaVersion()).isEqualTo(1);
+        assertThat(back.schemaVersion()).isEqualTo(2);
+        assertThat(back.authFingerprint()).isEqualTo("loginPath=/login;publicPaths=/health");
         assertThat(back.files().get("a/Foo.java").hash()).isEqualTo("h1");
     }
 }

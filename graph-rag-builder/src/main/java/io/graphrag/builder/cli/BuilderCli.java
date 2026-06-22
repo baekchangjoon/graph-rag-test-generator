@@ -336,7 +336,7 @@ public final class BuilderCli {
     /** 캐시 우선 정적 인덱싱: 신선하면 복원(Spoon 0회), 미스 또는 noIncremental이면 풀 리빌드 후 저장. */
     static StaticIndex staticIndexWithCache(BuildConfig config) {
         Path cacheDir = config.out().resolve("index-cache");
-        IndexManifest current = IndexCache.scan(config.sutSrc(), config.sutResources());
+        IndexManifest current = IndexCache.scan(config.sutSrc(), config.sutResources(), config.authConfig());
         if (!config.noIncremental()) {
             Optional<StaticIndex> hit = IndexCache.load(cacheDir, current);
             if (hit.isPresent()) {
