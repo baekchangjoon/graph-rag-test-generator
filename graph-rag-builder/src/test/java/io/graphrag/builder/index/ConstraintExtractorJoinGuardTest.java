@@ -2,6 +2,7 @@ package io.graphrag.builder.index;
 
 import io.graphrag.builder.index.ConstraintExtractor.JoinGuard;
 import io.graphrag.builder.index.ConstraintExtractor.JoinKind;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -37,5 +38,23 @@ class ConstraintExtractorJoinGuardTest {
                     assertThat(g.op()).isEqualTo("equals");
                     assertThat(g.rightRef()).isEqualTo("b");
                 });
+    }
+
+    @Test
+    @DisplayName("REQ-006: enum-constant comparisons must not be emitted as NUMERIC JoinGuard")
+    void enumConstantComparisonNotExtractedAsJoinGuard() {
+        List<JoinGuard> all = new ConstraintExtractor().extractJoinGuards(SAMPLE_SRC);
+
+        // StateGuards contains field == Enum.CONST / field != Enum.CONST comparisons
+        // (BookingStatus.PENDING, CONFIRMED, CANCELLED).
+        // None of those should appear as a NUMERIC JoinGuard whose leftRef or rightRef
+        // is an ALL_CAPS enum constant name.
+        assertThat(all).filteredOn(g -> g.kind() == JoinKind.NUMERIC)
+                .noneMatch(g -> isUpperCaseConstant(g.leftRef()) || isUpperCaseConstant(g.rightRef()));
+    }
+
+    /** Returns true when the name looks like an enum constant (all uppercase, possibly with underscores). */
+    private static boolean isUpperCaseConstant(String name) {
+        return name != null && !name.isEmpty() && name.equals(name.toUpperCase());
     }
 }

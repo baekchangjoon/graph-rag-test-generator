@@ -18,7 +18,7 @@ public class BoundsController {
         if (req.getAmount() == 7) {         // getter 형태 → amount로 정규화
             return "lucky";
         }
-        if (req.amount() > req.score()) {   // 리터럴 없음 → 무시
+        if (req.amount() > req.score()) {   // field-to-field → extractJoinGuards가 추출(JoinGuard NUMERIC)
             return "rel";
         }
         return "ok";
