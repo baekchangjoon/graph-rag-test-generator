@@ -17,9 +17,12 @@ public record GraphAsset(
         List<KafkaConsumer> kafkaConsumers,
         List<KafkaExchange> kafkaExchanges,
         List<RequiredSeed> seeds,
-        List<CapturedEventEmit> capturedEventEmits) {
+        List<CapturedEventEmit> capturedEventEmits,
+        String semanticStatusField,
+        String errorDetailField,
+        String errorDetailContains) {
 
-    /** 이전 Phase 그래프(누락 필드)와의 후방 호환. */
+    /** 이전 Phase 그래프(누락 필드)와의 후방 호환. 에러 계약 디스크립터는 nullable(비-envelope SUT은 null). */
     public GraphAsset {
         mappers = mappers == null ? List.of() : mappers;
         httpCalls = httpCalls == null ? List.of() : httpCalls;
@@ -29,6 +32,16 @@ public record GraphAsset(
         kafkaExchanges = kafkaExchanges == null ? List.of() : kafkaExchanges;
         seeds = seeds == null ? List.of() : seeds;
         capturedEventEmits = capturedEventEmits == null ? List.of() : capturedEventEmits;
+    }
+
+    /** 14-argument compatibility constructor (에러 계약 디스크립터 생략 → null). */
+    public GraphAsset(String sutId, String commitSha, List<Endpoint> endpoints, List<ExploredPath> paths,
+                      List<CapturedSql> sql, List<TableSchema> tables, List<MapperStatement> mappers,
+                      List<CapturedHttpCall> httpCalls, List<WsEndpoint> wsEndpoints, List<WsExchange> wsExchanges,
+                      List<KafkaConsumer> kafkaConsumers, List<KafkaExchange> kafkaExchanges, List<RequiredSeed> seeds,
+                      List<CapturedEventEmit> capturedEventEmits) {
+        this(sutId, commitSha, endpoints, paths, sql, tables, mappers, httpCalls, wsEndpoints, wsExchanges,
+             kafkaConsumers, kafkaExchanges, seeds, capturedEventEmits, null, null, null);
     }
 
     /** 13-argument compatibility constructor */

@@ -112,4 +112,19 @@ public class FileGraphRagClient implements GraphRagClient {
     public List<io.graphrag.model.CapturedEventEmit> capturedEventEmitsForPath(String pathId) {
         return asset.capturedEventEmits().stream().filter(e -> e.pathId().equals(pathId)).toList();
     }
+
+    @Override
+    public String errorContractStatusField() {
+        return asset.semanticStatusField();
+    }
+
+    @Override
+    public String errorDetailField() {
+        return asset.errorDetailField();
+    }
+
+    @Override
+    public String errorDetailContains() {
+        return asset.errorDetailContains();
+    }
 }

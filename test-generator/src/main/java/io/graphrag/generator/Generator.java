@@ -164,8 +164,11 @@ public class Generator {
                 knownByField.putIfAbsent(snakeToCamel(s.columns().get(i)), s.values().get(i));
             }
         }
+        // 에러 계약 디스크립터: 영속된 값이 권위. null(비-envelope/legacy graph)이면 그대로 null을 넘겨
+        // FixtureComposer가 에러 계약 단언을 생성하지 않게 한다(비-envelope SUT 회귀 방지).
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
-                client.seedsForPath(path.id()), readPath, knownByField);
+                client.seedsForPath(path.id()), readPath, knownByField,
+                client.errorContractStatusField(), client.errorDetailField(), client.errorDetailContains());
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(path.id()));
 

@@ -42,4 +42,19 @@ public interface GraphRagClient {
     default List<io.graphrag.model.CapturedEventEmit> capturedEventEmitsForPath(String pathId) {
         return List.of();
     }
+
+    /** FAILURE 응답의 의미 상태 코드 필드명 (예: "errorCode"). 비-envelope SUT은 null. */
+    default String errorContractStatusField() {
+        return null;
+    }
+
+    /** FAILURE 응답의 에러 상세 메시지 필드명. null이면 containsString 단언 없음. */
+    default String errorDetailField() {
+        return null;
+    }
+
+    /** errorDetailField가 포함해야 하는 부분 문자열. */
+    default String errorDetailContains() {
+        return null;
+    }
 }
