@@ -37,15 +37,15 @@
     Then 정적 인덱싱 블록 `buildCount == 0`이고 `graph.json`이 1회차와 동일하다.
 - 검증 레벨: E2E black-box + integration(카운터)
 
-### REQ-004 — 자기완결 단일 파일 수정 시 부분 갱신
+### REQ-004 — 단일 파일 수정 후 재빌드 정확성
 - 유형: Functional
 - 우선순위: Must
-- 설명: cross-file 의존이 없는 핸들러/DTO 파일 1개만 수정하면, 그 파일의 조각만 재계산되고 나머지
-  조각은 캐시에서 재사용되며 최종 그래프가 정확하다.
+- 설명: 핸들러/DTO 파일 1개를 수정하면 변경이 감지되어 풀 리빌드(전체모델 1회)가 일어나고 최종
+  그래프가 정확하다(whole-result 캐시이므로 부분 조각 갱신은 하지 않음).
 - 수용기준:
-  - Given 캐시가 채워진 SUT, When 자기완결 파일 1개를 수정해 재빌드하면,
-    Then 그 파일 조각만 갱신되고 나머지 조각은 재계산되지 않으며 `graph.json`이 풀 리빌드와 동일하다.
-- 검증 레벨: E2E black-box + integration(조각 갱신 범위)
+  - Given 캐시가 채워진 SUT, When 파일 1개를 수정해 재빌드하면,
+    Then 변경이 감지되어 `buildCount == 1`이고 `graph.json`이 `--no-incremental` 풀 리빌드와 동일하다.
+- 검증 레벨: E2E black-box + integration(buildCount)
 
 ### REQ-005 — 파일 삭제 반영
 - 유형: Functional
@@ -122,7 +122,7 @@
 | REQ-001 | 정적 블록 단일 모델 빌드 | `SharedSpoonModelTest#buildCountIsOnePerBlock` | integration | 🔴 planned |
 | REQ-002 | Stage 1 결과 동등성 | `IncrementalIndexE2E#sharedModelEqualsLegacy` | E2E | 🔴 planned |
 | REQ-003 | 무변경 0회 + 동일 | `IncrementalIndexE2E#noChangeRebuildZeroBuilds` | E2E | 🔴 planned |
-| REQ-004 | 자기완결 단일 수정 부분 갱신 | `IncrementalIndexE2E#singleFileEditPartialUpdate` | E2E | 🔴 planned |
+| REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IncrementalIndexE2E#singleFileEditMatchesFullRebuild` | E2E | 🔴 planned |
 | REQ-005 | 파일 삭제 반영 | `IncrementalIndexE2E#deletedFileRemovesFragment` | E2E | 🔴 planned |
 | REQ-006 | 증분 == 풀리빌드 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🔴 planned |
 | REQ-007 | `--no-incremental` | `IncrementalIndexE2E#noIncrementalForcesFullRebuild` | E2E | 🔴 planned |
