@@ -25,6 +25,7 @@ import io.graphrag.builder.index.FormFieldBinding;
 import io.graphrag.builder.index.JsonPaths;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
+import io.graphrag.builder.oracle.CandidateLifter;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.oracle.ResponseClassifier;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
@@ -292,11 +293,13 @@ public class EndpointExplorationRunner {
                 : (shape == null ? List.of() : shape.fields());
 
         // 입력 후보는 오라클(static-literal + concolic ASM+Z3)이 이미 합쳐 산출. 필드별 투영.
-        Map<String, Set<Long>> conditionBounds = candidates.numeric();
-        Map<String, Set<String>> stringCandidates = candidates.strings();
-        List<Map<String, Long>> interFieldTuples = candidates.tuples();   // inter-field 동시충족 해
-        Map<String, Set<Double>> realBounds = candidates.reals();         // float/double 단일필드 경계(작업 #4)
-        List<Map<String, Double>> realInterFieldTuples = candidates.realTuples();   // float inter-field 튜플
+        // REQ-005: leaf-keyed 후보를 mutableFields의 dot-path로 승격해 중첩 바디에 올바르게 전달.
+        InputCandidates lifted = CandidateLifter.lift(candidates, mutableFields);
+        Map<String, Set<Long>> conditionBounds = lifted.numeric();
+        Map<String, Set<String>> stringCandidates = lifted.strings();
+        List<Map<String, Long>> interFieldTuples = lifted.tuples();   // inter-field 동시충족 해
+        Map<String, Set<Double>> realBounds = lifted.reals();         // float/double 단일필드 경계(작업 #4)
+        List<Map<String, Double>> realInterFieldTuples = lifted.realTuples();   // float inter-field 튜플
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
                 List.of(new HeuristicExplorer(classifier), new CoverageGuidedFuzzer(FUZZER_SATURATION, classifier)),
                 budgetRequests, classifier);
