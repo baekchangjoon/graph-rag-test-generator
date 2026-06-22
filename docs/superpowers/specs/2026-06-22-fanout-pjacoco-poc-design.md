@@ -378,4 +378,29 @@ production fan-out에서는 모든 커버리지가 pjacoco 경로에서 나와 r
 - 엔드포인트 A: `GET /owners?lastName=` → `OwnerController` (`org/springframework/samples/petclinic/owner/OwnerController`)
 - 엔드포인트 B: `GET /vets.html` → `VetController` (`org/springframework/samples/petclinic/vet/VetController`)
 - 동시성: `ExecutorService` (2 threads) + `CompletableFuture.allOf`, 5 rounds
+
+---
+
+### V2-seeding 결과 — 2026-06-23 (REQ-003)
+
+| 항목 | 측정값 |
+|---|---|
+| **방법론** | Testcontainers PostgreSQL 16-alpine (Docker in-process), petclinic 미사용 |
+| **워커 수** | 8 |
+| **워커당 행** | 20 (INSERT + SELECT + DELETE 순서, 비중첩 키 범위) |
+| **동시 출발** | CountDownLatch(1) startGate — 전 워커 동시 출발 |
+| **SQLException 발생** | **0** |
+| **최종 행 수 (DELETE 후)** | **0** (INSERT/DELETE 일관성 보존) |
+| **각 워커 SELECT count** | 20 (자기 행만 조회, 모두 정상) |
+| **JUnit 게이트 (`V2ConcurrentSeedingPoc`)** | ✅ PASS, ~49s (PostgreSQL 기동 포함), failures=0, errors=0 |
+
+**V2-seeding 판정: PASS** — 동일 DataSource에서 워커별 자기 Connection을 발급해 동시 INSERT/DELETE를 수행할 때
+SQLException 0건, 행 수 일관. per-worker Connection 원칙이 JDBC thread-safety 관점에서 안전함을 확인.
+
+#### 환경 메모
+- DB: `postgres:16-alpine` (Testcontainers, Docker Desktop 29.5.3)
+- JDBC: `DriverManager.getConnection(POSTGRES.getJdbcUrl(), ...)` — 동일 URL, 워커마다 독립 발급
+- 키 범위: worker-k는 `[k*20, (k+1)*20-1]` 전용 (비중첩, DB 레벨 row-level 충돌 없음)
+- 비고: row-level seeding 충돌(동일 키 동시 INSERT 경쟁)은 비중첩 키 범위로 회피. 실제 fan-out 설계에서는
+  엔드포인트별 seed 키 범위 분리가 별도 과제(design §9 "DB row-level seeding 충돌" 참조).
 - 신규 파일: `V2CrossContaminationPoc.java`, `v2-cross-contamination.sh`
