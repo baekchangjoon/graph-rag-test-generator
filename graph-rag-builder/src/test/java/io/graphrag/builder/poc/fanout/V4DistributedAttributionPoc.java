@@ -104,7 +104,7 @@ class V4DistributedAttributionPoc {
         // ── 판정 ──────────────────────────────────────────────────────────────
         boolean req006Pass = diaryProbes > 0;
         boolean req007Pass = mindgraphProbes > 0;    // cross-JVM attribution non-empty
-        boolean consumerPass = consumerProbes > 0;  // actual consumer classes hit
+        boolean consumerPass = consumerProbes > 0;  // HARD: actual consumer classes hit
 
         System.out.printf("[V4] REQ-006 diary=%d %s%n",      diaryProbes,    req006Pass ? "PASS" : "FAIL");
         System.out.printf("[V4] REQ-007 mindgraph=%d %s%n",  mindgraphProbes, req007Pass ? "PASS" : "FAIL");
@@ -122,12 +122,11 @@ class V4DistributedAttributionPoc {
                     + "Record in spec §11 as V4 FAIL and stop PoC.");
         }
         if (!consumerPass) {
-            System.out.printf(
-                    "[V4] WARN: mindgraph total probes=%d > 0 but DiaryCreatedConsumer+GraphService probe count=0. "
-                    + "Mindgraph may have attributed other classes but not the consumer path. "
-                    + "Verifying all mindgraph classes for context.%n", mindgraphProbes);
-            // Non-fatal: overall mindgraph > 0 is sufficient for REQ-007; consumer-specific
-            // is a deeper diagnostic. Log the concern but do not fail REQ-007.
+            fail("REQ-007 FAIL (consumer-class): mindgraph total probes=" + mindgraphProbes
+                    + " but DiaryCreatedConsumer+GraphService+RuleBasedGraphExtractor probe count=0. "
+                    + "Cross-JVM consumer-class coverage NOT attributed — the core REQ-007 claim "
+                    + "(CROSS-JVM CONSUMER coverage) is not met even if other mindgraph classes appear. "
+                    + "mindgraph exec=" + mindgraphExec + " (size=" + execSize(mindgraphExec) + " bytes).");
         }
 
         System.out.println("[V4] PASS — REQ-006 diary=" + diaryProbes

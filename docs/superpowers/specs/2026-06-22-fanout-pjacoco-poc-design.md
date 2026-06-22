@@ -395,7 +395,12 @@ production fan-out에서는 모든 커버리지가 pjacoco 경로에서 나와 r
 | **JUnit 게이트 (`V2ConcurrentSeedingPoc`)** | ✅ PASS, ~49s (PostgreSQL 기동 포함), failures=0, errors=0 |
 
 **V2-seeding 판정: PASS** — 동일 DataSource에서 워커별 자기 Connection을 발급해 동시 INSERT/DELETE를 수행할 때
-SQLException 0건, 행 수 일관. per-worker Connection 원칙이 JDBC thread-safety 관점에서 안전함을 확인.
+SQLException 0건, 행 수 일관. per-worker Connection 원칙이 JDBC thread-safety 관점에서 실행 가능한 패턴임을 확인.
+
+**한계 명시**: 이 게이트는 "워커별 독립 Connection이 VIABLE한 패턴"임을 보인다 — 독립 연결 + 비중첩 키, 예외 0건.
+공유 단일 Connection에 의한 JDBC 레이스를 재현하지 않으며, BuilderCli의 실제 seeding 코드 경로도 경유하지 않는다.
+JDBC 레이스는 비결정적(non-deterministic)이어서 결정적으로 재현하기 어렵다; 따라서 게이트는 실패를 재현하는 것이 아니라
+수정 패턴(fix pattern)의 실행 가능성을 검증한다. 실제 코드 경로 통합은 fan-out 구현 단계(§9)로 미루어진다.
 
 #### 환경 메모
 - DB: `postgres:16-alpine` (Testcontainers, Docker Desktop 29.5.3)
@@ -533,7 +538,7 @@ V1~V7의 정확성·격리·분산 귀속 게이트가 전부 통과했다.
 
 - **아키텍처 정확성 (V3a)**: per-request OTel-scope/traceId 경로가 vanilla dump(reset) 경로와 동일한 partition을 산출함. 같은 arm → 같은 키, 다른 arm → 다른 키(run 내부 일관성). path dedup·distinct 보존이 동작한다. **A는 아키텍처적으로 부적합하지 않다.**
 - **동시 격리 (V2)**: 단일 SUT에서 동시 2 엔드포인트 탐색 시 커버리지 교차오염 = 0. traceId 경로가 probe를 올바르게 분리한다.
-- **per-worker Connection seeding (V2-seeding)**: 동일 DataSource에서 워커별 자기 Connection 발급 → 동시 INSERT/DELETE에서 SQLException 0건. A의 seeding 전제조건 충족.
+- **per-worker Connection seeding (V2-seeding)**: 동일 DataSource에서 워커별 자기 Connection 발급 → 동시 INSERT/DELETE에서 SQLException 0건. per-worker Connection이 VIABLE한 패턴임을 확인(독립 연결 + 비중첩 키). 공유 단일 Connection JDBC 레이스는 비결정적이어서 재현하지 않음; BuilderCli 실제 코드 경로 통합은 §9 fan-out 구현 단계로 미루어짐.
 - **분산 트레이스 귀속 (V4)**: tainted-spring diary(in-process, 118 probes) + mindgraph Kafka consumer(별도 JVM, 58 probes)가 동일 traceId에 귀속됨. **멀티 JVM 분산 귀속이 실제로 동작한다.**
 - **에이전트 공존 (V1)**: OTel javaagent + pjacoco-agent 이중 부착이 정상 기동하고 tcpserver를 대체한다.
 
