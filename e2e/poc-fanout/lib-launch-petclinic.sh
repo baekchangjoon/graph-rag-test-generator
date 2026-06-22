@@ -7,13 +7,11 @@ PETCLINIC_DIR="${PETCLINIC_DIR:-$HOME/github_spring-petclinic/spring-petclinic}"
 # petclinic 4.x requires Java 17+; pick a JDK 17 when available on macOS
 PETCLINIC_JAVA="${PETCLINIC_JAVA:-$(/usr/libexec/java_home -v 17 2>/dev/null || echo "${JAVA_HOME:-}")}"
 
-# build petclinic if not already built (gradle bootJar)
+# build petclinic (always run gradlew — Gradle's up-to-date check handles incrementality)
 _build_petclinic() {
     local dir="$PETCLINIC_DIR"
-    if [[ -z "$(find "$dir/build/libs" -name '*.jar' ! -name '*-plain.jar' 2>/dev/null)" ]]; then
-        echo "[lib-launch-petclinic] Building petclinic (./gradlew bootJar)..." >&2
-        (cd "$dir" && ./gradlew bootJar -q 2>&1) >&2
-    fi
+    echo "[lib-launch-petclinic] Building petclinic (./gradlew bootJar)..." >&2
+    (cd "$dir" && ./gradlew bootJar -q 2>&1) >&2
     # find the fat jar (not plain)
     find "$dir/build/libs" -name '*.jar' ! -name '*-plain.jar' | head -1
 }
