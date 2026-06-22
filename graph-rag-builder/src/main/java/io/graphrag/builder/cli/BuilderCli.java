@@ -14,13 +14,19 @@ import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
+import io.graphrag.builder.index.EnumConstantExtractor;
 import io.graphrag.builder.index.GatewayRouteIndexer;
 import io.graphrag.builder.index.IndexResult;
+import io.graphrag.builder.index.KafkaIndexResult;
+import io.graphrag.builder.index.KafkaListenerIndexer;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
 import io.graphrag.builder.index.RouterFunctionIndexer;
+import io.graphrag.builder.index.SharedSpoonModel;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
+import io.graphrag.builder.index.WsEndpointIndexer;
+import io.graphrag.builder.index.WsIndexResult;
 import io.graphrag.builder.oracle.ClassifierConfig;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
@@ -165,25 +171,13 @@ public final class BuilderCli {
 
     public static GraphAsset build(BuildConfig config) throws Exception {
         log.info("indexing endpoints from {}", config.sutSrc());
-        IndexResult index = new EndpointIndexer().index(config.sutSrc(), config.authConfig());
-        IndexResult functional = new RouterFunctionIndexer().index(config.sutSrc());
-        if (!functional.endpoints().isEmpty()) {
-            log.info("found {} functional route(s) (RouterFunction)", functional.endpoints().size());
-            index = index.merge(functional);
-        }
-        IndexResult gateway = new GatewayRouteIndexer().index(config.sutSrc());
-        if (!gateway.endpoints().isEmpty()) {
-            log.info("found {} gateway route(s) (RouteLocator)", gateway.endpoints().size());
-            index = index.merge(gateway);
-        }
-        io.graphrag.builder.index.WsIndexResult wsIndex =
-                new io.graphrag.builder.index.WsEndpointIndexer().index(config.sutSrc());
-        io.graphrag.builder.index.KafkaIndexResult kafkaIndex =
-                new io.graphrag.builder.index.KafkaListenerIndexer().index(config.sutSrc());
-        List<MapperStatement> mappers = Files.isDirectory(config.sutResources())
-                ? new MapperXmlIndexer().index(config.sutResources())
-                : List.<MapperStatement>of();
-        List<Set<String>> responseDtoFieldSets = new ResponseDtoIndexer().extract(config.sutSrc());
+        StaticIndexBundle si = indexStatically(config.sutSrc(), config.sutResources(), config.authConfig());
+        IndexResult index = si.index();
+        WsIndexResult wsIndex = si.ws();
+        KafkaIndexResult kafkaIndex = si.kafka();
+        List<MapperStatement> mappers = si.mappers();
+        List<Set<String>> responseDtoFieldSets = si.responseDtoFieldSets();
+        Map<String, List<String>> enumConstants = si.enumConstants();
         log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s)",
                 index.endpoints().size(), mappers.size(), responseDtoFieldSets.size());
 
@@ -229,10 +223,6 @@ public final class BuilderCli {
         ExplorationAccumulators acc = new ExplorationAccumulators(
                 paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
                 coveredAppBranches, runWideExec, capturedEventEmits);
-
-        // enum 상수 맵: 순수 소스 파싱(SUT/Docker 불요) → 분석 환경 기동 전 1회.
-        Map<String, List<String>> enumConstants =
-                new io.graphrag.builder.index.EnumConstantExtractor().extract(config.sutSrc());
 
         Path workDir = Files.createDirectories(config.out().resolve("work"));
         JacocoAgent jacoco = JacocoAgent.prepare(workDir);
@@ -299,6 +289,40 @@ public final class BuilderCli {
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
+    }
+
+    /** 정적 인덱싱 산출물 묶음(직렬화는 Task 4에서 record로 승격). */
+    record StaticIndexBundle(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
+            List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
+            Map<String, List<String>> enumConstants) {
+    }
+
+    /** 정적 인덱싱 블록: SUT 소스를 1회 파싱해 모든 Spoon 인덱서가 공유. (테스트 훅 겸용) */
+    static StaticIndexBundle indexStatically(Path sutSrc, Path sutResources, AuthConfig authConfig) {
+        spoon.reflect.CtModel model = SharedSpoonModel.build(sutSrc);
+        IndexResult index = new EndpointIndexer().index(model, authConfig);
+        IndexResult functional = new RouterFunctionIndexer().index(model);
+        if (!functional.endpoints().isEmpty()) {
+            log.info("found {} functional route(s) (RouterFunction)", functional.endpoints().size());
+            index = index.merge(functional);
+        }
+        IndexResult gateway = new GatewayRouteIndexer().index(model);
+        if (!gateway.endpoints().isEmpty()) {
+            log.info("found {} gateway route(s) (RouteLocator)", gateway.endpoints().size());
+            index = index.merge(gateway);
+        }
+        WsIndexResult ws = new WsEndpointIndexer().index(model);
+        KafkaIndexResult kafka = new KafkaListenerIndexer().index(model);
+        List<Set<String>> dto = new ResponseDtoIndexer().extract(model);
+        Map<String, List<String>> enums = new EnumConstantExtractor().extract(model);
+        List<MapperStatement> mappers = Files.isDirectory(sutResources)
+                ? new MapperXmlIndexer().index(sutResources) : List.<MapperStatement>of();
+        return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums);
+    }
+
+    /** 테스트 전용 단순 오버로드. */
+    static StaticIndexBundle indexStatically(Path sutSrc) {
+        return indexStatically(sutSrc, sutSrc.resolveSibling("resources"), null);
     }
 
     /** explore()가 채우는 mutable 누적기. */
