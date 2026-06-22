@@ -119,16 +119,21 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 정적 블록 단일 모델 빌드 | `SharedSpoonModelTest#buildCountIsOnePerBlock` | integration | 🔴 planned |
-| REQ-002 | Stage 1 결과 동등성 | `IncrementalIndexE2E#sharedModelEqualsLegacy` | E2E | 🔴 planned |
-| REQ-003 | 무변경 0회 + 동일 | `IncrementalIndexE2E#noChangeRebuildZeroBuilds` | E2E | 🔴 planned |
-| REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IncrementalIndexE2E#singleFileEditMatchesFullRebuild` | E2E | 🔴 planned |
-| REQ-005 | 파일 삭제 반영 | `IncrementalIndexE2E#deletedFileRemovesFragment` | E2E | 🔴 planned |
-| REQ-006 | 증분 == 풀리빌드 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🔴 planned |
-| REQ-007 | `--no-incremental` | `IncrementalIndexE2E#noIncrementalForcesFullRebuild` | E2E | 🔴 planned |
-| REQ-008 | schemaVersion 무효화 | `IndexCacheTest#schemaMismatchTriggersRebuild` | integration | 🔴 planned |
-| REQ-009 | XML 변경 반영 | `IncrementalIndexE2E#mapperXmlEditUpdatesFragment` | E2E | 🔴 planned |
-| REQ-010 | 캐시 손상/원자적 쓰기 | `IndexCacheTest#corruptManifestFallsBackToRebuild` | integration | 🔴 planned |
-| REQ-011 | `index(Path)` 하위호환 | 기존 인덱서 단위 테스트 회귀(green 유지) | integration | 🔴 planned |
+| REQ-001 | 정적 블록 단일 모델 빌드 | `SharedSpoonModelTest#buildCountIsOnePerBlock` | integration | 🟢 green |
+| REQ-002 | Stage 1 결과 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🟢 green |
+| REQ-003 | 무변경 0회 + 동일 | `IncrementalIndexE2E#noChangeRebuildZeroBuilds` | E2E | 🟢 green |
+| REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IndexCacheWiringTest#singleFileEditTriggersRebuild` | integration | 🟢 green |
+| REQ-005 | 파일 삭제 반영 | `IncrementalIndexE2E#deletedFileRemovesEndpoint` | E2E | 🟢 green |
+| REQ-006 | 증분 == 풀리빌드 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🟢 green |
+| REQ-007 | `--no-incremental` | `IndexCacheWiringTest#noIncrementalBypassesCache` | integration | 🟢 green |
+| REQ-008 | schemaVersion 무효화 | `IndexCacheTest#schemaMismatchTriggersRebuild` | integration | 🟢 green |
+| REQ-009 | XML 변경 반영 | `IncrementalIndexE2E#mapperXmlEditUpdatesFragment` | E2E | 🟢 green |
+| REQ-010 | 캐시 손상/원자적 쓰기 | `IndexCacheTest#corruptManifestFallsBackToRebuild` | integration | 🟢 green |
+| REQ-011 | `index(Path)` 하위호환 | 기존 인덱서 단위 테스트 회귀(green 유지) | integration | 🟢 green |
 
-Coverage: 0/11 green (0%) — target 100% (대상: Must 10 + Should 1; 모두 분모 포함). B안 관련 요구는 본 명세에 없음(🔵 범위 제외).
+Coverage: 11/11 green (100%) — target 100% 달성 (대상: Must 10 + Should 1; 모두 분모 포함). B안 관련 요구는 본 명세에 없음(🔵 범위 제외).
+
+### Task 8 업데이트 이력 (2026-06-22)
+- REQ-002, 003, 005, 006, 009: `IncrementalIndexE2E` E2E 테스트 작성 및 GREEN 확인
+- REQ-004, 007: Task 7 `IndexCacheWiringTest` 커버 (기존 green 확인)
+- REQ-001, 008, 010, 011: Task 6/7 기존 테스트 커버 (기존 green 확인)
