@@ -37,6 +37,7 @@ public record ExploredPath(
         responseHeaders = responseHeaders == null ? Map.of() : responseHeaders;
         // 역직렬화 후방호환: 구버전 JSON에 누락된 outcome/semanticStatus/semanticStatusText를 expectedStatus로 파생
         outcome = outcome == null ? deriveOutcome(expectedStatus) : outcome;
+        // semanticStatus 0 = legacy JSON에 필드 없음(Jackson 기본값). HTTP 상태에 0은 없으므로 sentinel로 안전.
         semanticStatus = semanticStatus == 0 ? expectedStatus : semanticStatus;
         semanticStatusText = (semanticStatusText == null || semanticStatusText.isBlank())
                 ? String.valueOf(expectedStatus) : semanticStatusText;
