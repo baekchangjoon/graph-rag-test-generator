@@ -140,7 +140,7 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 |--------|----------|------------------------------|-------|--------|
 | REQ-001 | OTel→pjacoco 공존 부팅 + 바닐라 `.exec` | `V1AgentCoexistencePoc` (petclinic) | E2E | 🟢 PASS (lines=253, port6300=closed) |
 | REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc.concurrentEndpoints_noCrossContamination` | E2E | 🟢 PASS (contamination=0, ownA=14 ownB=12, 2026-06-23) |
-| REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc` | E2E | 🔴 planned |
+| REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc.perWorkerConnection_concurrentSeeding_noFailures` | E2E | 🟢 PASS (workers=8 exceptions=0 finalRows=0, 2026-06-23) |
 | REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition` | int+E2E | 🟢 PASS (partition 등가 — OTel-scope traceId 경로, {{0,2},{1},{3}} 일치, 2026-06-23) |
 | REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🔴 planned (재개) |
 | REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (tainted-spring diary) | E2E | 🔴 planned (재개) |
