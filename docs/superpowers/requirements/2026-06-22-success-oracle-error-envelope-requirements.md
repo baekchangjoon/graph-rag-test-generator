@@ -101,16 +101,18 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 기본 status-only 후방호환 | ExistingRegression(order/gateway/tram) GREEN 유지 | E2E | 🔴 planned |
-| REQ-002 | 엔벨로프→FAILURE 분류 | ErrorEnvelopeClassifierTest#enveloped200IsFailure / E2E AC1 | E2E | 🔴 planned |
-| REQ-003 | semanticStatus 복원·타입 보존 | ErrorEnvelopeClassifierTest#recoversSemanticStatusText | integration | 🔴 planned |
-| REQ-004 | 와이어 status 보존 | GraphAssetOutcomeTest#wireStatusPreserved | integration | 🔴 planned |
-| REQ-005 | 파이프라인 일관 적용 | PostCreateCleanupGatedTest / LookupSucceededOutcomeTest | integration | 🔴 planned |
-| REQ-006 | 에러 계약 강한 단언 | ErrorContractAssertionE2E (AC2) | E2E | 🔴 planned |
-| REQ-007 | 에러 path 필터 정책 | VerifyAndFilterEnvelopeKeepTest | integration | 🔴 planned |
-| REQ-008 | happy 미도달 보고 | NoHappyPathReportTest | integration | 🔴 planned |
-| REQ-009 | FAILURE 피드백 재탐색 | RcbRetryLoopTest (AC3a) | integration | 🔴 planned |
-| REQ-010 | genuine SUCCESS 도달 + 커버리지 | ErrorEnvelopeSutE2E#reachesSuccess (AC3b) | E2E | 🔴 planned |
-| REQ-011 | classifier CLI 설정 표면 | BuilderCliClassifierConfigTest | integration | 🔴 planned |
+| REQ-001 | 기본 status-only 후방호환 | StatusOnlyClassifierTest + 전체 회귀(:graph-rag-builder/:test-generator) GREEN + E2E AC4 | E2E | 🟢 green |
+| REQ-002 | 엔벨로프→FAILURE 분류 | ErrorEnvelopeClassifierTest#enveloped200IsFailureAndRecoversStatus + run-error-envelope-e2e AC1 | E2E | 🟢 green |
+| REQ-003 | semanticStatus 복원·타입 보존 | ErrorEnvelopeClassifierTest#successFieldNull/unparseableStatusKeepsWireStatus | integration | 🟢 green |
+| REQ-004 | 와이어 status 보존 | EnvelopeOutcomeWiringTest + ExploredPathCompatTest + E2E AC1 | E2E | 🟢 green |
+| REQ-005 | 파이프라인 일관 적용 | OutcomeGatingTest + LookupSucceededOutcomeTest + PostCreateCleanupGatedTest | integration | 🟢 green |
+| REQ-006 | 에러 계약 강한 단언 | ErrorContractAssertionTest + GeneratorErrorContractEndToEndTest + E2E AC2 | E2E | 🟢 green |
+| REQ-007 | 에러 path 필터 정책 | VerifyAndFilterEnvelopeKeepTest | integration | 🟢 green |
+| REQ-008 | happy 미도달 보고 | NoHappyPathReportTest | integration | 🟢 green |
+| REQ-009 | FAILURE 피드백 재탐색 | RcbRetryLoopTest (AC3a) + noExtraRetriesForGenuineNon2xxFailure | integration | 🟢 green |
+| REQ-010 | genuine SUCCESS 도달 + 커버리지 | run-error-envelope-e2e AC3b + ItemApiTest | E2E | 🟢 green |
+| REQ-011 | classifier CLI 설정 표면 | ClassifierConfigParseTest | integration | 🟢 green |
 
-Coverage: 0/11 green (0%) — target 100% (대상: Must 9 + Should 2; 미연기 Should 전부 포함). Could/Won't 없음.
+Coverage: 11/11 green (100%) — 대상: Must 9 + Should 2 전부 green. Could/Won't 없음.
+
+> 비고: REQ-010의 branch-coverage 상승 측정은 샘플 SUT(error-envelope-service)에 분기가 없어 무의미 → genuine SUCCESS path ≥ 1 도달로 검증(E2E AC3b). RC-B 재시도는 엔벨로프-마스킹 실패(FAILURE && wire 2xx)에만 한정해 비-엔벨로프 SUT 동작을 보존(REQ-001/AC4, 커밋 245cc0c).
