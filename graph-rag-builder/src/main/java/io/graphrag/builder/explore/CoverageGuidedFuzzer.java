@@ -1,6 +1,6 @@
 package io.graphrag.builder.explore;
 
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.builder.oracle.ResponseClassifier;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
 import io.graphrag.model.Outcome;
@@ -38,10 +38,6 @@ public class CoverageGuidedFuzzer implements PathExplorer {
     @Override
     public ExplorationResult explore(EndpointTarget target, ExplorationBudget budget,
                                      KnownCoverage known) {
-        // 컬렉션 body는 happy-only(HeuristicExplorer가 이미 1회 실행) — fuzzer는 object 변이만 한다.
-        if (!(target.baseInput() instanceof ObjectNode)) {
-            return new ExplorationResult(new ArrayList<>());
-        }
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
         List<KnownCoverage.Seed> queue = new ArrayList<>(known.seeds());
         queue.sort(Comparator.comparing(seed -> seed.kind() != Outcome.Kind.SUCCESS));   // SUCCESS 먼저 (stable)
@@ -52,8 +48,8 @@ public class CoverageGuidedFuzzer implements PathExplorer {
             boolean requested = false;
             boolean novelInSeed = false;
             for (InputMutator.Mutation mutation : mutations) {
-                ObjectNode body = mutation.apply()
-                        .apply(InputMutator.copy(queue.get(seedIndex).body()));
+                JsonNode body = InputMutator.applyToBody(
+                        InputMutator.copy(queue.get(seedIndex).body()), mutation);
                 if (!known.markTried(body)) {
                     continue;   // 이미 시도한 입력 — 예산 미소비
                 }

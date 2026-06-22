@@ -1,9 +1,11 @@
 package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
+import io.graphrag.builder.index.JsonPaths;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
 
 import java.util.ArrayList;
@@ -37,28 +39,46 @@ public final class InputMutator {
         for (BodyShape.BodyField field : fields) {
             String name = field.name();
             mutations.add(new Mutation("remove-" + name, body -> {
-                body.remove(name);
+                JsonPaths.removePath(body, name);
                 return body;
             }));
             mutations.add(new Mutation("null-" + name, body -> {
-                body.putNull(name);
+                JsonPaths.putNullPath(body, name);
                 return body;
             }));
             if (NUMERIC_TYPES.contains(field.javaType())) {
-                mutations.add(new Mutation("zero-" + name, body -> body.put(name, 0)));
-                mutations.add(new Mutation("negative-" + name, body -> body.put(name, -1)));
+                mutations.add(new Mutation("zero-" + name, body -> {
+                    JsonPaths.putPath(body, name, 0);
+                    return body;
+                }));
+                mutations.add(new Mutation("negative-" + name, body -> {
+                    JsonPaths.putPath(body, name, -1);
+                    return body;
+                }));
                 // 범위 상한 분기용 (예: 재고/한도 초과)
-                mutations.add(new Mutation("large-" + name, body -> body.put(name, 1_000_000)));
+                mutations.add(new Mutation("large-" + name, body -> {
+                    JsonPaths.putPath(body, name, 1_000_000);
+                    return body;
+                }));
             } else if (field.javaType().equals("java.lang.String")) {
-                mutations.add(new Mutation("empty-" + name, body -> body.put(name, "")));
+                mutations.add(new Mutation("empty-" + name, body -> {
+                    JsonPaths.putPath(body, name, "");
+                    return body;
+                }));
                 if (name.endsWith("Id") && name.length() > 2) {
                     mutations.add(new Mutation("missing-ref-" + name,
-                            body -> body.put(name, "missing-" + name)));
+                            body -> {
+                                JsonPaths.putPath(body, name, "missing-" + name);
+                                return body;
+                            }));
                 }
                 // handler의 enum-스타일 리터럴을 도메인 값 후보로 (docs/22 보완)
                 for (String literal : literalCandidates) {
                     mutations.add(new Mutation("literal-" + name + "-" + literal,
-                            body -> body.put(name, literal)));
+                            body -> {
+                                JsonPaths.putPath(body, name, literal);
+                                return body;
+                            }));
                 }
             }
         }
@@ -98,7 +118,7 @@ public final class InputMutator {
             String name = "interfield-" + new java.util.TreeMap<>(tuple);
             Map<String, Long> t = tuple;
             out.add(new Mutation(name, body -> {
-                t.forEach((field, value) -> body.put(field, value.longValue()));
+                t.forEach((field, value) -> JsonPaths.putPath(body, field, value.longValue()));
                 return body;
             }));
         }
@@ -120,7 +140,7 @@ public final class InputMutator {
             String name = "interfield-real-" + new java.util.TreeMap<>(tuple);
             Map<String, Double> t = tuple;
             out.add(new Mutation(name, body -> {
-                t.forEach(body::put);
+                t.forEach((field, value) -> JsonPaths.putPath(body, field, value));
                 return body;
             }));
         }
@@ -142,7 +162,10 @@ public final class InputMutator {
             }
             for (Double v : new java.util.TreeSet<>(e.getValue())) {
                 out.add(new Mutation("realbound-" + field + "-" + v,
-                        body -> body.put(field, v)));
+                        body -> {
+                            JsonPaths.putPath(body, field, v);
+                            return body;
+                        }));
             }
         }
         return out;
@@ -159,7 +182,10 @@ public final class InputMutator {
             }
             String name = field.name();
             for (String c : consts) {
-                out.add(new Mutation("enum-" + name + "-" + c, body -> body.put(name, c)));
+                out.add(new Mutation("enum-" + name + "-" + c, body -> {
+                    JsonPaths.putPath(body, name, c);
+                    return body;
+                }));
             }
         }
         return out;
@@ -186,8 +212,8 @@ public final class InputMutator {
             out.add(new Mutation(name, body -> {
                 for (ConstraintExtractor.Atom a : atoms) {
                     switch (a.kind()) {
-                        case NUMERIC -> body.put(a.fieldRef(), satisfy(a.op(), a.numLiteral()));
-                        case ENUM_EQ, STRING_EQ -> body.put(a.fieldRef(), a.value());
+                        case NUMERIC -> JsonPaths.putPath(body, a.fieldRef(), satisfy(a.op(), a.numLiteral()));
+                        case ENUM_EQ, STRING_EQ -> JsonPaths.putPath(body, a.fieldRef(), a.value());
                     }
                 }
                 return body;
@@ -306,11 +332,17 @@ public final class InputMutator {
     }
 
     private static void putStr(List<Mutation> out, String mName, String field, String value) {
-        out.add(new Mutation(mName, body -> body.put(field, value)));
+        out.add(new Mutation(mName, body -> {
+            JsonPaths.putPath(body, field, value);
+            return body;
+        }));
     }
 
     private static void putLong(List<Mutation> out, String mName, String field, long value) {
-        out.add(new Mutation(mName, body -> body.put(field, value)));
+        out.add(new Mutation(mName, body -> {
+            JsonPaths.putPath(body, field, value);
+            return body;
+        }));
     }
 
     private static List<Mutation> dedupeByName(List<Mutation> mutations) {
@@ -321,7 +353,23 @@ public final class InputMutator {
         return new ArrayList<>(byName.values());
     }
 
-    public static ObjectNode copy(JsonNode body) {
+    public static JsonNode copy(JsonNode body) {
         return body.deepCopy();
+    }
+
+    /**
+     * body 타입에 따라 변이를 안전하게 적용한다.
+     * - ObjectNode: 직접 변이 적용.
+     * - ArrayNode(비어있지 않고 첫 요소가 ObjectNode): element[0]에만 변이 적용.
+     * - 그 외: body 그대로 반환.
+     */
+    public static JsonNode applyToBody(JsonNode body, Mutation m) {
+        if (body instanceof ObjectNode obj) {
+            return m.apply().apply(obj);
+        }
+        if (body instanceof ArrayNode arr && !arr.isEmpty() && arr.get(0) instanceof ObjectNode el) {
+            m.apply().apply(el);   // element[0] 대표 변이 (arr는 호출부에서 깊은 복사된 본문)
+        }
+        return body;
     }
 }
