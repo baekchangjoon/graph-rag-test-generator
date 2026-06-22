@@ -13,7 +13,11 @@ public record ClassifierConfig(
     public static ClassifierConfig from(Map<String, String> opts) {
         String when = opts.get("--error-when-present");
         List<String> fields = (when == null || when.isBlank())
-                ? List.of() : List.of(when.split(","));
+                ? List.of()
+                : java.util.Arrays.stream(when.split(","))
+                        .map(String::strip)
+                        .filter(s -> !s.isBlank())
+                        .toList();
         String statusField = opts.getOrDefault("--semantic-status-field", "errorCode");
         return new ClassifierConfig(fields, statusField,
                 opts.get("--error-detail-field"), opts.get("--error-detail-contains"));
