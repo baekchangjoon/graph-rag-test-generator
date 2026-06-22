@@ -114,15 +114,22 @@ public class EndpointExplorationRunner {
     static final int RCB_RETRY_BUDGET = 4;
 
     /**
-     * RC-B 재시도 결정 술어. pass-2 재탐색 결과 번들에 SUCCESS path가 하나도 없고(=happy가 여전히
-     * FAILURE: 진짜 4xx 또는 엔벨로프-200) 이미 실행한 pass-2 시도 횟수가 예산 이하이면 또 시도한다.
-     * SUCCESS path가 하나라도 있으면 즉시 중단(추가 시도 0 — happy가 이미 SUCCESS면 호출조차 안 됨).
+     * RC-B 재시도 결정 술어. SUCCESS path가 하나도 없고, 그 FAILURE가 <b>엔벨로프-마스킹</b>
+     * (outcome==FAILURE 이면서 wire status가 2xx — 200으로 감싼 에러)일 때만 예산 내에서 재시도한다.
+     * 진짜 non-2xx FAILURE(실제 404 등, StatusOnlyClassifier 경로)는 재시도하지 않는다 — 비-엔벨로프
+     * SUT는 pass-2를 정확히 1회만 실행(구버전 동작 비트-호환, 스펙 AC4). SUCCESS path가 하나라도
+     * 있으면 즉시 중단(happy가 이미 SUCCESS면 호출조차 안 됨).
      */
     static boolean shouldRetryPass2(List<ExploredPath> paths, int attemptsSoFar) {
         if (attemptsSoFar > RCB_RETRY_BUDGET) {
             return false;
         }
-        return paths.stream().noneMatch(p -> p.outcome() == Outcome.Kind.SUCCESS);
+        boolean hasSuccess = paths.stream().anyMatch(p -> p.outcome() == Outcome.Kind.SUCCESS);
+        if (hasSuccess) {
+            return false;
+        }
+        return paths.stream().anyMatch(
+                p -> p.outcome() == Outcome.Kind.FAILURE && p.expectedStatus() / 100 == 2);
     }
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
