@@ -66,4 +66,34 @@ class BodyShapeExtractorGenericTest {
                 .extracting(BodyShape.BodyField::name)
                 .doesNotContain("l1.l2");
     }
+    /**
+     * REQ-003: Map<String, DTO> value 타입이 "sampleKey.<field>" dot-path 리프로 전개된다.
+     * 단일 스칼라 "sampleKey" 리프(이전 동작)는 나오지 않아야 한다.
+     */
+    @Test
+    void mapBody_dtoValue() {
+        String src = "package p; "
+                + "record Dto(String city, int qty) {} "
+                + "class In { void h(java.util.Map<java.lang.String, p.Dto> m){} }";
+        CtModel m = model(src);
+
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
+
+        assertThat(shape).isPresent();
+        assertThat(shape.get().fields())
+                .extracting(BodyShape.BodyField::name)
+                .contains("sampleKey.city", "sampleKey.qty");
+        assertThat(shape.get().fields())
+                .filteredOn(f -> "sampleKey.city".equals(f.name()))
+                .extracting(BodyShape.BodyField::javaType)
+                .containsExactly("java.lang.String");
+        assertThat(shape.get().fields())
+                .filteredOn(f -> "sampleKey.qty".equals(f.name()))
+                .extracting(BodyShape.BodyField::javaType)
+                .containsExactly("int");
+        // bare "sampleKey" with DTO type must NOT appear
+        assertThat(shape.get().fields())
+                .extracting(BodyShape.BodyField::name)
+                .doesNotContain("sampleKey");
+    }
 }

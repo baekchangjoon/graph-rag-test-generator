@@ -10,10 +10,12 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.Map;
 
-/** Map/List scalar @RequestBody fixture (REQ-003/004): prefs + tags 엔드포인트. */
+/** Map/List scalar @RequestBody fixture (REQ-003/004): prefs + tags + profiles-map 엔드포인트. */
 @RestController
 @RequestMapping("/api")
 public class CollectionsController {
+
+    public record ProfileDto(String name, int age) {}
 
     @PostMapping("/prefs")
     public int prefs(@RequestBody Map<String, String> prefs) {
@@ -34,5 +36,17 @@ public class CollectionsController {
             }
         }
         return tags.size();
+    }
+    @PostMapping("/profiles-map")
+    public org.springframework.http.ResponseEntity<Void> profilesMap(
+            @RequestBody Map<String, ProfileDto> m) {
+        if (m == null || m.isEmpty()) {
+            return org.springframework.http.ResponseEntity.badRequest().build();
+        }
+        ProfileDto p = m.values().iterator().next();
+        if (p.name() == null || p.name().isBlank()) {
+            return org.springframework.http.ResponseEntity.unprocessableEntity().build();
+        }
+        return org.springframework.http.ResponseEntity.ok().build();
     }
 }

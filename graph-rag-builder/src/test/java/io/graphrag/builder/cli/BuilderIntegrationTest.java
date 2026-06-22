@@ -62,6 +62,7 @@ class BuilderIntegrationTest {
                         "post-api-orders-search", "post-api-orders-ship",
                         "post-api-prefs",
                         "post-api-pricing",
+                        "post-api-profiles-map",
                         "post-api-promo", "post-api-signups",
                         "post-api-tags",
                         "post-web-editor", "post-web-idref", "post-web-multi",
