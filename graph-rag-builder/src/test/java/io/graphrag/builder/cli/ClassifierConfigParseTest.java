@@ -23,4 +23,10 @@ class ClassifierConfigParseTest {
         assertThat(cfg.toClassifier()).isInstanceOf(ErrorEnvelopeClassifier.class);
         assertThat(cfg.semanticStatusField()).isEqualTo("errorCode");  // 기본값
     }
+
+    @Test
+    void errorWhenPresent_spacesAroundTokens_trimmed() {
+        ClassifierConfig cfg = ClassifierConfig.from(Map.of("--error-when-present", "errorCode, foo"));
+        assertThat(cfg.errorWhenPresent()).containsExactly("errorCode", "foo");
+    }
 }
