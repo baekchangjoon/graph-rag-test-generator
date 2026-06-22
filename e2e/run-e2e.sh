@@ -52,7 +52,7 @@ rm -rf "$OUT"
   --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
-for req in request-orders request-orders-batch request-search request-ws request-orders-get-id request-orders-get-user \
+for req in request-orders request-orders-batch request-orders-ship request-search request-ws request-orders-get-id request-orders-get-user \
            request-bookings request-bookings-get-id request-bookings-put-id request-bookings-delete-id \
            request-order-events request-profiles-by-name; do
   "$GW" -q :test-generator:run --args="generate \

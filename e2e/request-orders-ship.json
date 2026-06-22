@@ -1,0 +1,6 @@
+{
+  "endpointId": "post-api-orders-ship",
+  "testClassName": "OrdersShipPostTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}
