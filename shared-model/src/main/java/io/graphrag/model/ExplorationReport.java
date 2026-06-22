@@ -89,6 +89,12 @@ public record ExplorationReport(
         public EndpointExploration {
             droppedPaths = droppedPaths == null ? List.of() : droppedPaths;
         }
+
+        /** REQ-009: pathsByEngine 합산 — 탐색된 총 경로 수. */
+        public int exploredPathCount() {
+            return pathsByEngine == null ? 0
+                    : pathsByEngine.values().stream().mapToInt(Integer::intValue).sum();
+        }
     }
 
     /**
