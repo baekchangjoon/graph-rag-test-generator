@@ -55,7 +55,8 @@
 - 유형: Functional · 우선순위: Must
 - 설명: `BodyShapeExtractor.extractFromTypeFlattened`(JSON `@RequestBody` 전용 변형; `extract()`는
   un-flattened 유지 — 역전파 v3)가 중첩 DTO 컴포넌트를 dot-path 스칼라 리프로 재귀 전개하되, 깊이
-  상한(3)과 **경로별** cycle guard를 적용한다. `extract()`는 form 분류 계약상 평탄화하지 않는다.
+  상한(`MAX_NESTING_DEPTH=2` → dot-path 세그먼트 최대 3)과 **경로별** cycle guard를 적용한다.
+  `extract()`는 form 분류 계약상 평탄화하지 않는다.
 - 수용기준:
   - Given 중첩/순환 DTO 타입을, When `extract`하면, Then (a) `address.city` dot-path 리프 산출,
     (b) 깊이 3 초과 경로 절단, (c) 순환 타입 경로별 차단, (d) 같은 타입 형제 필드 둘 다 전개.
