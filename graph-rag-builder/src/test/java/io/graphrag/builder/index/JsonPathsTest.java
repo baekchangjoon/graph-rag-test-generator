@@ -29,6 +29,14 @@ class JsonPathsTest {
     }
 
     @Test
+    void putPathBooleanNode() {
+        ObjectNode root = obj();
+        JsonPaths.putPath(root, "a.b", true);
+        assertThat(root.get("a").get("b").isBoolean()).isTrue();
+        assertThat(root.get("a").get("b").booleanValue()).isTrue();
+    }
+
+    @Test
     void flatNameUnchanged() {
         ObjectNode root = obj();
         JsonPaths.putPath(root, "userId", "u1");
