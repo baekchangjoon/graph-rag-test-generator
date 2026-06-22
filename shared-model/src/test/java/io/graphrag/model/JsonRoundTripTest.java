@@ -117,6 +117,23 @@ class JsonRoundTripTest {
     }
 
     @Test
+    void explorationReport_unsupportedShapes_defaultsToEmpty() {
+        ExplorationReport report = new ExplorationReport(List.of(), 0, 0, List.of());
+        assertThat(report.unsupportedShapes()).isEmpty();
+    }
+
+    @Test
+    void explorationReport_unsupportedShapes_roundTrips() throws Exception {
+        ExplorationReport.UnsupportedShape shape = new ExplorationReport.UnsupportedShape(
+                "post-api-orders", "com.example.ComplexGeneric<T>", "generic type not supported");
+        ExplorationReport report = new ExplorationReport(List.of(), 0, 0, List.of(),
+                List.of(shape));
+        ExplorationReport roundTripped = roundTrip(report, ExplorationReport.class);
+        assertThat(roundTripped).isEqualTo(report);
+        assertThat(roundTripped.unsupportedShapes()).containsExactly(shape);
+    }
+
+    @Test
     void generationRequest_roundTrips() throws Exception {
         GenerationRequest request = new GenerationRequest(
                 "ep-orders-post", "path-1", "OrdersPostTest", "io.graphrag.generated", AuthMode.DISABLED);
