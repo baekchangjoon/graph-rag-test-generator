@@ -35,6 +35,15 @@ public record ExploredPath(
         requiredSeedIds = requiredSeedIds == null ? List.of() : requiredSeedIds;
         capturedEventEmitIds = capturedEventEmitIds == null ? List.of() : capturedEventEmitIds;
         responseHeaders = responseHeaders == null ? Map.of() : responseHeaders;
+        // 역직렬화 후방호환: 구버전 JSON에 누락된 outcome/semanticStatus/semanticStatusText를 expectedStatus로 파생
+        outcome = outcome == null ? deriveOutcome(expectedStatus) : outcome;
+        semanticStatus = semanticStatus == 0 ? expectedStatus : semanticStatus;
+        semanticStatusText = (semanticStatusText == null || semanticStatusText.isBlank())
+                ? String.valueOf(expectedStatus) : semanticStatusText;
+    }
+
+    private static Outcome.Kind deriveOutcome(int expectedStatus) {
+        return expectedStatus / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE;
     }
 
     /** 14-argument compatibility constructor: outcome/semanticStatus derived from expectedStatus. */
@@ -46,8 +55,7 @@ public record ExploredPath(
         this(id, endpointId, sampleInput, expectedStatus, sampleResponse, capturedSqlIds, capturedHttpCallIds,
              branchesTaken, discoveredBy, constraints, validationWarnings, requiredSeedIds,
              capturedEventEmitIds, responseHeaders,
-             expectedStatus / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
-             expectedStatus, String.valueOf(expectedStatus));
+             deriveOutcome(expectedStatus), expectedStatus, String.valueOf(expectedStatus));
     }
 
     /** 13-argument compatibility constructor (no responseHeaders — backward compat) */
