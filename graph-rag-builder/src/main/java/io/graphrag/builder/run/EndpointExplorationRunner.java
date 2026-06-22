@@ -1127,7 +1127,7 @@ public class EndpointExplorationRunner {
             List<io.graphrag.model.CapturedEventEmit> pathEventEmits = new ArrayList<>();
             int emitSeq = 1;
             for (KafkaCaptureReceiver.CapturedRecord record :
-                    kafkaByTrace.getOrDefault(candidate.kafkaTraceId(), java.util.List.of())) {
+                    kafkaRecordsForTrace(kafkaByTrace, candidate.kafkaTraceId())) {
                 pathEventEmits.add(new io.graphrag.model.CapturedEventEmit(
                         "event-" + candidate.pathId() + "-" + (emitSeq++),
                         candidate.pathId(),
@@ -1156,6 +1156,20 @@ public class EndpointExplorationRunner {
                     candidate.responseHeaders()));
         }
         return new PathsBundle(paths, allSql, allHttpCalls, allCapturedEventEmits);
+    }
+
+    /**
+     * trace-id에 매칭되는 Kafka 레코드 목록. traceId가 null이면 (Kafka 캡처 미사용 탐색) 빈 목록.
+     * kafkaByTrace는 Kafka 캡처가 없을 때 immutable {@code Map.of()}라 null 키로 getOrDefault하면
+     * NPE가 나므로 (immutable map의 get은 null 키를 거부), null traceId를 먼저 걸러낸다.
+     */
+    static List<KafkaCaptureReceiver.CapturedRecord> kafkaRecordsForTrace(
+            java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> kafkaByTrace,
+            String traceId) {
+        if (traceId == null) {
+            return java.util.List.of();
+        }
+        return kafkaByTrace.getOrDefault(traceId, java.util.List.of());
     }
 
     /** 시드를 path에 연결: GET은 첫 2xx path, 비-GET by-id는 path별 고유 PK 복제. */
