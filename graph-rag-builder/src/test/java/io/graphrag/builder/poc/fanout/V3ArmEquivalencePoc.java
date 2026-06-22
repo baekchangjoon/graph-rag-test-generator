@@ -58,7 +58,6 @@ class V3ArmEquivalencePoc {
     );
 
     private static final int PETCLINIC_PORT   = 8080;
-    private static final int VANILLA_TCP_PORT = 6300;   // JaCoCo tcpserver 포트
     private static final int PJACOCO_CTL_PORT = 6310;   // pjacoco 제어 포트
     private static final int BOOT_TIMEOUT_S   = 90;
 
@@ -258,6 +257,13 @@ class V3ArmEquivalencePoc {
                 + "  partition=" + vanillaPartition);
         System.out.println("[V3part] otel     distinct paths=" + otelPartition.size()
                 + "  partition=" + otelPartition);
+
+        // Non-triviality guard: the vanilla partition must contain at least one non-singleton
+        // group (i.e., arm MERGING must be demonstrated — if all groups were singletons, a trivial
+        // all-distinct fingerprinter would pass the equality check without proving dedup).
+        assertThat(vanillaPartition)
+                .as("vanilla partition must have at least one non-singleton group (arm merging)")
+                .anyMatch(g -> g.size() > 1);
 
         if (!vanillaPartition.equals(otelPartition)) {
             String msg = "V3(a) rev.4 FAIL — PARTITION MISMATCH."
