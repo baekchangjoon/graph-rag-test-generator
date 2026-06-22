@@ -31,7 +31,8 @@ public record BuildConfig(
         io.graphrag.model.RequestHeaders requestHeaders,
         List<String> endpointSelectors,
         String traceMode,
-        ClassifierConfig classifierConfig) {
+        ClassifierConfig classifierConfig,
+        boolean noIncremental) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -49,7 +50,7 @@ public record BuildConfig(
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, false, null,
-                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null);
+                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null, false);
     }
 
     /** attach/requestHeaders 를 생략하는 편의 생성자 (기존 17-arg 호출부 호환). */
@@ -61,10 +62,10 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, null, io.graphrag.model.RequestHeaders.empty(),
-                List.of(), "otel", null);
+                List.of(), "otel", null, false);
     }
 
-    /** classifierConfig를 생략하는 편의 생성자 (기존 21-arg 호출부 호환). */
+    /** classifierConfig/noIncremental 를 생략하는 편의 생성자 (기존 21-arg 호출부 호환). */
     public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
                        String sutId, String commitSha, DbConfig dbConfig,
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
@@ -75,6 +76,6 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
-                endpointSelectors, traceMode, null);
+                endpointSelectors, traceMode, null, false);
     }
 }
