@@ -259,5 +259,25 @@ A PASS 시: `ExplorationOrchestrator` 상위에 엔드포인트 워커 풀(병�
 
 ## 11. PoC 실측 결과
 
-> _(PoC 실행 후 채움 — V1~V4 각 pass/fail, V3 (a) 등가 비교·(b) 오버헤드 수치, V2 교차오염·
-> seeding 카운트, V4 귀속 바이트, 최종 A/B 판정.)_
+> _(V1~V4 각 pass/fail, V3 (a) 등가 비교·(b) 오버헤드 수치, V2 교차오염·seeding 카운트,
+> V4 귀속 바이트, 최종 A/B 판정을 각 게이트 완료 시 기록.)_
+
+### V1 결과 — 2026-06-23 (REQ-001)
+
+| 항목 | 측정값 |
+|---|---|
+| **부팅 성공** | ✅ (petclinic 4.0.0-SNAPSHOT, JDK Corretto 17.0.18) |
+| **OTel→pjacoco 공존** | ✅ 두 javaagent 동시 부착, SUT 정상 기동 (elapsed ~20s) |
+| **제어 엔드포인트** | ✅ `/test/start?testId=v1` / `/test/stop?testId=v1&result=passed` 모두 응답 |
+| **v1.exec 생성** | ✅ 26 bytes, `$DEST/v1.exec` 정상 산출 |
+| **jacococli 파싱** | ✅ 45 클래스 분석, **LINE_MISSED+LINE_COVERED = 253** |
+| **JaCoCo tcpserver 포트 6300** | ✅ 미개방 (pjacoco가 tcpserver를 대체) |
+| **JUnit 게이트 (V1AgentCoexistencePoc)** | ✅ 30.715s, failures=0, errors=0 |
+
+**V1 판정: PASS** — A(pjacoco 단일 SUT fan-out) V1 게이트 통과. V2(교차오염·seeding) 계속.
+
+#### 환경 메모 (로컬 전용)
+- `PETCLINIC_JAVA`: macOS `/usr/libexec/java_home -v 17` → Corretto 17.0.18 자동 선택
+- `OTEL_JAR`: `~/github_tainted-spring/tainted-spring-platform/jacoco/opentelemetry-javaagent.jar` (OTel 2.11.0)
+- `PJACOCO_JAR`: `~/github_parallel-per-test-coverage/parallel-per-test-coverage/agent/build/libs/pjacoco-agent.jar`
+- `JACOCOCLI_JAR`: `~/.m2/repository/org/jacoco/org.jacoco.cli/0.8.11/org.jacoco.cli-0.8.11-nodeps.jar`

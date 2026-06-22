@@ -135,7 +135,7 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 
 | REQ-ID | 요구사항 | 수용 테스트 (이름/경로, 계획) | Level | Status |
 |--------|----------|------------------------------|-------|--------|
-| REQ-001 | OTel→pjacoco 공존 부팅 + 바닐라 `.exec` | `V1AgentCoexistencePoc` (petclinic) | E2E | 🔴 planned |
+| REQ-001 | OTel→pjacoco 공존 부팅 + 바닐라 `.exec` | `V1AgentCoexistencePoc` (petclinic) | E2E | 🟢 PASS (lines=253, port6300=closed) |
 | REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc` | E2E | 🔴 planned |
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc` | E2E | 🔴 planned |
 | REQ-004 | per-request testId arm 등가 | `V3ArmEquivalencePoc` | int+E2E | 🔴 planned |
@@ -145,7 +145,7 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
-Coverage: 0/9 green (0%) — target 100% (대상: Must REQ-001~008 + Should REQ-009).
+Coverage: 1/9 green (11%) — target 100% (대상: Must REQ-001~008 + Should REQ-009).
 REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
 V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). REQ-007은 멀티 JVM
