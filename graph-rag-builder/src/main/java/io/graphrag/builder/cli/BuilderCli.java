@@ -603,7 +603,8 @@ public final class BuilderCli {
                             config.budgetRequests(), env.httpCapture(),
                             responseDtoFieldSets, literals,
                             authProvider, config.authConfig(), enumConstants, enumColumns,
-                            config.requestHeaders(), sqlCapture, receiverToClose);
+                            config.requestHeaders(), sqlCapture, receiverToClose,
+                            config.classifierConfig().toClassifier());
                     // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
                     List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
                             .filter(g -> g.classFqn().equals(endpoint.handlerClass())
