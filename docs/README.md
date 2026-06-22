@@ -24,6 +24,7 @@
 | 사용자 compose로 SUT 분석(attach 모드) + 커스텀 요청 헤더 | [26-attach-mode](26-attach-mode.md) |
 | trace/SQL 캡처 모드 (`--trace-mode` otel·sleuth·none) + 레거시 Java8+Sleuth MSA | [06-test-environment](06-test-environment.md) "trace 모드" 절 |
 | Kafka outbound produce 캡처 (SUT 발행 메시지 귀속 + 어설션 합성) | [06-test-environment](06-test-environment.md) "Kafka outbound produce 캡처" 절 |
+| 성공 오라클 / 에러 엔벨로프 (HTTP 200+에러 필드 → FAILURE 분류 + 어설션 합성) | [03-graph-rag-builder](03-graph-rag-builder.md) "성공 오라클" 절, [00-getting-started](00-getting-started.md) 옵션 표 |
 | 로드맵: OTEL SQL 캡처(완료)·외부 stub seeding·override 키 경고 | [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) |
 | 핸들러/앱 커버리지 진행 현황(개발 트래킹) | [coverage-progress](coverage-progress.md) |
 | 기능별 설계 결정 기록 | [decisions/](decisions/) |

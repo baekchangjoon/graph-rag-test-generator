@@ -33,6 +33,7 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 | `socket-mock-server` | Netty TCP mock + admin REST |
 | `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) + **Kafka outbound produce** 캡처 데모 |
 | `samples/legacy-tram` | 레거시 async MSA 샘플 (Java 8 + Spring Boot 2.7 + Sleuth(B3) + Eventuate Tram 0.35 + MySQL binlog/CDC + Kafka, order-web→reservation→ledger 3개 앱). `--trace-mode sleuth` 의 비동기·서비스간 SQL 캡처 라이브 E2E 검증용. **루트 Gradle 빌드 미포함** — docker compose로 별도 빌드/실행. 런북: `e2e/run-legacy-tram-sleuth-e2e.sh` |
+| `samples/error-envelope-service` | BizException을 HTTP 200 + 에러 엔벨로프(errorCode/errorDetail)로 감싸는 샘플 SUT — 성공 오라클 검증용 |
 | `e2e` | E2E·attach·dist·legacy-tram 수용/회귀 런북 모음 (`run-e2e.sh` 외 `run-attach-*.sh`·`run-dist-e2e.sh`·`run-legacy-tram-sleuth-e2e.sh` 등) |
 
 ## 요구 환경
@@ -122,6 +123,18 @@ git diff --name-only main > changed.txt
 #   --no-incremental으로 캐시 무시하고 강제 풀 리빌드 (schema 변경·동적 모델 확장 시).
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
   [--no-incremental]"
+
+# 도구 1 — 에러 엔벨로프 SUT (HTTP 200 + 에러 필드로 FAILURE를 표현하는 앱)
+#   --error-when-present: 응답 바디에 해당 필드가 있으면 HTTP 200이어도 FAILURE 분류
+#   --semantic-status-field: 에러 엔벨로프의 의미론적 상태코드 필드 (기본 errorCode)
+#   --error-detail-field / --error-detail-contains: FAILURE 경로 테스트에 바디 어설션 추가
+#   동작 데모: samples/error-envelope-service (BizException → errorCode/errorDetail 패턴)
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --error-when-present errorCode \
+  --semantic-status-field errorCode \
+  --error-detail-field errorDetail \
+  --error-detail-contains BizException"
 
 # 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개)
 #   스펙은 id(post-api-orders) 또는 "METHOD /path"; --incremental-base 동반 시 나머지는
