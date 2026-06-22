@@ -110,6 +110,20 @@ public class EndpointExplorationRunner {
 
     private static final int FUZZER_SATURATION = 2;   // 연속 dry 시드 패스 수
     private static final int VARIANT_CAP = 4;          // 엔드포인트당 negative-validation 변종 상한(ReadInputSynthesizer와 일치)
+    /** RC-B: GET-by-id happy가 outcome=FAILURE(엔벨로프-200 포함)일 때 pass-2 재시드를 추가로 시도하는 예산. */
+    static final int RCB_RETRY_BUDGET = 4;
+
+    /**
+     * RC-B 재시도 결정 술어. pass-2 재탐색 결과 번들에 SUCCESS path가 하나도 없고(=happy가 여전히
+     * FAILURE: 진짜 4xx 또는 엔벨로프-200) 이미 실행한 pass-2 시도 횟수가 예산 이하이면 또 시도한다.
+     * SUCCESS path가 하나라도 있으면 즉시 중단(추가 시도 0 — happy가 이미 SUCCESS면 호출조차 안 됨).
+     */
+    static boolean shouldRetryPass2(List<ExploredPath> paths, int attemptsSoFar) {
+        if (attemptsSoFar > RCB_RETRY_BUDGET) {
+            return false;
+        }
+        return paths.stream().noneMatch(p -> p.outcome() == Outcome.Kind.SUCCESS);
+    }
 
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
@@ -298,23 +312,43 @@ public class EndpointExplorationRunner {
                 ExecutionDataStore pass1Cumulative = cumulativeCoverage;
                 ExplorationOutcome pass1Outcome = outcome;
                 try {
-                    deleteSeeds(pass1Happy);
-                    SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
-                            enumConstants, enumColumns, happyConstraints, hint,
-                            shapesByType, formBindings, nameRefValues);
-                    requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
-                    coverage.dump(true);                          // baseline: 부팅+pass-1+시드 구간 컷
-                    cumulativeCoverage = new ExecutionDataStore(); // 리포트를 pass-2(시드된 run)만 반영
-                    EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
-                    EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
-                            tables, invoker2, literalCandidates,
-                            fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
-                            interFieldTuples, realBounds, realInterFieldTuples);
-                    outcome = orchestrator.explore(target2);
-                    log.info("re-explored {} (SQL hint table={}): {} path(s)",
-                            endpoint.id(), hint.table(), outcome.paths().size());
-                    bundle = buildPaths(outcome, endpoint, conditions);
-                    happy = happy2;
+                    // RC-B(REQ-009): pass-2 재시드+재탐색을 예산 내 루프로 감싼다. happy가 여전히
+                    // FAILURE(엔벨로프-200 포함)면 최신 캡처 SQL로 hint를 재해석해 다시 시드한다.
+                    // SUCCESS path 도달 즉시 중단. budget 소진 시 마지막 결과를 best-effort로 수용.
+                    SynthesizedInput prevHappy = pass1Happy;   // 현재 삽입된(=지울) 시드
+                    ResolutionHint attemptHint = hint;
+                    int attempt = 0;
+                    do {
+                        deleteSeeds(prevHappy);
+                        SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
+                                enumConstants, enumColumns, happyConstraints, attemptHint,
+                                shapesByType, formBindings, nameRefValues);
+                        requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
+                        coverage.dump(true);                          // baseline: 부팅+이전 구간 컷
+                        cumulativeCoverage = new ExecutionDataStore(); // 리포트를 마지막 pass-2 run만 반영
+                        EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
+                        EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
+                                tables, invoker2, literalCandidates,
+                                fieldConstraints, conditionBounds, stringCandidates, enumConstants, conjunctions,
+                                interFieldTuples, realBounds, realInterFieldTuples);
+                        outcome = orchestrator.explore(target2);
+                        bundle = buildPaths(outcome, endpoint, conditions);
+                        happy = happy2;
+                        prevHappy = happy2;
+                        attempt++;
+                        log.info("re-explored {} (SQL hint table={}, attempt {}): {} path(s)",
+                                endpoint.id(), attemptHint.table(), attempt, outcome.paths().size());
+                        if (!shouldRetryPass2(bundle.paths(), attempt)) {
+                            break;
+                        }
+                        // 여전히 FAILURE: 최신 SQL로 hint 재해석(시드된 테이블이 바뀔 수 있음). null이면 중단.
+                        ResolutionHint next = SqlSeedResolver.resolve(bundle.allSql(),
+                                sentParamValues(endpoint, happy2.body()), endpoint, tables);
+                        if (next == null || next.table() == null) {
+                            break;
+                        }
+                        attemptHint = next;
+                    } while (true);
                 } catch (Exception e) {
                     log.warn("SQL-driven re-seed failed for {} (table={}), keeping pass-1: {}",
                             endpoint.id(), hint.table(), e.getMessage());
@@ -322,6 +356,7 @@ public class EndpointExplorationRunner {
                     bundle = pass1Bundle;
                     cumulativeCoverage = pass1Cumulative;
                     outcome = pass1Outcome;
+                    happy = pass1Happy;
                     reinsertSeeds(pass1Happy);
                 }
             }
