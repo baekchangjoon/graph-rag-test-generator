@@ -251,6 +251,9 @@ public class ConstraintExtractor {
             if (literalLong(left).isPresent() || literalLong(right).isPresent()) {
                 continue;   // 한쪽이라도 리터럴이면 Comparison 대상 — JoinGuard 아님
             }
+            if (enumConstant(left) != null || enumConstant(right) != null) {
+                continue;   // field == Enum.CONST 는 join guard 아님 (enum 동치는 별도 처리)
+            }
             CtMethod<?> method = op.getParent(CtMethod.class);
             CtType<?> type = op.getParent(CtType.class);
             if (method == null || type == null) {
