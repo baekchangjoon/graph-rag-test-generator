@@ -28,6 +28,7 @@ dependencies {
     implementation(libs.jacoco.core)
     implementation(libs.jacoco.agent)
     implementation(libs.wiremock)
+    implementation(libs.instancio.core)
     implementation(libs.slf4j.api)
     implementation(libs.jackson.dataformat.yaml)
     implementation(libs.opentelemetry.proto)
