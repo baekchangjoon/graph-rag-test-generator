@@ -26,6 +26,10 @@ public final class BodyShapeExtractor {
      */
     private static final int MAX_NESTING_DEPTH = 2;
 
+    /**
+     * 타입 이름으로 BodyShape를 추출한다 (비평탄화 — 직접 필드만).
+     * form 커맨드 및 WS 인덱서 등 dot-path 평탄화가 필요 없는 경로에서 사용.
+     */
     public static Optional<BodyShape> extract(CtModel model, String qualifiedName) {
         for (CtType<?> type : model.getAllTypes()) {
             CtType<?> target = findNested(type, qualifiedName);
@@ -33,11 +37,15 @@ public final class BodyShapeExtractor {
                 continue;
             }
             List<BodyShape.BodyField> fields = new ArrayList<>();
-            // 루트 타입을 visited에 넣어 self-cycle 차단
-            Set<String> visited = new HashSet<>();
-            visited.add(qualifiedName);
-            collectComponents(target, (compName, compType) ->
-                    flatten(model, "", compName, compType, 0, visited, fields));
+            if (target instanceof CtRecord record) {
+                for (CtRecordComponent component : record.getRecordComponents()) {
+                    fields.add(new BodyShape.BodyField(component.getSimpleName(),
+                            component.getType().getQualifiedName()));
+                }
+            } else {
+                target.getFields().forEach(field -> fields.add(new BodyShape.BodyField(
+                        field.getSimpleName(), field.getType().getQualifiedName())));
+            }
             return Optional.of(new BodyShape(qualifiedName, fields));
         }
         return Optional.empty();
@@ -118,29 +126,58 @@ public final class BodyShapeExtractor {
             "java.time.LocalDate", "java.time.LocalDateTime", "java.time.LocalTime",
             "java.time.Instant", "java.time.OffsetDateTime", "java.time.ZonedDateTime");
 
+    /**
+     * 타입 참조로 BodyShape를 추출한다 (비평탄화).
+     * 컬렉션이면 element 타입의 shape(collection=true), 아니면 타입 자체 shape.
+     * form 커맨드 경로에서 사용 — classifyFormBindings는 field.javaType()이 POJO 타입이어야 정상 동작.
+     */
     public static Optional<BodyShape> extractFromType(CtModel model,
             spoon.reflect.reference.CtTypeReference<?> type) {
         var element = elementType(type);
         if (element == null) {
             return extract(model, type.getQualifiedName());   // 비컬렉션 → 객체(기존)
         }
-        return elementShape(model, element).map(s -> new BodyShape(s.javaType(), s.fields(), true));
+        return elementShape(model, element, false).map(s -> new BodyShape(s.javaType(), s.fields(), true));
     }
 
-    private static spoon.reflect.reference.CtTypeReference<?> elementType(
+    /**
+     * 타입 참조로 BodyShape를 추출한다 (dot-path 평탄화 — JSON @RequestBody 전용).
+     * 컬렉션이면 element 타입의 shape를 평탄화해서 collection=true로 반환,
+     * 아니면 타입 필드를 재귀적으로 평탄화해서 반환.
+     * 중첩 DTO 필드는 "parent.child" dot-path 스칼라 리프로 전개된다.
+     */
+    public static Optional<BodyShape> extractFromTypeFlattened(CtModel model,
             spoon.reflect.reference.CtTypeReference<?> type) {
-        if (type instanceof spoon.reflect.reference.CtArrayTypeReference<?> arr) {
-            return arr.getComponentType();
+        var element = elementType(type);
+        if (element == null) {
+            // 비컬렉션: 평탄화 추출
+            return extractFlattened(model, type.getQualifiedName());
         }
-        if (COLLECTION_TYPES.contains(type.getQualifiedName())
-                && type.getActualTypeArguments().size() == 1) {
-            return type.getActualTypeArguments().get(0);
+        // 컬렉션: element 타입을 평탄화 추출
+        return elementShape(model, element, true).map(s -> new BodyShape(s.javaType(), s.fields(), true));
+    }
+
+    /**
+     * 지정된 FQN의 타입 필드를 dot-path로 평탄화해서 BodyShape를 반환.
+     */
+    private static Optional<BodyShape> extractFlattened(CtModel model, String qualifiedName) {
+        for (CtType<?> type : model.getAllTypes()) {
+            CtType<?> target = findNested(type, qualifiedName);
+            if (target == null) {
+                continue;
+            }
+            List<BodyShape.BodyField> fields = new ArrayList<>();
+            Set<String> visited = new HashSet<>();
+            visited.add(qualifiedName);
+            collectComponents(target, (compName, compType) ->
+                    flatten(model, "", compName, compType, 0, visited, fields));
+            return Optional.of(new BodyShape(qualifiedName, fields));
         }
-        return null;
+        return Optional.empty();
     }
 
     private static Optional<BodyShape> elementShape(CtModel model,
-            spoon.reflect.reference.CtTypeReference<?> element) {
+            spoon.reflect.reference.CtTypeReference<?> element, boolean flattened) {
         String qn = element.getQualifiedName();
         CtType<?> decl = element.getTypeDeclaration();
         if (decl != null && decl.isShadow()) {
@@ -153,7 +190,7 @@ public final class BodyShapeExtractor {
             return Optional.of(new BodyShape(qn, java.util.List.of()));
         }
         if (decl != null) {
-            return extract(model, qn);
+            return flattened ? extractFlattened(model, qn) : extract(model, qn);
         }
         if (SCALAR_TYPES.contains(qn)) {
             return Optional.of(new BodyShape(qn, java.util.List.of()));
@@ -189,6 +226,18 @@ public final class BodyShapeExtractor {
             if (found != null) {
                 return found;
             }
+        }
+        return null;
+    }
+
+    private static spoon.reflect.reference.CtTypeReference<?> elementType(
+            spoon.reflect.reference.CtTypeReference<?> type) {
+        if (type instanceof spoon.reflect.reference.CtArrayTypeReference<?> arr) {
+            return arr.getComponentType();
+        }
+        if (COLLECTION_TYPES.contains(type.getQualifiedName())
+                && type.getActualTypeArguments().size() == 1) {
+            return type.getActualTypeArguments().get(0);
         }
         return null;
     }

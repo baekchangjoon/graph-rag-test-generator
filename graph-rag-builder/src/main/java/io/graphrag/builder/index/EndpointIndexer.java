@@ -175,7 +175,7 @@ public class EndpointIndexer {
             if (findAnnotation(parameter, REQUEST_BODY) != null) {
                 String bodyType = BodyShapeExtractor.bodyTypeKey(parameter.getType());
                 params.add(new EndpointParam(parameter.getSimpleName(), bodyType, ParamKind.BODY));
-                BodyShapeExtractor.extractFromType(model, parameter.getType())
+                BodyShapeExtractor.extractFromTypeFlattened(model, parameter.getType())
                         .ifPresent(s -> bodyShapes.put(bodyType, s));
             } else if (findAnnotation(parameter, PATH_VARIABLE) != null) {
                 // 이름은 정규화(@PathVariable value/name 우선) — path 템플릿 {x}와 일치해야 치환·역추출이 정확.
