@@ -21,6 +21,7 @@ import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
 import io.graphrag.builder.index.RouterFunctionIndexer;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
+import io.graphrag.builder.oracle.ClassifierConfig;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
@@ -126,6 +127,8 @@ public final class BuilderCli {
             }
         }
 
+        ClassifierConfig classifierConfig = ClassifierConfig.from(options);
+
         BuildConfig config = new BuildConfig(
                 sutSrc,
                 Path.of(options.getOrDefault("--sut-resources",
@@ -150,7 +153,8 @@ public final class BuilderCli {
                 attach,
                 requestHeaders,
                 endpointSelectors,
-                traceMode(options.get("--trace-mode")));
+                traceMode(options.get("--trace-mode")),
+                classifierConfig);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
