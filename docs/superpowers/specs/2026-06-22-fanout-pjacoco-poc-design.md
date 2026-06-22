@@ -562,3 +562,28 @@ flush 왕복 지연은 4.1ms(①, 임계 < 5ms ✅)이나, production-model 벽�
 3. **DB row-level seeding 충돌** — V2-seeding은 per-worker 비중첩 키 범위로 충돌을 회피. 실제 fan-out 설계에서 엔드포인트별 seed 키 범위 분리가 별도 과제(§9).
 
 **결론**: 전략 A(pjacoco 단일 SUT fan-out)는 **아키텍처적으로 실현 가능하다**. V3(b) flush 오버헤드의 수용 여부를 사용자와 재논의한 후 본 fan-out 설계(spec→requirements→plan)로 진행한다.
+
+---
+
+### V3b cross-SUT 측정 (tainted-spring diary) — 2026-06-23
+
+petclinic(H2 in-memory, host JVM) 대비 현실적 SUT(Postgres+Kafka, Docker)에서 동일 production-model로 재측정.
+상세: `.superpowers/sdd/diary-overhead-report.md`
+
+| 항목 | diary (Docker, Postgres+Kafka) | petclinic (host JVM, H2) |
+|---|---|---|
+| **baseline per-request** | **87.68ms** | ~17.1ms |
+| **오버헤드 (%)** | **+108.34%** | +15.80% |
+| **flush 왕복 mean** | **274.92ms** (p95=409ms) | 4.1ms |
+| **pjacoco internal durationMs** | 86ms mean | ~<1ms (추정) |
+| **Docker bridge overhead** | ~190ms/flush | 0ms (host-to-host) |
+| **exec 파일** | 60/60, ~770 bytes | — |
+
+**가설 반증**: "현실적 SUT는 baseline이 느려서 flush 비율이 낮을 것"이라는 가설이 틀렸다.
+diary의 flush 자체가 훨씬 느리다 — (1) pjacoco internal 86ms(Kafka/JPA 다수 스레드 → 수집 데이터량↑),
+(2) Docker Desktop macOS bridge 오버헤드 ~190ms. 두 요인으로 오버헤드 비율이 오히려 급등.
+
+**실환경(Linux 배포) 시사점**: Docker Desktop macOS의 `+108%`는 최악값이다.
+Linux host + Docker bridge에서는 network overhead가 수 ms 수준이 되겠으나,
+pjacoco internal 86ms(SUT 특성)는 유지되어 petclinic보다는 여전히 높을 것으로 예상.
+어느 환경에서도 **flush 비동기화(fire-and-forget) 완화책 적용이 diary 같은 현실적 SUT에서 더욱 중요**하다.
