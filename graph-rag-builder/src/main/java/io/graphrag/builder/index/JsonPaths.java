@@ -42,4 +42,21 @@ public final class JsonPaths {
         }
         node.remove(leaf(path));
     }
+
+    /** 최상위 키 중 '.'를 포함하는 것을 중첩 객체 경로로 이동(노드 타입 보존). 점 없는 키는 불변. */
+    public static void nestDottedKeys(ObjectNode body) {
+        java.util.List<String> dotted = new java.util.ArrayList<>();
+        body.fieldNames().forEachRemaining(n -> { if (n.contains(".")) dotted.add(n); });
+        for (String name : dotted) {
+            JsonNode value = body.remove(name);
+            String[] seg = name.split("\\.");
+            ObjectNode node = body;
+            for (int i = 0; i < seg.length - 1; i++) {
+                JsonNode child = node.get(seg[i]);
+                if (!(child instanceof ObjectNode)) { ObjectNode c = node.objectNode(); node.set(seg[i], c); child = c; }
+                node = (ObjectNode) child;
+            }
+            node.set(seg[seg.length - 1], value);
+        }
+    }
 }

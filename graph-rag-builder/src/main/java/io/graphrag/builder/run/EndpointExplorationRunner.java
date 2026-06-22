@@ -22,6 +22,7 @@ import io.graphrag.builder.explore.PathCandidate;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.FormFieldBinding;
+import io.graphrag.builder.index.JsonPaths;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.builder.oracle.InputCandidates;
@@ -273,6 +274,10 @@ public class EndpointExplorationRunner {
         coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
 
         JsonNode baseInput = happy.body();
+        boolean formBody = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
+        if (!formBody && baseInput instanceof ObjectNode jsonBody) {
+            JsonPaths.nestDottedKeys(jsonBody);   // JSON @RequestBody: dot-path 키 → 중첩 객체
+        }
         List<BodyShape.BodyField> mutableFields = readPath
                 ? endpoint.params().stream()
                       .filter(p -> p.kind() == ParamKind.PATH || p.kind() == ParamKind.QUERY)
