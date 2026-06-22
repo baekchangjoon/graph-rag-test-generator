@@ -435,3 +435,33 @@ SQLException 0건, 행 수 일관. per-worker Connection 원칙이 JDBC thread-s
 #### 환경 메모
 - 신규 파일: `V3OverheadPoc.java`, `v3-overhead.sh`
 - `PjacocoOtelScopeClient` 재사용 (flush/awaitAndLoad 모두 해당 클래스 경유)
+
+---
+
+### V4 결과 — 2026-06-23 (REQ-006 + REQ-007) — 분산 트레이스 귀속
+
+| 항목 | 측정값 |
+|---|---|
+| **traceId** | `ff6033b5cd763a028e0dfc0fd62ced45` (OTel 자동 생성, POST /internal/diaries traceparent 경유) |
+| **diary [pjacoco] agent installed** | ✅ 확인 |
+| **mindgraph [pjacoco] agent installed** | ✅ 확인 |
+| **diary HTTP 상태** | ✅ POST /internal/diaries → HTTP 201 |
+| **mindgraph Kafka 소비 확인** | ✅ `graph.updated` 토픽 producer 활동 확인 (LEADER_NOT_AVAILABLE → 정상 리더 선출 후 처리) |
+| **REQ-006: diary in-process covered probes** | **118** (13 classes: DiaryService 30, EnvelopeCryptoService 28, DiaryEntry 8 등) |
+| **REQ-007: mindgraph 전체 covered probes** | **72** (14 classes: 별도 JVM 정상 귀속) |
+| **REQ-007: consumer-class probes (DiaryCreatedConsumer+GraphService+RuleBasedGraphExtractor 등)** | **58** (GraphService 16, RuleBasedGraphExtractor 15, DiaryCreatedEvent 9, DiaryCreatedConsumer 2 등) |
+| **diary exec 크기** | 829 bytes |
+| **mindgraph exec 크기** | 1059 bytes |
+| **JUnit 게이트 (`V4DistributedAttributionPoc`)** | ✅ PASS (2 tests, failures=0, errors=0, ~0.2s — exec files 재사용) |
+
+**V4 판정: PASS** — 동일 traceId(`ff6033b5cd763a028e0dfc0fd62ced45`)가 diary in-process(REQ-006, 118 probes)와
+mindgraph Kafka consumer(REQ-007, 72 probes / consumer 58 probes) 양쪽에 귀속됨 확인. pjacoco PR #13 수정
+(OTel jar 구조적 식별)으로 멀티 JVM 귀속이 정상 동작. **A(pjacoco 기반 fan-out) 전제 V1~V4 전부 PASS**.
+
+#### 환경 메모
+- 기동: `docker compose -f docker-compose.yml -f docker-compose.pjacoco-otel.yml up -d zookeeper kafka postgres redis auth-user diary mindgraph`
+- pjacoco jar: `~/github_parallel-per-test-coverage/parallel-per-test-coverage/agent/build/libs/jacocoagent-parallel.jar` (Jun 20 빌드, PR #13 fix 포함)
+- OTel javaagent: `jacoco/opentelemetry-javaagent.jar` (2.11.0)
+- traceId 주의: W3C traceparent는 32 lowercase hex 필수 — 비hex 입력 시 OTel이 자동 생성한 traceId로 귀속됨
+- Teardown: compose down --remove-orphans (trap EXIT 자동 처리)
+- 신규 파일: `V4DistributedAttributionPoc.java`, `e2e/poc-fanout/v4-distributed-attribution.sh`

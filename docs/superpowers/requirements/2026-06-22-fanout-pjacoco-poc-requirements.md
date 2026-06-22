@@ -143,14 +143,13 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc.perWorkerConnection_concurrentSeeding_noFailures` | E2E | 🟢 PASS (workers=8 exceptions=0 finalRows=0, 2026-06-23) |
 | REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition` | int+E2E | 🟢 PASS (partition 등가 — OTel-scope traceId 경로, {{0,2},{1},{3}} 일치, 2026-06-23) |
 | REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🟡 DONE_WITH_CONCERNS (flush 3.5ms ✅, wall-clock +23.83% ❌ > 10%, 2026-06-23) |
-| REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (tainted-spring diary) | E2E | 🔴 planned (재개) |
-| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` (diary→mindgraph) | E2E | 🔴 planned (재개) |
+| REQ-006 | 분산 귀속 단일 JVM | `V4DistributedAttributionPoc` (tainted-spring diary) | E2E | 🟢 PASS (diary 118 probes, 13 classes, 2026-06-23) |
+| REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4DistributedAttributionPoc` (diary→mindgraph) | E2E | 🟢 PASS (mindgraph 72 probes, consumer 58 probes, 14 classes, 2026-06-23) |
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
-Coverage: 3/9 green (33%) — REQ-001·REQ-002·REQ-004 green. REQ-005: DONE_WITH_CONCERNS (flush 3.5ms PASS, wall-clock +23.83% FAIL > 10% — §7 (b) 완화 재논의 필요, 2026-06-23).
-V2(REQ-002·003)/V3b(REQ-005)/V4(REQ-006·007) 계속 진행.
+Coverage: 7/9 Must+Should green (78%) — REQ-001·002·003·004·006·007 green. REQ-005: DONE_WITH_CONCERNS. REQ-008: planned.
+V4(REQ-006·007) 2026-06-23 PASS — 동일 traceId `ff6033b5cd763a028e0dfc0fd62ced45`가 diary(단일 JVM, 118 probes)·mindgraph(멀티 JVM, 72 probes / consumer 58 probes) 양쪽 귀속 확인. pjacoco PR #13 수정(OTel jar 구조적 식별)으로 크로스-JVM 귀속 정상.
 REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
-V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). REQ-007은 멀티 JVM
-OTel SUT 확보로 더 이상 🔵 위험 없음(분모 9/9 유지). Could/Won't 없음.
+V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 9/9 유지. Could/Won't 없음.
