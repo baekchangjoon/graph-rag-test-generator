@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.LongNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.JsonPaths;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.model.ColumnSchema;
@@ -74,13 +75,16 @@ public class SampleInputSynthesizer {
         List<SynthesizedInput.SeedRow> seeds = new ArrayList<>();
 
         for (BodyShape.BodyField field : shape.fields()) {
-            FkTarget fk = field.name().endsWith("Id") && field.name().length() > 2
+            boolean hasDot = field.name().contains(".");
+            FkTarget fk = !hasDot && field.name().endsWith("Id") && field.name().length() > 2
                     ? findFkTarget(camelToSnake(field.name()), tables)
                     : null;
             if (fk != null) {
                 String probeValue = "probe-" + field.name();
                 body.put(field.name(), probeValue);
                 seeds.add(seedRow(fk, probeValue, tables));
+            } else if (hasDot) {
+                putScalarNested(body, field, fieldConstraints.getOrDefault(field.name(), List.of()));
             } else {
                 putScalar(body, field, fieldConstraints.getOrDefault(field.name(), List.of()));
             }
@@ -153,6 +157,18 @@ public class SampleInputSynthesizer {
 
     private void putScalar(ObjectNode body, BodyShape.BodyField field, List<FieldConstraint> cons) {
         body.set(field.name(), scalarValue(field.javaType(), cons, field.name()));
+    }
+
+    /** dot-path 필드(e.g. "address.city")를 JsonPaths.putPath로 중첩 materializ. */
+    private void putScalarNested(ObjectNode body, BodyShape.BodyField field, List<FieldConstraint> cons) {
+        JsonNode value = scalarValue(field.javaType(), cons, field.name());
+        if (value.isLong() || value.isIntegralNumber()) {
+            JsonPaths.putPath(body, field.name(), value.longValue());
+        } else if (value.isDouble() || value.isFloatingPointNumber()) {
+            JsonPaths.putPath(body, field.name(), value.doubleValue());
+        } else {
+            JsonPaths.putPath(body, field.name(), value.asText());
+        }
     }
 
     /** 컬렉션 element 스칼라/enum 값 합성용 — 필드명 의존(email 폴백, sample-prefix)이 없는 진입점. */
