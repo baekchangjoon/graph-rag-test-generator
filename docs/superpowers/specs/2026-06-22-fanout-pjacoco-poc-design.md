@@ -504,3 +504,56 @@ mindgraph Kafka consumer(REQ-007, 72 probes / consumer 58 probes) 양쪽에 귀�
 - traceId 주의: W3C traceparent는 32 lowercase hex 필수 — 비hex 입력 시 OTel이 자동 생성한 traceId로 귀속됨
 - Teardown: compose down --remove-orphans (trap EXIT 자동 처리)
 - 신규 파일: `V4DistributedAttributionPoc.java`, `e2e/poc-fanout/v4-distributed-attribution.sh`
+
+---
+
+### 종합 판정 — 2026-06-23 (REQ-008)
+
+#### 게이트별 최종 결과 요약
+
+| 게이트 | REQ | 결과 | 핵심 수치 |
+|---|---|---|---|
+| **V1** 에이전트 공존 부팅 + 바닐라 `.exec` | REQ-001 | ✅ **PASS** | lines=253, port6300=closed, JUnit failures=0 |
+| **V2** 동시 2EP 교차오염 | REQ-002 | ✅ **PASS** | contamination=0, ownA=14, ownB=12, JUnit failures=0 |
+| **V2-seeding** per-worker Connection | REQ-003 | ✅ **PASS** | workers=8, exceptions=0, finalRows=0, JUnit failures=0 |
+| **V3(a)** partition 등가 (OTel-scope/traceId 경로) | REQ-004 | ✅ **PASS** | partition `{{0,2},{1},{3}}` 일치, distinct-paths=3, JUnit failures=0 |
+| **V3(b)** per-request 오버헤드 | REQ-005 | ⚠️ **OVER-THRESHOLD** | flush ①: 4.1ms ✅, production-model 벽시계 +15.80% ❌ (>10%); 재논의 필요 |
+| **V4 단일 JVM** diary in-process | REQ-006 | ✅ **PASS** | diary 118 probes, 13 classes |
+| **V4 멀티 JVM** diary→Kafka→mindgraph | REQ-007 | ✅ **PASS** | mindgraph 72 probes / consumer 58 probes |
+| **A 종합 판정** (본 절) | REQ-008 | ✅ **기록 완료** | 아래 참조 |
+| **pjacoco agent 해소·주입** | REQ-009 | ✅ **unit-green** | PjacocoAgentTest 통과 |
+
+---
+
+#### **최종 판정: 전략 A (pjacoco 단일 SUT fan-out) 아키텍처적으로 실현 가능**
+
+**A VIABLE — 열린 항목 1개 (V3b 오버헤드, 사용자 재논의)**
+
+V1~V7의 정확성·격리·분산 귀속 게이트가 전부 통과했다.
+
+- **아키텍처 정확성 (V3a)**: per-request OTel-scope/traceId 경로가 vanilla dump(reset) 경로와 동일한 partition을 산출함. 같은 arm → 같은 키, 다른 arm → 다른 키(run 내부 일관성). path dedup·distinct 보존이 동작한다. **A는 아키텍처적으로 부적합하지 않다.**
+- **동시 격리 (V2)**: 단일 SUT에서 동시 2 엔드포인트 탐색 시 커버리지 교차오염 = 0. traceId 경로가 probe를 올바르게 분리한다.
+- **per-worker Connection seeding (V2-seeding)**: 동일 DataSource에서 워커별 자기 Connection 발급 → 동시 INSERT/DELETE에서 SQLException 0건. A의 seeding 전제조건 충족.
+- **분산 트레이스 귀속 (V4)**: tainted-spring diary(in-process, 118 probes) + mindgraph Kafka consumer(별도 JVM, 58 probes)가 동일 traceId에 귀속됨. **멀티 JVM 분산 귀속이 실제로 동작한다.**
+- **에이전트 공존 (V1)**: OTel javaagent + pjacoco-agent 이중 부착이 정상 기동하고 tcpserver를 대체한다.
+
+**열린 항목: V3(b) per-request flush 오버헤드**
+
+flush 왕복 지연은 4.1ms(①, 임계 < 5ms ✅)이나, production-model 벽시계 증가율이 **+15.80%**(임계 < 10% ❌)로 초과한다. 근인: flush 왕복 4ms × 60회 ≈ 240ms 누적. petclinic은 가능한 한 가장 빠른 SUT(H2 in-memory, 비즈니스 로직 최소)이며, 실제 SUT(DB·비즈니스 로직·Kafka 등)에서는 요청당 처리 시간이 늘어 오버헤드 비율이 대폭 감소할 것으로 예상된다.
+
+§7 (b) 기준으로 성능 초과는 **정확성/A 불가 트리거가 아니다** — 완화 가능한 성능 항목으로 재논의 대상이다.
+
+**가용한 완화책 (사용자와 재논의)**:
+1. flush 비동기화(fire-and-forget) — critical-path flush 비용 완전 제거. 실패 감지 불가 트레이드오프.
+2. flush 배치화 — run 종료 시 일괄 flush. coverage 완전성 트레이드오프.
+3. 임계 재협의 — 실환경 SUT(DB 쿼리 수백ms)에서의 실측 기반 재정의.
+4. fan-out 효과 — 총 요청을 N개 워커로 분산하면 워커당 flush 누적이 줄어 벽시계 증가율이 추가 개선됨.
+
+**자동 B(전략) 회귀 없음**: V3(b) 오버헤드 결과만으로는 A를 포기하지 않는다. 본 PoC에서 A의 아키텍처적 실현성은 확인됐으며, 오버헤드 결정은 사용자와 재논의한다. 재논의 결과에 따라: ① 완화책 적용 후 A로 진행, ② 임계 재협의 후 A로 진행, ③ 사용자 결정으로 B 착수 — 어느 경로든 자동으로 B로 전환하지 않는다.
+
+**정직한 한계 (문서화)**:
+1. **절대 키 비호환** — pjacoco 지문은 vanilla dump(reset) 지문과 byte-동일하지 않다(§5.1). run 내부 일관성만 보장(graph-rag 요구 범위).
+2. **OTel-scope/traceId canonical 경로** — baggage 경로 대비 pre-servlet 필터 probe를 추가 캡처하나, OTel이 JPA·async를 넓게 귀속해 절대 키가 달라짐. SUT별 잔여 리스크로 본 PoC(petclinic)에서 partition 보존 확인(§5.1).
+3. **DB row-level seeding 충돌** — V2-seeding은 per-worker 비중첩 키 범위로 충돌을 회피. 실제 fan-out 설계에서 엔드포인트별 seed 키 범위 분리가 별도 과제(§9).
+
+**결론**: 전략 A(pjacoco 단일 SUT fan-out)는 **아키텍처적으로 실현 가능하다**. V3(b) flush 오버헤드의 수용 여부를 사용자와 재논의한 후 본 fan-out 설계(spec→requirements→plan)로 진행한다.

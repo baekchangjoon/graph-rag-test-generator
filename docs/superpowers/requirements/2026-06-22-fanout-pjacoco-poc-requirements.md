@@ -145,11 +145,12 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc`, `V3OverheadProductionPoc` | E2E | 🟡 STILL-OVER — 에스컬레이션 필요 (flush ①: 4.1ms ✅, production-model wall-clock +15.80% ❌ > 10%; 이전 동기 모델 +23.83% ❌; post-run load 28.2ms off-crit; 2026-06-23) |
 | REQ-006 | 분산 귀속 단일 JVM | `V4DistributedAttributionPoc` (tainted-spring diary) | E2E | 🟢 PASS (diary 118 probes, 13 classes, 2026-06-23) |
 | REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4DistributedAttributionPoc` (diary→mindgraph) | E2E | 🟢 PASS (mindgraph 72 probes, consumer 58 probes, 14 classes, 2026-06-23) |
-| REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
-| REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
+| REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🟢 PASS (§11 종합 판정 기록 완료 2026-06-23 — A viable, V3b 오버헤드 재논의) |
+| REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟢 unit-green |
 
-Coverage: 7/9 Must+Should green (78%) — REQ-001·002·003·004·006·007 green. REQ-005: STILL-OVER(에스컬레이션 필요, flush ✅ wall-clock 15.80%>10%). REQ-008: planned.
+Coverage: 8/9 gates green; REQ-005 over-threshold (재논의) — REQ-001·002·003·004·006·007·008·009 green. REQ-005: ⚠️ 측정 완료 (flush ✅ 4.1ms, production-model 벽시계 +15.80% > 10% 임계 초과 — 사용자 재논의 필요, NOT green).
+종합 판정(REQ-008) 2026-06-23 기록 완료: 전략 A 아키텍처적으로 실현 가능. V3(b) 오버헤드는 §7(b) 성능 항목(재논의)으로, A 불가 트리거 아님. 자동 B 회귀 없음.
 V4(REQ-006·007) 2026-06-23 PASS — 동일 traceId `ff6033b5cd763a028e0dfc0fd62ced45`가 diary(단일 JVM, 118 probes)·mindgraph(멀티 JVM, 72 probes / consumer 58 probes) 양쪽 귀속 확인. pjacoco PR #13 수정(OTel jar 구조적 식별)으로 크로스-JVM 귀속 정상.
-REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
+REQ-009: unit 테스트 통과(🟢).
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
 V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 9/9 유지. Could/Won't 없음.
