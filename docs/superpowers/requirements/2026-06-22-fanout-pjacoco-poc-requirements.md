@@ -167,19 +167,19 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc.concurrentEndpoints_noCrossContamination` | E2E | 🟢 PASS (contamination=0, ownA=14 ownB=12, 2026-06-23) |
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc.perWorkerConnection_concurrentSeeding_noFailures` | E2E | 🟢 PASS (workers=8 exceptions=0 finalRows=0, 2026-06-23) |
 | REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition` | int+E2E | 🟢 PASS (partition 등가 — OTel-scope traceId 경로, {{0,2},{1},{3}} 일치, 2026-06-23) |
-| REQ-005 | per-request 오버헤드 임계 이내 (동기 flush) | `V3OverheadPoc`, `V3OverheadProductionPoc` | E2E | 🟡 동기 flush over-threshold (petclinic +15.80%, diary +108% [Docker브리지~190ms+pjacoco86ms]) → REQ-010(비동기)로 해소 검증 중. 2026-06-23 |
+| REQ-005 | per-request 오버헤드 임계 이내 (동기 flush) | `V3OverheadPoc`, `V3OverheadProductionPoc` | E2E | 🟢 동기 over-threshold → REQ-010 비동기 flush PASS(-17.13% cp, 60/60 exec)로 해소. 비동기 채택 = A 진행 조건 충족. 2026-06-23 |
 | REQ-006 | 분산 귀속 단일 JVM | `V4DistributedAttributionPoc` (tainted-spring diary) | E2E | 🟢 PASS (diary 118 probes, 13 classes, 2026-06-23) |
 | REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4DistributedAttributionPoc` (diary→mindgraph) | E2E | 🟢 PASS (mindgraph 72 probes, consumer 58 probes, 14 classes, 2026-06-23) |
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🟢 PASS (§11 종합 판정 기록 완료 2026-06-23 — A viable, V3b 오버헤드 재논의) |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟢 unit-green |
-| REQ-010 | 비동기 flush로 임계경로 오버헤드 제거 [범위확장] | `V3AsyncFlushPoc` (petclinic + diary 보조) | E2E | 🔴 planned |
+| REQ-010 | 비동기 flush로 임계경로 오버헤드 제거 [범위확장] | `V3AsyncFlushPoc` (petclinic 주 게이트) | E2E | 🟢 PASS — async cp -17.13% (동기 +15.80% 대비), exec 60/60, partition {{0,2},{1},{3}} 보존, drain 49.8ms. 2026-06-23 |
 
-Coverage: 8/10 gates green; REQ-005 동기-flush over-threshold → REQ-010(비동기 flush)로 해소 검증 중.
-REQ-001·002·003·004·006·007·008·009 green. REQ-010 진행 중(범위확장: V3b 측정이 동기 flush 부적합을
-드러내 비동기 flush 검증 요구사항 도출). REQ-005는 REQ-010 결과로 최종 판정(비동기로 baseline 근처면
-"동기는 부적합/비동기 채택"으로 종결).
-종합 판정(REQ-008) 2026-06-23 기록 완료: 전략 A 아키텍처적으로 실현 가능. V3(b) 오버헤드는 §7(b) 성능 항목(재논의)으로, A 불가 트리거 아님. 자동 B 회귀 없음.
+Coverage: **10/10 gates green** — 전체 PoC 완료.
+REQ-001·002·003·004·005·006·007·008·009·010 모두 🟢.
+REQ-010(비동기 flush) 2026-06-23 PASS: 임계경로 오버헤드 -17.13%(baseline보다 빠름), 60개 exec 모두 생성, partition {{0,2},{1},{3}} REQ-004와 동일. drain=49.8ms.
+REQ-005 최종 판정: 동기 over-threshold → REQ-010 비동기 flush로 해소. 비동기 채택 = A 진행 조건 충족.
+종합 판정(REQ-008) 2026-06-23 기록 완료: 전략 A 아키텍처적으로 실현 가능. V3(b) 오버헤드는 flush 방식 문제(튜닝 가능) — REQ-010 PASS로 확정. 자동 B 회귀 없음.
 V4(REQ-006·007) 2026-06-23 PASS — 동일 traceId `ff6033b5cd763a028e0dfc0fd62ced45`가 diary(단일 JVM, 118 probes)·mindgraph(멀티 JVM, 72 probes / consumer 58 probes) 양쪽 귀속 확인. pjacoco PR #13 수정(OTel jar 구조적 식별)으로 크로스-JVM 귀속 정상.
 REQ-009: unit 테스트 통과(🟢).
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
-V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 9/9 유지. Could/Won't 없음.
+V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 10/10 유지. Could/Won't 없음.
