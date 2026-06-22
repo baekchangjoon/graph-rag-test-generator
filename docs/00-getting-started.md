@@ -122,6 +122,10 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 | `--sut-java-home <jdk>` | SUT를 다른 JDK로 띄워야 할 때 |
 | `--trace-mode none` | SQL 캡처를 로그 파싱으로(기본은 OTEL DB span 기반 `otel`). OTEL 캡처가 안 되는 환경의 폴백 ([docs/06](06-test-environment.md) "trace 모드") |
 | `--trace-mode sleuth` | 레거시 Java8+Sleuth SUT. B3 trace-id로 비동기·서비스간 SQL까지 로그 상관 ([docs/06](06-test-environment.md) "trace 모드"). 동작 데모: `samples/legacy-tram` |
+| `--error-when-present <field>[,<field>...]` | 응답 바디에 지정 필드가 존재하면 HTTP 200이어도 FAILURE로 분류 (에러 엔벨로프 SUT). 동작 데모: `samples/error-envelope-service` ([docs/03](03-graph-rag-builder.md) "성공 오라클") |
+| `--semantic-status-field <field>` | (기본 `errorCode`) 에러 엔벨로프의 의미론적 상태코드 필드 |
+| `--error-detail-field <field>` | FAILURE 경로 테스트에 추가할 바디 어설션 대상 필드 |
+| `--error-detail-contains <substr>` | `--error-detail-field` 와 함께 지정 시 `containsString` 어설션 생성 |
 
 끝나면 `./out/graph/graph.json`이 생긴다.
 

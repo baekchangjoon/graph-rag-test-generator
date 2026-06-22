@@ -83,6 +83,6 @@
   `SchemaExtractorPostgresTest`, samples `AuthApiTest`·`OrderApiTest`·`OrderCountWsTest`·
   `OrderExpressApiTest`·`OrderReadApiTest`·`OrderSearchApiTest`, testlib `KafkaHelperTest`.
 - **e2e(셸):** CI 연결 `run-e2e.sh`·`run-dind-builder-e2e.sh`·`run-service-image-boot-e2e.sh`,
-  수동 7개(`run-attach-*`, `run-auth-headers-e2e`, `run-dist-e2e`, `run-docker-e2e`,
-  `run-legacy-tram-sleuth-e2e`).
+  수동 8개(`run-attach-*`, `run-auth-headers-e2e`, `run-dist-e2e`, `run-docker-e2e`,
+  `run-legacy-tram-sleuth-e2e`, `run-error-envelope-e2e` — 에러 엔벨로프 SUT 성공 오라클 검증).
 - **나머지** = host-only unit (`*Test`, 태그 없음).

@@ -105,6 +105,17 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
   **부분 그래프**가 된다. 어느 경우든 정적 엔드포인트 목록(`endpoints()` 등)은
   필터링하지 않고 풀로 유지한다. `--changed-files` 와 함께 주면 `--endpoint` 가 우선.
 
+- **성공 오라클 — 에러 엔벨로프 SUT**: 아래 4개 플래그는 HTTP 200에 비즈니스 오류를 실어 반환하는 SUT를 위한 것이다. 미설정 시 기존 동작(HTTP 상태 코드만으로 성공/실패 판단)이 유지된다.
+
+  | 플래그 | 기본값 | 역할 |
+  |---|---|---|
+  | `--error-when-present <field>[,<field>...]` | 미설정 | 응답 바디에 지정 필드가 하나라도 존재(non-null, non-empty)하면 HTTP 상태코드가 200이어도 FAILURE로 분류 |
+  | `--semantic-status-field <field>` | `errorCode` | `--error-when-present` 활성 시 해당 필드 값을 의미론적 상태코드(예: `"404"`)로 회수해 경로의 `semanticStatus`에 기록. 와이어 상태(200)는 그대로 보존 |
+  | `--error-detail-field <field>` | 미설정 | 지정 시, FAILURE 경로 테스트에 해당 필드를 대상으로 하는 `.body()` 어설션 추가 |
+  | `--error-detail-contains <substr>` | 미설정 | `--error-detail-field` 와 함께 지정 시 `.body("<field>", containsString("<substr>"))` 어설션 생성 |
+
+  동작 예: `--error-when-present errorCode --error-detail-field errorDetail --error-detail-contains BizException`. 동작 데모: `samples/error-envelope-service`, `e2e/run-error-envelope-e2e.sh`.
+
 ## 분석 환경
 
 분석 시점에 도구가 직접 띄우는 환경:
@@ -141,5 +152,7 @@ override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전
 - **비결정적 분기 (시간/Random)**: 분석 시점 `Clock.fixed`, seeded Random 사용
 - **민감 정보**: 캡처 시 패턴 기반 마스킹 필수
 - **`@Controller` 폼 — 클래스-레벨 path 변수**: `@RequestMapping("/owners/{ownerId}")`의 `{ownerId}`가 핸들러 파라미터가 아니라 `@ModelAttribute` 헬퍼 메서드(`findOwner(@PathVariable ownerId)`)에서만 해석되는 경우(petclinic 패턴), 인덱서는 **같은 컨트롤러의 모든 메서드에서 `@PathVariable` 타입 신호를 역추출**해 그 path 변수를 PATH 파라미터로 등록한다(`collectPathVarTypes`+`extractPlaceholders`). 등록되면 `ReadInputSynthesizer`가 해당 리소스(+FK 부모)를 시드해 `@ModelAttribute` 헬퍼가 성공하고 폼 핸들러에 진입한다. path 변수 이름은 `@PathVariable` value/name으로 정규화(`pathVarName`)해 path 템플릿 `{x}`와 일치시킨다(치환 정확). **단일** 추가-PATH(예: petclinic `/owners/{ownerId}/pets/new`, order-service `UserOrderWebController`)는 양 arm까지 완전 탐색된다. **다중** 추가-PATH(`/owners/{ownerId}/pets/{petId}/edit`)는 `ReadInputSynthesizer.mapParamToColumn`이 PATH를 일괄 target PK에 매핑하는 한계로 정밀 시드가 부분적이며(별도 후속 예정), 타입 신호 없는 placeholder는 센티널("0")로 graceful fallback(`buildPathAndQuery`). `@Controller` 폼은 현재 **커버리지 전용**(테스트 생성 미지원 — `Generator`가 `ParamKind.FORM` 엔드포인트를 스킵)이다.
+
+- **에러 엔벨로프 SUT (성공 오라클)**: 일부 SUT는 비즈니스 오류를 HTTP 200으로 감싸 반환한다(예: `BizException` 핸들러가 `{"errorServer":"...", "errorCode":"404", "errorDetail":"...BizException..."}` + HTTP 200 응답). 빌더가 HTTP 상태 코드만으로 성공/실패를 판단하면 이 경로를 happy path로 오인해 어설션이 약해지고 진짜 성공 경로에 도달하지 못한다. `--error-when-present <필드>` 플래그를 쓰면 지정 필드가 응답 바디에 존재(non-null, non-empty)할 때 HTTP 200이라도 FAILURE로 분류한다. `--semantic-status-field`는 그 필드 값을 의미론적 상태코드(예: `"404"`)로 회수해 경로의 `semanticStatus`에 기록한다. `--error-detail-field` + `--error-detail-contains`는 에러-계약 경로에 `containsString` 어설션을 생성하게 한다. 동작 데모: `samples/error-envelope-service`, `e2e/run-error-envelope-e2e.sh`.
 
 - **`@Controller` 폼 — 레거시 바인딩 종류**: 평면 스칼라 필드를 넘어 다음 Spring MVC 바인딩 패턴을 커버한다(커버리지 전용, 회귀 0). (1) **다중 커맨드 객체**(`(HelperObj, @Valid Cmd)`): `selectFormCommand`가 첫 후보가 아니라 `@Valid`/`@Validated` 붙은 커맨드를 FORM 커맨드로 선택(없으면 첫 후보 폴백). (2) **중첩 POJO**: 컨버터 없는 바인딩가능 POJO 필드를 `field.sub=v` 평면 점-경로 스칼라로 재귀 전개(`FormBodySynthesizer`; `formEncode`가 비-스칼라를 드롭하므로 중첩 ObjectNode를 두지 않음, 빈-POJO/순환/깊이 가드). (3) **참조 엔티티**(name-`Formatter<E>` / id-`Converter<String,E>` / Spring Data): `ConverterRegistryIndexer`가 전역 컨버티드 타입 + `@InitBinder registerCustomEditor`(컨트롤러-local) + `@Entity`를 수집하고 `classifyFormBindings`가 REFERENCE로 분류, 러너가 백업 테이블(FK `@JoinColumn`→부모 / 정적 `@Table` / `camelToSnake` 우선순위)을 SELECT/seed해 **name 1순위 토큰**으로 reference-aware happy base를 합성하고, name으로 안 열리는 필드(PK 조회 Converter)는 **PK backtrack trial**(`discoveredBy="form-ref-trial"`, budget ≤ `min(req/2,10)`)로 연다. (4) **PropertyEditor**(`@InitBinder`): 그 컨트롤러 핸들러의 필드만 REFERENCE로 스코프(다른 컨트롤러의 동일 타입 필드는 NESTED — 컨트롤러-local 가드). **컬렉션 필드**(`List<Y>`)는 v1 비목표 → 스칼라/skip 폴백. 미해석/후보 실패 시 기존 스칼라/skip 동작으로 폴백(추가 도달만, 회귀 0).
