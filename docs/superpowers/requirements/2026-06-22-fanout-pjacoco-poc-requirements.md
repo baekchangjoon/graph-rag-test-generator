@@ -139,7 +139,7 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-ID | 요구사항 | 수용 테스트 (이름/경로, 계획) | Level | Status |
 |--------|----------|------------------------------|-------|--------|
 | REQ-001 | OTel→pjacoco 공존 부팅 + 바닐라 `.exec` | `V1AgentCoexistencePoc` (petclinic) | E2E | 🟢 PASS (lines=253, port6300=closed) |
-| REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc` | E2E | 🔴 planned |
+| REQ-002 | 동시 2EP 커버리지 교차오염 0 | `V2CrossContaminationPoc.concurrentEndpoints_noCrossContamination` | E2E | 🟢 PASS (contamination=0, ownA=14 ownB=12, 2026-06-23) |
 | REQ-003 | 동시 seeding 무사고 + per-worker Connection | `V2ConcurrentSeedingPoc` | E2E | 🔴 planned |
 | REQ-004 | per-request arm partition 등가 [rev.4] | `V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition` | int+E2E | 🟢 PASS (partition 등가 — OTel-scope traceId 경로, {{0,2},{1},{3}} 일치, 2026-06-23) |
 | REQ-005 | per-request 오버헤드 임계 이내 | `V3OverheadPoc` | E2E | 🔴 planned (재개) |
@@ -148,7 +148,7 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
-Coverage: 2/9 green (22%) — REQ-001·REQ-004 green. REQ-004: OTel-scope/traceId partition 등가 PASS (2026-06-23).
+Coverage: 3/9 green (33%) — REQ-001·REQ-002·REQ-004 green. REQ-002: V2 교차오염 0 PASS (contamination=0, ownA=14 ownB=12, 2026-06-23).
 V2(REQ-002·003)/V3b(REQ-005)/V4(REQ-006·007) 계속 진행.
 REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
