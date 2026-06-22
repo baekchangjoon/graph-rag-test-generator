@@ -457,7 +457,7 @@ public class EndpointExplorationRunner {
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
         return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
-                finalSeeds, report(endpoint, outcome, comparisons, drops), cumulativeCoverage, bundle.capturedEventEmits());
+                finalSeeds, report(endpoint, outcome, comparisons, drops, finalPaths), cumulativeCoverage, bundle.capturedEventEmits());
     }
 
     /**
@@ -1743,13 +1743,21 @@ public class EndpointExplorationRunner {
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
                                                          ExplorationOutcome outcome,
                                                          List<ConstraintExtractor.Comparison> comparisons) {
-        return report(endpoint, outcome, comparisons, List.of());
+        return report(endpoint, outcome, comparisons, List.of(), List.of());
     }
 
     private ExplorationReport.EndpointExploration report(Endpoint endpoint,
                                                          ExplorationOutcome outcome,
                                                          List<ConstraintExtractor.Comparison> comparisons,
                                                          List<ExplorationReport.DroppedPath> drops) {
+        return report(endpoint, outcome, comparisons, drops, List.of());
+    }
+
+    private ExplorationReport.EndpointExploration report(Endpoint endpoint,
+                                                         ExplorationOutcome outcome,
+                                                         List<ConstraintExtractor.Comparison> comparisons,
+                                                         List<ExplorationReport.DroppedPath> drops,
+                                                         List<ExploredPath> finalPaths) {
         // 누적 exec data 분석 → arm-level 정확 커버리지 (양쪽 arm 합산).
         // 리포트 범위는 handler 메서드의 분기 (형제 메서드 분기 희석 방지).
         BranchCoverage all = analyzer.analyze(cumulativeCoverage);
@@ -1771,9 +1779,16 @@ public class EndpointExplorationRunner {
                 .map(ConstraintExtractor.Comparison::line).collect(Collectors.toSet());
         int solverRelevantMissed = (int) missed.stream()
                 .filter(b -> comparisonLines.contains(b.line())).count();
+        // REQ-008: 탐색 경로 중 FAILURE ≥1 이고 SUCCESS = 0이면 사유를 기록한다.
+        boolean hasFailure = finalPaths.stream()
+                .anyMatch(p -> p.outcome() == Outcome.Kind.FAILURE);
+        boolean hasSuccess = finalPaths.stream()
+                .anyMatch(p -> p.outcome() == Outcome.Kind.SUCCESS);
+        String noHappyPathReason = (hasFailure && !hasSuccess)
+                ? "all responses error-enveloped" : null;
         return new ExplorationReport.EndpointExploration(
                 endpoint.id(), total, covered.size(), missed,
-                outcome.pathsByEngine(), solverRelevantMissed, drops);
+                outcome.pathsByEngine(), solverRelevantMissed, drops, noHappyPathReason);
     }
 
     /**

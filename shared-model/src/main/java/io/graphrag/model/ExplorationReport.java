@@ -23,6 +23,9 @@ public record ExplorationReport(
     /**
      * solverRelevantMissed: 미커버 분기 중 handler 비교식(field op literal) 라인과
      * 겹치는 개수. 콘콜릭 복귀 트리거의 실증 데이터 (docs/decisions/explorer-engines.md).
+     *
+     * <p>noHappyPathReason: 탐색된 경로가 전부 FAILURE(에러 엔벨로프 포함)일 때 사유 문자열을 기록한다.
+     * SUCCESS 경로가 하나라도 있거나 탐색 경로 자체가 없으면 null.
      */
     public record EndpointExploration(
             String endpointId,
@@ -31,18 +34,32 @@ public record ExplorationReport(
             List<BranchRef> missedBranches,
             Map<String, Integer> pathsByEngine,
             int solverRelevantMissed,
-            List<DroppedPath> droppedPaths) {
+            List<DroppedPath> droppedPaths,
+            String noHappyPathReason) {
+
+        /**
+         * 7-argument backward-compat constructor (no noHappyPathReason).
+         * droppedPaths를 포함하는 기존 호출자는 noHappyPathReason=null 기본값을 얻는다.
+         */
+        public EndpointExploration(String endpointId, int totalBranches, int coveredBranches,
+                                   List<BranchRef> missedBranches,
+                                   Map<String, Integer> pathsByEngine,
+                                   int solverRelevantMissed,
+                                   List<DroppedPath> droppedPaths) {
+            this(endpointId, totalBranches, coveredBranches, missedBranches,
+                    pathsByEngine, solverRelevantMissed, droppedPaths, null);
+        }
 
         /**
          * 6-argument backward-compat constructor (no droppedPaths — legacy).
-         * 기존 호출자(BuilderCli, 테스트 등)는 이 생성자를 통해 droppedPaths=[] 기본값을 얻는다.
+         * 기존 호출자(BuilderCli, 테스트 등)는 이 생성자를 통해 droppedPaths=[], noHappyPathReason=null 기본값을 얻는다.
          */
         public EndpointExploration(String endpointId, int totalBranches, int coveredBranches,
                                    List<BranchRef> missedBranches,
                                    Map<String, Integer> pathsByEngine,
                                    int solverRelevantMissed) {
             this(endpointId, totalBranches, coveredBranches, missedBranches,
-                    pathsByEngine, solverRelevantMissed, List.of());
+                    pathsByEngine, solverRelevantMissed, List.of(), null);
         }
 
         /** compact canonical constructor: null-guard droppedPaths. */
