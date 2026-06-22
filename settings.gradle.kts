@@ -15,5 +15,6 @@ include(
     "test-generator",
     "samples:order-service",
     "samples:gateway-service",
+    "samples:error-envelope-service",
     "e2e",
 )
