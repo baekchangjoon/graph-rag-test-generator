@@ -1170,6 +1170,10 @@ public class EndpointExplorationRunner {
             // 와이어 status + 응답 body로 성공/실패 판정. expectedStatus는 와이어 status 그대로 유지하고
             // outcome/semanticStatus/semanticStatusText만 classifier 산출로 기록(엔벨로프-200 → FAILURE).
             Outcome o = classifier.classify(candidate.status(), candidate.response());
+            // error-envelope: 와이어 2xx이지만 분류 결과 FAILURE → Task 11 생성기 라우팅용 마커 부여.
+            String discoveredBy = (o.kind() == Outcome.Kind.FAILURE && candidate.status() / 100 == 2)
+                    ? "error-envelope"
+                    : candidate.discoveredBy();
             // seed는 성공(2xx) path에만 연결 — attachSeeds에서 채운다
             paths.add(new ExploredPath(
                     candidate.pathId(),
@@ -1180,7 +1184,7 @@ public class EndpointExplorationRunner {
                     sql.stream().map(CapturedSql::id).toList(),
                     httpCalls.stream().map(io.graphrag.model.CapturedHttpCall::id).toList(),
                     candidate.branches(),
-                    candidate.discoveredBy(),
+                    discoveredBy,
                     matchConstraints(candidate, conditions, endpoint),
                     validate(sql),
                     List.of(),
@@ -1821,7 +1825,10 @@ public class EndpointExplorationRunner {
      * <p><b>정책:</b>
      * <ul>
      *   <li>2xx path → 검증 없이 KEEP (attachSeeds가 이미 시드를 붙였으므로 재현 가능).
-     *   <li>negative-auth / negative-validation 마커 path → 검증 없이 KEEP
+     *       여기에는 error-envelope path(와이어 2xx, outcome FAILURE)도 포함된다 — 와이어 status가
+     *       2xx이므로 이 분기에서 KEEP된다. buildPaths가 discoveredBy="error-envelope"를 부여해
+     *       Task 11 생성기가 올바른 검증 전략을 선택할 수 있게 한다.
+     *   <li>negative-auth / negative-validation / state-guard 마커 path → 검증 없이 KEEP
      *       (discoveredBy 필드로 식별; 이 경로는 DB 상태와 독립적인 인증/검증 거부).
      *   <li>GET(read) non-2xx → verifier.replay() 호출:
      *       replay 상태 == 캡처 상태 → KEEP; 다르면 → DROP + DroppedPath 기록.
