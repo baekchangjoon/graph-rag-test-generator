@@ -72,6 +72,17 @@ public class ReflectiveBodyInstantiator {
         if (!enabled) {
             return Optional.empty();
         }
+        // JDK types and parameterized/array type keys cannot be meaningfully instantiated
+        // by Instancio against a SUT jar — return empty deterministically rather than
+        // producing junk shapes (e.g. Map<Integer,String> key reaches Instancio.of(Map.class)).
+        if (fqn == null
+                || fqn.startsWith("java.")
+                || fqn.startsWith("javax.")
+                || fqn.startsWith("jakarta.")
+                || fqn.contains("<")
+                || fqn.contains("[")) {
+            return Optional.empty();
+        }
         try {
             return doResolve(fqn, sutJar);
         } catch (Throwable t) {
@@ -341,8 +352,12 @@ public class ReflectiveBodyInstantiator {
     private String inferJavaType(JsonNode node) {
         if (node.isTextual()) return "java.lang.String";
         if (node.isBoolean()) return "java.lang.Boolean";
-        if (node.isLong() || node.isIntegralNumber()) return "java.lang.Integer";
-        if (node.isDouble() || node.isFloat() || node.isFloatingPointNumber()) return "java.lang.Double";
+        // Precise integral/floating checks BEFORE the wider fallbacks so that
+        // Long and Float values are not silently narrowed to Integer/Double.
+        if (node.isLong()) return "java.lang.Long";
+        if (node.isIntegralNumber()) return "java.lang.Integer";
+        if (node.isFloat()) return "java.lang.Float";
+        if (node.isDouble() || node.isFloatingPointNumber()) return "java.lang.Double";
         if (node.isBigDecimal()) return "java.math.BigDecimal";
         if (node.isNull()) return "java.lang.Object";
         return "java.lang.Object";

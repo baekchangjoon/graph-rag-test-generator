@@ -159,6 +159,20 @@ class ReflectiveBodyInstantiatorTest {
         assertThat(result).isEmpty();
     }
 
+    @Test
+    void jdkTypeReturnsEmpty() {
+        // JDK types and parameterized type keys must be rejected deterministically
+        // so that BuilderCli records UnsupportedShape rather than a junk shape.
+        var instantiator = new ReflectiveBodyInstantiator(true);
+        assertThat(instantiator.resolve("java.util.Map", plainJar)).isEmpty();
+        assertThat(instantiator.resolve("java.lang.String", plainJar)).isEmpty();
+        assertThat(instantiator.resolve("javax.servlet.http.HttpServletRequest", plainJar)).isEmpty();
+        assertThat(instantiator.resolve("jakarta.servlet.http.HttpServletRequest", plainJar)).isEmpty();
+        assertThat(instantiator.resolve("java.util.Map<java.lang.Integer,java.lang.String>", plainJar)).isEmpty();
+        assertThat(instantiator.resolve("io.graphrag.fixture.SomeDto[]", plainJar)).isEmpty();
+        assertThat(instantiator.resolve(null, plainJar)).isEmpty();
+    }
+
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
