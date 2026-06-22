@@ -225,6 +225,8 @@ public final class BuilderCli {
         List<io.graphrag.model.KafkaExchange> kafkaExchanges = new ArrayList<>();
         List<RequiredSeed> allSeeds = new ArrayList<>();
         List<ExplorationReport.EndpointExploration> reportEntries = new ArrayList<>();
+        // Fix 3: accumulate UnsupportedShape entries for REQ-006/REQ-008 loud-failure invariant
+        List<ExplorationReport.UnsupportedShape> unsupportedShapes = new ArrayList<>();
         // SUT 전체 도달 분기 집계: 전 엔드포인트가 커버한 whole-app 분기 합집합
         Set<io.graphrag.model.BranchRef> coveredAppBranches = new LinkedHashSet<>();
         // 탐색 전체의 line+branch 집계용: 엔드포인트별 누적 exec를 OR 병합한 run-wide 스토어.
@@ -232,7 +234,7 @@ public final class BuilderCli {
         List<io.graphrag.model.CapturedEventEmit> capturedEventEmits = new ArrayList<>();
         ExplorationAccumulators acc = new ExplorationAccumulators(
                 paths, sql, httpCalls, wsExchanges, kafkaExchanges, allSeeds, reportEntries,
-                coveredAppBranches, runWideExec, capturedEventEmits);
+                coveredAppBranches, runWideExec, capturedEventEmits, unsupportedShapes);
 
         Path workDir = Files.createDirectories(config.out().resolve("work"));
         JacocoAgent jacoco = JacocoAgent.prepare(workDir);
@@ -282,7 +284,7 @@ public final class BuilderCli {
                 Json.mapper().writerWithDefaultPrettyPrinter()
                         .writeValueAsString(new ExplorationReport(
                                 reportEntries, coveredAppBranches.size(), totalAppBranches,
-                                coveredAppClasses)));
+                                coveredAppClasses, unsupportedShapes)));
 
         io.graphrag.builder.oracle.ClassifierConfig cc = config.classifierConfig();
         // 에러 계약 디스크립터는 error-envelope SUT(--error-when-present 지정)일 때만 영속한다.
@@ -364,7 +366,8 @@ public final class BuilderCli {
             List<ExplorationReport.EndpointExploration> reportEntries,
             Set<io.graphrag.model.BranchRef> coveredAppBranches,
             org.jacoco.core.data.ExecutionDataStore runWideExec,
-            List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
+            List<io.graphrag.model.CapturedEventEmit> capturedEventEmits,
+            List<ExplorationReport.UnsupportedShape> unsupportedShapes) {
     }
 
     /** attach 모드: 사용자 compose + 생성 override 로 SUT를 띄우고 동일한 explore()를 돌린다. */
@@ -533,6 +536,7 @@ public final class BuilderCli {
         Set<io.graphrag.model.BranchRef> coveredAppBranches = acc.coveredAppBranches();
         org.jacoco.core.data.ExecutionDataStore runWideExec = acc.runWideExec();
         List<io.graphrag.model.CapturedEventEmit> capturedEventEmits = acc.capturedEventEmits();
+        List<ExplorationReport.UnsupportedShape> unsupportedShapes = acc.unsupportedShapes();
         int totalAppBranches;
         List<TableSchema> tables;
 
@@ -648,20 +652,29 @@ public final class BuilderCli {
                     boolean hasPathParam = endpoint.params().stream()
                             .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
                     // Spoon이 해석하지 못한 body param → Instancio reflective fallback 시도
-                    if (shape == null && config.reflectInstantiate()) {
-                        String bodyFqn = endpoint.params().stream()
-                                .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
-                                        || p.kind() == io.graphrag.model.ParamKind.FORM)
-                                .map(io.graphrag.model.EndpointParam::javaType)
-                                .findFirst().orElse(null);
-                        if (bodyFqn != null) {
-                            var reflected = new ReflectiveBodyInstantiator(true)
+                    String bodyFqn = endpoint.params().stream()
+                            .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
+                                    || p.kind() == io.graphrag.model.ParamKind.FORM)
+                            .map(io.graphrag.model.EndpointParam::javaType)
+                            .findFirst().orElse(null);
+                    if (shape == null && bodyFqn != null) {
+                        if (config.reflectInstantiate()) {
+                            // Fix 5: pass config.reflectInstantiate() — no hardcoded literal
+                            var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
                                     .resolve(bodyFqn, config.sutJar());
                             if (reflected.isPresent()) {
                                 log.info("reflect-instantiate fallback: {} → {} field(s)",
                                         bodyFqn, reflected.get().shape().fields().size());
                                 shape = reflected.get().shape();
+                            } else {
+                                // Fix 3: record UnsupportedShape when reflect fallback returns empty (REQ-006/REQ-008)
+                                unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                                        endpoint.id(), bodyFqn, "reflect-instantiate failed"));
                             }
+                        } else {
+                            // Fix 3: record UnsupportedShape when reflect-instantiate is disabled (REQ-006/REQ-008)
+                            unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                                    endpoint.id(), bodyFqn, "reflect-instantiate disabled"));
                         }
                     }
                     // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색

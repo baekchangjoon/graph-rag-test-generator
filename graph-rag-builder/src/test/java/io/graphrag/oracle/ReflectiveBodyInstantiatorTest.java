@@ -76,6 +76,27 @@ class ReflectiveBodyInstantiatorTest {
     }
 
     static Path JACKSON_JAR;
+    static Path JACKSON_GETTER_JAR;
+    static String JACKSON_GETTER_FQN = "io.graphrag.fixture.GetterJacksonDto";
+
+    @BeforeAll
+    static void buildGetterJacksonJar(@TempDir Path tmpDir2) throws Exception {
+        // Dto with @JsonSerialize on a getter method (Fix 4 coverage)
+        String src = """
+                package io.graphrag.fixture;
+                import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+                public class GetterJacksonDto {
+                    private String value;
+                    @JsonSerialize
+                    public String getValue() { return value; }
+                    public void setValue(String v) { this.value = v; }
+                }
+                """;
+        Path jacksonJar = findJacksonAnnotationsJar();
+        JACKSON_GETTER_JAR = compileAndJar(tmpDir2, "getter-jackson", List.of(
+                new SourceFile("io/graphrag/fixture/GetterJacksonDto.java", src)
+        ), jacksonJar);
+    }
 
     @Test
     void resolvesPlainJarType() {
@@ -126,6 +147,15 @@ class ReflectiveBodyInstantiatorTest {
     void disabledReturnsEmpty() {
         var instantiator = new ReflectiveBodyInstantiator(false);
         Optional<ReflectiveBodyInstantiator.ReflectiveBody> result = instantiator.resolve(PLAIN_FQN, plainJar);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void customJacksonOnGetterFallsBackToEmpty() {
+        // Fix 4: @JsonSerialize on a getter method should also be caught by the ASM visitor
+        var instantiator = new ReflectiveBodyInstantiator(true);
+        Optional<ReflectiveBodyInstantiator.ReflectiveBody> result =
+                instantiator.resolve(JACKSON_GETTER_FQN, JACKSON_GETTER_JAR);
         assertThat(result).isEmpty();
     }
 
