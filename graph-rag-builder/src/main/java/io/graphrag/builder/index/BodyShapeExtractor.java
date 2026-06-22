@@ -143,6 +143,7 @@ public final class BodyShapeExtractor {
     /**
      * 타입 참조로 BodyShape를 추출한다 (dot-path 평탄화 — JSON @RequestBody 전용).
      * 컬렉션이면 element 타입의 shape를 평탄화해서 collection=true로 반환,
+     * Map<String,V>이면 단일 synthetic 필드 "sampleKey"로 모델링,
      * 아니면 타입 필드를 재귀적으로 평탄화해서 반환.
      * 중첩 DTO 필드는 "parent.child" dot-path 스칼라 리프로 전개된다.
      */
@@ -150,11 +151,41 @@ public final class BodyShapeExtractor {
             spoon.reflect.reference.CtTypeReference<?> type) {
         var element = elementType(type);
         if (element == null) {
+            // Map<K,V> 지원: String 키만 허용, value 타입을 sampleKey 필드로 모델링
+            var mapShape = extractMapShape(type);
+            if (mapShape != null) {
+                return mapShape;
+            }
             // 비컬렉션: 평탄화 추출
             return extractFlattened(model, type.getQualifiedName());
         }
         // 컬렉션: element 타입을 평탄화 추출
         return elementShape(model, element, true).map(s -> new BodyShape(s.javaType(), s.fields(), true));
+    }
+
+    /**
+     * Map<K,V> 타입을 인식해 BodyShape를 반환한다.
+     * String 키면 value 타입을 가리키는 "sampleKey" 필드 1개짜리 shape 반환.
+     * non-String 키면 Optional.empty() 반환.
+     * Map이 아니면 null 반환(호출자가 일반 처리로 진행).
+     */
+    private static Optional<BodyShape> extractMapShape(
+            spoon.reflect.reference.CtTypeReference<?> type) {
+        if (!"java.util.Map".equals(type.getQualifiedName())) {
+            return null;
+        }
+        var args = type.getActualTypeArguments();
+        if (args.size() != 2) {
+            return Optional.empty();
+        }
+        String keyType = args.get(0).getQualifiedName();
+        if (!"java.lang.String".equals(keyType)) {
+            return Optional.empty();
+        }
+        String valueType = args.get(1).getQualifiedName();
+        return Optional.of(new BodyShape(
+                type.getQualifiedName(),
+                List.of(new BodyShape.BodyField("sampleKey", valueType))));
     }
 
     /**

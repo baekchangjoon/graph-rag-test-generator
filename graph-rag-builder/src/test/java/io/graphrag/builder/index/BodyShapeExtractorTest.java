@@ -151,4 +151,27 @@ class BodyShapeExtractorTest {
         assertThat(BodyShapeExtractor.bodyTypeKey(firstParamType(m)))
                 .isEqualTo("p.Dto");
     }
+
+    // ----- Map<K,V> body support (REQ-003) -----
+
+    @Test
+    void mapBody_stringKey() {
+        // Map<String,String> → shape present, single field "sampleKey" with value type String
+        CtModel m = model("class In { void h(java.util.Map<java.lang.String,java.lang.String> b){} }");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
+
+        assertThat(shape).isPresent();
+        assertThat(shape.get().fields()).hasSize(1);
+        assertThat(shape.get().fields().get(0).name()).isEqualTo("sampleKey");
+        assertThat(shape.get().fields().get(0).javaType()).isEqualTo("java.lang.String");
+    }
+
+    @Test
+    void mapBody_nonStringKey_empty() {
+        // Map<Integer,String> → unsupported key type → empty
+        CtModel m = model("class In { void h(java.util.Map<java.lang.Integer,java.lang.String> b){} }");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
+
+        assertThat(shape).isEmpty();
+    }
 }

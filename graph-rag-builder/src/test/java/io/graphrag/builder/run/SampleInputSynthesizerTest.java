@@ -186,4 +186,17 @@ class SampleInputSynthesizerTest {
                         new BodyShape.BodyField("type", "java.lang.String")), List.of()).body();
         assertThat(withEmpty).isEqualTo(legacy);
     }
+
+    // ----- REQ-004 guard: List<scalar> synthesize -----
+
+    @Test
+    void scalarList_alreadyWorks() {
+        // List<String> collection shape with no fields → 1-element array of text
+        BodyShape shape = new BodyShape("java.lang.String", List.of(), true);
+        JsonNode result = new SampleInputSynthesizer().synthesize(shape, List.of()).body();
+
+        assertThat(result.isArray()).isTrue();
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).isTextual()).isTrue();
+    }
 }
