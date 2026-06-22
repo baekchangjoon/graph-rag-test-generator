@@ -113,7 +113,8 @@ node.put(leaf, value);   // 타입별 오버로드: int→IntNode, long→LongNo
 
 - **scalar 판정**: 기존 `SCALAR_TYPES` 재사용. enum·collection·미해결(shadow/외부)·**깊이 상한 도달**은
   리프로 종료.
-- **깊이 상한** `MAX_NESTING_DEPTH = 3`(루트=0; dot-path 세그먼트 최대 3). 폭주 방지 임의 상한 —
+- **깊이 상한** `MAX_NESTING_DEPTH = 2`(depth=0이 첫 컴포넌트 레벨 → dot-path 세그먼트 최대 3, 예
+  `a.b.c`). 폭주 방지 임의 상한 —
   FormBodySynthesizer 등 타 평탄화와 독립(공유 유틸 아님; 본 작업 한정).
 - **cycle guard**: 방문 타입 FQN `Set`을 **재귀 경로별(스택-로컬, 파라미터 전달)** 로 둔다. 전역 Set이
   아니다 — 전역이면 `record Order(Address billing, Address shipping)`의 같은 타입 형제 필드가 잘못
