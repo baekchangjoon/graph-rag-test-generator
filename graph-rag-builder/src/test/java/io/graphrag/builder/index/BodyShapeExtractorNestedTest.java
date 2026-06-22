@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Test;
 import spoon.reflect.CtModel;
+import spoon.reflect.reference.CtTypeReference;
 
 /**
  * REQ-005: BodyShapeExtractor 재귀 dot-path 평탄화 테스트.
  * 중첩 DTO 필드를 "parent.child" dot-path 스칼라 리프로 전개함을 검증.
+ * extractFromTypeFlattened(JSON @RequestBody 전용)를 대상으로 한다.
  */
 class BodyShapeExtractorNestedTest {
 
@@ -19,15 +21,28 @@ class BodyShapeExtractorNestedTest {
         return l.buildModel();
     }
 
+    /** 핸들러 메서드의 첫 번째 파라미터 타입을 반환. */
+    private static CtTypeReference<?> firstParamType(CtModel m) {
+        for (var t : m.getAllTypes()) {
+            for (var mt : t.getMethods()) {
+                if (!mt.getParameters().isEmpty()) {
+                    return mt.getParameters().get(0).getType();
+                }
+            }
+        }
+        throw new IllegalStateException("no param");
+    }
+
     /** REQ-005: 단일 중첩 DTO가 dot-path 리프로 전개된다. */
     @Test
     void nestedField_flattensToDotPath() {
         String src = "package p; "
                 + "record Order(p.Address address) {} "
-                + "record Address(String city) {}";
+                + "record Address(String city) {} "
+                + "class In { void h(p.Order b){} }";
         CtModel m = model(src);
 
-        var shape = BodyShapeExtractor.extract(m, "p.Order");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
 
         assertThat(shape).isPresent();
         assertThat(shape.get().fields())
@@ -45,21 +60,22 @@ class BodyShapeExtractorNestedTest {
     }
 
     /**
-     * REQ-005: MAX_NESTING_DEPTH(=3)를 초과하는 체인은 depth 3에서 타입 자체를 리프로 emit.
-     * 예: A.b.c.d 경로에서 d(depth=3)는 확장되지 않고 타입 FQN을 javaType으로 가진 리프.
+     * REQ-005: MAX_NESTING_DEPTH(=2)를 초과하는 체인은 depth 2에서 타입 자체를 리프로 emit.
+     * 예: A.b.c.d 경로에서 d(depth=2)는 확장되지 않고 타입 FQN을 javaType으로 가진 리프.
      */
     @Test
     void nestedDepth_cappedAtMax() {
         // A -> B -> C -> D (스칼라 아님) : depth 0=A, 1=B, 2=C, 3=D
-        // D는 depth=3이므로 expand 안 됨 → path "b.c.d" 가 리프
+        // D는 depth=2이므로 expand 안 됨 → path "b.c.d" 가 리프
         String src = "package p; "
                 + "record A(p.B b) {} "
                 + "record B(p.C c) {} "
                 + "record C(p.D d) {} "
-                + "record D(String x) {}";
+                + "record D(String x) {} "
+                + "class In { void h(p.A b){} }";
         CtModel m = model(src);
 
-        var shape = BodyShapeExtractor.extract(m, "p.A");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
 
         assertThat(shape).isPresent();
         // depth cap: "b.c.d" 가 리프(D 타입)로 emit되어야 하고, "b.c.d.x" 는 없어야 한다
@@ -67,7 +83,7 @@ class BodyShapeExtractorNestedTest {
                 .extracting(BodyShape.BodyField::name)
                 .contains("b.c.d")
                 .doesNotContain("b.c.d.x");
-        // dot-segment 수: 최대 3개 (root=0이므로 depth3 경로 = 3 dot-segments "b.c.d")
+        // dot-segment 수: 최대 3개 (root=0이므로 depth2 경로 = 3 dot-segments "b.c.d")
         assertThat(shape.get().fields())
                 .extracting(BodyShape.BodyField::name)
                 .allSatisfy(name -> {
@@ -82,11 +98,12 @@ class BodyShapeExtractorNestedTest {
      */
     @Test
     void cyclicNested_perPathGuard() {
-        String src = "package p; record Node(p.Node parent, String name) {}";
+        String src = "package p; record Node(p.Node parent, String name) {} "
+                + "class In { void h(p.Node b){} }";
         CtModel m = model(src);
 
         // 무한 재귀가 없어야 하므로 타임아웃 없이 완료되어야 한다
-        var shape = BodyShapeExtractor.extract(m, "p.Node");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
 
         assertThat(shape).isPresent();
         // "name" 스칼라 리프는 존재해야 함
@@ -107,10 +124,11 @@ class BodyShapeExtractorNestedTest {
     void siblingSameType_bothExpanded() {
         String src = "package p; "
                 + "record Order(p.Address billing, p.Address shipping) {} "
-                + "record Address(String city) {}";
+                + "record Address(String city) {} "
+                + "class In { void h(p.Order b){} }";
         CtModel m = model(src);
 
-        var shape = BodyShapeExtractor.extract(m, "p.Order");
+        var shape = BodyShapeExtractor.extractFromTypeFlattened(m, firstParamType(m));
 
         assertThat(shape).isPresent();
         assertThat(shape.get().fields())
