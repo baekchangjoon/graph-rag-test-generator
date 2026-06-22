@@ -1,5 +1,6 @@
 package io.graphrag.builder.index;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.model.Json;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,25 @@ class JsonPathsTest {
         JsonPaths.putNullPath(root, "score");
         assertThat(root.get("userId").asText()).isEqualTo("u1");
         assertThat(root.get("score").isNull()).isTrue();
+    }
+
+    @Test
+    void nestDottedKeys_perArrayElement() {
+        com.fasterxml.jackson.databind.node.ArrayNode arr =
+                Json.mapper().createArrayNode();
+        ObjectNode elem = obj();
+        elem.put("address.city", "x");
+        elem.put("userId", "u");
+        arr.add(elem);
+
+        for (JsonNode el : arr) {
+            if (el instanceof ObjectNode oel) JsonPaths.nestDottedKeys(oel);
+        }
+
+        ObjectNode result = (ObjectNode) arr.get(0);
+        assertThat(result.has("address.city")).isFalse();
+        assertThat(result.get("address").get("city").asText()).isEqualTo("x");
+        assertThat(result.get("userId").asText()).isEqualTo("u");
     }
 
     @Test
