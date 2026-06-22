@@ -1,6 +1,9 @@
 package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.graphrag.builder.oracle.ResponseClassifier;
+import io.graphrag.builder.oracle.StatusOnlyClassifier;
+import io.graphrag.model.Outcome;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -16,9 +19,15 @@ import java.util.List;
 public class CoverageGuidedFuzzer implements PathExplorer {
 
     private final int saturationLimit;
+    private final ResponseClassifier classifier;
 
     public CoverageGuidedFuzzer(int saturationLimit) {
+        this(saturationLimit, new StatusOnlyClassifier());
+    }
+
+    public CoverageGuidedFuzzer(int saturationLimit, ResponseClassifier classifier) {
         this.saturationLimit = saturationLimit;
+        this.classifier = classifier;
     }
 
     @Override
@@ -35,7 +44,7 @@ public class CoverageGuidedFuzzer implements PathExplorer {
         }
         List<ExplorationResult.ExploredInput> inputs = new ArrayList<>();
         List<KnownCoverage.Seed> queue = new ArrayList<>(known.seeds());
-        queue.sort(Comparator.comparing(seed -> seed.status() / 100 != 2));   // 2xx 먼저 (stable)
+        queue.sort(Comparator.comparing(seed -> seed.kind() != Outcome.Kind.SUCCESS));   // SUCCESS 먼저 (stable)
         List<InputMutator.Mutation> mutations = InputMutator.forTarget(target);
         int drySeedPasses = 0;
 
@@ -56,8 +65,9 @@ public class CoverageGuidedFuzzer implements PathExplorer {
                 inputs.add(new ExplorationResult.ExploredInput(body, outcome));
                 if (known.isNovel(outcome.coveredBranches())) {
                     known.merge(outcome.coveredBranches());
-                    known.addSeed(body, outcome.status());
-                    queue.add(new KnownCoverage.Seed(body, outcome.status()));
+                    Outcome.Kind kind = classifier.classify(outcome.status(), outcome.response()).kind();
+                    known.addSeed(body, outcome.status(), kind);
+                    queue.add(new KnownCoverage.Seed(body, outcome.status(), kind));
                     novelInSeed = true;
                 }
             }

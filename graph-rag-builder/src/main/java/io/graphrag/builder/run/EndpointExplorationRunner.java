@@ -265,8 +265,8 @@ public class EndpointExplorationRunner {
         Map<String, Set<Double>> realBounds = candidates.reals();         // float/double 단일필드 경계(작업 #4)
         List<Map<String, Double>> realInterFieldTuples = candidates.realTuples();   // float inter-field 튜플
         ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(
-                List.of(new HeuristicExplorer(), new CoverageGuidedFuzzer(FUZZER_SATURATION)),
-                budgetRequests);
+                List.of(new HeuristicExplorer(classifier), new CoverageGuidedFuzzer(FUZZER_SATURATION, classifier)),
+                budgetRequests, classifier);
         EndpointInvoker invoker = buildInvoker(endpoint, readPath, hasPathParam, happy);
         EndpointTarget target = new EndpointTarget(endpoint, baseInput, mutableFields, tables,
                 invoker, literalCandidates,
@@ -910,10 +910,12 @@ public class EndpointExplorationRunner {
                                             Endpoint endpoint, boolean readPath,
                                             SynthesizedInput happy,
                                             List<io.graphrag.model.TableSchema> tables) {
-        // happy 2xx 경로 중 Kafka를 발행한 PathCandidate 탐색
+        // happy(SUCCESS) 경로 중 Kafka를 발행한 PathCandidate 탐색.
+        // 와이어 status가 아닌 분류 outcome으로 판정 → 엔벨로프-200(FAILURE)은 happy로 보지 않는다.
         PathCandidate happyCandidate = null;
         for (PathCandidate c : outcome.paths()) {
-            if (c.status() / 100 == 2 && c.kafkaTraceId() != null) {
+            if (classifier.classify(c.status(), c.response()).kind() == Outcome.Kind.SUCCESS
+                    && c.kafkaTraceId() != null) {
                 happyCandidate = c;
                 break;
             }
@@ -1198,10 +1200,11 @@ public class EndpointExplorationRunner {
             return new AttachResult(paths, requiredSeeds);
         }
         if (readPath) {
-            // GET: id가 변이되므로(404/400 path 존재) seed는 첫 2xx(존재하는 id) path에만 연결.
+            // GET: id가 변이되므로(404/400 path 존재) seed는 첫 SUCCESS(존재하는 id) path에만 연결.
+            // outcome 기준 — 엔벨로프-200(FAILURE)은 존재하는 리소스가 아니므로 seed를 붙이지 않는다.
             int successIdx = -1;
             for (int i = 0; i < paths.size(); i++) {
-                if (paths.get(i).expectedStatus() / 100 == 2) { successIdx = i; break; }
+                if (paths.get(i).outcome() == Outcome.Kind.SUCCESS) { successIdx = i; break; }
             }
             if (successIdx >= 0) {
                 ExploredPath p = paths.get(successIdx);
