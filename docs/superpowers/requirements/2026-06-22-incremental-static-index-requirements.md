@@ -120,13 +120,13 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 정적 블록 단일 모델 빌드 | `SharedSpoonModelTest#buildCountIsOnePerBlock` | integration | 🟢 green |
+| REQ-001 | 정적 블록 단일 모델 빌드 | `BuilderStaticIndexTest#staticIndexingBuildsSpoonModelOnce` | integration | 🟢 green |
 | REQ-002 | Stage 1 결과 동등성(공유모델==레거시 기대값) | 기존 인덱서 단위 테스트 회귀(index(Path)=공유모델 경로) | integration | 🟢 green |
 | REQ-003 | 무변경 0회 + 동일 | `IncrementalIndexE2E#noChangeRebuildZeroBuilds` | E2E | 🟢 green |
-| REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IndexCacheWiringTest#singleFileEditTriggersRebuild` | integration | 🟢 green |
+| REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IndexCacheWiringTest#changedFileTriggersRebuild` | integration | 🟢 green |
 | REQ-005 | 파일 삭제 반영 | `IncrementalIndexE2E#deletedFileRemovesEndpoint` | E2E | 🟢 green |
 | REQ-006 | 증분 == 풀리빌드 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🟢 green |
-| REQ-007 | `--no-incremental` | `IndexCacheWiringTest#noIncrementalBypassesCache` | integration | 🟢 green |
+| REQ-007 | `--no-incremental` | `IndexCacheWiringTest#noIncrementalForcesRebuild` | integration | 🟢 green |
 | REQ-008 | schemaVersion 무효화 | `IndexCacheTest#schemaMismatchTriggersRebuild` | integration | 🟢 green |
 | REQ-009 | XML 변경 반영 | `IncrementalIndexE2E#mapperXmlEditUpdatesFragment` | E2E | 🟢 green |
 | REQ-010 | 캐시 손상/원자적 쓰기 | `IndexCacheTest#corruptManifestFallsBackToRebuild` | integration | 🟢 green |
