@@ -317,28 +317,43 @@ A PASS 시: `ExplorationOrchestrator` 상위에 엔드포인트 워커 풀(병�
 
 ---
 
-### V3(a) 결과 — 2026-06-23 (REQ-004)
+### V3(a) 결과 — 2026-06-23 (REQ-004) — 키 동일성 (구 기준, 폐기)
 
 | 항목 | 측정값 |
 |---|---|
 | **vanilla 집합 크기** | 3 (keys: `35763958eb8eef2d`, `e1859cc39e870bce`, `3a35ec74ec7027b`) |
-| **pjacoco 집합 크기** | 3 (keys: `64fa3e5a98eb12d7`, `be0bf6035ce60b56`, `d42c806d501d3b11`) |
+| **pjacoco baggage 집합 크기** | 3 (keys: `64fa3e5a98eb12d7`, `be0bf6035ce60b56`, `d42c806d501d3b11`) |
 | **집합 교집합** | **0** — 두 집합의 교집합 없음 |
-| **일치 여부** | ❌ **불일치** |
+| **일치 여부** | ❌ **불일치** (구 키 동일성 기준) |
 | **arm 분리 패턴** | 일치 (vanilla: req-0=req-2, pjacoco: req-0=req-2 — 동일한 3개 distinct path 구분) |
-| **pjacoco `droppedProbes`** | 4 (per-request), `incompleteAttribution: true` |
-| **불일치 원인** | vanilla은 JwtAuthenticationFilter(pre-servlet filter)의 4개 probe를 캡처, pjacoco baggage 경로는 servlet 진입 전 스레드에 test store가 없어 해당 probe를 drop → FNV-1a 해시 전체 불일치 |
-| **classId 일치 여부** | ✅ 일치 — 두 벡터의 동일 클래스 classId(CRC64) 동일 확인 |
-| **JUnit 게이트 (V3ArmEquivalencePoc)** | ❌ FAIL: `AssertionError` — sets MISMATCH |
+| **pjacoco `droppedProbes`** | 4 (per-request), `incompleteAttribution: true` (baggage 경로만) |
+| **불일치 원인** | pre-servlet JwtAuthenticationFilter probe drop (baggage 경로 고유 문제) |
 
-**V3(a) 판정: FAIL** — **A architecturally incompatible (current form)**.
+**→ 이 기준(키 동일성)은 §5.1 rev.4 재정의로 폐기됨. 아래 partition 등가 결과가 실제 게이트.**
 
-pjacoco의 `test.id` baggage 경로(OTel 없이)는 per-request arm 분리 패턴(3 distinct paths)을 올바르게 재현하지만, pre-servlet 필터(Spring Security `JwtAuthenticationFilter`)에서 발화하는 probe를 drop하여 CoverageFingerprint 해시값이 vanilla tcpserver dump와 완전히 불일치한다. 이는 pjacoco가 설계상 servlet entry 이전 스레드에 test store를 활성화하지 않는 것에 기인한다.
+---
 
-#### 분석 메모
-- **두 벡터의 classId(CRC64) 동일**: 계측 방식의 차이가 아닌 probe 귀속 범위 차이가 원인
-- **arm 분리 패턴은 동일**: 3 distinct paths 구분은 성공
-- **불일치의 근본 원인**: vanilla tcpserver dump는 리셋 전 ALL 스레드 probe를 수집, pjacoco baggage 경로는 servlet 진입 이후 test store가 활성화된 스레드만 귀속
-- **`incompleteAttribution: true`**: pjacoco 자체 JSON 메타데이터가 명시적으로 incomplete 귀속을 표시
-- **OTel traceKeyAutoCreate=true 경로**: OTel을 함께 부착하면 pjacoco는 OTel traceId를 key로 사용하고 start/stop testId store는 classCount=0이 됨 — V3(a) baggage 경로와는 별개의 실패 원인
-- **재논의 필요**: PoC 정책(§7 (a))에 따라 B로 자동 회귀하지 않고 사용자와 다음 방향 재논의.
+### V3(a) rev.4 결과 — 2026-06-23 (REQ-004) — partition 등가 (OTel-scope/traceId 경로)
+
+| 항목 | 측정값 |
+|---|---|
+| **입력 시퀀스** | 4 req: `lastName=` / `lastName=ZZZNONE` / `lastName=Davis` / `lastName=Franklin` |
+| **vanilla coverageKey 매핑** | req-0=`35763958eb8eef2d`, req-1=`e1859cc39e870bce`, req-2=`35763958eb8eef2d`, req-3=`3a35ec74ec7027b` |
+| **vanilla partition** | `{{0,2},{1},{3}}` — distinct paths=3 |
+| **OTel-scope coverageKey 매핑** | req-0=`b13e082e8378dc20`, req-1=`7650f252052ff381`, req-2=`b13e082e8378dc20`, req-3=`5e4b01494e276852` |
+| **OTel-scope partition** | `{{0,2},{1},{3}}` — distinct paths=3 |
+| **partition 일치 여부** | ✅ **MATCH** — 두 partition 동일 |
+| **OTel-scope exec 크기** | req-0,2,3=607 bytes, req-1=415 bytes |
+| **OTel-scope `incompleteAttribution`** | false (droppedProbes=0) — JwtAuthenticationFilter probe 정상 캡처 |
+| **JUnit 게이트 (`V3ArmEquivalencePoc.perRequestOtelScope_yieldsSamePartition`)** | ✅ PASS, 54s, failures=0, errors=0 |
+
+**V3(a) rev.4 판정: PASS** — OTel-scope/traceId 경로는 vanilla와 동일한 partition을 산출함.
+arm 분리가 올바르게 동작하고(같은 arm→같은 키, 다른 arm→다른 키), run 내부 일관성이 보존됨.
+절대 키는 pjacoco OTel-scope가 JPA·async 추가 귀속으로 vanilla와 다르나(§5.1 문서화 한계),
+production fan-out에서는 모든 커버리지가 pjacoco 경로에서 나와 run 내부 일관성만 필요(허용).
+
+#### 환경 메모
+- pjacoco: OTel javaagent FIRST, 이어서 pjacoco(`traceKeyAutoCreate=true`)
+- 각 요청: `traceparent: 00-<traceId(deterministic)>-0000000000000001-01` 헤더 전송
+- flush: `POST /__coverage__/test/stop?testId=<traceId>&result=passed` (start 불필요 — auto-create)
+- 신규 파일: `PjacocoOtelScopeClient.java` (reusable helper, V2/V3b/V4에서 재사용)
