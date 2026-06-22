@@ -117,6 +117,12 @@ path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트
 git diff --name-only main > changed.txt
 ./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
 
+# 도구 1 — 정적 인덱싱 증분 캐시 (Phase 6.3)
+#   <out>/index-cache/에 Spoon 파싱 결과를 캐시. 소스 무변경 시 캐시 복원으로 Spoon 0회.
+#   --no-incremental으로 캐시 무시하고 강제 풀 리빌드 (schema 변경·동적 모델 확장 시).
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
+  [--no-incremental]"
+
 # 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개)
 #   스펙은 id(post-api-orders) 또는 "METHOD /path"; --incremental-base 동반 시 나머지는
 #   base에서 이월, 없으면 선택 단위만 담은 부분 그래프(정적 엔드포인트 목록은 풀 유지)

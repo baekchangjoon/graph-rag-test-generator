@@ -70,6 +70,9 @@ import java.util.stream.Stream;
  *       [--incremental-base <prev-graph-dir> --changed-files <list-file>]
  *       [--auth-login-path /api/auth/login --auth-user admin --auth-pass password]
  *       [--auth-token-field token --auth-header Authorization --auth-scheme Bearer]
+ *       [--no-incremental|--reindex]
+ * 정적 인덱싱 캐시: 이전 빌드가 있으면 <out>/index-cache/에 Spoon 파싱 결과를 캐시하고,
+ * 소스 무변경 시 캐시 복원으로 Spoon 0회 재빌드. --no-incremental으로 캐시 무시 강제 풀 리빌드.
  */
 public final class BuilderCli {
 
