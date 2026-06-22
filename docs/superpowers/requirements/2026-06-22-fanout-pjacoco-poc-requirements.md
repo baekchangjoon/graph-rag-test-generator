@@ -143,8 +143,9 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-006 | 분산 귀속 단일 JVM | `V4SingleJvmAttributionPoc` (order-service) | E2E | 🔴 planned |
 | REQ-007 | 분산 귀속 멀티 JVM (C3) | `V4MultiJvmAttributionPoc` | E2E | 🔴 planned |
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🔴 planned |
-| REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentResolutionPoc` | E2E | 🔴 planned |
+| REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟡 unit-green |
 
 Coverage: 0/9 green (0%) — target 100% (대상: Must REQ-001~008 + Should REQ-009).
+REQ-009: unit 테스트 통과(🟡). E2E(PoC 스크립트 재실행)는 후속 Task에서 확정 예정.
 REQ-007은 order-service가 단일 JVM으로 확정되면 🔵 처리되어 분모에서 제외될 수 있음(그 경우
 8/8 대상). Could/Won't 없음.
