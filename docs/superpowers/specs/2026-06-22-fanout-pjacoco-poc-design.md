@@ -532,9 +532,17 @@ mindgraph Kafka consumer(REQ-007, 72 probes / consumer 58 probes) 양쪽에 귀�
 
 #### **최종 판정: 전략 A (pjacoco 단일 SUT fan-out) 아키텍처적으로 실현 가능**
 
-**A VIABLE — 열린 항목 1개 (V3b 오버헤드, 사용자 재논의)**
+**A VIABLE — 10/10 게이트 통과 (V3b 오버헤드는 REQ-010 비동기 flush로 해소)**
 
-V1~V7의 정확성·격리·분산 귀속 게이트가 전부 통과했다.
+> **갱신 2026-06-23 (REQ-010):** 아래 "열린 항목"이던 V3(b) 동기 flush 오버헤드(+15.8%)는
+> **비동기 flush 검증(REQ-010)으로 해소**됐다 — flush를 요청 임계경로 밖(백그라운드)으로 옮기면
+> petclinic 오버헤드가 **+1.73%(≈baseline, <5%)** 로 떨어지고 커버리지(60/60 exec, partition
+> `{{0,2},{1},{3}}` 동등) 무손실. 즉 V3b는 flush *방식* 문제였고 A의 한계가 아니다. 아래 "열린 항목"
+> 절은 발견 경위 기록으로 보존하되, **최종 결론은 §REQ-010 결과 + 본 갱신**이다. 남은 것은 PoC
+> 블로커가 아니라 fan-out *구현* 설계 노트: (1) coverage-guided 탐색과 비동기 flush 양립(파이프라인·lag),
+> (2) 무거운 SUT에서 백그라운드 flush 큐 throughput(flush 비용이 SUT footprint에 비례 → flush 스레드풀 필요).
+
+V1~V4 정확성·격리·분산 귀속 게이트 + REQ-009·REQ-010이 전부 통과했다.
 
 - **아키텍처 정확성 (V3a)**: per-request OTel-scope/traceId 경로가 vanilla dump(reset) 경로와 동일한 partition을 산출함. 같은 arm → 같은 키, 다른 arm → 다른 키(run 내부 일관성). path dedup·distinct 보존이 동작한다. **A는 아키텍처적으로 부적합하지 않다.**
 - **동시 격리 (V2)**: 단일 SUT에서 동시 2 엔드포인트 탐색 시 커버리지 교차오염 = 0. traceId 경로가 probe를 올바르게 분리한다.
@@ -561,7 +569,12 @@ flush 왕복 지연은 4.1ms(①, 임계 < 5ms ✅)이나, production-model 벽�
 2. **OTel-scope/traceId canonical 경로** — baggage 경로 대비 pre-servlet 필터 probe를 추가 캡처하나, OTel이 JPA·async를 넓게 귀속해 절대 키가 달라짐. SUT별 잔여 리스크로 본 PoC(petclinic)에서 partition 보존 확인(§5.1).
 3. **DB row-level seeding 충돌** — V2-seeding은 per-worker 비중첩 키 범위로 충돌을 회피. 실제 fan-out 설계에서 엔드포인트별 seed 키 범위 분리가 별도 과제(§9).
 
-**결론**: 전략 A(pjacoco 단일 SUT fan-out)는 **아키텍처적으로 실현 가능하다**. V3(b) flush 오버헤드의 수용 여부를 사용자와 재논의한 후 본 fan-out 설계(spec→requirements→plan)로 진행한다.
+**결론**: 전략 A(pjacoco 단일 SUT fan-out)는 **아키텍처적으로 실현 가능하다**. 10/10 게이트 통과 —
+정확성(V3a partition)·격리(V2)·per-worker Connection(V2-seeding)·분산 귀속(V4 단일+멀티 JVM)·공존(V1)·
+재현성(REQ-009)·**비동기 flush 오버헤드 해소(REQ-010, +1.73%)**. V3(b) 동기 flush 오버헤드는 flush
+*방식* 문제로 비동기 flush 채택으로 해소됐다(A의 한계 아님). 남은 것은 fan-out **구현** 설계 노트
+(coverage-guided↔비동기 flush 파이프라인, 무거운 SUT의 flush 큐 throughput)이며 PoC 블로커가 아니다.
+→ 본 fan-out 설계(spec→requirements→plan)로 진행 가능.
 
 ---
 
