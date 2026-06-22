@@ -62,6 +62,6 @@ class BuilderCollectionIntegrationTest {
                 60, null, Path.of(System.getProperty("external.stubs")),
                 Map.of("EXTERNAL_INVENTORY_URL","{{wiremock}}"),
                 null, null, auth, false, true, null,
-                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", false));
+                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null, false));
     }
 }
