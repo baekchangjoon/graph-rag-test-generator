@@ -12,6 +12,7 @@ import io.graphrag.builder.env.ExplorationEnvironment;
 import io.graphrag.builder.env.OverrideComposeGenerator;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.oracle.ReflectiveBodyInstantiator;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
 import io.graphrag.builder.index.EnumConstantExtractor;
@@ -168,7 +169,8 @@ public final class BuilderCli {
                 endpointSelectors,
                 traceMode(options.get("--trace-mode")),
                 classifierConfig,
-                options.containsKey("--no-incremental") || options.containsKey("--reindex"));
+                options.containsKey("--no-incremental") || options.containsKey("--reindex"),
+                !options.containsKey("--no-reflect-instantiate"));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -645,6 +647,23 @@ public final class BuilderCli {
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
                     boolean hasPathParam = endpoint.params().stream()
                             .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+                    // Spoon이 해석하지 못한 body param → Instancio reflective fallback 시도
+                    if (shape == null && config.reflectInstantiate()) {
+                        String bodyFqn = endpoint.params().stream()
+                                .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
+                                        || p.kind() == io.graphrag.model.ParamKind.FORM)
+                                .map(io.graphrag.model.EndpointParam::javaType)
+                                .findFirst().orElse(null);
+                        if (bodyFqn != null) {
+                            var reflected = new ReflectiveBodyInstantiator(true)
+                                    .resolve(bodyFqn, config.sutJar());
+                            if (reflected.isPresent()) {
+                                log.info("reflect-instantiate fallback: {} → {} field(s)",
+                                        bodyFqn, reflected.get().shape().fields().size());
+                                shape = reflected.get().shape();
+                            }
+                        }
+                    }
                     // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
                     // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
                     if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
