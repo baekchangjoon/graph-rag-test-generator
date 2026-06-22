@@ -25,6 +25,8 @@ import io.graphrag.builder.index.FormFieldBinding;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import io.graphrag.builder.oracle.InputCandidates;
+import io.graphrag.builder.oracle.ResponseClassifier;
+import io.graphrag.builder.oracle.StatusOnlyClassifier;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
@@ -35,6 +37,7 @@ import io.graphrag.model.ForeignKey;
 import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.Json;
+import io.graphrag.model.Outcome;
 import io.graphrag.model.ParamKind;
 import io.graphrag.model.RequestHeaders;
 import io.graphrag.model.RequiredSeed;
@@ -152,11 +155,13 @@ public class EndpointExplorationRunner {
     private final RequestHeaders extraHeaders;              // 사용자 지정 커스텀 헤더 (B3)
     private final SqlCaptureBackend sqlCapture;             // 요청별 SQL 캡처 backend (log 폴백 / OTEL)
     private final KafkaCaptureReceiver kafkaCapture;
+    private final ResponseClassifier classifier;   // 성공/실패 판정(기본 StatusOnlyClassifier)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
     private Set<String> appClasses = Set.of();   // path 지문을 SUT 자체 클래스로 한정
 
+    /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
@@ -171,6 +176,27 @@ public class EndpointExplorationRunner {
                                      RequestHeaders extraHeaders,
                                      SqlCaptureBackend sqlCapture,
                                      KafkaCaptureReceiver kafkaCapture) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                new StatusOnlyClassifier());
+    }
+
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -190,6 +216,7 @@ public class EndpointExplorationRunner {
         this.extraHeaders = extraHeaders;
         this.sqlCapture = sqlCapture;
         this.kafkaCapture = kafkaCapture;
+        this.classifier = classifier == null ? new StatusOnlyClassifier() : classifier;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -788,7 +815,7 @@ public class EndpointExplorationRunner {
         return captured;
     }
 
-    private record PathsBundle(List<ExploredPath> paths, List<CapturedSql> allSql,
+    record PathsBundle(List<ExploredPath> paths, List<CapturedSql> allSql,
                                List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
     }
@@ -1104,8 +1131,8 @@ public class EndpointExplorationRunner {
         return null;
     }
 
-    /** outcome → ExploredPath/CapturedSql/CapturedHttpCall 묶음. */
-    private PathsBundle buildPaths(ExplorationOutcome outcome, Endpoint endpoint,
+    /** outcome → ExploredPath/CapturedSql/CapturedHttpCall 묶음. (package-private: classifier 배선 테스트용) */
+    PathsBundle buildPaths(ExplorationOutcome outcome, Endpoint endpoint,
                                   List<ConstraintExtractor.ConditionSpan> conditions) {
         List<ExploredPath> paths = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
@@ -1138,6 +1165,9 @@ public class EndpointExplorationRunner {
             }
             allCapturedEventEmits.addAll(pathEventEmits);
 
+            // 와이어 status + 응답 body로 성공/실패 판정. expectedStatus는 와이어 status 그대로 유지하고
+            // outcome/semanticStatus/semanticStatusText만 classifier 산출로 기록(엔벨로프-200 → FAILURE).
+            Outcome o = classifier.classify(candidate.status(), candidate.response());
             // seed는 성공(2xx) path에만 연결 — attachSeeds에서 채운다
             paths.add(new ExploredPath(
                     candidate.pathId(),
@@ -1153,7 +1183,10 @@ public class EndpointExplorationRunner {
                     validate(sql),
                     List.of(),
                     pathEventEmits.stream().map(io.graphrag.model.CapturedEventEmit::id).toList(),
-                    candidate.responseHeaders()));
+                    candidate.responseHeaders(),
+                    o.kind(),
+                    o.semanticStatus(),
+                    o.semanticStatusText()));
         }
         return new PathsBundle(paths, allSql, allHttpCalls, allCapturedEventEmits);
     }
