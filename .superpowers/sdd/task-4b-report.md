@@ -115,6 +115,18 @@ filter chain 전체를 span으로 감싸 `ThreadLocalContextStorage#attach`가 J
 
 ---
 
+## 리뷰 수정 (commit f36b5f5)
+
+| Finding | 조치 |
+|---------|------|
+| F1 non-triviality guard | `perRequestOtelScope_yieldsSamePartition`에서 partition equality 전에 `assertThat(vanillaPartition).anyMatch(g -> g.size() > 1)` 추가. arm MERGING 실증. |
+| F2 awaitExecFile threshold | `PjacocoOtelScopeClient.awaitExecFile`: `> 32` → `> 0`. 소형 .exec(V1: 26바이트) 타임아웃 방지. V2/V3b/V4 재사용 안전. |
+| F3 dead constants | `TRACE_ID_BASE` (PjacocoOtelScopeClient L43), `VANILLA_TCP_PORT` (V3ArmEquivalencePoc L61) 제거. grep-confirmed 미사용. |
+
+재실행 결과: `perRequestOtelScope_yieldsSamePartition` PASS — partition `{{0,2},{1},{3}}` match, 비singleton {0,2} guard 통과. 기존 `perRequestTestId` 실패는 §11 기록된 baggage 경로 구조적 불일치로 변경과 무관.
+
+---
+
 ## JUnit 출력 요약
 
 ```
