@@ -238,12 +238,12 @@ public class FixtureComposer {
     }
 
     /**
-     * outcome==FAILURE かつ semanticStatusField が設定されている場合はエラー契約アサーションを生成する。
-     * outcome==SUCCESS または semanticStatusField が null の場合は既存の決定論的ロジックを使用する。
+     * outcome==FAILURE 이고 semanticStatusField 가 설정된 경우 에러 계약 단언을 생성한다.
+     * outcome==SUCCESS 이거나 semanticStatusField 가 null 인 경우 기존 결정론적 로직을 사용한다.
      *
-     * REQ-006: FAILURE path → エラー契約アサーション
-     *  1. `.body("<semanticStatusField>", equalTo("<semanticStatusText>"))` — 文字列マッチャー
-     *  2. errorDetailField + errorDetailContains が両方 non-null/non-blank の場合のみ:
+     * REQ-006: FAILURE path → 에러 계약 단언
+     *  1. `.body("<semanticStatusField>", equalTo("<semanticStatusText>"))` — 문자열 매처
+     *  2. errorDetailField + errorDetailContains 가 둘 다 non-null/non-blank 인 경우에만:
      *     `.body("<errorDetailField>", org.hamcrest.Matchers.containsString("<errorDetailContains>"))`
      */
     private static List<ComposedFixture.Assertion> assertionsFromResponse(ExploredPath path,
@@ -275,7 +275,7 @@ public class FixtureComposer {
             return assertions;
         }
 
-        // SUCCESS path(または semanticStatusField 未設定): 既存の決定論的ロジック
+        // SUCCESS path(또는 semanticStatusField 미설정): 기존 결정론적 로직
         // 서버가 SQL에 literal로 쓴 값(예: status='PENDING')은 필드 무관하게 결정적.
         // 단, INSERT의 PK 컬럼에 바인딩된 LITERAL 값은 DB 시퀀스(auto-increment)로 생성된 후
         // 재사용된 것이므로 제외한다 — 환경마다 달라지는 비결정적 값이다.
