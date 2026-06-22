@@ -54,6 +54,12 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
   - Then exploration-report 오류 0, HTTP 5xx 0, seed INSERT 실패 0건이다. (실패 관측 시 이
     REQ는 fail이며 per-worker Connection/seeding 직렬화가 A 전제조건임을 §11에 기록한다.)
 - 검증 레벨: E2E black-box
+- **한계(문서화)**: 이 게이트는 "워커별 독립 Connection이 JDBC thread-safety 관점에서 실행 가능한
+  패턴임"을 확인한다 — 독립 연결 + 비중첩 키, 예외 0건. 공유 단일 Connection에 의한 JDBC 레이스
+  (BuilderCli의 실제 코드 경로)를 재현하지는 않는다. JDBC 레이스는 비결정적(non-deterministic)이어서
+  테스트 하니스에서 결정적으로 재현하기 어렵다; 따라서 이 게이트는 실패를 재현하는 것이 아니라 수정
+  패턴(fix pattern)의 실행 가능성을 검증한다. BuilderCli의 실제 seeding 코드 경로 통합은 fan-out
+  구현 단계(design §9)로 미루어진다.
 
 ### REQ-004 — per-request arm partition 등가 (V3-correctness) [rev.4]
 - 유형: Functional
