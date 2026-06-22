@@ -31,18 +31,14 @@ class V1AgentCoexistencePoc {
 
         ProcessBuilder pb = new ProcessBuilder("bash", script.toString());
         pb.directory(repoRoot.toFile()); // repo root
-        pb.redirectErrorStream(false); // keep stderr separate
+        pb.redirectErrorStream(true); // merge stderr into stdout — prevents stdout/stderr deadlock
 
         Process proc = pb.start();
 
-        // capture stdout
+        // capture merged stdout+stderr; "V1 PASS" appears on stdout so it is still present
         String stdout;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
             stdout = reader.lines().collect(Collectors.joining("\n"));
-        }
-        // drain stderr to console
-        try (BufferedReader err = new BufferedReader(new InputStreamReader(proc.getErrorStream()))) {
-            err.lines().forEach(line -> System.err.println("[v1-script] " + line));
         }
 
         int exitCode = proc.waitFor();
