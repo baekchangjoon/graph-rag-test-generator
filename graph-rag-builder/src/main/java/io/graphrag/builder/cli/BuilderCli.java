@@ -284,10 +284,18 @@ public final class BuilderCli {
                                 reportEntries, coveredAppBranches.size(), totalAppBranches,
                                 coveredAppClasses)));
 
+        io.graphrag.builder.oracle.ClassifierConfig cc = config.classifierConfig();
+        // 에러 계약 디스크립터는 error-envelope SUT(--error-when-present 지정)일 때만 영속한다.
+        // StatusOnly SUT는 FAILURE 응답 body에 statusField가 없어 단언이 거짓이 되므로 null로 둔다.
+        boolean envelope = cc.errorWhenPresent() != null && !cc.errorWhenPresent().isEmpty();
+        String statusField = envelope ? cc.semanticStatusField() : null;
+        String detailField = envelope ? cc.errorDetailField() : null;
+        String detailContains = envelope ? cc.errorDetailContains() : null;
         GraphAsset asset = new GraphAsset(config.sutId(), config.commitSha(),
                 index.endpoints(), paths, sql, tables, mappers, httpCalls,
                 wsIndex.endpoints(), wsExchanges, kafkaIndex.consumers(), kafkaExchanges, allSeeds,
-                capturedEventEmits);
+                capturedEventEmits,
+                statusField, detailField, detailContains);
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
         return asset;
