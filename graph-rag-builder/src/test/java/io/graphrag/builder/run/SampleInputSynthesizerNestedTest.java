@@ -9,14 +9,14 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * REQ-011: dot-path 필드명을 중첩 JSON으로 materialization.
- * "address.city" → {"address":{"city":...}}, flat key "address.city" 없어야 함.
- * "shipTo.userId" → FK 휴리스틱 미발화(dot 포함) + {"shipTo":{"userId":...}} 중첩.
+ * REQ-011 v3: SampleInputSynthesizer는 dot-path 필드를 LITERAL 키로 방출(form contract 유지).
+ * JSON @RequestBody 중첩은 runner 단계(JsonPaths.nestDottedKeys)가 담당한다.
+ * FK 카브아웃: "Id"로 끝나지만 dot 포함 → FK probe row 미발화.
  */
 class SampleInputSynthesizerNestedTest {
 
     @Test
-    void nestedHappyAndFkCarveOut() {
+    void dottedFields_emitLiteralKeysNotNested() {
         BodyShape shape = new BodyShape("com.example.Dto", List.of(
                 new BodyShape.BodyField("address.city", "java.lang.String"),
                 new BodyShape.BodyField("shipTo.userId", "java.lang.String")
@@ -26,35 +26,15 @@ class SampleInputSynthesizerNestedTest {
 
         ObjectNode body = (ObjectNode) result.body();
 
-        // 중첩 구조: address.city → body["address"]["city"]
-        assertThat(body.has("address")).isTrue();
-        assertThat(body.get("address").get("city").isTextual()).isTrue();
+        // 합성기는 literal dotted 키를 방출해야 함 (form contract)
+        assertThat(body.has("address.city")).isTrue();
+        assertThat(body.has("shipTo.userId")).isTrue();
 
-        // 중첩 구조: shipTo.userId → body["shipTo"]["userId"]
-        assertThat(body.has("shipTo")).isTrue();
-        assertThat(body.get("shipTo").get("userId").isTextual()).isTrue();
-
-        // 평면 키 없어야 함
-        assertThat(body.has("address.city")).isFalse();
-        assertThat(body.has("shipTo.userId")).isFalse();
+        // 중첩 구조는 방출하지 않음 (runner 단계 책임)
+        assertThat(body.has("address")).isFalse();
+        assertThat(body.has("shipTo")).isFalse();
 
         // FK 카브아웃: shipTo.userId는 "Id"로 끝나지만 dot 포함 → FK probe row 없어야 함
         assertThat(result.seeds()).isEmpty();
-    }
-
-    @Test
-    void nestedBooleanFieldEmitsBooleanNode() {
-        BodyShape shape = new BodyShape("com.example.Dto", List.of(
-                new BodyShape.BodyField("flags.active", "java.lang.Boolean")
-        ));
-
-        SynthesizedInput result = new SampleInputSynthesizer().synthesize(shape, List.of());
-
-        ObjectNode body = (ObjectNode) result.body();
-
-        // 중첩 boolean: flags.active → body["flags"]["active"] 는 JSON boolean (string "true" 아님)
-        assertThat(body.has("flags")).isTrue();
-        assertThat(body.get("flags").get("active").isBoolean()).isTrue();
-        assertThat(body.get("flags").get("active").booleanValue()).isTrue();
     }
 }
