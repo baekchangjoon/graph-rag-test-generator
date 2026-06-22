@@ -3,6 +3,7 @@ package io.graphrag.builder.store;
 import io.graphrag.builder.index.IndexResult;
 import io.graphrag.builder.index.KafkaIndexResult;
 import io.graphrag.builder.index.WsIndexResult;
+import io.graphrag.builder.run.AuthConfig;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -27,9 +28,9 @@ class IndexCacheTest {
         Path src = Files.createTempDirectory("src");
         Path res = Files.createTempDirectory("res");
         Files.writeString(src.resolve("A.java"), "class A {}");
-        IndexManifest m1 = IndexCache.scan(src, res);
+        IndexManifest m1 = IndexCache.scan(src, res, null);
         Files.writeString(src.resolve("A.java"), "class A { int x; }");
-        IndexManifest m2 = IndexCache.scan(src, res);
+        IndexManifest m2 = IndexCache.scan(src, res, null);
         assertThat(IndexCache.isFresh(m1, m2)).isFalse();
         assertThat(IndexCache.isFresh(m1, m1)).isTrue();
     }
@@ -40,7 +41,7 @@ class IndexCacheTest {
         Path src = Files.createTempDirectory("src2");
         Path res = Files.createTempDirectory("res2");
         Files.writeString(src.resolve("A.java"), "class A {}");
-        IndexManifest m = IndexCache.scan(src, res);
+        IndexManifest m = IndexCache.scan(src, res, null);
         IndexCache.save(cache, m, empty());
         assertThat(IndexCache.load(cache, m)).isPresent();
     }
@@ -48,9 +49,9 @@ class IndexCacheTest {
     @Test
     void schemaMismatchTriggersRebuild() throws Exception {       // REQ-008
         Path cache = Files.createTempDirectory("cache3");
-        IndexManifest stale = new IndexManifest(IndexCache.SCHEMA_VERSION - 1, Map.of());
+        IndexManifest stale = new IndexManifest(IndexCache.SCHEMA_VERSION - 1, "", Map.of());
         IndexCache.save(cache, stale, empty());
-        assertThat(IndexCache.load(cache, new IndexManifest(IndexCache.SCHEMA_VERSION, Map.of())))
+        assertThat(IndexCache.load(cache, new IndexManifest(IndexCache.SCHEMA_VERSION, "", Map.of())))
                 .isEmpty();
     }
 
@@ -59,7 +60,27 @@ class IndexCacheTest {
         Path cache = Files.createTempDirectory("cache4");
         Files.createDirectories(cache);
         Files.writeString(cache.resolve("manifest.json"), "{ not json");
-        assertThat(IndexCache.load(cache, new IndexManifest(IndexCache.SCHEMA_VERSION, Map.of())))
+        assertThat(IndexCache.load(cache, new IndexManifest(IndexCache.SCHEMA_VERSION, "", Map.of())))
                 .isEmpty();
+    }
+
+    @Test
+    void authChangeInvalidatesCache() throws Exception {
+        Path cache = Files.createTempDirectory("cache-auth");
+        Path src = Files.createTempDirectory("src-auth");
+        Path res = Files.createTempDirectory("res-auth");
+        Files.writeString(src.resolve("A.java"), "class A {}");
+
+        AuthConfig authA = new AuthConfig("/login", "user", "pass", "token", "Authorization", "Bearer",
+                List.of("/public", "/health"));
+        AuthConfig authB = new AuthConfig("/api/login", "user", "pass", "token", "Authorization", "Bearer",
+                List.of("/public"));
+
+        IndexManifest manifestA = IndexCache.scan(src, res, authA);
+        IndexCache.save(cache, manifestA, empty());
+
+        // 동일 소스, 다른 auth → 캐시 미스
+        IndexManifest manifestB = IndexCache.scan(src, res, authB);
+        assertThat(IndexCache.load(cache, manifestB)).isEmpty();
     }
 }

@@ -148,7 +148,8 @@ public IndexResult index(CtModel model, AuthConfig auth) { /* 본 로직 */ }
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "authFingerprint": "loginPath=/api/auth/login;publicPaths=/a,/b",
   "files": {
     "src/main/java/.../FooController.java": { "root": "sutSrc",       "hash": "sha256:..." },
     "mapper/FooMapper.xml":                  { "root": "sutResources", "hash": "sha256:..." }
@@ -158,6 +159,12 @@ public IndexResult index(CtModel model, AuthConfig auth) { /* 본 로직 */ }
 
 `static-index.json`: 정적 인덱싱 산출물 묶음 = 병합된 `IndexResult`(HTTP/Router/Gateway), `WsIndexResult`,
 `KafkaIndexResult`, `List<MapperStatement>`, `List<Set<String>>` responseDtoFieldSets, `Map` enumConstants.
+
+**비소스 입력 fingerprint(필수):** 정적 인덱싱 산출물은 소스 파일뿐 아니라 `authConfig`에도 의존한다 —
+`EndpointIndexer`가 `Endpoint.authRequired`를 `authConfig.loginPath()`/`publicPaths()`로 계산한다. 따라서
+manifest는 이 비소스 입력의 fingerprint(`authFingerprint`)도 포함해야 한다. 같은 소스라도 auth 플래그가
+바뀌면 캐시가 무효화되어야 G4(증분==풀 리빌드)가 성립한다. fingerprint에는 산출물에 영향을 주는
+필드(loginPath, 정렬된 publicPaths)만 넣고 **시크릿(user/pass/token)은 제외**한다(캐시에 시크릿 저장 회피).
 
 - **`schemaVersion`**: 정적 인덱싱 산출물 포맷/인덱서 로직 변경 시 올리는 상수. 위치/정책:
   전용 `IndexCache` 클래스의 `static final int SCHEMA_VERSION` 상수. 관련 record
