@@ -2,12 +2,24 @@ package io.graphrag.builder.explore;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.graphrag.builder.oracle.ResponseClassifier;
+import io.graphrag.builder.oracle.StatusOnlyClassifier;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /** 엔진 1: happy 입력 + 1단 boundary-value 변형 (docs/05 Phase B의 heuristic 생성기). */
 public class HeuristicExplorer implements PathExplorer {
+
+    private final ResponseClassifier classifier;
+
+    public HeuristicExplorer() {
+        this(new StatusOnlyClassifier());
+    }
+
+    public HeuristicExplorer(ResponseClassifier classifier) {
+        this.classifier = classifier;
+    }
 
     @Override
     public String name() {
@@ -38,7 +50,8 @@ public class HeuristicExplorer implements PathExplorer {
         inputs.add(new ExplorationResult.ExploredInput(body, outcome));
         if (known.isNovel(outcome.coveredBranches())) {
             known.merge(outcome.coveredBranches());
-            known.addSeed(body, outcome.status());
+            known.addSeed(body, outcome.status(),
+                    classifier.classify(outcome.status(), outcome.response()).kind());
         }
     }
 }

@@ -1,6 +1,9 @@
 package io.graphrag.builder.explore;
 
+import io.graphrag.builder.oracle.ResponseClassifier;
+import io.graphrag.builder.oracle.StatusOnlyClassifier;
 import io.graphrag.model.BranchRef;
+import io.graphrag.model.Outcome;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -24,16 +27,28 @@ public class ExplorationOrchestrator {
     private final List<PathExplorer> engines;
     private final int totalBudgetRequests;
     private final Duration maxDuration;
+    private final ResponseClassifier classifier;
 
     public ExplorationOrchestrator(List<PathExplorer> engines, int totalBudgetRequests) {
-        this(engines, totalBudgetRequests, Duration.ofMinutes(5));
+        this(engines, totalBudgetRequests, Duration.ofMinutes(5), new StatusOnlyClassifier());
+    }
+
+    public ExplorationOrchestrator(List<PathExplorer> engines, int totalBudgetRequests,
+                                   ResponseClassifier classifier) {
+        this(engines, totalBudgetRequests, Duration.ofMinutes(5), classifier);
     }
 
     public ExplorationOrchestrator(List<PathExplorer> engines, int totalBudgetRequests,
                                    Duration maxDuration) {
+        this(engines, totalBudgetRequests, maxDuration, new StatusOnlyClassifier());
+    }
+
+    public ExplorationOrchestrator(List<PathExplorer> engines, int totalBudgetRequests,
+                                   Duration maxDuration, ResponseClassifier classifier) {
         this.engines = engines;
         this.totalBudgetRequests = totalBudgetRequests;
         this.maxDuration = maxDuration;
+        this.classifier = classifier;
     }
 
     public ExplorationOutcome explore(EndpointTarget target) {
@@ -54,12 +69,15 @@ public class ExplorationOrchestrator {
             for (ExplorationResult.ExploredInput input : result.inputs()) {
                 List<BranchRef> sorted = input.outcome().coveredBranches().stream()
                         .sorted(BRANCH_ORDER).toList();
-                // path 식별 = status + coverage 지문. 지문은 probe 단위(arm-accurate)라 같은 라인의
-                // 다른 arm(예: score==42 true vs false)을 연 입력이 distinct path로 보존된다.
-                // 지문이 없으면(테스트 fake 등) 분기집합으로 폴백.
+                // path 식별 = (분류 kind) + status + coverage 지문. 지문은 probe 단위(arm-accurate)라
+                // 같은 라인의 다른 arm(예: score==42 true vs false)을 연 입력이 distinct path로 보존된다.
+                // 지문이 없으면(테스트 fake 등) 분기집합으로 폴백. kind를 prefix해 genuine-200(SUCCESS)과
+                // enveloped-200(FAILURE)이 동일 coverage라도 collapse되지 않게 한다.
+                int status = input.outcome().status();
+                Outcome outcome = classifier.classify(status, input.outcome().response());
                 String cov = input.outcome().coverageKey();
-                String key = input.outcome().status() + ":" + (cov != null ? cov : sorted.toString());
-                candidates.putIfAbsent(key, new Proto(input, sorted, engine.name()));
+                String key = outcome.kind() + ":" + status + ":" + (cov != null ? cov : sorted.toString());
+                candidates.putIfAbsent(key, new Proto(input, sorted, engine.name(), outcome));
             }
             if (remaining <= 0) {
                 break;
@@ -69,18 +87,23 @@ public class ExplorationOrchestrator {
     }
 
     private record Proto(ExplorationResult.ExploredInput input, List<BranchRef> branches,
-                         String engine) {
+                         String engine, Outcome outcome) {
     }
 
     private ExplorationOutcome toOutcome(EndpointTarget target, KnownCoverage known,
                                          Map<String, Proto> candidates) {
         List<PathCandidate> paths = new ArrayList<>();
-        Map<Integer, Integer> seqByStatus = new LinkedHashMap<>();
+        Map<String, Integer> seqByStatusKind = new LinkedHashMap<>();
         Map<String, Integer> pathsByEngine = new LinkedHashMap<>();
         for (Proto proto : candidates.values()) {
             int status = proto.input().outcome().status();
-            int seq = seqByStatus.merge(status, 1, Integer::sum);
-            String pathId = target.endpoint().id() + "-s" + status + "-" + seq;
+            Outcome outcome = proto.outcome();
+            // FAILURE면 의미상 status를 path-id에 박아(엔벨로프-200 → -s200e404-) genuine 200과 분리한다.
+            String statusSeg = outcome.kind() == Outcome.Kind.FAILURE
+                    ? "s" + status + "e" + outcome.semanticStatus()
+                    : "s" + status;
+            int seq = seqByStatusKind.merge(statusSeg, 1, Integer::sum);
+            String pathId = target.endpoint().id() + "-" + statusSeg + "-" + seq;
             pathsByEngine.merge(proto.engine(), 1, Integer::sum);
             paths.add(new PathCandidate(
                     pathId,
