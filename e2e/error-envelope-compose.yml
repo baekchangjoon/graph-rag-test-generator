@@ -1,0 +1,9 @@
+# 빌더 build 모드용 최소 compose. SUT는 Testcontainers로 띄우므로 여기엔
+# ComposeInspector.detectDb 가 DB 종류/이미지를 읽을 postgres 서비스만 둔다.
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
