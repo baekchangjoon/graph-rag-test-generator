@@ -24,9 +24,10 @@
 - 설명: 단일 공유 모델로 생성한 정적 인덱싱 산출물(`graph.json`)이 기존(인덱서별 개별 모델)
   방식의 결과와 동일하다.
 - 수용기준:
-  - Given 동일 SUT, When 공유-모델 빌드와 기존-방식 빌드를 각각 수행하면,
-    Then 두 `graph.json`의 정적 인덱싱 산출물(endpoints/ws/kafka/mappers/dto/enum)이 동일하다.
-- 검증 레벨: E2E black-box (golden 비교)
+  - Given 기존 인덱서 단위 테스트(레거시 개별모델 시절 작성된 기대값), When 인덱서가 공유모델
+    경로(index(Path)→SharedSpoonModel.build→index(CtModel))로 리팩터된 뒤 그대로 실행하면,
+    Then 모두 통과한다(= 공유모델 산출물이 레거시 기대값과 동일).
+- 검증 레벨: integration (기존 인덱서 단위 테스트 회귀)
 
 ### REQ-003 — 무변경 재빌드 시 Spoon 0회 + 동일 결과
 - 유형: Functional
@@ -120,7 +121,7 @@
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
 | REQ-001 | 정적 블록 단일 모델 빌드 | `SharedSpoonModelTest#buildCountIsOnePerBlock` | integration | 🟢 green |
-| REQ-002 | Stage 1 결과 동등성 | `IncrementalIndexE2E#incrementalEqualsFullRebuild` | E2E | 🟢 green |
+| REQ-002 | Stage 1 결과 동등성(공유모델==레거시 기대값) | 기존 인덱서 단위 테스트 회귀(index(Path)=공유모델 경로) | integration | 🟢 green |
 | REQ-003 | 무변경 0회 + 동일 | `IncrementalIndexE2E#noChangeRebuildZeroBuilds` | E2E | 🟢 green |
 | REQ-004 | 단일 파일 수정 후 재빌드 정확성 | `IndexCacheWiringTest#singleFileEditTriggersRebuild` | integration | 🟢 green |
 | REQ-005 | 파일 삭제 반영 | `IncrementalIndexE2E#deletedFileRemovesEndpoint` | E2E | 🟢 green |
