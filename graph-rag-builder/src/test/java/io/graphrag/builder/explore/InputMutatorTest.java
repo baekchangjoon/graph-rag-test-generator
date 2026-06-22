@@ -3,6 +3,7 @@ package io.graphrag.builder.explore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.ValidationConstraintExtractor.FieldConstraint;
 import io.graphrag.builder.index.ValidationConstraintExtractor.Kind;
 import org.junit.jupiter.api.Test;
@@ -156,5 +157,71 @@ class InputMutatorTest {
                                 io.graphrag.builder.index.ConstraintExtractor.Atom.Kind.NUMERIC,
                                 "loyalty", "<", 500, null)));
         assertThat(InputMutator.joint(fields, List.of(c))).isEmpty();
+    }
+
+    // --- joinGuards tests (REQ-007, REQ-008b) ---
+
+    @Test
+    void joinGuards_numericEmitsThreeArms() {
+        List<BodyShape.BodyField> fields = List.of(
+                new BodyShape.BodyField("amount", "java.lang.Integer"),
+                new BodyShape.BodyField("score", "java.lang.Integer"));
+        ConstraintExtractor.JoinGuard guard = new ConstraintExtractor.JoinGuard(
+                "C", "m", 1, "amount", ">", "score", ConstraintExtractor.JoinKind.NUMERIC);
+
+        List<InputMutator.Mutation> ms = InputMutator.joinGuards(fields, List.of(guard));
+
+        assertThat(ms).hasSize(3);
+        // names are distinct
+        assertThat(ms.stream().map(InputMutator.Mutation::name).distinct().count()).isEqualTo(3);
+
+        // lt arm: amount < score → amount=0, score=1
+        ObjectNode lt = ms.get(0).apply().apply(MAPPER.createObjectNode());
+        assertThat(lt.get("amount").asLong()).isEqualTo(0L);
+        assertThat(lt.get("score").asLong()).isEqualTo(1L);
+
+        // eq arm: amount == score → amount=0, score=0
+        ObjectNode eq = ms.get(1).apply().apply(MAPPER.createObjectNode());
+        assertThat(eq.get("amount").asLong()).isEqualTo(0L);
+        assertThat(eq.get("score").asLong()).isEqualTo(0L);
+
+        // gt arm: amount > score → amount=1, score=0
+        ObjectNode gt = ms.get(2).apply().apply(MAPPER.createObjectNode());
+        assertThat(gt.get("amount").asLong()).isEqualTo(1L);
+        assertThat(gt.get("score").asLong()).isEqualTo(0L);
+    }
+
+    @Test
+    void joinGuards_stringEmitsTwoArms() {
+        List<BodyShape.BodyField> fields = List.of(
+                new BodyShape.BodyField("a", "java.lang.String"),
+                new BodyShape.BodyField("b", "java.lang.String"));
+        ConstraintExtractor.JoinGuard guard = new ConstraintExtractor.JoinGuard(
+                "C", "m", 1, "a", "equals", "b", ConstraintExtractor.JoinKind.STRING);
+
+        List<InputMutator.Mutation> ms = InputMutator.joinGuards(fields, List.of(guard));
+
+        assertThat(ms).hasSize(2);
+
+        // eq arm: a == b → both "x"
+        ObjectNode eq = ms.get(0).apply().apply(MAPPER.createObjectNode());
+        assertThat(eq.get("a").asText()).isEqualTo("x");
+        assertThat(eq.get("b").asText()).isEqualTo("x");
+
+        // ne arm: a != b → "x" and "y"
+        ObjectNode ne = ms.get(1).apply().apply(MAPPER.createObjectNode());
+        assertThat(ne.get("a").asText()).isEqualTo("x");
+        assertThat(ne.get("b").asText()).isEqualTo("y");
+    }
+
+    @Test
+    void joinGuards_skipWhenFieldMissing() {
+        // guard refs "amount" and "score" but fields only has "amount"
+        List<BodyShape.BodyField> fields = List.of(
+                new BodyShape.BodyField("amount", "java.lang.Integer"));
+        ConstraintExtractor.JoinGuard guard = new ConstraintExtractor.JoinGuard(
+                "C", "m", 1, "amount", ">", "score", ConstraintExtractor.JoinKind.NUMERIC);
+
+        assertThat(InputMutator.joinGuards(fields, List.of(guard))).isEmpty();
     }
 }

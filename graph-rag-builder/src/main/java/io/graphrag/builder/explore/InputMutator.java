@@ -94,6 +94,7 @@ public final class InputMutator {
                 target.fieldConstraints(), target.conditionBounds(), target.stringCandidates()));
         all.addAll(enumValues(target.mutableFields(), target.enumConstants()));
         all.addAll(joint(target.mutableFields(), target.conjunctions()));
+        all.addAll(joinGuards(target.mutableFields(), target.joinGuards()));
         all.addAll(interField(target.mutableFields(), target.interFieldTuples()));
         all.addAll(interFieldReal(target.mutableFields(), target.realInterFieldTuples()));
         all.addAll(realBounds(target.mutableFields(), target.realBounds()));
@@ -220,6 +221,45 @@ public final class InputMutator {
             }));
         }
         return out;
+    }
+
+    /** 필드-대-필드 비교 가드(JoinGuard)를 lt/eq/gt(NUMERIC) 또는 eq/ne(STRING) 변이 쌍으로 전개. */
+    public static List<Mutation> joinGuards(List<BodyShape.BodyField> fields,
+                                            List<ConstraintExtractor.JoinGuard> guards) {
+        HashSet<String> names = new HashSet<>();
+        for (BodyShape.BodyField f : fields) { names.add(f.name()); }
+        List<Mutation> out = new ArrayList<>();
+        for (ConstraintExtractor.JoinGuard g : guards) {
+            if (!names.contains(g.leftRef()) || !names.contains(g.rightRef())) { continue; }
+            String base = "joinguard-" + g.leftRef() + "-" + g.op() + "-" + g.rightRef() + "-";
+            if (g.kind() == ConstraintExtractor.JoinKind.NUMERIC) {
+                out.add(numMutation(base + "lt", g.leftRef(), 0L, g.rightRef(), 1L));
+                out.add(numMutation(base + "eq", g.leftRef(), 0L, g.rightRef(), 0L));
+                out.add(numMutation(base + "gt", g.leftRef(), 1L, g.rightRef(), 0L));
+            } else {
+                out.add(strMutation(base + "eq", g.leftRef(), "x", g.rightRef(), "x"));
+                out.add(strMutation(base + "ne", g.leftRef(), "x", g.rightRef(), "y"));
+            }
+        }
+        return out;
+    }
+
+    private static Mutation numMutation(String name, String leftField, long leftVal,
+                                        String rightField, long rightVal) {
+        return new Mutation(name, body -> {
+            JsonPaths.putPath(body, leftField, leftVal);
+            JsonPaths.putPath(body, rightField, rightVal);
+            return body;
+        });
+    }
+
+    private static Mutation strMutation(String name, String leftField, String leftVal,
+                                        String rightField, String rightVal) {
+        return new Mutation(name, body -> {
+            JsonPaths.putPath(body, leftField, leftVal);
+            JsonPaths.putPath(body, rightField, rightVal);
+            return body;
+        });
     }
 
     private static long satisfy(String op, long literal) {
