@@ -6,6 +6,7 @@ import io.graphrag.builder.index.BodyShape;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
+import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,7 +135,8 @@ public class ReflectiveBodyInstantiator {
 
     private URL[] buildFatJarClasspath(Path sutJar) throws Exception {
         String cacheKey = sha256Key(sutJar);
-        Path extractDir = Path.of(System.getProperty("java.io.tmpdir"), "grb-instancio", cacheKey);
+        // Fix 2: user-private cache (user.home/.cache) — not world-writable shared tmp (CWE-377)
+        Path extractDir = Path.of(System.getProperty("user.home"), ".cache", "grb-instancio", cacheKey);
         Path doneMarker = extractDir.resolve(".done");
 
         if (!Files.exists(doneMarker)) {
@@ -170,16 +172,28 @@ public class ReflectiveBodyInstantiator {
                     }
                     if (name.startsWith("BOOT-INF/classes/")) {
                         String rel = name.substring("BOOT-INF/classes/".length());
-                        Path target = classesDir.resolve(rel);
+                        Path target = classesDir.resolve(rel).normalize();
+                        // Fix 1: Zip Slip guard (CWE-22) — skip entries that escape the target dir
+                        if (!target.startsWith(classesDir.normalize())) {
+                            log.debug("zip-slip entry skipped: {}", name);
+                            continue;
+                        }
                         Files.createDirectories(target.getParent());
+                        Files.deleteIfExists(target);
                         try (InputStream in = zf.getInputStream(e)) {
-                            Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(in, target);
                         }
                     } else if (name.startsWith("BOOT-INF/lib/") && name.endsWith(".jar")) {
                         String jarName = name.substring(name.lastIndexOf('/') + 1);
-                        Path target = libDir.resolve(jarName);
+                        Path target = libDir.resolve(jarName).normalize();
+                        // Fix 1: Zip Slip guard for lib entries
+                        if (!target.startsWith(libDir.normalize())) {
+                            log.debug("zip-slip entry skipped: {}", name);
+                            continue;
+                        }
+                        Files.deleteIfExists(target);
                         try (InputStream in = zf.getInputStream(e)) {
-                            Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                            Files.copy(in, target);
                         }
                     }
                 }
@@ -252,6 +266,21 @@ public class ReflectiveBodyInstantiator {
                 public FieldVisitor visitField(int access, String name, String descriptor,
                         String signature, Object value) {
                     return new FieldVisitor(Opcodes.ASM9) {
+                        @Override
+                        public org.objectweb.asm.AnnotationVisitor visitAnnotation(String annDesc, boolean visible) {
+                            if (DANGEROUS_JACKSON_DESCS.contains(annDesc)) {
+                                found[0] = true;
+                            }
+                            return null;
+                        }
+                    };
+                }
+
+                // Fix 4: catch method-level @JsonSerialize (e.g. on getters)
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor,
+                        String signature, String[] exceptions) {
+                    return new MethodVisitor(Opcodes.ASM9) {
                         @Override
                         public org.objectweb.asm.AnnotationVisitor visitAnnotation(String annDesc, boolean visible) {
                             if (DANGEROUS_JACKSON_DESCS.contains(annDesc)) {
