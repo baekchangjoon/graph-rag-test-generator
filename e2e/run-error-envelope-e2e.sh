@@ -37,6 +37,12 @@ rm -rf "$OUT"; mkdir -p "$OUT"
 echo "=== [1/4] error-envelope-service jar 빌드 ==="
 "$GW" -q :samples:error-envelope-service:bootJar
 
+JAR="$SAMPLE/build/libs/error-envelope-service.jar"
+if [ ! -f "$JAR" ]; then
+    echo "ERROR: error-envelope-service.jar not found at $JAR" >&2
+    exit 1
+fi
+
 echo "=== [2/4] 도구 1: 분기 탐색 + graph 빌드 (classifier 플래그 ON) ==="
 "$GW" -q :graph-rag-builder:run --args="build \
   --sut-src $SAMPLE/src/main/java \
@@ -84,13 +90,13 @@ echo "=== [4/4] 도구 2: 테스트 생성 + 에러 계약 단언 검증 (AC2) =
   --graph $OUT \
   --out $OUT/generated"
 
-GEN_JAVA="$(find "$OUT/generated" -name "*.java")"
-[ -n "$GEN_JAVA" ] || { echo "AC2 FAIL: 생성된 .java 없음"; exit 1; }
-echo "생성된 테스트: $GEN_JAVA"
+mapfile -t GEN_JAVA_FILES < <(find "$OUT/generated" -name "*.java")
+[ "${#GEN_JAVA_FILES[@]}" -gt 0 ] || { echo "AC2 FAIL: 생성된 .java 없음"; exit 1; }
+echo "생성된 테스트: ${GEN_JAVA_FILES[*]}"
 
 ac2_fail=0
 for needle in '.statusCode(200)' '.body("errorCode", equalTo("404"))' 'org.hamcrest.Matchers.containsString("BizException")'; do
-  if ! grep -qF "$needle" $GEN_JAVA; then
+  if ! grep -qF "$needle" "${GEN_JAVA_FILES[@]}"; then
     echo "AC2 FAIL: 생성 테스트에 누락 → $needle"
     ac2_fail=1
   fi
