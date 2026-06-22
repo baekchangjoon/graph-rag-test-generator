@@ -160,7 +160,8 @@ public final class BuilderCli {
                 requestHeaders,
                 endpointSelectors,
                 traceMode(options.get("--trace-mode")),
-                classifierConfig);
+                classifierConfig,
+                options.containsKey("--no-incremental") || options.containsKey("--reindex"));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",

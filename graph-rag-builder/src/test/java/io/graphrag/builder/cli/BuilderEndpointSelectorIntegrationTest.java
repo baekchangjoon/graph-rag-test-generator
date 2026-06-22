@@ -40,7 +40,7 @@ class BuilderEndpointSelectorIntegrationTest {
                 java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
                 null, null, authConfig, false, true, null,
                 null, io.graphrag.model.RequestHeaders.empty(),
-                List.of("POST /api/orders"), "none"));   // 단일 엔드포인트만 탐색, base 없음 → 부분 그래프
+                List.of("POST /api/orders"), "none", false));   // 단일 엔드포인트만 탐색, base 없음 → 부분 그래프
 
         // 1) scoped facts: 탐색된 path는 전부 선택한 엔드포인트(post-api-orders) 소속이어야 한다.
         assertThat(asset.paths()).isNotEmpty();
