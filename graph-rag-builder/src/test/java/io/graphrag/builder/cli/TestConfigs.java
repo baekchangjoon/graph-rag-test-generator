@@ -12,7 +12,7 @@ class TestConfigs {
     static BuildConfig minimal(Path src, Path out, boolean noInc) {
         return new BuildConfig(src, src.resolveSibling("resources"), null, out,
                 "sut", "unknown", null, 0, null, null, null, null, null, null,
-                false, false, null, null, null, null, null, noInc);
+                false, false, null, null, null, null, null, null, noInc);
     }
 
     /** src 디렉터리를 dst로 재귀 복사한다. dst가 없으면 생성한다. */

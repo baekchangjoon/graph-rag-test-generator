@@ -50,7 +50,7 @@ class OtelKafkaBuildIntegrationTest {
                 Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
                 null, null, authConfig, false, true, null,
                 null, io.graphrag.model.RequestHeaders.empty(), List.of(),
-                "otel", false));   // ← OTEL SQL 캡처 모드
+                "otel", null, false));   // ← OTEL SQL 캡처 모드
 
         // consumer 인덱싱 + happy 교환 존재
         assertThat(asset.kafkaConsumers()).extracting(c -> c.id()).contains("kafka-order-events");
