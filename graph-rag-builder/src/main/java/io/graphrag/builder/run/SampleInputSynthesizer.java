@@ -166,6 +166,8 @@ public class SampleInputSynthesizer {
             JsonPaths.putPath(body, field.name(), value.longValue());
         } else if (value.isDouble() || value.isFloatingPointNumber()) {
             JsonPaths.putPath(body, field.name(), value.doubleValue());
+        } else if (value.isBoolean()) {
+            JsonPaths.putPath(body, field.name(), value.booleanValue());
         } else {
             JsonPaths.putPath(body, field.name(), value.asText());
         }

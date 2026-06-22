@@ -41,4 +41,20 @@ class SampleInputSynthesizerNestedTest {
         // FK 카브아웃: shipTo.userId는 "Id"로 끝나지만 dot 포함 → FK probe row 없어야 함
         assertThat(result.seeds()).isEmpty();
     }
+
+    @Test
+    void nestedBooleanFieldEmitsBooleanNode() {
+        BodyShape shape = new BodyShape("com.example.Dto", List.of(
+                new BodyShape.BodyField("flags.active", "java.lang.Boolean")
+        ));
+
+        SynthesizedInput result = new SampleInputSynthesizer().synthesize(shape, List.of());
+
+        ObjectNode body = (ObjectNode) result.body();
+
+        // 중첩 boolean: flags.active → body["flags"]["active"] 는 JSON boolean (string "true" 아님)
+        assertThat(body.has("flags")).isTrue();
+        assertThat(body.get("flags").get("active").isBoolean()).isTrue();
+        assertThat(body.get("flags").get("active").booleanValue()).isTrue();
+    }
 }

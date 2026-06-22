@@ -26,10 +26,11 @@ public final class JsonPaths {
         return dot < 0 ? path : path.substring(dot + 1);
     }
 
-    public static void putPath(ObjectNode root, String path, long value)   { descend(root, path).put(leaf(path), value); }
-    public static void putPath(ObjectNode root, String path, int value)    { descend(root, path).put(leaf(path), value); }
-    public static void putPath(ObjectNode root, String path, double value) { descend(root, path).put(leaf(path), value); }
-    public static void putPath(ObjectNode root, String path, String value) { descend(root, path).put(leaf(path), value); }
+    public static void putPath(ObjectNode root, String path, long value)    { descend(root, path).put(leaf(path), value); }
+    public static void putPath(ObjectNode root, String path, int value)     { descend(root, path).put(leaf(path), value); }
+    public static void putPath(ObjectNode root, String path, double value)  { descend(root, path).put(leaf(path), value); }
+    public static void putPath(ObjectNode root, String path, boolean value) { descend(root, path).put(leaf(path), value); }
+    public static void putPath(ObjectNode root, String path, String value)  { descend(root, path).put(leaf(path), value); }
     public static void putNullPath(ObjectNode root, String path) { descend(root, path).putNull(leaf(path)); }
     public static void removePath(ObjectNode root, String path) {
         String[] seg = path.split("\\.");
