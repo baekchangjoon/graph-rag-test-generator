@@ -281,3 +281,31 @@ A PASS 시: `ExplorationOrchestrator` 상위에 엔드포인트 워커 풀(병�
 - `OTEL_JAR`: `~/github_tainted-spring/tainted-spring-platform/jacoco/opentelemetry-javaagent.jar` (OTel 2.11.0)
 - `PJACOCO_JAR`: `~/github_parallel-per-test-coverage/parallel-per-test-coverage/agent/build/libs/pjacoco-agent.jar`
 - `JACOCOCLI_JAR`: `~/.m2/repository/org/jacoco/org.jacoco.cli/0.8.11/org.jacoco.cli-0.8.11-nodeps.jar`
+
+---
+
+### V3(a) 결과 — 2026-06-23 (REQ-004)
+
+| 항목 | 측정값 |
+|---|---|
+| **vanilla 집합 크기** | 3 (keys: `35763958eb8eef2d`, `e1859cc39e870bce`, `3a35ec74ec7027b`) |
+| **pjacoco 집합 크기** | 3 (keys: `64fa3e5a98eb12d7`, `be0bf6035ce60b56`, `d42c806d501d3b11`) |
+| **집합 교집합** | **0** — 두 집합의 교집합 없음 |
+| **일치 여부** | ❌ **불일치** |
+| **arm 분리 패턴** | 일치 (vanilla: req-0=req-2, pjacoco: req-0=req-2 — 동일한 3개 distinct path 구분) |
+| **pjacoco `droppedProbes`** | 4 (per-request), `incompleteAttribution: true` |
+| **불일치 원인** | vanilla은 JwtAuthenticationFilter(pre-servlet filter)의 4개 probe를 캡처, pjacoco baggage 경로는 servlet 진입 전 스레드에 test store가 없어 해당 probe를 drop → FNV-1a 해시 전체 불일치 |
+| **classId 일치 여부** | ✅ 일치 — 두 벡터의 동일 클래스 classId(CRC64) 동일 확인 |
+| **JUnit 게이트 (V3ArmEquivalencePoc)** | ❌ FAIL: `AssertionError` — sets MISMATCH |
+
+**V3(a) 판정: FAIL** — **A architecturally incompatible (current form)**.
+
+pjacoco의 `test.id` baggage 경로(OTel 없이)는 per-request arm 분리 패턴(3 distinct paths)을 올바르게 재현하지만, pre-servlet 필터(Spring Security `JwtAuthenticationFilter`)에서 발화하는 probe를 drop하여 CoverageFingerprint 해시값이 vanilla tcpserver dump와 완전히 불일치한다. 이는 pjacoco가 설계상 servlet entry 이전 스레드에 test store를 활성화하지 않는 것에 기인한다.
+
+#### 분석 메모
+- **두 벡터의 classId(CRC64) 동일**: 계측 방식의 차이가 아닌 probe 귀속 범위 차이가 원인
+- **arm 분리 패턴은 동일**: 3 distinct paths 구분은 성공
+- **불일치의 근본 원인**: vanilla tcpserver dump는 리셋 전 ALL 스레드 probe를 수집, pjacoco baggage 경로는 servlet 진입 이후 test store가 활성화된 스레드만 귀속
+- **`incompleteAttribution: true`**: pjacoco 자체 JSON 메타데이터가 명시적으로 incomplete 귀속을 표시
+- **OTel traceKeyAutoCreate=true 경로**: OTel을 함께 부착하면 pjacoco는 OTel traceId를 key로 사용하고 start/stop testId store는 classCount=0이 됨 — V3(a) baggage 경로와는 별개의 실패 원인
+- **재논의 필요**: PoC 정책(§7 (a))에 따라 B로 자동 회귀하지 않고 사용자와 다음 방향 재논의.
