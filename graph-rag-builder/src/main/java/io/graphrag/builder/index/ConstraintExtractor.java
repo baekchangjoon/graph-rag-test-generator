@@ -57,6 +57,17 @@ public class ConstraintExtractor {
         public enum Kind { NUMERIC, ENUM_EQ, STRING_EQ }
     }
 
+    /** 필드-대-필드 비교 가드의 종류 (REQ-006, REQ-008a). */
+    public enum JoinKind { NUMERIC, STRING }
+
+    /**
+     * 양변이 모두 필드 참조인 비교식. NUMERIC: 관계 연산자(REL_OPS)의 양변이 필드이고 리터럴 없음.
+     * STRING: {@code field.equals(field)} 형태로 양변이 필드이고 문자열 리터럴 없음.
+     */
+    public record JoinGuard(String classFqn, String method, int line,
+                            String leftRef, String op, String rightRef, JoinKind kind) {
+    }
+
     /** 상태 의존 가드의 종류 (Stage 4 StateGuardOracle). */
     public enum GuardKind { TEMPORAL, ENUM }
 
@@ -205,6 +216,79 @@ public class ConstraintExtractor {
                 .thenComparing(StringEquality::method)
                 .thenComparingInt(StringEquality::line)
                 .thenComparing(StringEquality::fieldRef));
+        return out;
+    }
+
+    /**
+     * SUT 소스 전체에서 양변이 모두 필드 참조인 비교식을 추출한다 (REQ-006, REQ-008a).
+     * NUMERIC: REL_OPS의 관계 연산자이고 양변이 fieldRef != null이며 리터럴이 없는 것.
+     * STRING: {@code field.equals(field)} 형태이고 양변이 fieldRef != null이며 문자열 리터럴이 없는 것.
+     * 1회 빌드. 정렬·dedupe는 기존 패턴과 동일.
+     */
+    public List<JoinGuard> extractJoinGuards(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        List<JoinGuard> out = new ArrayList<>();
+
+        // NUMERIC: field op field (리터럴 없음)
+        for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
+            String opStr = REL_OPS.get(op.getKind());
+            if (opStr == null) {
+                continue;
+            }
+            CtExpression<?> left = op.getLeftHandOperand();
+            CtExpression<?> right = op.getRightHandOperand();
+            String leftRef = fieldRef(left);
+            String rightRef = fieldRef(right);
+            if (leftRef == null || rightRef == null) {
+                continue;
+            }
+            if (literalLong(left).isPresent() || literalLong(right).isPresent()) {
+                continue;   // 한쪽이라도 리터럴이면 Comparison 대상 — JoinGuard 아님
+            }
+            CtMethod<?> method = op.getParent(CtMethod.class);
+            CtType<?> type = op.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new JoinGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                    op.getPosition().getLine(), leftRef, opStr, rightRef, JoinKind.NUMERIC));
+        }
+
+        // STRING: field.equals(field) (문자열 리터럴 없음)
+        for (CtInvocation<?> inv : model.getElements(new TypeFilter<>(CtInvocation.class))) {
+            if (!"equals".equals(inv.getExecutable().getSimpleName())
+                    || inv.getArguments().size() != 1 || inv.getTarget() == null) {
+                continue;
+            }
+            CtExpression<?> target = inv.getTarget();
+            CtExpression<?> arg = inv.getArguments().get(0);
+            String targetRef = fieldRef(target);
+            String argRef = fieldRef(arg);
+            if (targetRef == null || argRef == null) {
+                continue;
+            }
+            if (stringLiteral(target) != null || stringLiteral(arg) != null) {
+                continue;   // 한쪽이라도 리터럴이면 StringEquality 대상 — JoinGuard 아님
+            }
+            CtMethod<?> method = inv.getParent(CtMethod.class);
+            CtType<?> type = inv.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new JoinGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                    inv.getPosition().getLine(), targetRef, "equals", argRef, JoinKind.STRING));
+        }
+
+        out.sort(Comparator.comparing(JoinGuard::classFqn)
+                .thenComparing(JoinGuard::method)
+                .thenComparingInt(JoinGuard::line)
+                .thenComparing(JoinGuard::leftRef));
         return out;
     }
 
