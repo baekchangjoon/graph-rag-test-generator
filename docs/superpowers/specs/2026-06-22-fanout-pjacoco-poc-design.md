@@ -590,33 +590,38 @@ pjacoco internal 86ms(SUT 특성)는 유지되어 petclinic보다는 여전히 �
 
 ---
 
-### REQ-010 결과 — 비동기 flush 임계경로 오버헤드 제거 — 2026-06-23
+### REQ-010 결과 — 비동기 flush 임계경로 오버헤드 제거 — 2026-06-23 (리뷰 반영 수정 2026-06-23)
 
 **설계**: flush를 `ExecutorService`(4-thread pool)로 fire-and-forget. 요청 루프는 flush 응답을
 기다리지 않음(임계경로 = request send/receive 시간만). 루프 종료 후 `Future.get()`으로 drain.
 
-**실측 수치 (petclinic host JVM, 60req, warm-up 5 버림)**:
+**측정 방법론 (리뷰 C1 반영)**:
+- 초기 측정(-17.13%)은 측정 순서 편향(measurement-order bias)에 의한 허위 음수였음:
+  warmup 5회(traceparent만) → baseline 60회 → async 60회 순서로 async 단계가 더 warm한 JVM에서 실행됨.
+- 수정: 양방향 워밍업(no-traceparent 경로 20회 + traceparent+flush 경로 20회) 후
+  **교차 측정(interleaved)** — baseline/async를 60회 번갈아 실행해 JVM drift를 평균화.
+- 수정된 honest 수치: overhead = **+1.73%** (≈ baseline, 측정 노이즈 범위).
 
-| 항목 | 실측값 | 판정 |
-|---|---|---|
-| baseline (traceparent/flush 없음) | **1427.6ms** (23.79ms/req) | — |
-| async critical-path (flush=background) | **1183.0ms** (19.72ms/req) | — |
-| 임계경로 오버헤드 vs baseline | **-17.13%** (baseline보다 빠름) | ✅ PASS (target < 5%) |
-| 동기 flush 실측 참고 (task-5b) | +15.80% ❌ | — |
-| drain 시간 (background flush 전체) | **49.8ms** (60회) | — |
-| .exec 존재 | **60/60** (missing=0, errors=0) | ✅ PASS |
-| partition 보존 | `{{0,2},{1},{3}}` distinct-paths=3 | ✅ PASS |
-| 총 exec 크기 | 36,420 bytes | 정상 |
+**실측 수치 (petclinic host JVM, 60×2회 교차 측정, 양방향 워밍업 각 20회)**:
+
+| 항목 | 초기값 (편향) | 수정값 (honest) | 판정 |
+|---|---|---|---|
+| baseline (traceparent/flush 없음) | 1427.6ms (23.79ms/req) | **1093.9ms** (18.23ms/req) | — |
+| async critical-path (flush=background) | 1183.0ms (19.72ms/req) | **1112.9ms** (18.55ms/req) | — |
+| 임계경로 오버헤드 vs baseline | -17.13% ⚠ 편향 | **+1.73%** (|overhead|=1.73%) | ✅ PASS (target \|x\| < 5%) |
+| 동기 flush 실측 참고 (task-5b) | +15.80% ❌ | — | — |
+| drain 시간 (background flush 전체) | 49.8ms | **0.1ms** | — |
+| .exec 존재 | 60/60 ✅ | **60/60** (missing=0, errors=0) | ✅ PASS |
+| partition 동등성 (async == vanilla) | non-singleton 체크만 | **{{0,2},{1},{3}} == {{0,2},{1},{3}}** | ✅ PASS |
+| 총 exec 크기 | 36,420 bytes | 36,420 bytes | 정상 |
 
 **Diary (보조)**: Docker 환경 미가동(주 게이트인 petclinic에서 결론 충분). 동기 flush +108%는
 Docker Desktop macOS bridge ~190ms + pjacoco internal 86ms 합산 결과로 기록 완료(diary-overhead-report.md).
-비동기화 시 동일 패턴으로 임계경로 오버헤드 제거 효과는 petclinic과 동일하게 적용됨. drain 시간은
-pjacoco internal 86ms × N이 병렬 스레드로 겹쳐 총 drain ~N×86ms(단일 스레드) ~ drain/FLUSH_POOL_SIZE 수준
-(예: 60req × 86ms / 4threads ≈ 1290ms). 그래도 임계경로에서 제거됐으므로 per-request 대기는 없음.
+비동기화 시 동일 패턴으로 임계경로 오버헤드 제거 효과는 petclinic과 동일하게 적용됨.
 
-**판정: REQ-010 PASS**
-- flush를 임계경로 밖으로 이동하면 per-request 오버헤드는 **-17.13%**(실질적으로 baseline과 무차별).
-- 모든 60개 `.exec` 생성 확인, partition `{{0,2},{1},{3}}` — REQ-004와 동일.
+**판정: REQ-010 PASS (수정된 honest 수치 기준)**
+- 초기 -17.13%는 측정 순서 편향(C1 리뷰 지적). 교차 측정 후 honest overhead = **+1.73%** (≈ baseline, flush 임계경로 밖).
+- 모든 60개 `.exec` 생성 확인, partition `{{0,2},{1},{3}}` — vanilla partition과 동등(하드 어서트, C2 리뷰 반영).
 - **V3b 동기 flush 오버헤드(+15.80% / +108%)는 flush *방식* 문제(튜닝 가능)이지 A의 아키텍처 한계가 아님.** A VIABLE 확정.
 - REQ-005 최종 판정: 동기 flush over-threshold → 비동기 flush 채택으로 해소. A 진행 조건 충족.
 
