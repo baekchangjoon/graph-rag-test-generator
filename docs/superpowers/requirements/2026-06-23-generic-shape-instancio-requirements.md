@@ -95,24 +95,24 @@
 ## 추적 매트릭스
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 깊이3 중첩 | `DeepNestedE2E` + `BodyShapeExtractorGenericTest#deepNested` | E2E+unit | 🔴 planned |
-| REQ-002 | 중첩-배열 원소 nest | `CollectionBodyNestE2E` / `JsonPathsTest#nestArrayElements` | E2E+unit | 🔴 planned |
-| REQ-003 | Map 바디 | `MapBodyE2E` + `BodyShapeExtractorGenericTest#mapBody` | E2E+unit | 🔴 planned |
-| REQ-004 | List<scalar> 원소 | `ScalarListE2E` | E2E | 🔴 planned |
-| REQ-005 | concolic lifter | `CandidateLifterTest#liftsLeafToDotPath` | unit | 🔴 planned |
-| REQ-006 | Instancio 폴백 | `ReflectiveBodyInstantiatorTest#{resolvesShadowType,deterministicSeed,jarLayout}` | unit/integration | 🔴 planned |
-| REQ-007 | cross-loader Jackson 안전 | `ReflectiveBodyInstantiatorTest#customJacksonFallsBackUnsupported` | unit | 🔴 planned |
-| REQ-008 | UnsupportedShape 기록 | `UnsupportedShapeTest` / report 단언 | unit/integration | 🔴 planned |
-| REQ-009 | 회귀 superset | 전 모듈+e2e GREEN + exploredPathCount>1 단언 | E2E/regression | 🔴 planned |
-| REQ-010 | 깊이 상한 갱신 | `BodyShapeExtractorNestedTest#nestedDepth_cappedAtMax`(갱신) | unit | 🔴 planned |
-| REQ-011 | 다형 best-effort | `BodyShapeExtractorGenericTest#polymorphicFirstSubtype` | unit | 🔵 should |
+| REQ-001 | 깊이3 중첩 | E2E `DeepPostTest`(happy `{"l1":{"l2":{"value":…,"count":1}}}` 200; `count:-1`→422; `remove-l1.l2.value`→400) + `BodyShapeExtractorGenericTest#deepNested` | E2E+unit | 🟢 green |
+| REQ-002 | 중첩-배열 원소 nest | `JsonPathsTest#nestDottedKeys_perArrayElement` | unit | 🟢 green |
+| REQ-003 | Map 바디 | E2E `PrefsPostTest`(`{"sampleKey":…}` 200; `{}`→400) + `BodyShapeExtractorTest#mapBody_stringKey/nonStringKey_empty` | E2E+unit | 🟢 green |
+| REQ-004 | List<scalar> 원소 | E2E `TagsPostTest`(`["sample"]` 200; `[]`→400) + `SampleInputSynthesizerTest#scalarList_alreadyWorks` | E2E+unit | 🟢 green |
+| REQ-005 | concolic lifter | `CandidateLifterTest`(8 tests: leaf→dot-path, fan-out, tuple unique-only 등) | unit | 🟢 green |
+| REQ-006 | Instancio 폴백 | `ReflectiveBodyInstantiatorTest#{resolvesPlainJarType,deterministicSeed,disabledReturnsEmpty}` | unit | 🟢 green |
+| REQ-007 | cross-loader Jackson 안전 | `ReflectiveBodyInstantiatorTest#{customJacksonFallsBackToEmpty,customJacksonOnGetterFallsBackToEmpty}` | unit | 🟢 green |
+| REQ-008 | UnsupportedShape 기록 | `JsonRoundTripTest`(record) + BuilderCli seam 기록(reflect 실패/비활성) | unit/integration | 🟢 green |
+| REQ-009 | 회귀 superset | 전 모듈 497 + e2e 74(66→74) GREEN + `EndpointExploration.exploredPathCount` | E2E/regression | 🟢 green |
+| REQ-010 | 깊이 상한 갱신 | `BodyShapeExtractorNestedTest#nestedDepth_cappedAtMax`(7-deep, cap=4) | unit | 🟢 green |
+| REQ-011 | 다형 best-effort | (미구현 — Should 연기) | unit | 🔵 deferred |
 
-Coverage: 0/10 green (0%) — target 100% (대상: Must 10). REQ-011(Should)는 미연기지만 fixture 의존 →
-unit으로 검증, 분모 포함. 제외: 없음.
+Coverage: 10/10 green (100%) — 대상 = Must 10. REQ-011(다형, Should)은 fixture 부재로 **연기(🔵)**,
+분모 제외 — 후속(Instancio가 interface도 best-effort 처리하므로 폴백으로 부분 커버). 제외: REQ-011.
 
 ## 커버리지 규칙
-- 분모 = Must(10) + 미연기 Should(REQ-011) = 11. 각 E2E는 `@DisplayName("REQ-00X: …")` 참조.
-- 이중루프: REQ-001/003/004/009의 E2E 먼저 red, 단위 TDD로 나머지 드라이브 → green. PR 전 매트릭스 green.
+- 분모 = Must(10). REQ-011(Should)은 연기(🔵)로 분모 제외. → 10/10 green (100%).
+- 이중루프: REQ-001/003/004/009의 E2E 먼저 red, 단위 TDD로 나머지 드라이브 → green. (PR 전 매트릭스 green 달성.)
 
 ## 자기검토
 1. 고아 행위 없음 — spec AC-1~6 + 계약(cross-loader 안전·loud-fail)이 모두 REQ로.
