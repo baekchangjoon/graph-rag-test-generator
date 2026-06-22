@@ -35,3 +35,4 @@ e2e/agents/
 **/.work/
 e2e/.attach*-out/
 e2e/.gateway-e2e-out/
+e2e/.error-envelope-out/

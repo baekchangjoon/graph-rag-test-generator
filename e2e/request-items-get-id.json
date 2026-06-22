@@ -1,0 +1,6 @@
+{
+  "endpointId": "get-items-id",
+  "testClassName": "ItemsGetByIdTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "DISABLED"
+}
