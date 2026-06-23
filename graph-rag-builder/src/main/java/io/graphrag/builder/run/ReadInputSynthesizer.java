@@ -268,7 +268,8 @@ public class ReadInputSynthesizer {
                 long clamped = Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, opposite));
                 return List.of((int) clamped);
             }
-            return List.of(opposite);
+            // 비정수 JDBC 타입(DECIMAL/NUMERIC/REAL/FLOAT 등)은 Long 삽입 시 타입 불일치 위험 → 변종 없음
+            return List.of();
         }
         if (guard.kind() == ConstraintExtractor.GuardKind.NUMERIC
                 && guard.comparandKind() == ConstraintExtractor.ComparandKind.PARAM) {
