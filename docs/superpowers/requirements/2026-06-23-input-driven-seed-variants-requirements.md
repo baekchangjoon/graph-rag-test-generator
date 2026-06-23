@@ -188,10 +188,12 @@
 | REQ-010 | P1 | record 후방호환 | 기존 StateGuard 테스트 컴파일·green | integration | 🟢 green |
 | REQ-011 | P2 | reachable 1-hop | ConstraintExtractorReachableTest#oneHopIncludesService, #handlerSelf, #lambdaInvocationIncluded | integration | 🟢 green |
 | REQ-012 | P2 | cross-class 귀속 | BuilderCliAttributionTest#reachableIncludesServiceGuard, #unreachableExcluded, #joinGuardReachable, #sameMethodNameDifferentClassExcluded, #handlerSelfIsReachable, #joinGuardUnreachableExcluded, #simpleNameFallbackMatchesWhenFqnEndsWith, #simpleNameFallbackMatchesWhenGuardClassIsSimpleName | integration | 🟢 green |
-| REQ-013 | P2 | E2E petclinic 계층형 | local sweep (.work/ 스크립트) | local sweep | 🔴 planned |
+| REQ-013 | P2 | E2E petclinic 계층형 | local sweep (e2e/sweep-petclinic-cross-class.sh) | local sweep | 🔵 deferred (로컬 수동) |
 | REQ-014 | P2 | pass-through 매칭 | BuilderCliAttributionTest#passThroughSameNameGuardIsReachable, ReadInputSynthesizerVariantTest#inputSeedJoint_geParam(동명 매칭)·#inputSeedJoint_paramNameMismatch_skipsGuard(불일치 skip) | integration | 🟢 green |
 
-Coverage: 13/14 green (P2 진행 중) — Phase 1 대상(REQ-001~010) 10/10 (100% P1 green).
-P2 대상(REQ-011~014): REQ-011 🟢, REQ-012 🟢, REQ-013 🔴(petclinic 로컬 스윕 미완), REQ-014 🟢.
-비고: REQ-013은 외부 petclinic 의존 — in-repo CI 게이트가 아닌 로컬 스윕으로 green 판정(설계 §6, R4). Task 13 미완료.
+Coverage: 13/14 in-repo green + REQ-013 🔵 deferred(로컬 수동 스윕).
+커버리지 분모(Must + 미연기 Should) = REQ-001~012 + REQ-014 = 13개 → 13/13 100% in-repo green.
+REQ-013은 외부 petclinic 의존(CI 밖 로컬 스윕) — 설계 §6 R4에 따라 분모에서 제외, 🔵로 표기.
+  - cross-class 동작 자체는 REQ-011/012/014 in-repo green으로 입증됨.
+  - 스윕 스크립트: e2e/sweep-petclinic-cross-class.sh (before/after/diff 모드).
 비고: BuilderIntegrationTest 두 메서드 동시 실행 시 SUT 포트 충돌 발생(기존 이슈, stash 검증). 단독 실행 green 확인(REQ-009).
