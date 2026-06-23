@@ -1546,9 +1546,28 @@ public class EndpointExplorationRunner {
                     exchange.status(),
                     exchange.responseBody(),
                     consumedFields(exchange.responseBody()),
-                    exchange.baggagePresent()));
+                    exchange.baggagePresent(),
+                    provenanceOf(exchange)));
         }
         return calls;
+    }
+
+    /**
+     * 외부 호출 응답의 출처 판정 (REQ-011). 캡처된 (method, urlPath)가 합성 stub으로 등록된 site에
+     * 대응하면 SYNTHESIZED, 아니면 CAPTURED(운영자 stub·실제 외부 응답).
+     */
+    private io.graphrag.model.CapturedHttpCall.Provenance provenanceOf(
+            io.graphrag.builder.explore.RawHttpExchange exchange) {
+        if (stubSynthesizer == null) {
+            return io.graphrag.model.CapturedHttpCall.Provenance.CAPTURED;
+        }
+        Optional<io.graphrag.builder.index.ExternalCallSite> site =
+                CallSiteMatcher.match(exchange.method(), exchange.urlPath(), callSites);
+        if (site.isPresent()
+                && stubSynthesizer.isRegistered(exchange.method(), site.get().pathLiteral())) {
+            return io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED;
+        }
+        return io.graphrag.model.CapturedHttpCall.Provenance.CAPTURED;
     }
 
     private List<String> consumedFields(String responseBody) {
