@@ -56,6 +56,9 @@ public final class AnthropicValueClient implements LlmValueClient {
         return key != null && !key.isBlank();
     }
 
+    // 핸들러 본문 egress·비용·컨텍스트 한도 방어를 위한 상한. 분기 판단엔 앞부분이면 충분.
+    private static final int MAX_SOURCE_CHARS = 4000;
+
     /** 순수: LLM 호출에 쓸 모델·온도·프롬프트 구성(테스트 가능, API 무호출). */
     static PreparedCall prepare(LlmRequest request) {
         StringBuilder user = new StringBuilder();
@@ -72,7 +75,14 @@ public final class AnthropicValueClient implements LlmValueClient {
             }
             user.append('\n');
         }
-        user.append("\nHandler method body:\n").append(request.handlerSource());
+        // 잔여 위험: 핸들러 소스는 신뢰 불가 입력(SUT가 적대적 주석을 넣을 수 있음)이나, ShapeGate가
+        // shape에 실존하는 String 필드만 통과시키고 union-only 기여라 blast radius=선택 필드 값에 한정.
+        // 내부 SUT 전용 권고로 수용. 길이는 MAX_SOURCE_CHARS로 캡(egress/비용/컨텍스트 방어).
+        String source = request.handlerSource();
+        if (source != null && source.length() > MAX_SOURCE_CHARS) {
+            source = source.substring(0, MAX_SOURCE_CHARS) + "\n…(truncated)";
+        }
+        user.append("\nHandler method body:\n").append(source);
         return new PreparedCall(request.modelId(), 0.0, SYSTEM_PROMPT, user.toString());
     }
 

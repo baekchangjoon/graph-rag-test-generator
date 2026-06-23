@@ -47,14 +47,17 @@ public final class CliValueClient implements LlmValueClient {
     @Override
     public LlmFieldValues generate(LlmRequest request) {
         try {
+            // stderr를 stdout으로 합친다 — CLI들이 ANSI/진행상황을 stderr로 흘리는데, 별도 파이프를
+            // 배수하지 않으면 버퍼가 차서 데드락(타임아웃까지 행)한다. LlmJson은 노이즈를 무시하고 {..}만 추출.
             Process proc = new ProcessBuilder(buildCommand(combinedPrompt(request)))
-                    .redirectErrorStream(false)
+                    .redirectErrorStream(true)
                     .start();
             String stdout = readAll(proc.getInputStream());
             boolean done = proc.waitFor(TIMEOUT_SEC, TimeUnit.SECONDS);
             if (!done) {
                 proc.destroyForcibly();
-                throw new IllegalStateException(binary + " -p timed out");
+                proc.waitFor(5, TimeUnit.SECONDS);   // 강제종료 후 reap(좀비/FD 누수 방지)
+                throw new IllegalStateException(binary + " timed out");
             }
             if (proc.exitValue() != 0) {
                 throw new IllegalStateException(binary + " -p exit " + proc.exitValue());
