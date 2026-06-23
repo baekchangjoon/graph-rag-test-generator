@@ -34,11 +34,14 @@ class OrderExpressApiTest {
 
     static HttpServer inventoryStub;
 
+    /** 재고 stub 응답 mode. 케이스별로 갈아끼워 switch arm을 단언한다. */
+    static volatile String stubMode = "STANDARD";
+
     @BeforeAll
     static void startInventoryStub() throws IOException {
         inventoryStub = HttpServer.create(new InetSocketAddress(0), 0);
         inventoryStub.createContext("/inventory/stock", exchange -> {
-            byte[] body = "{\"available\":50}".getBytes();
+            byte[] body = ("{\"available\":50,\"mode\":\"" + stubMode + "\"}").getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -70,6 +73,7 @@ class OrderExpressApiTest {
     void setup() {
         token = AuthHelper.obtainToken(rest);
         users.save(new User("u-express", "Express"));
+        stubMode = "STANDARD";
     }
 
     private ResponseEntity<String> post(String json) {
@@ -97,5 +101,22 @@ class OrderExpressApiTest {
         ResponseEntity<String> response =
                 post("{\"userId\":\"u-express\",\"amount\":999,\"type\":\"NORMAL\"}");
         assertThat(response.getStatusCode().value()).isEqualTo(201);
+    }
+
+    @Test
+    void expressOnlyMode_nonExpressOrder_returns400() {
+        stubMode = "EXPRESS_ONLY";
+        ResponseEntity<String> response =
+                post("{\"userId\":\"u-express\",\"amount\":10,\"type\":\"EXPRESS\"}");
+        // express 변수는 type==EXPRESS면 true → EXPRESS_ONLY arm은 통과(201)
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+    }
+
+    @Test
+    void backorderMode_returns409() {
+        stubMode = "BACKORDER";
+        ResponseEntity<String> response =
+                post("{\"userId\":\"u-express\",\"amount\":10,\"type\":\"EXPRESS\"}");
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
     }
 }
