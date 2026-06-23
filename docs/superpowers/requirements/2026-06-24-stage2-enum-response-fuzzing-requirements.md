@@ -90,19 +90,19 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | enum 변형 모든 arm 도달 | `Stage2EnumResponseFuzzingE2E#allEnumArmsReached` | E2E | 🔴 planned |
-| REQ-002 | 결정성 | `Stage2EnumResponseFuzzingE2E#deterministicAcrossRuns` | E2E | 🔴 planned |
-| REQ-003 | budget 절단 loud | `EnumResponseVariantGeneratorTest#budgetTruncationLoud` | unit | 🔴 planned |
-| REQ-004 | 변형 provenance | `Stage2EnumResponseFuzzingE2E#variantStubTaggedSynthesized` | E2E | 🔴 planned |
-| REQ-005 | 단계1 회귀 | `Stage1ExternalStubSynthesisE2E`(mode stub 갱신 후) | E2E | 🔴 planned |
-| REQ-006 | VariantGenerator | `EnumResponseVariantGeneratorTest` | unit | 🔴 planned |
-| REQ-007 | trace-id 매칭 조건 | `TraceKeyMatchForTest` | unit | 🔴 planned |
-| REQ-008 | registerVariant/removeVariant | `ExternalStubVariantTest` | integration | 🔴 planned |
-| REQ-009 | 변형 탐색 루프 | `EnumVariantReExploreTest` | integration | 🔴 planned |
-| REQ-010 | none 모드 순차 교체 | `EnumVariantNoneModeTest` | integration | 🔴 planned |
-| REQ-011 | SUT fixture + 기존 테스트 갱신 | `OrderExpressApiTest`(갱신) + order-service 빌드 | integration | 🔴 planned |
+| REQ-001 | enum 변형 모든 arm 도달 | `Stage2EnumResponseFuzzingE2E#enumVariantsReachAllArms` | E2E | 🟢 |
+| REQ-002 | 결정성 | `Stage2EnumResponseFuzzingE2E#deterministicAcrossRuns` | E2E | 🟢 |
+| REQ-003 | budget 절단 loud | `EnumResponseVariantGeneratorTest#budgetTruncationLoud` | unit | 🟢 |
+| REQ-004 | 변형 provenance | `Stage2EnumResponseFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 |
+| REQ-005 | 단계1 회귀 | `Stage1ExternalStubSynthesisE2E`(mode stub 갱신 후, 4 tests green) | E2E | 🟢 |
+| REQ-006 | VariantGenerator | `EnumResponseVariantGeneratorTest` | unit | 🟢 |
+| REQ-007 | trace-id 매칭 조건 | `TraceKeyMatchForTest` | unit | 🟢 |
+| REQ-008 | registerVariant/removeVariant | `ExternalStubVariantTest` | integration | 🟢 |
+| REQ-009 | 변형 탐색 루프 | `EnumVariantReExploreTest` | integration | 🟢 |
+| REQ-010 | none 모드 순차 교체 | `EnumVariantNoneModeTest` | integration | 🟢 |
+| REQ-011 | SUT fixture + 기존 테스트 갱신 | `OrderExpressApiTest`(갱신) + order-service 빌드 | integration | 🟢 |
 
-Coverage: 0/11 green (0%) — target 100% (대상: Must 9 + Should 2, 모두 미연기). Won't/deferred 없음.
+Coverage: 11/11 green (100%) — target 100% (대상: Must 9 + Should 2, 모두 미연기). Won't/deferred 없음.
 
 ## 단계 경계 (이 명세에서 제외 — 🔵 out-of-scope)
 
