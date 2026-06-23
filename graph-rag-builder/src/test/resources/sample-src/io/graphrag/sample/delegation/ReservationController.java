@@ -21,4 +21,15 @@ public class ReservationController {
     public List<String> listReservations(int minNights) {
         return service.list(minNights);
     }
+
+    /**
+     * 람다/스트림 내부 invocation 포함 확인용.
+     * stream().filter() 람다 안에서 service.matches()를 호출한다.
+     * reachableMethods 결과에 (ReservationService, "matches")가 포함되어야 한다.
+     */
+    public List<String> listFiltered(int minNights) {
+        return service.list(minNights).stream()
+                .filter(r -> service.matches(r, minNights))
+                .toList();
+    }
 }

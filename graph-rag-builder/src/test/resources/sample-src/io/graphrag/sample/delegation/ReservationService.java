@@ -15,4 +15,8 @@ public class ReservationService {
     public String getById(long id) {
         return "";
     }
+
+    public boolean matches(String reservation, int minNights) {
+        return !reservation.isEmpty() && minNights > 0;
+    }
 }

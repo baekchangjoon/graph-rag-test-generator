@@ -151,15 +151,15 @@ public class ConstraintExtractor {
                 }
                 for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                     var executable = inv.getExecutable();
-                    String methodName = executable.getSimpleName();
                     var declaringType = executable.getDeclaringType();
-                    String typeFqn;
-                    if (declaringType != null) {
-                        String fqn = declaringType.getQualifiedName();
-                        typeFqn = (fqn != null && !fqn.isEmpty()) ? fqn.replace('$', '.') : declaringType.getSimpleName();
-                    } else {
-                        typeFqn = executable.getSimpleName(); // 미해소 fallback: simpleName
+                    if (declaringType == null) {
+                        // 타입 미해소 → 귀속 불가, skip (보수적)
+                        continue;
                     }
+                    String methodName = executable.getSimpleName();
+                    String fqn = declaringType.getQualifiedName();
+                    // noClasspath 미해소: FQN이 빈 경우 타입 simpleName 사용 (메서드명 아님)
+                    String typeFqn = (fqn != null && !fqn.isEmpty()) ? fqn.replace('$', '.') : declaringType.getSimpleName();
                     result.add(new AbstractMap.SimpleEntry<>(typeFqn, methodName));
                 }
             }
