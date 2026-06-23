@@ -532,7 +532,12 @@ mindgraph Kafka consumer(REQ-007, 72 probes / consumer 58 probes) 양쪽에 귀�
 
 #### **최종 판정: 전략 A (pjacoco 단일 SUT fan-out) 아키텍처적으로 실현 가능**
 
-**A VIABLE — 10/10 게이트 통과 (V3b 오버헤드는 REQ-010 비동기 flush로 해소)**
+**A VIABLE — 11/11 게이트 통과 (격리 정확·비용 작음·실제 speedup 3.72x 확인)**
+
+> **갱신 2026-06-23 (REQ-011):** 병렬화의 실제 목적(속도향상)을 실측 — 순차 대비 **P=8에서 3.72x
+> speedup**(1975ms→531ms). flush 큐는 경량 SUT에서 따라잡고(drain 1ms), 무거운 SUT는 flush-pool
+> ≈ ceil(요청율×flush비용) 규칙으로 사이징(diary류 86ms flush → ~23스레드). "병렬이 더 느려진 게
+> 아니라 더 빨라진다"가 숫자로 확정됨 — 앞서 측정한 +1.73%는 *격리 세금*이지 속도 손실이 아니다.
 
 > **갱신 2026-06-23 (REQ-010):** 아래 "열린 항목"이던 V3(b) 동기 flush 오버헤드(+15.8%)는
 > **비동기 flush 검증(REQ-010)으로 해소**됐다 — flush를 요청 임계경로 밖(백그라운드)으로 옮기면
@@ -673,4 +678,12 @@ P=2→4: 3.30/2.33 = 1.42x 증가. P=4→8: 3.72/3.30 = 1.13x 증가 (SUT/Tomcat
 - heavy-flush 시뮬레이션으로 sized-pool이 small-pool 대비 drain 47x 단축(154ms vs 7254ms).
 - PoC 전체 11/11 게이트 green. **A VIABLE 최종 확정**.
 
-상세: `.superpowers/sdd/task-11-report.md`
+**측정 정직성 caveat (리뷰 반영)**: ① 보고된 "queue max 17/152"는 executor의 순수 backlog가 아니라
+**in-flight + 큐 대기 flush 합산(pending)** 수다 — "flush NOT bottleneck" 결론은 큐 깊이가 아니라
+**drain 1ms** 사실로 직접 입증된다(라벨 오해 주의). ② 측정 순서가 P=1→2→4→8 고정이라 순서 편향
+가능성이 있으나, 워밍업+3회 중앙값으로 완화했고 편향 방향은 오히려 speedup을 **보수적으로**
+보고하는 쪽(실제 ≥3.72x)이다. ③ P=1은 "단일 스레드가 8개 워커 루프를 순차 실행"이며 총 요청
+수(160)는 순차·병렬 동일 — 비교 공정(순차/병렬 per-request 작업 동일: 동일 traceparent + 동일
+비동기 flush). 리뷰 최종 판정 = **SOUND**(인위적 부풀림 경로 없음).
+
+상세: `.superpowers/sdd/task-11-report.md`(스크래치, 브랜치 미포함)
