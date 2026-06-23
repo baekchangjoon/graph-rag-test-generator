@@ -189,7 +189,7 @@
 | REQ-011 | P2 | reachable 1-hop | ConstraintExtractorReachableTest#oneHopIncludesService, #handlerSelf, #lambdaInvocationIncluded | integration | 🟢 green |
 | REQ-012 | P2 | cross-class 귀속 | BuilderCliAttributionTest#reachableIncludesServiceGuard, #unreachableExcluded, #joinGuardReachable, #sameMethodNameDifferentClassExcluded, #handlerSelfIsReachable, #joinGuardUnreachableExcluded, #simpleNameFallbackMatchesWhenFqnEndsWith, #simpleNameFallbackMatchesWhenGuardClassIsSimpleName | integration | 🟢 green |
 | REQ-013 | P2 | E2E petclinic 계층형 | local sweep (.work/ 스크립트) | local sweep | 🔴 planned |
-| REQ-014 | P2 | pass-through 매칭 | BuilderCliAttributionTest#passThroughSameNameGuardIsReachable, ReadInputSynthesizerVariantTest#inputSeedJoint_paramNameMismatch_fallsBackToProbeId | integration | 🟢 green |
+| REQ-014 | P2 | pass-through 매칭 | BuilderCliAttributionTest#passThroughSameNameGuardIsReachable, ReadInputSynthesizerVariantTest#inputSeedJoint_geParam(동명 매칭)·#inputSeedJoint_paramNameMismatch_skipsGuard(불일치 skip) | integration | 🟢 green |
 
 Coverage: 13/14 green (P2 진행 중) — Phase 1 대상(REQ-001~010) 10/10 (100% P1 green).
 P2 대상(REQ-011~014): REQ-011 🟢, REQ-012 🟢, REQ-013 🔴(petclinic 로컬 스윕 미완), REQ-014 🟢.
