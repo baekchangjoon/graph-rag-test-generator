@@ -264,3 +264,13 @@ Task 8에서 E2E가 처음엔 SUT HTTP 타임아웃·arm 미도달로 red였다.
 
 E2E 결과: `Stage2EnumResponseFuzzingE2E` 3/3 green(REQ-001 3 arm, REQ-002 결정성, REQ-004
 SYNTHESIZED), `Stage1ExternalStubSynthesisE2E` 4/4 green(REQ-005 회귀). 매트릭스 11/11.
+
+4. **Task 9 전체 회귀에서 추가 발견 — Spoon enum-switch NPE (REQ-005 회귀)** — Task 1에서
+   `OrderController.create`에 추가한 enum `switch`(arrow case 라벨)가 Spoon no-classpath
+   pretty-printer의 `visitCtCase`에서 `CtFieldAccess.getTarget()==null` NPE를 유발 →
+   `HandlerSourceExtractor.extract`가 던진 NPE가 `LlmOracle.analyze`→`BuilderCli.build`를
+   중단시켜 `LlmOracleE2E`(LLM 오라클 활성 빌드)가 깨졌다. switch는 Stage2 E2E의 line-56 3-arm
+   tableswitch 단언에 필요하므로 SUT를 if/else로 바꾸지 않고, `HandlerSourceExtractor.extract`의
+   `toString()`을 try/catch로 흡수(한 핸들러 인쇄 실패 → 빈 문자열, 빌드·다른 핸들러·LLM 오라클
+   정상). `CouponController` 등 추출은 무영향 → `LlmOracleE2E` 2/2 green 복구. (방어적 일반 수정:
+   enum switch를 가진 어떤 SUT 핸들러도 더 이상 빌드를 깨지 않는다.)
