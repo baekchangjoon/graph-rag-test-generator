@@ -52,6 +52,7 @@ class BuilderIntegrationTest {
         // auth 추가 + GET read-path 활성화로 인덱싱되는 엔드포인트 (id 정렬 순)
         assertThat(asset.endpoints()).extracting(e -> e.id())
                 .containsExactly("delete-api-bookings-id", "get-api-bookings-id",
+                        "get-api-bookings-id-eligibility",
                         "get-api-orders", "get-api-orders-id",
                         "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings",
@@ -377,6 +378,68 @@ class BuilderIntegrationTest {
         // 실행되면 그 클래스 분기가 run-wide covered 집합(coveredAppClasses)에 들어와야 한다.
         // HTTP 탐색만 집계하던 회귀로 되돌아가면 consumer 클래스가 빠져 FAIL.
         assertThat(report).contains("io.graphrag.sample.orders.OrderEventConsumer");
+    }
+
+    /**
+     * REQ-009: NUMERIC 파라미터 가드 입력-주도 시드 변종 — 양arm E2E (red).
+     *
+     * <p>GET /api/bookings/{id}/eligibility?minNights={n} 핸들러는 저장된 행의 nights 값이 minNights
+     * 이상이면 200, 미만이면 404를 반환한다. 빌더가 이 GE(>=) 가드를 검출하고 두 시드 변종을 생성하면:
+     * <ul>
+     *   <li>nights=V 행 → expectedStatus 200 path (eligible arm)</li>
+     *   <li>nights=V-1 행 → expectedStatus 404 path (ineligible arm)</li>
+     * </ul>
+     * 두 path의 requiredSeedIds는 서로 다른 PK를 가리켜야 한다(격리 단언).
+     *
+     * <p>NUMERIC 가드 검출·변종 미구현 단계에서 반드시 FAIL해야 한다(red). 약화/스텁/주석 금지.
+     */
+    @Test
+    void eligibilityNumericTwoArms() throws Exception {
+        Path sutSrc = Path.of(System.getProperty("sut.src"));
+        Path sutJar = Path.of(System.getProperty("sut.jar"));
+        Path sutResources = sutSrc.resolveSibling("resources");
+
+        AuthConfig authConfig = new AuthConfig(
+                "/api/auth/login", "admin", "password",
+                "token", "Authorization", "Bearer", java.util.List.of());
+
+        GraphAsset asset = BuilderCli.build(new BuildConfig(
+                sutSrc, sutResources, sutJar, out,
+                "order-service", "test",
+                new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app"),
+                60, null,
+                Path.of(System.getProperty("external.stubs")),
+                java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
+                null, null, authConfig, false, true, null,
+                null, io.graphrag.model.RequestHeaders.empty(), java.util.List.of(), "none", null, false));
+
+        // eligibility 엔드포인트가 인덱싱됐는지 확인 (REQ-008 연계)
+        assertThat(asset.endpoints()).extracting(e -> e.id())
+                .contains("get-api-bookings-id-eligibility");
+
+        // 양 arm path가 각 1개씩 존재해야 한다 (REQ-009 핵심)
+        List<ExploredPath> eligibilityPaths = pathsOf(asset, "get-api-bookings-id-eligibility");
+        assertThat(eligibilityPaths.stream().map(ExploredPath::expectedStatus).distinct())
+                .as("NUMERIC GE 가드: 200(nights>=V) arm과 404(nights<V) arm이 모두 존재해야 한다")
+                .contains(200, 404);
+
+        ExploredPath arm200 = eligibilityPaths.stream()
+                .filter(p -> p.expectedStatus() == 200).findFirst()
+                .orElseThrow(() -> new AssertionError("200 arm(nights>=minNights) 없음 — NUMERIC 가드 미검출"));
+        ExploredPath arm404 = eligibilityPaths.stream()
+                .filter(p -> p.expectedStatus() == 404).findFirst()
+                .orElseThrow(() -> new AssertionError("404 arm(nights<minNights) 없음 — 변종 시드 미생성"));
+
+        // 두 arm의 requiredSeedIds가 비어 있지 않고 서로 다른 PK로 격리됐는지 단언 (REQ-009 격리 경계)
+        assertThat(arm200.requiredSeedIds())
+                .as("200 arm은 nights=V 시드를 참조해야 한다")
+                .isNotEmpty();
+        assertThat(arm404.requiredSeedIds())
+                .as("404 arm은 nights=V-1 시드를 참조해야 한다")
+                .isNotEmpty();
+        assertThat(arm200.requiredSeedIds())
+                .as("두 arm의 시드 ID는 격리된 별개 PK여야 한다 (동일 행 공유 금지)")
+                .doesNotContainAnyElementsOf(arm404.requiredSeedIds());
     }
 
     private static List<ExploredPath> pathsOf(GraphAsset asset, String endpointId) {

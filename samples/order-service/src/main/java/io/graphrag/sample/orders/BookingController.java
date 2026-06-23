@@ -126,6 +126,24 @@ public class BookingController {
     }
 
     /**
+     * NUMERIC 파라미터 가드(입력-주도 시드 변종 Phase 1): 저장된 행의 nights 값이 minNights 이상이면 200,
+     * 미만이면 404. 빌더가 이 GE 가드를 검출하면 nights=V(200 arm)와 nights=V-1(404 arm) 두 시드 변종을
+     * 생성해야 한다. 두 시드는 서로 다른 PK의 격리된 행이어야 한다.
+     */
+    @GetMapping("/{id}/eligibility")
+    public BookingResponse eligibility(@PathVariable Long id, @RequestParam int minNights) {
+        if (id == null || id <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "id must be a positive integer");
+        }
+        Booking b = bookings.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "booking " + id + " not found"));
+        if (b.getNights() >= minNights) {
+            return toResponse(b);
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "booking " + id + " below minNights " + minNights);
+    }
+
+    /**
      * 상태머신 다중 전이 회귀 가드(작업 #5): 저장된 행의 status enum 값에 따라 세 arm(200/409/410)으로 갈린다.
      * 각 상태가 명시 == 비교라 빌더가 EQ 가드를 추출하고 각 상태 변종 시드로 세 arm을 모두 캡처해야 한다
      * (다중 변종 미적용으로 되돌리면 happy 상태 1 arm만 → 회귀 시 FAIL).
