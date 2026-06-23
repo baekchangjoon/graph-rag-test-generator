@@ -72,6 +72,12 @@ public class ConstraintExtractor {
     public enum GuardKind { TEMPORAL, ENUM }
 
     /**
+     * 비교 피연산자(comparand)의 종류. LITERAL: 리터럴 상수(숫자·문자열·boolean); PARAM: 요청 파라미터/지역변수.
+     * StateGuard의 op/comparandKind/comparand 3필드가 채워질 때 사용 (BOOLEAN/NULLITY/NUMERIC 검출 — 다음 task).
+     */
+    public enum ComparandKind { LITERAL, PARAM }
+
+    /**
      * 저장된(시드된) 단일 행 상태로 분기하는 가드. by-id 엔드포인트의 양 arm을 열기 위한 대체 시드
      * 변종 합성의 근거 (docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md).
      * <ul>
@@ -81,10 +87,20 @@ public class ConstraintExtractor {
      *       negatedConstants={A…}(NE 정렬) + positiveConstants={B…}(EQ 정렬). 대체 시드 변종은 EQ 각 상수
      *       (그 == arm) + NE 잔여 상수 + (positive/negated 밖) 잔여 1개(else arm)로 다중 전이 arm을 연다.</li>
      * </ul>
+     * <p>op/comparandKind/comparand: BOOLEAN/NULLITY/NUMERIC 가드에서 채워지는 확장 필드. TEMPORAL/ENUM에서는 null.
      */
     public record StateGuard(String classFqn, String method, int line, String column,
                              GuardKind kind, String enumType,
-                             List<String> negatedConstants, List<String> positiveConstants) {
+                             List<String> negatedConstants, List<String> positiveConstants,
+                             String op, ComparandKind comparandKind, String comparand) {
+        /** 후방호환 8-arg(op/comparandKind/comparand 없음 — null 위임). */
+        public StateGuard(String classFqn, String method, int line, String column,
+                          GuardKind kind, String enumType,
+                          List<String> negatedConstants, List<String> positiveConstants) {
+            this(classFqn, method, line, column, kind, enumType, negatedConstants, positiveConstants,
+                    null, null, null);
+        }
+
         /** 후방호환 7-arg(positiveConstants 없음 — TEMPORAL/기존 NE emit·테스트 보존). */
         public StateGuard(String classFqn, String method, int line, String column,
                           GuardKind kind, String enumType, List<String> negatedConstants) {
