@@ -885,11 +885,14 @@ public class EndpointExplorationRunner {
                 for (SynthesizedInput.SeedRow row : variant.input().seeds()) {
                     Seeds.insert(connection, dbType, row);   // 변종 행(offset PK) — 기존 happy 행과 공존
                 }
-                boolean gate = variant.guard().kind() != ConstraintExtractor.GuardKind.TEMPORAL;
+                ConstraintExtractor.GuardKind gkind = variant.guard().kind();
                 ObjectNode body = (ObjectNode) variant.input().body().deepCopy();
-                for (EndpointParam param : endpoint.params()) {
-                    if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
-                        body.put(param.name(), gate);
+                if (appliesBooleanGate(gkind)) {
+                    boolean gate = booleanGateValueFor(gkind);
+                    for (EndpointParam param : endpoint.params()) {
+                        if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
+                            body.put(param.name(), gate);
+                        }
                     }
                 }
                 InvocationOutcome out = invoker.invoke(body);
@@ -916,6 +919,24 @@ public class EndpointExplorationRunner {
             }
         }
         return new VariantResult(paths, seeds, sqls);
+    }
+
+    /**
+     * TEMPORAL/ENUM 가드만 boolean QUERY param을 gate로 설정한다.
+     * BOOLEAN/NULLITY/NUMERIC 가드는 시드 컬럼 flip 또는 vbody 파라미터로 처리되므로
+     * 무관한 boolean QUERY param(예: includeStale)을 덮어쓰지 않는다.
+     */
+    static boolean appliesBooleanGate(ConstraintExtractor.GuardKind kind) {
+        return kind == ConstraintExtractor.GuardKind.TEMPORAL
+                || kind == ConstraintExtractor.GuardKind.ENUM;
+    }
+
+    /**
+     * TEMPORAL → false(예: includeStale=false), ENUM → true(예: confirm=true).
+     * appliesBooleanGate가 true인 kind에 대해서만 호출해야 한다.
+     */
+    static boolean booleanGateValueFor(ConstraintExtractor.GuardKind kind) {
+        return kind != ConstraintExtractor.GuardKind.TEMPORAL;
     }
 
     private static boolean isBooleanType(String javaType) {
