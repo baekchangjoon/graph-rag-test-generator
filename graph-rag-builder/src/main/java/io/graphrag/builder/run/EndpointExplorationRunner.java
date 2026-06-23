@@ -68,6 +68,7 @@ import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -139,7 +140,18 @@ public class EndpointExplorationRunner {
                                  List<RequiredSeed> seeds,
                                  ExplorationReport.EndpointExploration report,
                                  ExecutionDataStore cumulativeExec,
-                                 List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
+                                 List<io.graphrag.model.CapturedEventEmit> capturedEventEmits,
+                                 List<LoudFail> externalLoudFails) {
+
+        /** 7-arg 레거시 호환(외부 stub loud-fail 없음). */
+        public EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
+                              List<io.graphrag.model.CapturedHttpCall> httpCalls,
+                              List<RequiredSeed> seeds,
+                              ExplorationReport.EndpointExploration report,
+                              ExecutionDataStore cumulativeExec,
+                              List<io.graphrag.model.CapturedEventEmit> capturedEventEmits) {
+            this(paths, sql, httpCalls, seeds, report, cumulativeExec, capturedEventEmits, List.of());
+        }
     }
 
     /**
@@ -185,6 +197,7 @@ public class EndpointExplorationRunner {
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
     private Set<String> appClasses = Set.of();   // path 지문을 SUT 자체 클래스로 한정
+    private final List<LoudFail> externalLoudFails = new ArrayList<>();   // 현 endpoint의 외부 stub loud-fail
 
     /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
@@ -283,6 +296,7 @@ public class EndpointExplorationRunner {
                               Map<String, BodyShape> shapesByType,
                               List<FormFieldBinding> formBindings) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
+        externalLoudFails.clear();                        // 외부 stub loud-fail도 엔드포인트마다 초기화
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
         }
@@ -340,6 +354,34 @@ public class EndpointExplorationRunner {
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
+
+        // ---- B2: 외부 stub 합성→재탐색 루프 (REQ-008, REQ-014) ----
+        // 1차 invoke에서 외부 호출이 WireMock unmatched(404)면, 인덱싱한 응답 형상으로 minimal valid
+        // stub을 합성·등록한 뒤 같은 endpoint를 재invoke해 외부 직후 분기를 연다. 새 stub이 없으면
+        // 수렴, 상한 K=EXTERNAL_STUB_MAX_ROUNDS. stubSynthesizer가 null(httpCapture 미배선)이거나
+        // callSites가 비면 no-op.
+        if (stubSynthesizer != null && !callSites.isEmpty()) {
+            int round = 0;
+            while (round < EXTERNAL_STUB_MAX_ROUNDS) {
+                List<io.graphrag.builder.explore.RawHttpExchange> exchanges = outcome.paths().stream()
+                        .flatMap(pc -> pc.httpExchanges().stream())
+                        .toList();
+                StubSynthesisResult synth =
+                        synthesizeStubsForUnmatched(exchanges, callSites, stubSynthesizer);
+                externalLoudFails.addAll(synth.loudFails());
+                if (synth.newlyRegistered() == 0) {
+                    break;   // 수렴: 새로 합성할 stub 없음
+                }
+                coverage.dump(true);                          // baseline: 직전 구간 컷(stub 적용 후 delta만)
+                cumulativeCoverage = new ExecutionDataStore(); // 리포트를 재invoke run만 반영
+                outcome = orchestrator.explore(target);
+                round++;
+                log.info("re-explored {} after synthesizing {} external stub(s) (round {}): {} path(s)",
+                        endpoint.id(), synth.newlyRegistered(), round, outcome.paths().size());
+            }
+            // 상한 도달 후에도 여전히 404로 남는 외부 호출 → stub-ineffective(REQ-010).
+            recordIneffectiveStubs(endpoint, outcome);
+        }
 
         PathsBundle bundle = buildPaths(outcome, endpoint, conditions);
 
@@ -543,7 +585,8 @@ public class EndpointExplorationRunner {
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
         return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
-                finalSeeds, report(endpoint, outcome, comparisons, drops, finalPaths), cumulativeCoverage, bundle.capturedEventEmits());
+                finalSeeds, report(endpoint, outcome, comparisons, drops, finalPaths), cumulativeCoverage,
+                bundle.capturedEventEmits(), List.copyOf(externalLoudFails));
     }
 
     /**
@@ -1392,6 +1435,98 @@ public class EndpointExplorationRunner {
             }
         }
         return result.isEmpty() ? Map.of() : java.util.Collections.unmodifiableMap(result);
+    }
+
+    /** 상한 K: 한 endpoint에서 외부 stub 합성→재invoke를 반복하는 최대 라운드 수(무한 방지). */
+    static final int EXTERNAL_STUB_MAX_ROUNDS = 3;
+
+    /**
+     * loud-fail 1건(silent 금지). reason ∈ {unwired-external-dep, unmatched-external-call,
+     * unsynthesizable-shape, stub-ineffective}. target = "&lt;METHOD path&gt;" 또는 FQN.
+     */
+    public record LoudFail(String reason, String target) {}
+
+    /** synthesizeStubsForUnmatched 결과: 새로 등록된 stub 수 + 이 라운드의 loud-fail 기록. */
+    public record StubSynthesisResult(int newlyRegistered, List<LoudFail> loudFails) {}
+
+    /**
+     * 한 라운드의 외부 교환 목록에서 unmatched(404) 호출을 합성 stub으로 등록한다 (REQ-008, REQ-010).
+     * 매칭 실패·미추출 shape는 loud-fail로 기록만 한다. 새로 등록된 stub이 0이면 루프가 수렴한다.
+     *
+     * <p>none 모드(trace-id 없음)는 직렬 전제로 1차 invoke 직후 drain 전체가 그 요청의 외부 호출이므로,
+     * 호출자는 outcome의 모든 candidate 교환을 합쳐 넘긴다. 여기서는 status==404만 unmatched로 본다.
+     */
+    static StubSynthesisResult synthesizeStubsForUnmatched(
+            List<io.graphrag.builder.explore.RawHttpExchange> exchanges,
+            List<io.graphrag.builder.index.ExternalCallSite> callSites,
+            ExternalStubSynthesizer synthesizer) {
+        int newly = 0;
+        List<LoudFail> loudFails = new ArrayList<>();
+        java.util.Set<String> seenThisRound = new java.util.HashSet<>();   // 라운드 내 중복 교환 dedupe
+        for (io.graphrag.builder.explore.RawHttpExchange ex : exchanges) {
+            if (ex.status() != 404) {
+                continue;   // 이미 매칭된(200 등) 호출은 합성 대상 아님
+            }
+            String key = ex.method().toUpperCase(java.util.Locale.ROOT) + " " + ex.urlPath();
+            if (!seenThisRound.add(key)) {
+                continue;
+            }
+            Optional<io.graphrag.builder.index.ExternalCallSite> site =
+                    CallSiteMatcher.match(ex.method(), ex.urlPath(), callSites);
+            if (site.isEmpty()) {
+                log.warn("unmatched-external-call: {} {} (no indexed call site)", ex.method(), ex.urlPath());
+                loudFails.add(new LoudFail("unmatched-external-call", ex.method() + " " + ex.urlPath()));
+                continue;
+            }
+            Optional<BodyShape> shape = site.get().responseShape();
+            if (shape.isEmpty()) {
+                log.warn("unwired-external-dep: {} {}, reason=unextractable-response-type, fallback=stage3",
+                        ex.method(), ex.urlPath());
+                loudFails.add(new LoudFail("unwired-external-dep", ex.method() + " " + ex.urlPath()));
+                continue;
+            }
+            try {
+                if (synthesizer.register(ex.method(), site.get().pathLiteral(), shape.get())) {
+                    newly++;
+                }
+            } catch (RuntimeException e) {
+                log.warn("unsynthesizable-shape: {} ({})", site.get().pathLiteral(), e.toString());
+                loudFails.add(new LoudFail("unsynthesizable-shape", site.get().pathLiteral()));
+            }
+        }
+        return new StubSynthesisResult(newly, loudFails);
+    }
+
+    /**
+     * 재탐색 수렴 후에도 여전히 404로 남는 외부 호출을 stub-ineffective로 기록한다 (REQ-010).
+     * 등록 stub이 있는데도 SUT가 합성 응답을 받지 못하는 경우(역직렬화 실패·경로 불일치 등).
+     */
+    private void recordIneffectiveStubs(Endpoint endpoint, ExplorationOutcome outcome) {
+        if (stubSynthesizer == null) {
+            return;
+        }
+        java.util.Set<String> reported = new java.util.HashSet<>();
+        for (PathCandidate pc : outcome.paths()) {
+            for (io.graphrag.builder.explore.RawHttpExchange ex : pc.httpExchanges()) {
+                if (ex.status() != 404) {
+                    continue;
+                }
+                Optional<io.graphrag.builder.index.ExternalCallSite> site =
+                        CallSiteMatcher.match(ex.method(), ex.urlPath(), callSites);
+                if (site.isEmpty() || site.get().responseShape().isEmpty()) {
+                    continue;   // 매칭/형상 없음은 이미 다른 loud-fail로 기록됨
+                }
+                if (!stubSynthesizer.isRegistered(ex.method(), site.get().pathLiteral())) {
+                    continue;   // 등록조차 안 된 건 stub-ineffective가 아님
+                }
+                String target = ex.method() + " " + ex.urlPath();
+                if (reported.add(target)) {
+                    log.warn("stub-ineffective: {} {} still 404 after synthesizing stub for {}",
+                            ex.method(), ex.urlPath(), site.get().pathLiteral());
+                    externalLoudFails.add(new LoudFail("stub-ineffective", target));
+                }
+            }
+        }
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
