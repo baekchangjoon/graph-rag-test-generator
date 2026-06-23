@@ -114,6 +114,13 @@ interface SqlCaptureBackend {
 
 ## 2. OpenAPI 기반 외부 stub seeding + 커버리지 유도형 응답 fuzzing
 
+> **상태(2026-06-23): 무-LLM 1순위 = 단계1로 커버됨.** 운영자 수동 stub 작성((가))을 없애는
+> **무-LLM·무-OpenAPI 형상-only 합성**은 [단계1](superpowers/specs/2026-06-23-stage1-external-stub-synthesis-design.md)에서
+> 구현·검증 완료(REQ-001~014 100% green). SUT 응답 DTO 형상에서 minimal valid 200 응답을 결정적으로
+> 합성해 외부-의존 경로(예: order-service `GET /inventory/stock` → 외부 직후 409 분기)를 통과시킨다.
+> 따라서 본 §2의 나머지 — **OpenAPI 기반 합성**은 **단계3**, **커버리지 유도형 응답 값 fuzzing**(enum/상태코드
+> 전환 등 외부-응답-의존 분기 전체 열기)은 **단계2**로 이연한다. 수동 `--external-stubs`는 escape hatch로 유지.
+
 ### 문제
 
 SUT가 외부 HTTP 의존(결제·재고 등)을 호출할 때:

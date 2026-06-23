@@ -31,11 +31,11 @@
 - Consumes: 빌더 CLI(`BuilderCli.main`), order-service SUT jar(`sut.jar` 시스템 프로퍼티, 기존 테스트와 동일 배선).
 - Produces: REQ-001/002/003/011의 수용 단언(현재는 red — 합성 기능 미구현).
 
-- [ ] **Step 1: 실패 E2E 작성** — `@DisplayName("REQ-001: 외부 stub 없이 형상 합성으로 외부 호출 통과")` 등 4개 메서드. `--external-stubs` 없이 order-service 빌드 → 산출 graph에서 `InventoryClient`의 `CapturedHttpCall`이 status 200 + `responseProvenance=SYNTHESIZED`인지, 외부 직후 분기 커버리지가 수동 stub 버전 이상인지 단언. (수동 stub 버전은 기존 `external.stubs` 배선 재사용.)
+- [x] **Step 1: 실패 E2E 작성** — `@DisplayName("REQ-001: 외부 stub 없이 형상 합성으로 외부 호출 통과")` 등 4개 메서드. `--external-stubs` 없이 order-service 빌드 → 산출 graph에서 `InventoryClient`의 `CapturedHttpCall`이 status 200 + `responseProvenance=SYNTHESIZED`인지, 외부 직후 분기 커버리지가 수동 stub 버전 이상인지 단언. (수동 stub 버전은 기존 `external.stubs` 배선 재사용.)
 
-- [ ] **Step 2: red 확인** — Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.cli.Stage1ExternalStubSynthesisE2E'`. Expected: FAIL(합성 미구현 → 외부 호출 404 / provenance 필드 없음). **이 테스트는 Task 12까지 red 유지(스킵·약화 금지).**
+- [x] **Step 2: red 확인** — Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.cli.Stage1ExternalStubSynthesisE2E'`. **plan 대비 변경:** 기능(Task 2~11)이 이미 배선·커밋되어 E2E는 작성 즉시 **green**(tests=4, failures=0). red 단계는 의미가 없어 생략하고 green을 직접 확인했다(약화 없음). 증거: system-out `re-explored post-api-orders after synthesizing 1 external stub(s) (round 1)`.
 
-- [ ] **Step 3: 커밋** — `git add` 테스트 파일; commit `test(e2e): 단계1 외부 stub 합성 E2E 스켈레톤(red) REQ-001~003,011`.
+- [x] **Step 3: 커밋** — commit `77b05c3` `test(e2e): 단계1 외부 stub 합성 E2E green REQ-001~003,011` (스켈레톤-red 커밋 대신 green 커밋).
 
 ---
 
@@ -346,13 +346,13 @@
 - Modify: `Stage1ExternalStubSynthesisE2E.java`(필요 시 단언 정밀화)
 - Modify: 요구사항명세 매트릭스(🟡→🟢)
 
-- [ ] **Step 1: E2E 실행** — Run: `./gradlew :graph-rag-builder:test --tests '*Stage1ExternalStubSynthesisE2E'`. Expected: PASS(Task 1의 red가 green으로). 실패 시 systematic-debugging으로 재탐색 루프/매칭/합성 점검.
+- [x] **Step 1: E2E 실행** — Run: `./gradlew :graph-rag-builder:test --tests '*Stage1ExternalStubSynthesisE2E'` → PASS(tests=4, failures=0, errors=0, time=1261s). systematic-debugging 불필요(green).
 
-- [ ] **Step 2: 결정성 확인** — 2회 실행 byte-동일 stub 단언 green.
+- [x] **Step 2: 결정성 확인** — `deterministicAcrossRuns`: 2회 빌드 합성 stub body byte-동일 + 외부-의존 status 집합 동일 green.
 
-- [ ] **Step 3: 매트릭스 갱신** — REQ-001~014 Status를 실제 테스트 결과로 🟢 갱신, Coverage 줄 N/14.
+- [x] **Step 3: 매트릭스 갱신** — REQ-001~014 Status 🟢 갱신, Coverage 14/14 green (100%).
 
-- [ ] **Step 4: 커밋** — `test(e2e): 단계1 E2E green + REQ 매트릭스 100% 갱신`.
+- [x] **Step 4: 커밋** — commit `77b05c3`(E2E green). 매트릭스/plan 갱신은 Task 13 마감 커밋에 동봉.
 
 ---
 
@@ -363,15 +363,15 @@
 **Files:**
 - Test: 기존 attach 통합 테스트, `ExternalStubNoneModeTest`
 
-- [ ] **Step 1: none 모드 테스트** — `--trace-mode none`에서 합성·통과 직렬 동작 단언(`ExternalStubNoneModeTest`).
+- [x] **Step 1: none 모드 테스트** — `ExternalStubNoneModeTest` green(tests=1, failures=0). `--trace-mode none`에서 합성 stub 200+SYNTHESIZED + 외부 직후 409 분기 도달.
 
-- [ ] **Step 2: attach 회귀** — Run: 기존 attach/HttpCapture 통합 테스트 suite. Expected: green 유지.
+- [x] **Step 2: attach 회귀** — `:graph-rag-builder:test` 전체 green에 attach/HttpCapture suite 포함(`AttachCliConfigTest`, `AttachedComposeEnvironmentTest`, `OtelHttpCaptureIntegrationTest`, `HttpCaptureServer*Test`) — 회귀 없음.
 
-- [ ] **Step 3: 전체 회귀** — Run: `./gradlew test`. Expected: 전 모듈 green(skip은 명시).
+- [x] **Step 3: 전체 회귀** — Run: `./gradlew test`. **graph-rag-builder: 117 classes, 506 tests, 0 failures/errors/skipped — 전부 green. shared-model: green.** **단, `:samples:order-service:test`에서 3/20 실패** — `OrderApiTest`(`unknownUser_returns404`, `invalidAmount_returns400`, `createOrder_returns201WithPendingStatus`), 전부 동일한 `ResourceAccessException: I/O error ... parsing HTTP/1.1 status line, receiving [garbage]`. **환경적 포트 충돌**(다른 worktree 실행이 남긴 leaked SUT JVM과 ephemeral 포트 경합)으로, **본 브랜치는 `samples/order-service`를 전혀 수정하지 않는다**(diff 확인). 격리 재실행으로 flake 확인. Stage1/builder 회귀와 무관.
 
-- [ ] **Step 4: 매트릭스 최종 확인** — REQ 대상 100% green, 각 green REQ ↔ 통과 테스트 대조.
+- [x] **Step 4: 매트릭스 최종 확인** — REQ-001~014 100% green, 각 green REQ ↔ 통과 테스트 대조 완료(매트릭스 검증 주석 참조).
 
-- [ ] **Step 5: 커밋** — `test: none 모드 + attach 회귀 + 전체 회귀 green REQ-013,014`.
+- [x] **Step 5: 커밋** — `test: none 모드 + 매트릭스/plan/로드맵 마감 REQ-013,014`(none-mode 테스트는 `1bca2ec`로 선커밋).
 
 ---
 
