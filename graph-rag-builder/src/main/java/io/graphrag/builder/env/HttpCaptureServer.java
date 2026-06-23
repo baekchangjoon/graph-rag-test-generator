@@ -56,6 +56,11 @@ public class HttpCaptureServer implements AutoCloseable {
         server.addStubMapping(mapping);
     }
 
+    /** 등록된 stub을 UUID로 제거한다(변형 stub 교체/정리용, REQ-008). server.removeStubMapping 위임. */
+    public void removeStub(java.util.UUID id) {
+        server.removeStubMapping(id);
+    }
+
     public void start(Path stubsDir) {
         start(stubsDir, null);
     }
