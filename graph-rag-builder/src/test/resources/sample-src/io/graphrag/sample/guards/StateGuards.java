@@ -15,10 +15,13 @@ public class StateGuards {
         private Long id;
         private LocalDate checkInDate;
         private BookingStatus status;
+        private boolean active;
 
         Long getId() { return id; }
         LocalDate getCheckInDate() { return checkInDate; }
         BookingStatus getStatus() { return status; }
+        boolean getActive() { return active; }
+        boolean isActive() { return active; }
     }
 
     String getById(Booking b, boolean includeStale, int id) {
@@ -68,5 +71,21 @@ public class StateGuards {
             return "x";
         }
         return "y";
+    }
+
+    /** BOOLEAN truthy 단독 getter(getActive) — 저장 행 active 컬럼, comparand="true". */
+    String byActive(Booking b) {
+        if (b.getActive()) {
+            return "on";
+        }
+        return "off";
+    }
+
+    /** BOOLEAN NOT 래핑 is-prefix getter(isActive) — comparand="false". */
+    String byNotActive(Booking b) {
+        if (!b.isActive()) {
+            return "off";
+        }
+        return "on";
     }
 }

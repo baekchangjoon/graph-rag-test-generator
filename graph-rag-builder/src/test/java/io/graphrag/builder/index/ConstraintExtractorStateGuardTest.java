@@ -1,5 +1,6 @@
 package io.graphrag.builder.index;
 
+import io.graphrag.builder.index.ConstraintExtractor.ComparandKind;
 import io.graphrag.builder.index.ConstraintExtractor.GuardKind;
 import io.graphrag.builder.index.ConstraintExtractor.StateGuard;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,48 @@ class ConstraintExtractorStateGuardTest {
                 .findFirst().orElseThrow();
         assertThat(mixed.negatedConstants()).containsExactly("PENDING");
         assertThat(mixed.positiveConstants()).containsExactly("CONFIRMED");
+    }
+
+    @Test
+    void booleanGuard_truthy() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byActive: if(b.getActive()) → BOOLEAN, column="active", op="==", comparand="true"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.BOOLEAN)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byActive"))
+                .findFirst().orElseThrow(() -> new AssertionError("BOOLEAN guard for byActive not found"));
+        assertThat(g.column()).isEqualTo("active");
+        assertThat(g.op()).isEqualTo("==");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("true");
+    }
+
+    @Test
+    void booleanGuard_negated() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byNotActive: if(!b.isActive()) → BOOLEAN, column="active", op="==", comparand="false"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.BOOLEAN)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNotActive"))
+                .findFirst().orElseThrow(() -> new AssertionError("BOOLEAN guard for byNotActive not found"));
+        assertThat(g.column()).isEqualTo("active");
+        assertThat(g.op()).isEqualTo("==");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("false");
+    }
+
+    @Test
+    void booleanGuard_isPrefix() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byNotActive uses isActive() — is-prefix getter도 column="active"으로 정규화
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.BOOLEAN)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNotActive"))
+                .findFirst().orElseThrow(() -> new AssertionError("BOOLEAN guard for byNotActive(isPrefix) not found"));
+        assertThat(g.column()).isEqualTo("active");
     }
 
     @Test
