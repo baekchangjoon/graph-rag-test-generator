@@ -281,7 +281,8 @@ public class EndpointExplorationRunner {
         this.callSites = callSites == null ? List.of() : callSites;
         this.stubSynthesizer = httpCapture == null ? null
                 : new ExternalStubSynthesizer(httpCapture,
-                        new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants));
+                        new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),
+                        httpCapture.traceKey());
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -381,6 +382,14 @@ public class EndpointExplorationRunner {
             }
             // 상한 도달 후에도 여전히 404로 남는 외부 호출 → stub-ineffective(REQ-010).
             recordIneffectiveStubs(endpoint, outcome);
+
+            // ---- 단계2: enum 응답 변형 탐색 루프 (REQ-009, REQ-010) ----
+            // B2 수렴 후, enum 필드를 가진 외부 응답 callSite의 모든 상수를 변형 stub으로 갈아끼우며
+            // 재invoke해 그 enum으로 갈리는 SUT 분기의 모든 arm을 결정적으로 연다. GRB_RESPONSE_VARIANTS=off면 skip.
+            if (baseInput != null
+                    && !"off".equalsIgnoreCase(System.getenv("GRB_RESPONSE_VARIANTS"))) {
+                runEnumResponseVariantLoops(endpoint, baseInput);
+            }
         }
 
         PathsBundle bundle = buildPaths(outcome, endpoint, conditions);
@@ -1550,6 +1559,210 @@ public class EndpointExplorationRunner {
         }
     }
 
+    // ===== 단계2: enum 응답 변형 탐색 루프 (REQ-009, REQ-010) =====
+
+    /** 변형당 endpoint 재invoke 추상화. 격리 모드는 nextTraceId()로 invoke가 쓸 trace-id를 미리 노출한다. */
+    public interface VariantInvoker {
+        /**
+         * 곧 이어질 {@link #invoke}가 사용할 trace-id. otel/sleuth(격리)면 그 요청의 trace-id,
+         * none이면 null. 격리 모드는 이 값을 registerVariant 매칭 헤더에 바인딩한다.
+         */
+        String nextTraceId();
+
+        /** 변형 body로 endpoint를 1회 invoke하고 그 요청의 per-request 커버리지 delta를 반환한다. */
+        ExecutionDataStore invoke(JsonNode variantBody) throws Exception;
+    }
+
+    /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수. */
+    public record VariantExploreResult(List<String> keptVariantLabels, int attempted) {}
+
+    /**
+     * enum 응답 변형 탐색 루프 (REQ-009, REQ-010). B2 루프 수렴 후 한 외부 응답 callSite에 대해
+     * 호출한다. 각 변형 V에 대해:
+     * <ul>
+     *   <li>격리(otel/sleuth): invoker.nextTraceId()로 다음 invoke의 trace-id T를 받아 변형 stub을
+     *       (method,path,withHeader T)로 등록 → invoke → delta. 변형 stub은 공존(trace-id 격리).</li>
+     *   <li>none: trace-id 없이 변형 stub 등록(전역-우선 priority) → invoke → delta → removeVariant로
+     *       순차 교체. 전역(단계1) stub은 보존된다.</li>
+     * </ul>
+     * 각 변형 delta는 {@code cumulative}에 OR-병합(리셋 금지)한다. 병합 전 cumulative에 없던 probe를
+     * 켠 변형(=새 arm)은 보존 목록에 담는다. budget(plan.kept().size())까지 진행한다.
+     */
+    static VariantExploreResult exploreEnumResponseVariants(
+            EnumResponseVariantGenerator.VariantPlan plan, JsonNode baselineBody,
+            String method, String pathLiteral, ExternalStubSynthesizer synthesizer,
+            boolean isolated, VariantInvoker invoker,
+            ExecutionDataStore cumulative, Set<String> appClasses) {
+        List<String> kept = new ArrayList<>();
+        int attempted = 0;
+        for (EnumResponseVariantGenerator.ResponseVariant variant : plan.kept()) {
+            JsonNode body = applyEnumOverrides(baselineBody, variant.enumOverrides());
+            String traceId = isolated ? invoker.nextTraceId() : null;
+            java.util.UUID variantId = synthesizer.registerVariant(method, pathLiteral, body, traceId);
+            try {
+                ExecutionDataStore delta = invoker.invoke(body);
+                attempted++;
+                boolean newArm = mergeAndDetectNewArm(cumulative, delta, appClasses);
+                if (newArm) {
+                    kept.add(variant.label());
+                }
+            } catch (Exception e) {   // best-effort: 변형 실패는 회귀 아님(나머지 변형 계속)
+                log.warn("enum-variant invoke failed for {} {} ({}): {}",
+                        method, pathLiteral, variant.label(), e.getMessage());
+                attempted++;
+            } finally {
+                // none(격리 불가): 다음 변형을 위해 순차 제거(전역 stub 보존). 격리 모드는 공존 유지.
+                if (!isolated) {
+                    synthesizer.removeVariant(variantId);
+                }
+            }
+        }
+        return new VariantExploreResult(kept, attempted);
+    }
+
+    /**
+     * delta를 cumulative에 probe OR-병합하고, 병합 전 cumulative에 없던 probe를 delta가 켰는지
+     * (=새 arm) 반환한다. appClasses에 속한 클래스만 본다(프레임워크/JDK 노이즈 제외).
+     */
+    private static boolean mergeAndDetectNewArm(ExecutionDataStore cumulative,
+                                                ExecutionDataStore delta, Set<String> appClasses) {
+        boolean newArm = false;
+        for (ExecutionData ed : delta.getContents()) {
+            if (!appClasses.contains(ed.getName())) {
+                continue;
+            }
+            ExecutionData existing = cumulative.get(ed.getId());
+            boolean[] deltaProbes = ed.getProbes();
+            boolean[] priorProbes = existing == null ? null : existing.getProbes();
+            for (int i = 0; i < deltaProbes.length; i++) {
+                if (deltaProbes[i] && (priorProbes == null || i >= priorProbes.length || !priorProbes[i])) {
+                    newArm = true;
+                    break;
+                }
+            }
+        }
+        for (ExecutionData ed : delta.getContents()) {
+            cumulative.put(ed);   // probe OR 병합(리셋 금지)
+        }
+        return newArm;
+    }
+
+    /** baseline JSON object를 deepCopy해 enum override 필드만 텍스트로 덮어쓴다(비-enum 필드 보존). */
+    private static JsonNode applyEnumOverrides(JsonNode baselineBody, Map<String, String> enumOverrides) {
+        JsonNode copy = baselineBody.deepCopy();
+        if (copy instanceof ObjectNode obj) {
+            enumOverrides.forEach(obj::put);
+        }
+        return copy;
+    }
+
+    /** enum 응답 변형 budget(엔드포인트당 변형 stub 시도 상한). generator budget과 동일. */
+    static final int RESPONSE_VARIANT_BUDGET = 32;
+
+    /**
+     * 등록된 외부 응답 stub 중 enum 필드를 가진 callSite마다 변형 탐색 루프를 돈다(REQ-009, REQ-010).
+     * 각 변형 stub은 trace-id로 격리(otel/sleuth) 또는 순차 교체(none)되고, endpoint를 happy 입력으로
+     * 재invoke해 SUT의 외부-응답-의존 분기 arm을 cumulativeCoverage에 OR-병합한다.
+     */
+    private void runEnumResponseVariantLoops(Endpoint endpoint, JsonNode baseInput) {
+        boolean isolated = !(httpCapture.traceKey() instanceof io.graphrag.builder.env.NoTraceKey);
+        EnumResponseVariantGenerator generator = new EnumResponseVariantGenerator();
+        ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(
+                enumConstants == null ? Map.of() : enumConstants);
+        String authHeader = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        HttpClient http = HttpClient.newHttpClient();
+        for (io.graphrag.builder.index.ExternalCallSite site : callSites) {
+            if (site.responseShape().isEmpty() || site.httpMethod().isBlank()) {
+                continue;
+            }
+            BodyShape responseShape = site.responseShape().get();
+            if (!stubSynthesizer.isRegistered(site.httpMethod(), site.pathLiteral())) {
+                continue;   // B2가 stub을 등록하지 못한 site는 변형 대상 아님(loud-fail은 이미 기록)
+            }
+            EnumResponseVariantGenerator.VariantPlan plan =
+                    generator.generate(responseShape, enumConstants == null ? Map.of() : enumConstants,
+                            RESPONSE_VARIANT_BUDGET);
+            if (plan.kept().isEmpty()) {
+                continue;   // enum 필드 없음 → 변형 0(정상, 단계1 단일 stub만)
+            }
+            JsonNode baselineResponse;
+            try {
+                baselineResponse = shapes.synthesizeBody(responseShape);
+            } catch (RuntimeException e) {   // 해소 불가 형상(중첩 DTO 등)은 변형 대상 아님(B2가 이미 loud-fail)
+                continue;
+            }
+            VariantInvoker invoker = realVariantInvoker(endpoint, baseInput, authHeader, http);
+            VariantExploreResult vr = exploreEnumResponseVariants(plan, baselineResponse,
+                    site.httpMethod(), site.pathLiteral(), stubSynthesizer,
+                    isolated, invoker, cumulativeCoverage, appClasses);
+            log.info("enum-variant loop {} for {} {}: attempted={} kept={}",
+                    endpoint.id(), site.httpMethod(), site.pathLiteral(), vr.attempted(), vr.keptVariantLabels());
+        }
+    }
+
+    /**
+     * 실 endpoint 재invoke용 VariantInvoker. nextTraceId()가 scope를 열어 그 요청의 trace-id를 노출하고
+     * (변형 stub 등록 매칭에 사용), invoke()는 동일 scope로 happy 입력을 전송해 변형 stub이 가로채는
+     * 외부 응답으로 분기를 연다. invoke()는 그 요청의 per-request 커버리지 delta를 반환하고, OR-병합·
+     * 새-arm 판정·cumulativeCoverage 누적은 호출자(exploreEnumResponseVariants)가 수행한다.
+     */
+    private VariantInvoker realVariantInvoker(Endpoint endpoint, JsonNode baseInput,
+                                              String authHeader, HttpClient http) {
+        return new VariantInvoker() {
+            private SqlCaptureBackend.Scope pendingScope;
+
+            @Override
+            public String nextTraceId() {
+                pendingScope = sqlCapture.begin();
+                return traceparentTraceId(pendingScope.requestHeaders());
+            }
+
+            @Override
+            public ExecutionDataStore invoke(JsonNode variantBody) throws Exception {
+                SqlCaptureBackend.Scope scope = pendingScope != null ? pendingScope : sqlCapture.begin();
+                pendingScope = null;
+                return sendVariantAndDumpDelta(http, endpoint, baseInput, authHeader, scope);
+            }
+        };
+    }
+
+    /**
+     * 변형 invoke 전용 전송: 직전 구간을 baseline으로 컷(coverage.dump)한 뒤 동일 scope로 happy 입력을
+     * 보내고, 이 invoke의 커버리지 delta를 반환한다. cumulativeCoverage 병합은 호출자(변형 루프 헬퍼)가
+     * 한다 — doSend와 달리 여기서는 병합하지 않는다(이중 병합 방지).
+     */
+    private ExecutionDataStore sendVariantAndDumpDelta(HttpClient http, Endpoint endpoint,
+            JsonNode input, String authHeaderValue, SqlCaptureBackend.Scope sqlScope) throws Exception {
+        coverage.dump(true);   // baseline: 직전 구간 컷 → 이 변형 invoke delta만 측정
+        String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
+        boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json")
+                .header("baggage", "test-id=explore");
+        if (authHeaderValue != null) {
+            builder.header(authConfig.headerName(), authHeaderValue);
+        }
+        Map<String, String> userHeaders = extraHeaders.resolved(Instant.now());
+        for (Map.Entry<String, String> h
+                : applyCorrelationPriority(userHeaders, sqlScope.requestHeaders()).entrySet()) {
+            builder.header(h.getKey(), h.getValue());
+        }
+        String method = endpoint.httpMethod();
+        if (method.equals("GET") || method.equals("DELETE")) {
+            builder.method(method, HttpRequest.BodyPublishers.noBody());
+        } else if (form) {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(formEncode(bodyOnly(endpoint, input))));
+        } else {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(
+                    Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
+        }
+        http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        sqlScope.drain();   // scope 닫기(SQL은 변형 루프에서 사용 안 함)
+        return coverage.dump(true);   // 이 invoke의 delta
+    }
+
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
     private List<io.graphrag.model.CapturedHttpCall> captureHttpCalls(PathCandidate candidate) {
         List<io.graphrag.model.CapturedHttpCall> calls = new ArrayList<>();
@@ -1589,6 +1802,23 @@ public class EndpointExplorationRunner {
             return io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED;
         }
         return io.graphrag.model.CapturedHttpCall.Provenance.CAPTURED;
+    }
+
+    /** traceparent 헤더(00-tid-sid-flags)에서 32-hex trace-id 필드를 추출. 없으면 null. */
+    private static String traceparentTraceId(Map<String, String> requestHeaders) {
+        for (Map.Entry<String, String> h : requestHeaders.entrySet()) {
+            if (h.getKey().equalsIgnoreCase("traceparent")) {
+                String tp = h.getValue();
+                if (tp != null) {
+                    String[] parts = tp.split("-");
+                    if (parts.length >= 2 && parts[1].length() == 32) {
+                        return parts[1];
+                    }
+                }
+                return null;
+            }
+        }
+        return null;
     }
 
     private List<String> consumedFields(String responseBody) {
@@ -1631,8 +1861,16 @@ public class EndpointExplorationRunner {
      */
     private InvocationOutcome doSend(HttpClient http, Endpoint endpoint, JsonNode input,
                                     String authHeaderValue) throws Exception {
+        return doSendWithScope(http, endpoint, input, authHeaderValue, sqlCapture.begin());
+    }
+
+    /**
+     * doSend의 scope-주입 코어. 단계2 변형 루프는 invoke 전에 scope를 열어 trace-id를 알고 변형 stub을
+     * 등록해야 하므로, 동일 scope를 send에 재사용한다(같은 trace-id로 outbound 전파·stub 매칭 일치).
+     */
+    private InvocationOutcome doSendWithScope(HttpClient http, Endpoint endpoint, JsonNode input,
+                                    String authHeaderValue, SqlCaptureBackend.Scope sqlScope) throws Exception {
         long logStart = sut.logOffset();
-        SqlCaptureBackend.Scope sqlScope = sqlCapture.begin();
         String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
         // @Controller 폼 핸들러는 application/x-www-form-urlencoded, 그 외는 JSON.
         boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
@@ -1670,22 +1908,7 @@ public class EndpointExplorationRunner {
                 HttpResponse.BodyHandlers.ofString());
         List<ParsedSql> drained = sqlScope.drain();   // flush 여유는 backend.drain() 내부로 이동
 
-        String traceId = null;
-        for (Map.Entry<String, String> h : sqlScope.requestHeaders().entrySet()) {
-            if (h.getKey().equalsIgnoreCase("traceparent")) {
-                String tp = h.getValue();
-                if (tp != null) {
-                    String[] parts = tp.split("-");
-                    if (parts.length >= 2) {
-                        String candidate = parts[1];
-                        if (candidate.length() == 32) {
-                            traceId = candidate;
-                        }
-                    }
-                }
-                break;
-            }
-        }
+        String traceId = traceparentTraceId(sqlScope.requestHeaders());
 
         ExecutionDataStore delta = coverage.dump(true);
         String coverageKey = CoverageFingerprint.of(delta, appClasses);

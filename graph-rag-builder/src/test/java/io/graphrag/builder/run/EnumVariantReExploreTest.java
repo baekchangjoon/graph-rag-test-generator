@@ -1,0 +1,191 @@
+package io.graphrag.builder.run;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.graphrag.builder.env.HttpCaptureServer;
+import io.graphrag.builder.env.OtelTraceKey;
+import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.run.EnumResponseVariantGenerator.VariantPlan;
+import org.jacoco.core.data.ExecutionData;
+import org.jacoco.core.data.ExecutionDataStore;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * REQ-009, REQ-010: enum 변형 탐색 루프(otel/sleuth 격리 모드).
+ * 각 변형 stub을 invoke 전 trace-id로 등록·invoke하고, per-variant 커버리지 delta를
+ * cumulativeCoverage에 OR-병합한다. 새 arm을 연 변형은 보존되고, 앞선 변형이 연 arm은
+ * 최종 cumulative에 남는다(리셋 금지). budget 소진까지 진행한다.
+ *
+ * <p>루프 자체는 {@link EndpointExplorationRunner#exploreEnumResponseVariants} 정적 헬퍼로
+ * 추출해 SUT/DB 없이 임베디드 HttpCaptureServer + 가짜 invoke로 검증한다.
+ */
+class EnumVariantReExploreTest {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private HttpCaptureServer server;
+
+    @AfterEach
+    void tearDown() {
+        if (server != null) {
+            server.close();
+        }
+    }
+
+    private static final String CLASS = "io/graphrag/sample/orders/OrderController";
+
+    private static final BodyShape INV_SHAPE = new BodyShape("Inv", List.of(
+            new BodyShape.BodyField("available", "Integer"),
+            new BodyShape.BodyField("mode", "p.FulfillmentMode")), false);
+
+    private static final Map<String, List<String>> ENUMS = Map.of(
+            "p.FulfillmentMode", List.of("STANDARD", "EXPRESS_ONLY", "BACKORDER"));
+
+    private ExternalStubSynthesizer synthesizer() {
+        server = new HttpCaptureServer(new OtelTraceKey());
+        server.start(null, null);
+        return new ExternalStubSynthesizer(server, new ShapeJsonSynthesizer(ENUMS), new OtelTraceKey());
+    }
+
+    private static JsonNode baseline() throws Exception {
+        return MAPPER.readTree("{\"available\":1,\"mode\":\"STANDARD\"}");
+    }
+
+    /** 단일 클래스의 probe 벡터 1개를 가진 delta. armBit 위치만 켠다. */
+    private static ExecutionDataStore deltaWithArm(int armBit) {
+        boolean[] probes = new boolean[8];
+        probes[armBit] = true;
+        ExecutionDataStore store = new ExecutionDataStore();
+        store.put(new ExecutionData(123L, CLASS, probes));
+        return store;
+    }
+
+    @Test
+    void variantsOpeningNewArmsAreKeptAndCumulativeOrMerges() throws Exception {
+        ExternalStubSynthesizer syn = synthesizer();
+        // 전역(단계1) stub + baseline arm: STANDARD가 probe[1]을 연다(누적 시작 상태).
+        syn.register("GET", "/inventory/stock", INV_SHAPE);
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+        cumulative.put(new ExecutionData(123L, CLASS, armBits(1)));
+
+        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        // kept = [mode=BACKORDER, mode=EXPRESS_ONLY] — 각각 다른 arm을 연다.
+        List<JsonNode> registeredBodies = new ArrayList<>();
+        AtomicInteger seq = new AtomicInteger();
+
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            @Override
+            public String nextTraceId() {
+                return "trace00000000000" + seq.incrementAndGet();   // 16-hex-ish, distinct per invoke
+            }
+
+            @Override
+            public ExecutionDataStore invoke(JsonNode body) {
+                registeredBodies.add(body);
+                // BACKORDER → arm 2, EXPRESS_ONLY → arm 3.
+                if (body.get("mode").asText().equals("BACKORDER")) {
+                    return deltaWithArm(2);
+                }
+                return deltaWithArm(3);
+            }
+        };
+
+        EndpointExplorationRunner.VariantExploreResult result =
+                EndpointExplorationRunner.exploreEnumResponseVariants(
+                        plan, baseline(), "GET", "/inventory/stock", syn,
+                        true, invoker, cumulative, Set.of(CLASS));
+
+        // 두 변형 모두 새 arm을 열었으므로 보존(kept=2).
+        assertThat(result.keptVariantLabels()).containsExactlyInAnyOrder("mode=BACKORDER", "mode=EXPRESS_ONLY");
+        // 등록된 변형 body는 baseline + override (available 보존, mode만 변형).
+        assertThat(registeredBodies).allSatisfy(b -> assertThat(b.get("available").asInt()).isEqualTo(1));
+        assertThat(registeredBodies).extracting(b -> b.get("mode").asText())
+                .containsExactlyInAnyOrder("BACKORDER", "EXPRESS_ONLY");
+        // cumulative OR-병합: baseline arm(1) + 두 변형 arm(2,3)이 모두 누적에 남는다.
+        boolean[] merged = probesFor(cumulative, CLASS);
+        assertThat(merged[1]).isTrue();
+        assertThat(merged[2]).isTrue();
+        assertThat(merged[3]).isTrue();
+    }
+
+    @Test
+    void variantWithoutNewArmIsNotKeptButCumulativeStillMerges() throws Exception {
+        ExternalStubSynthesizer syn = synthesizer();
+        syn.register("GET", "/inventory/stock", INV_SHAPE);
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+        cumulative.put(new ExecutionData(123L, CLASS, armBits(1, 2, 3)));   // 이미 모든 arm 누적
+
+        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            private int n;
+            @Override public String nextTraceId() { return "trace00000000000" + (++n); }
+            @Override public ExecutionDataStore invoke(JsonNode body) {
+                return body.get("mode").asText().equals("BACKORDER") ? deltaWithArm(2) : deltaWithArm(3);
+            }
+        };
+
+        EndpointExplorationRunner.VariantExploreResult result =
+                EndpointExplorationRunner.exploreEnumResponseVariants(
+                        plan, baseline(), "GET", "/inventory/stock", syn,
+                        true, invoker, cumulative, Set.of(CLASS));
+
+        // 두 변형 모두 새 arm 없음 → 보존 0.
+        assertThat(result.keptVariantLabels()).isEmpty();
+        // budget 만큼 시도는 했다.
+        assertThat(result.attempted()).isEqualTo(2);
+    }
+
+    @Test
+    void budgetConverges() throws Exception {
+        ExternalStubSynthesizer syn = synthesizer();
+        syn.register("GET", "/inventory/stock", INV_SHAPE);
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+        // budget=1 → 단 1개 변형만 kept 목록으로 들어온다.
+        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 1);
+        assertThat(plan.kept()).hasSize(1);
+
+        AtomicInteger calls = new AtomicInteger();
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            private int n;
+            @Override public String nextTraceId() { return "trace00000000000" + (++n); }
+            @Override public ExecutionDataStore invoke(JsonNode body) {
+                calls.incrementAndGet();
+                return deltaWithArm(2);
+            }
+        };
+
+        EndpointExplorationRunner.VariantExploreResult result =
+                EndpointExplorationRunner.exploreEnumResponseVariants(
+                        plan, baseline(), "GET", "/inventory/stock", syn,
+                        true, invoker, cumulative, Set.of(CLASS));
+
+        assertThat(calls.get()).isEqualTo(1);   // budget 1 → 1회 invoke로 수렴
+        assertThat(result.attempted()).isEqualTo(1);
+    }
+
+    private static boolean[] armBits(int... bits) {
+        boolean[] p = new boolean[8];
+        for (int b : bits) {
+            p[b] = true;
+        }
+        return p;
+    }
+
+    private static boolean[] probesFor(ExecutionDataStore store, String className) {
+        for (ExecutionData ed : store.getContents()) {
+            if (ed.getName().equals(className)) {
+                return ed.getProbes();
+            }
+        }
+        return new boolean[0];
+    }
+}
