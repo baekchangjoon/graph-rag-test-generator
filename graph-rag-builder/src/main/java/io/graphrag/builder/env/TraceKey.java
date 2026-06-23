@@ -1,5 +1,7 @@
 package io.graphrag.builder.env;
 
+import com.github.tomakehurst.wiremock.matching.StringValuePattern;
+
 import java.util.Map;
 import java.util.Optional;
 
@@ -11,6 +13,16 @@ import java.util.Optional;
 public interface TraceKey {
 
     Optional<String> readTraceId(Map<String, String> outboundHeaders);
+
+    /**
+     * 변형 stub을 이 trace-id로 격리하기 위한 WireMock 헤더 매칭 조건.
+     * otel: traceparent 전체 값(00-tid-sid-flags)에 substring(containing).
+     * sleuth: 헤더 값이 곧 trace-id(equalTo). none: null(헤더 조건 없음).
+     */
+    StringValuePattern matchFor(String traceId);
+
+    /** matchFor가 적용될 헤더 이름. otel: "traceparent", sleuth: "X-B3-TraceId". none: 미사용. */
+    String headerName();
 
     /** trace-mode 문자열로 구현 선택. "otel"→Otel, "sleuth"→Sleuth, 그 외→No. */
     static TraceKey forMode(String traceMode) {

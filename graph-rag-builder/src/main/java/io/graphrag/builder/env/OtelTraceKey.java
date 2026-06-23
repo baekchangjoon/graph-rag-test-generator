@@ -1,5 +1,8 @@
 package io.graphrag.builder.env;
 
+import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.matching.StringValuePattern;
+
 import java.util.Map;
 import java.util.Optional;
 
@@ -12,5 +15,16 @@ public final class OtelTraceKey implements TraceKey {
                 .map(v -> v.split("-"))
                 .filter(parts -> parts.length >= 2 && !parts[1].isBlank())
                 .map(parts -> parts[1]);
+    }
+
+    @Override
+    public StringValuePattern matchFor(String traceId) {
+        // traceparent 전체 값(00-tid-sid-flags)에 trace-id가 substring으로 들어 있다 → containing.
+        return WireMock.containing(traceId);
+    }
+
+    @Override
+    public String headerName() {
+        return "traceparent";
     }
 }
