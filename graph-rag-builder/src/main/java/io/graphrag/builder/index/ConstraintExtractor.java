@@ -655,9 +655,16 @@ public class ConstraintExtractor {
         return false;
     }
 
-    /** getter/accessor invocation(저장 행 상태 접근)일 때만 fieldRef, 아니면 null(pure-input 제외). */
+    /**
+     * get/is 접두사 getter invocation(저장 행 상태 접근)일 때만 fieldRef, 아니면 null.
+     * record accessor(amount() 등 접두사 없는 메서드)는 저장 행 접근으로 보지 않아 제외.
+     */
     private static String getterRef(CtExpression<?> expr) {
-        return expr instanceof CtInvocation ? fieldRef(expr) : null;
+        if (!(expr instanceof CtInvocation<?> inv)) return null;
+        String m = inv.getExecutable().getSimpleName();
+        if (m.startsWith("get") && m.length() > 3) return Character.toLowerCase(m.charAt(3)) + m.substring(4);
+        if (m.startsWith("is") && m.length() > 2)  return Character.toLowerCase(m.charAt(2)) + m.substring(3);
+        return null;   // record accessor 등 비-getter는 저장 행 접근으로 보지 않음
     }
 
     /** {@code Type.CONST} enum 상수 읽기의 선언 타입 simpleName(예: BookingStatus), 아니면 null. */

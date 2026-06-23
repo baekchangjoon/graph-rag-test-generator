@@ -101,12 +101,13 @@ class ConstraintExtractorStateGuardTest {
     void booleanGuard_isPrefix() {
         List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
 
-        // byNotActive uses isActive() — is-prefix getter도 column="active"으로 정규화
+        // byIsActive: if(b.isActive()) — is-prefix getter 단독, column="active", comparand="true"
         StateGuard g = guards.stream()
                 .filter(sg -> sg.kind() == GuardKind.BOOLEAN)
-                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNotActive"))
-                .findFirst().orElseThrow(() -> new AssertionError("BOOLEAN guard for byNotActive(isPrefix) not found"));
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byIsActive"))
+                .findFirst().orElseThrow(() -> new AssertionError("BOOLEAN guard for byIsActive(isPrefix) not found"));
         assertThat(g.column()).isEqualTo("active");
+        assertThat(g.comparand()).isEqualTo("true");
     }
 
     @Test
