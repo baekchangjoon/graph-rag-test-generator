@@ -34,7 +34,7 @@ public class ExternalStubSynthesizer {
      * 이미 등록된 키면 false(재등록 안 함), 새로 등록하면 true.
      */
     public boolean register(String method, String pathLiteral, BodyShape shape) {
-        String key = method.toUpperCase() + " " + pathLiteral;
+        String key = key(method, pathLiteral);
         if (!registered.add(key)) {
             return false;
         }
@@ -48,5 +48,14 @@ public class ExternalStubSynthesizer {
                 .withBody(body.toString())).build();
         server.registerStub(mapping);
         return true;
+    }
+
+    /** (method, pathLiteral)이 이미 합성 stub으로 등록됐는지. provenance 태깅·stub-ineffective 판정용. */
+    public boolean isRegistered(String method, String pathLiteral) {
+        return registered.contains(key(method, pathLiteral));
+    }
+
+    private static String key(String method, String pathLiteral) {
+        return method.toUpperCase() + " " + pathLiteral;
     }
 }
