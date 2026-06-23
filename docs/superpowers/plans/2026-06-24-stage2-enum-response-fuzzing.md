@@ -274,3 +274,9 @@ SYNTHESIZED), `Stage1ExternalStubSynthesisE2E` 4/4 green(REQ-005 회귀). 매트
    `toString()`을 try/catch로 흡수(한 핸들러 인쇄 실패 → 빈 문자열, 빌드·다른 핸들러·LLM 오라클
    정상). `CouponController` 등 추출은 무영향 → `LlmOracleE2E` 2/2 green 복구. (방어적 일반 수정:
    enum switch를 가진 어떤 SUT 핸들러도 더 이상 빌드를 깨지 않는다.)
+
+### Task 9 전체 회귀 결과 (green)
+
+- `:graph-rag-builder:test` — **136 classes / 600 tests / 0 skipped / 0 failures / 0 errors** (1h12m, single-worker).
+- `:shared-model:test` green(cached), `:samples:order-service:test` green(switch 3 arm + kafka), `:test-generator:test` green(enum-response-variant 생성 제외 마커 반영).
+- 환경 메모: 단독 worker로 안 돌리면 경쟁 worktree 빌드와 메모리 경합으로 test worker가 SIGTERM(exit 143)될 수 있어 `--max-workers=1`로 직렬 실행. 기능 결함 아님(컨테이너/메모리 경합).
