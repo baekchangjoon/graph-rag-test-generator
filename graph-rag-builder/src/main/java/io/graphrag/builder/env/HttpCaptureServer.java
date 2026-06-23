@@ -51,6 +51,11 @@ public class HttpCaptureServer implements AutoCloseable {
         this.traceKey = traceKey != null ? traceKey : new NoTraceKey();
     }
 
+    /** 이 서버가 사용하는 trace-mode 매처(변형 stub 격리용, REQ-008). 단계2 변형 루프 배선에서 사용. */
+    public TraceKey traceKey() {
+        return traceKey;
+    }
+
     /** 합성 stub을 런타임에 등록한다(B2 재탐색 루프용). server.addStubMapping 위임. */
     public void registerStub(StubMapping mapping) {
         server.addStubMapping(mapping);
