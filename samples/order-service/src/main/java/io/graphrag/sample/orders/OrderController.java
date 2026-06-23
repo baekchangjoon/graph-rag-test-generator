@@ -51,9 +51,21 @@ public class OrderController {
         User user = users.findById(request.userId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
         if ("EXPRESS".equals(request.type())) {
+            boolean express = "EXPRESS".equals(request.type());
             InventoryClient.InventoryResponse stock = inventory.check(request.type());
-            if (stock.available() < request.amount()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "insufficient stock");
+            switch (stock.mode()) {
+                case BACKORDER ->
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "backordered");
+                case EXPRESS_ONLY -> {
+                    if (!express) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "express only");
+                    }
+                }
+                case STANDARD -> {
+                    if (stock.available() < request.amount()) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "insufficient stock");
+                    }
+                }
             }
         }
         Order saved = orders.save(new Order(user, request.amount(), request.type(), "PENDING"));

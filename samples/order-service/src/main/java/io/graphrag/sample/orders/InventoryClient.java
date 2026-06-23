@@ -8,7 +8,7 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class InventoryClient {
 
-    public record InventoryResponse(Integer available) {
+    public record InventoryResponse(Integer available, FulfillmentMode mode) {
     }
 
     private final RestTemplate rest = new RestTemplate();
