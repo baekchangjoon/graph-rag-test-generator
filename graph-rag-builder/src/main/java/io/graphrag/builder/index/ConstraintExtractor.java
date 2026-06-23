@@ -15,6 +15,7 @@ import spoon.reflect.code.CtUnaryOperator;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.code.UnaryOperatorKind;
 import spoon.reflect.declaration.CtMethod;
+import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.visitor.filter.TypeFilter;
 
@@ -610,6 +611,30 @@ public class ConstraintExtractor {
                         ctIf.getPosition().getLine(), snake(getterFieldR), GuardKind.NUMERIC, null,
                         List.of(), List.of(), FLIP.get(opStr), ComparandKind.LITERAL,
                         String.valueOf(leftLit.getAsLong())));
+                continue;
+            }
+            // NUMERIC-vs-PARAM: getter() OP paramRef — 가드 메서드의 파라미터를 직접 참조하는 경우.
+            // 중간 계산(CtBinaryOperator 등)을 경유하는 경우는 CtVariableRead가 아니므로 자동 제외.
+            String paramName = directParamName(right);
+            if (getterField != null && paramName != null) {
+                // getter() OP param
+                CtMethod<?> method = ctIf.getParent(CtMethod.class);
+                CtType<?> type = ctIf.getParent(CtType.class);
+                if (method == null || type == null) continue;
+                out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                        ctIf.getPosition().getLine(), snake(getterField), GuardKind.NUMERIC, null,
+                        List.of(), List.of(), opStr, ComparandKind.PARAM, paramName));
+                continue;
+            }
+            String paramNameL = directParamName(left);
+            if (getterFieldR != null && paramNameL != null) {
+                // param OP getter() → FLIP op
+                CtMethod<?> method = ctIf.getParent(CtMethod.class);
+                CtType<?> type = ctIf.getParent(CtType.class);
+                if (method == null || type == null) continue;
+                out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                        ctIf.getPosition().getLine(), snake(getterFieldR), GuardKind.NUMERIC, null,
+                        List.of(), List.of(), FLIP.get(opStr), ComparandKind.PARAM, paramNameL));
             }
         }
 
@@ -832,6 +857,17 @@ public class ConstraintExtractor {
             }
         }
         return OptionalLong.empty();
+    }
+
+    /**
+     * 표현식이 가드 메서드의 파라미터를 직접 참조하는 CtVariableRead이면 파라미터명, 아니면 null.
+     * 중간 계산(CtBinaryOperator 등)을 경유하면 CtVariableRead가 아니므로 null을 반환한다.
+     */
+    private static String directParamName(CtExpression<?> expr) {
+        if (expr instanceof CtVariableRead<?> vr && vr.getVariable().getDeclaration() instanceof CtParameter<?> p) {
+            return p.getSimpleName();
+        }
+        return null;
     }
 
     private static String fieldRef(CtExpression<?> expr) {
