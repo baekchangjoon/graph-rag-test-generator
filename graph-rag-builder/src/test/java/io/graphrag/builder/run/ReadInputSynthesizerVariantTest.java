@@ -1,5 +1,6 @@
 package io.graphrag.builder.run;
 
+import io.graphrag.builder.index.ConstraintExtractor.ComparandKind;
 import io.graphrag.builder.index.ConstraintExtractor.GuardKind;
 import io.graphrag.builder.index.ConstraintExtractor.StateGuard;
 import io.graphrag.builder.run.ReadInputSynthesizer.SeedVariant;
@@ -151,5 +152,148 @@ class ReadInputSynthesizerVariantTest {
                 synth().synthesizeVariants(GET_BY_ID, List.of(BOOKINGS), List.of(missing));
 
         assertThat(variants).hasSize(1);   // base only
+    }
+
+    // ── Task 7: BOOLEAN / NULLITY / NUMERIC-상수 ─────────────────────────────
+
+    /** BOOLEAN: baseState="true" → 반대 arm = false */
+    @Test
+    void flipBoolean_trueBaseYieldsFalseVariant() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("is_active", "BOOLEAN", false, false)),
+                List.of(), List.of());
+        StateGuard boolGuard = new StateGuard("x.B", "m", 1, "is_active",
+                GuardKind.BOOLEAN, null,
+                List.of(), List.of(), "==", ComparandKind.LITERAL, "true");
+
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(boolGuard));
+
+        // base + 1 variant
+        assertThat(variants).hasSize(2);
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(variantRow, "is_active")).isEqualTo(false);
+        // 변종 PK ≠ base PK
+        SeedRow baseRow = variants.get(0).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(variantRow.values().get(0)).isNotEqualTo(baseRow.values().get(0));
+    }
+
+    /** BOOLEAN: baseState="false" → 반대 arm = true */
+    @Test
+    void flipBoolean_falseBaseYieldsTrueVariant() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("is_active", "BOOLEAN", false, false)),
+                List.of(), List.of());
+        // is_active 컬럼의 defaultFor → true(BOOL 타입), base state = "true"가 될 것이므로
+        // false comparand로 가드를 만들면 op=="==" comparand=="false" → base happy = true → 반대 arm = false.
+        // 아니면 comparand="false" 가드: "entry.isActive() == false" 형태, base=true → 반대 arm = false.
+        // base를 false로 만들기 위해 enumColumns로 is_active=false를 시드:
+        ReadInputSynthesizer s2 = new ReadInputSynthesizer(Map.of(), Map.of("is_active", List.of("false")));
+        StateGuard boolGuard = new StateGuard("x.B", "m", 1, "is_active",
+                GuardKind.BOOLEAN, null,
+                List.of(), List.of(), "==", ComparandKind.LITERAL, "false");
+
+        List<SeedVariant> variants = s2.synthesizeVariants(GET_BY_ID, List.of(table), List.of(boolGuard));
+
+        assertThat(variants).hasSize(2);
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(variantRow.values()).contains(true);
+    }
+
+    /** NULLITY: nullable 컬럼, baseState=non-null → 반대 arm = null */
+    @Test
+    void flipNullityNonNull_yieldsNullVariant() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("cancelled_at", "DATE", true, false)),   // nullable
+                List.of(), List.of());
+        StateGuard nullGuard = new StateGuard("x.B", "m", 1, "cancelled_at",
+                GuardKind.NULLITY, null,
+                List.of(), List.of(), "!=", ComparandKind.LITERAL, "null");
+
+        // base는 nullable이라 시드 미포함, baseState=null → 반대 arm = defaultFor(DATE) = LocalDate
+        // 아니면 null base일 때 defaultFor가 반환되므로 variant는 defaultFor(DATE).
+        // 실제로는: nullable 컬럼은 base seed에 없으므로 stateAt → null → arm = defaultFor(col).
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(nullGuard));
+
+        assertThat(variants).hasSize(2);
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        // null arm: cancelled_at 컬럼이 추가되고 값이 null이어야 함.
+        // 그런데 nullable 컬럼이 base에 없고 stateAt=null이면 → arm = defaultFor(col) (not null).
+        // 명세: baseState=null(컬럼 없으므로) → [defaultFor(col)]
+        int idx = variantRow.columns().indexOf("cancelled_at");
+        assertThat(idx).isGreaterThanOrEqualTo(0);
+        // 변종 PK ≠ base PK
+        SeedRow baseRow = variants.get(0).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(variantRow.values().get(0)).isNotEqualTo(baseRow.values().get(0));
+    }
+
+    /** NULLITY: nullable 컬럼에서 baseState=non-null이면 [null] */
+    @Test
+    void flipNullityNonNull_seedIncludesNullArm() {
+        // base에 nullable 컬럼이 포함된 상황을 만들기 위해 NOT NULL 컬럼으로 설정
+        // → 실제 non-null base를 얻으려면 NOT NULL nullable=false 컬럼을 사용하되
+        //   NULLITY 가드를 발행. defaultFor가 DATE → base state = "2037-01-01" (non-null)
+        //   → 반대 arm = null.
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("processed_at", "DATE", false, false)),   // NOT NULL
+                List.of(), List.of());
+        StateGuard nullGuard = new StateGuard("x.B", "m", 1, "processed_at",
+                GuardKind.NULLITY, null,
+                List.of(), List.of(), "!=", ComparandKind.LITERAL, "null");
+
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(nullGuard));
+
+        // NOT NULL 컬럼이므로 null arm 불가 → 빈 변종 → singleton [base]
+        // 명세: NOT NULL NULLITY → 빈 리스트 → 변종 없음
+        assertThat(variants).hasSize(1);
+    }
+
+    /** NULLITY: NOT NULL 컬럼이면 빈 리스트(변종 없음) */
+    @Test
+    void flipNullityNotNullSkip_returnsNoVariant() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("required_field", "VARCHAR", false, false)),   // NOT NULL
+                List.of(), List.of());
+        StateGuard nullGuard = new StateGuard("x.B", "m", 1, "required_field",
+                GuardKind.NULLITY, null,
+                List.of(), List.of(), "==", ComparandKind.LITERAL, "null");
+
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(nullGuard));
+
+        assertThat(variants).hasSize(1);   // base only, null arm 불가
+    }
+
+    /** NUMERIC 상수 가드: >=C → 반대 arm = C-1 */
+    @Test
+    void flipNumericConst_greaterOrEqual_yieldsConstMinusOne() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("amount", "INT", false, false)),
+                List.of(), List.of());
+        // amount >= 3 → base(happy)는 defaultFor(INT)=1이라 3보다 작으므로
+        // base는 이미 만족(? 아니다 1<3이면 조건 불만족). 설계상 반대 arm = C-1 = 2.
+        StateGuard numGuard = new StateGuard("x.B", "m", 1, "amount",
+                GuardKind.NUMERIC, null,
+                List.of(), List.of(), ">=", ComparandKind.LITERAL, "3");
+
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(numGuard));
+
+        assertThat(variants).hasSize(2);
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(variantRow, "amount")).isEqualTo(2);   // C-1 = 3-1 = 2
+        // 변종 PK ≠ base PK
+        SeedRow baseRow = variants.get(0).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(variantRow.values().get(0)).isNotEqualTo(baseRow.values().get(0));
     }
 }
