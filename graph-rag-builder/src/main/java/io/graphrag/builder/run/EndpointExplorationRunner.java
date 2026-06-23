@@ -1798,7 +1798,9 @@ public class EndpointExplorationRunner {
         Optional<io.graphrag.builder.index.ExternalCallSite> site =
                 CallSiteMatcher.match(exchange.method(), exchange.urlPath(), callSites);
         if (site.isPresent()
-                && stubSynthesizer.isRegistered(exchange.method(), site.get().pathLiteral())) {
+                && (stubSynthesizer.isRegistered(exchange.method(), site.get().pathLiteral())
+                    || stubSynthesizer.isVariantRegistered(exchange.method(), site.get().pathLiteral()))) {
+            // 전역(단계1) stub 또는 활성 변형(단계2) stub 어느 쪽으로든 응답했으면 합성 출처(REQ-004).
             return io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED;
         }
         return io.graphrag.model.CapturedHttpCall.Provenance.CAPTURED;

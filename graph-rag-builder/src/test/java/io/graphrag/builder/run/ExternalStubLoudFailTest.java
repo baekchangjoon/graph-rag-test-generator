@@ -81,6 +81,41 @@ class ExternalStubLoudFailTest {
                 .isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
     }
 
+    /**
+     * REQ-004(Task 7): 전역(단계1) stub은 미등록이고 변형(단계2) stub만 활성인 (method,path)로 통과한
+     * 외부 호출도 SYNTHESIZED로 판정된다. provenanceOf가 isRegistered OR isVariantRegistered를 본다.
+     */
+    @Test
+    void variantStubOnlyCallIsTaggedSynthesized() throws Exception {
+        server = new HttpCaptureServer(new io.graphrag.builder.env.OtelTraceKey());
+        server.start(null, null);
+        List<ExternalCallSite> sites = List.of(
+                new ExternalCallSite("GET", "/inventory/stock", Optional.of(INV_SHAPE)));
+        EndpointExplorationRunner runner = runnerWith(server, sites);
+
+        // 전역 stub은 등록하지 않고(=isRegistered false) 변형 stub만 등록.
+        ExternalStubSynthesizer syn = internalSynthesizer(runner);
+        assertThat(syn.isRegistered("GET", "/inventory/stock")).isFalse();
+        syn.registerVariant("GET", "/inventory/stock",
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree("{\"available\":1}"),
+                "trace000000000001");
+        assertThat(syn.isVariantRegistered("GET", "/inventory/stock")).isTrue();
+
+        RawHttpExchange variantCall = new RawHttpExchange("GET", "/inventory/stock", Map.of(),
+                null, 200, "{\"available\":1}", false, "");
+        List<CapturedHttpCall> calls = captureHttpCalls(runner, candidateWith(variantCall));
+
+        assertThat(calls).hasSize(1);
+        assertThat(calls.get(0).responseProvenance())
+                .isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
+    }
+
+    private ExternalStubSynthesizer internalSynthesizer(EndpointExplorationRunner runner) throws Exception {
+        java.lang.reflect.Field f = EndpointExplorationRunner.class.getDeclaredField("stubSynthesizer");
+        f.setAccessible(true);
+        return (ExternalStubSynthesizer) f.get(runner);
+    }
+
     @Test
     void nonSynthesizedCallIsTaggedCaptured() throws Exception {
         server = new HttpCaptureServer();
