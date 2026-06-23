@@ -308,6 +308,8 @@ base (변이 없음)         →                            → 201
   합성해 by-id 요청으로 구동한다. NUMERIC-파라미터는 입력값과 시드를 함께 정하는 **입력-시드 공동
   합성**. **런타임 에이전트 불요**(flip 값이 solve가 아니라 고정 상수/입력-기준 결정값). order-service GET stale 404 / DELETE conflict 409 arm을
   missed→covered(branch 85% 106/124). `docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md`.
+  가드가 **서비스 계층**에 있어도 핸들러 1-hop 호출그래프(`reachableMethods`)로 엔드포인트에 귀속
+  (cross-class) — petclinic처럼 컨트롤러→서비스 위임 계층형 SUT에서도 변종이 열린다.
   - 여전히 보류: **집계/capacity 다중 행**(`COUNT(status==CONFIRMED)>=cap`)·인식 안 되는 임의 상태 가드
     (계산형·cross-entity)는 in-process concolic 라인(PoC `.work/concolic-poc/`)의 몫.
 - ✅ **2-필드 선형 inter-field — Z3 `solveTuple`로 해결**: `ConcolicOracle`의 `Sym`을 2개 필드까지 선형식
