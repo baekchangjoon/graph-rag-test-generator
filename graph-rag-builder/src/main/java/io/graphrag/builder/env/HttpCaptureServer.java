@@ -6,6 +6,7 @@ import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
 import com.github.tomakehurst.wiremock.extension.requestfilter.RequestFilterAction;
 import com.github.tomakehurst.wiremock.extension.requestfilter.RequestWrapper;
 import com.github.tomakehurst.wiremock.extension.requestfilter.StubRequestFilterV2;
+import com.github.tomakehurst.wiremock.http.HttpHeader;
 import com.github.tomakehurst.wiremock.http.Request;
 import com.github.tomakehurst.wiremock.http.ResponseDefinition;
 import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
@@ -40,8 +41,19 @@ public class HttpCaptureServer implements AutoCloseable {
     private WireMockServer server;
     private String authToken;
     private int drainedCount;
+    private final TraceKey traceKey;
 
     public HttpCaptureServer() {
+        this(new NoTraceKey());
+    }
+
+    public HttpCaptureServer(TraceKey traceKey) {
+        this.traceKey = traceKey != null ? traceKey : new NoTraceKey();
+    }
+
+    /** 합성 stub을 런타임에 등록한다(B2 재탐색 루프용). server.addStubMapping 위임. */
+    public void registerStub(StubMapping mapping) {
+        server.addStubMapping(mapping);
     }
 
     public void start(Path stubsDir) {
@@ -125,6 +137,13 @@ public class HttpCaptureServer implements AutoCloseable {
             event.getRequest().getQueryParams().forEach((name, value) ->
                     query.put(name, value.firstValue()));
             String baggage = event.getRequest().getHeader("baggage");
+            Map<String, String> headers = new LinkedHashMap<>();
+            if (event.getRequest().getHeaders() != null) {
+                for (HttpHeader h : event.getRequest().getHeaders().all()) {
+                    headers.put(h.key(), h.firstValue());
+                }
+            }
+            String traceId = traceKey.readTraceId(headers).orElse("");
             exchanges.add(new RawHttpExchange(
                     event.getRequest().getMethod().getName(),
                     path,
@@ -132,7 +151,8 @@ public class HttpCaptureServer implements AutoCloseable {
                     event.getRequest().getBodyAsString(),
                     event.getResponse().getStatus(),
                     event.getResponse().getBodyAsString(),
-                    baggage != null && baggage.contains("test-id=")));
+                    baggage != null && baggage.contains("test-id="),
+                    traceId));
         }
         return exchanges;
     }

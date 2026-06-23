@@ -10,5 +10,6 @@ public record RawHttpExchange(
         String requestBody,
         int status,
         String responseBody,
-        boolean baggagePresent) {
+        boolean baggagePresent,
+        String outboundTraceId) {
 }
