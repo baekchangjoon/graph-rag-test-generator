@@ -352,10 +352,10 @@ class ReadInputSynthesizerVariantTest {
     // ── Task 8: NUMERIC-vs-파라미터 입력-시드 공동 합성 + per-guard skip ─────
 
     /**
-     * NUMERIC-vs-파라미터(>=): 입력 minNights=V → 변종 시드 nights=V-1 + vbody minNights=V.
+     * NUMERIC-vs-파라미터(>=): 입력 minNights=V → base 시드 nights=V(만족), 변종 시드 nights=V-1(불만족) + vbody minNights=V.
      * 엔드포인트: GET /api/reservations?minNights=long
      * 가드: getNights() >= minNights → column=nights, op=">="", comparandKind=PARAM, comparand="minNights"
-     * 기대: base + 1 변종. 변종 시드 nights = V-1 = probeId-1. vbody["minNights"] = probeId(문자열).
+     * 기대: base + 1 변종. base 시드 nights=V (만족 arm). 변종 시드 nights=V-1. vbody["minNights"]=V.
      */
     @Test
     void inputSeedJoint_geParam() {
@@ -384,11 +384,17 @@ class ReadInputSynthesizerVariantTest {
         String vStr = variants.get(0).input().body().get("minNights").asText();
         long v = Long.parseLong(vStr);
 
+        // base 시드: nights = V (만족 arm: nights >= minNights)
+        assertThat(col(baseRow, "nights")).isEqualTo((int) v);
+
         SeedRow variantRow = variants.get(1).input().seeds().stream()
                 .filter(s -> s.table().equals("reservations")).findFirst().orElseThrow();
 
-        // 변종 시드: nights = V-1 (반대 arm: nights < minNights)
+        // 변종 시드: nights = V-1 (불만족 arm: nights < minNights)
         assertThat(col(variantRow, "nights")).isEqualTo((int) (v - 1));
+
+        // base ≠ 변종: 양 arm 분리 확인
+        assertThat(col(baseRow, "nights")).isNotEqualTo(col(variantRow, "nights"));
 
         // 변종 vbody: minNights = V (문자열)
         String vbodyMinNights = variants.get(1).input().body().get("minNights").asText();
@@ -399,70 +405,80 @@ class ReadInputSynthesizerVariantTest {
     }
 
     /**
-     * per-guard skip: collection 엔드포인트에서 타깃 테이블 해소 실패 → NUMERIC-param 가드는 skip,
-     * 같은 엔드포인트의 BOOLEAN 가드는 정상 변종 생성.
-     * collection 엔드포인트: GET /api/items (path에 "items" 테이블명 없어 resolveTargetTable → null 아닌 경우 주의)
-     * 이를 위해 path가 테이블명과 매칭되지 않도록 설계: GET /api/widget-things, table="bookings"
+     * NUMERIC-vs-파라미터(!=): base 시드 nights=V+1(만족: nights != maxNights), 변종 시드 nights=V(불만족) + vbody maxNights=V.
+     * § 3.3 표: != → base=V+1, 변종=V.
      */
     @Test
-    void collectionTargetSkipPerGuard() {
-        Endpoint unmatchedEp = new Endpoint(
-                "get-api-widget-things", "GET", "/api/widget-things",
-                "x.WidgetController", "list",
-                List.of(new EndpointParam("minCount", "java.lang.Long", ParamKind.QUERY)),
+    void inputSeedJoint_neParam_bothArmsDistinct() {
+        Endpoint listEp = new Endpoint(
+                "get-api-reservations-ne", "GET", "/api/reservations",
+                "x.ReservationController", "listNe",
+                List.of(new EndpointParam("maxNights", "java.lang.Long", ParamKind.QUERY)),
                 false);
-        // bookings 테이블: path "/api/widget-things"에 "bookings"나 "booking" 없음 → resolveTargetTable=null
-        TableSchema table = new TableSchema("bookings",
+        TableSchema reservations = new TableSchema("reservations",
                 List.of(new ColumnSchema("id", "BIGINT", false, true),
-                        new ColumnSchema("nights", "INT", false, false),
-                        new ColumnSchema("is_active", "BOOLEAN", false, false)),
+                        new ColumnSchema("nights", "INT", false, false)),
                 List.of(), List.of());
-
-        StateGuard numParamGuard = new StateGuard("x.WidgetController", "list", 5, "nights",
+        StateGuard neGuard = new StateGuard("x.ReservationController", "listNe", 10, "nights",
                 GuardKind.NUMERIC, null,
-                List.of(), List.of(), ">=", ComparandKind.PARAM, "minCount");
-        StateGuard boolGuard = new StateGuard("x.WidgetController", "list", 10, "is_active",
-                GuardKind.BOOLEAN, null,
-                List.of(), List.of(), "==", ComparandKind.LITERAL, "true");
+                List.of(), List.of(), "!=", ComparandKind.PARAM, "maxNights");
 
-        // synth()는 enumColumns에 "status"만 있으므로 is_active enumColumns 없음 → defaultFor(BOOLEAN)=true → base
         List<SeedVariant> variants = new ReadInputSynthesizer()
-                .synthesizeVariants(unmatchedEp, List.of(table), List.of(numParamGuard, boolGuard));
+                .synthesizeVariants(listEp, List.of(reservations), List.of(neGuard));
 
-        // resolveTargetTable("widget-things") vs table="bookings" → null → base.seeds() 비어있음
-        // → synthesizeVariants가 base만 반환하는 현재 동작이 아니라
-        //   per-guard: numParamGuard는 타깃 없어 skip, boolGuard도 타깃 없으면 skip
-        // 엔드포인트가 bookings와 path 매칭 안 됨 → target=null → base.seeds() empty
-        // → variants = [base only], 이것이 per-guard skip의 결과(타깃 없는 엔드포인트)
-        // 단, 이미 테이블이 있고 가드가 컬럼을 찾을 수 있어야 변종이 생성된다.
-        // 여기서는 target=null이므로 base.seeds()=[] → synthesizeVariants는 [base] 반환 (기존 동작)
-        // → 실제 per-guard skip 검증: target이 있는데 NUMERIC-param 컬럼은 없는 경우로 재설계
+        assertThat(variants).hasSize(2);
 
-        // 재설계: path="/api/bookings/list" → target=bookings 매칭됨
-        // 가드1: NUMERIC-param column="unknown_col" → col=null → skip
-        // 가드2: BOOLEAN column="is_active" → 정상 변종
+        String vStr = variants.get(0).input().body().get("maxNights").asText();
+        long v = Long.parseLong(vStr);
 
+        SeedRow baseRow = variants.get(0).input().seeds().stream()
+                .filter(s -> s.table().equals("reservations")).findFirst().orElseThrow();
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("reservations")).findFirst().orElseThrow();
+
+        // base 시드: nights = V+1 (만족 arm: nights != maxNights)
+        assertThat(col(baseRow, "nights")).isEqualTo((int) (v + 1));
+        // 변종 시드: nights = V (불만족 arm: nights == maxNights)
+        assertThat(col(variantRow, "nights")).isEqualTo((int) v);
+        // 양 arm 분리 확인
+        assertThat(col(baseRow, "nights")).isNotEqualTo(col(variantRow, "nights"));
+    }
+
+    /**
+     * per-guard skip: 타깃 테이블은 해소되나 NUMERIC-param 가드 컬럼이 그 테이블에 없을 때
+     * → 해당 가드만 skip하고 다른 가드(BOOLEAN 등)의 변종은 정상 생성된다.
+     * path="/api/bookings/list" → target=bookings 해소됨.
+     * 가드1: NUMERIC-param column="unknown_col" → col=null → per-guard skip.
+     * 가드2: BOOLEAN column="is_active" → 정상 변종 1개.
+     */
+    @Test
+    void numericParamColumnUnresolved_skipsThatGuardOnly_keepsBoolean() {
         Endpoint matchedEp = new Endpoint(
                 "get-api-bookings-list", "GET", "/api/bookings/list",
                 "x.BookingController", "list",
                 List.of(new EndpointParam("minCount", "java.lang.Long", ParamKind.QUERY)),
                 false);
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("nights", "INT", false, false),
+                        new ColumnSchema("is_active", "BOOLEAN", false, false)),
+                List.of(), List.of());
         StateGuard unknownColGuard = new StateGuard("x.BookingController", "list", 5, "unknown_col",
                 GuardKind.NUMERIC, null,
                 List.of(), List.of(), ">=", ComparandKind.PARAM, "minCount");
-        StateGuard boolGuard2 = new StateGuard("x.BookingController", "list", 10, "is_active",
+        StateGuard boolGuard = new StateGuard("x.BookingController", "list", 10, "is_active",
                 GuardKind.BOOLEAN, null,
                 List.of(), List.of(), "==", ComparandKind.LITERAL, "true");
 
-        List<SeedVariant> variants2 = new ReadInputSynthesizer()
-                .synthesizeVariants(matchedEp, List.of(table), List.of(unknownColGuard, boolGuard2));
+        List<SeedVariant> variants = new ReadInputSynthesizer()
+                .synthesizeVariants(matchedEp, List.of(table), List.of(unknownColGuard, boolGuard));
 
-        // unknownColGuard: col=null → skip (per-guard)
-        // boolGuard2: is_active 컬럼 있음 → 변종 1개
-        // 결과: base + boolGuard2 변종 = 2
-        assertThat(variants2).hasSize(2);
+        // unknownColGuard: col=null → per-guard skip
+        // boolGuard: is_active 컬럼 있음 → 변종 1개
+        // 결과: base + boolGuard 변종 = 2
+        assertThat(variants).hasSize(2);
 
-        // 변종의 guard는 boolGuard2
-        assertThat(variants2.get(1).guard()).isEqualTo(boolGuard2);
+        // 변종의 guard는 boolGuard (unknownColGuard는 skip됨)
+        assertThat(variants.get(1).guard()).isEqualTo(boolGuard);
     }
 }

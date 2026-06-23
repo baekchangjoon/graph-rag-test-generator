@@ -159,8 +159,15 @@ public class ReadInputSynthesizer {
 
         String pkColumn = target.columns().stream().filter(ColumnSchema::primaryKey)
                 .map(ColumnSchema::name).findFirst().orElse(null);
+        // base 시드의 타깃 행 — NUMERIC-vs-PARAM 가드별 만족 arm 보정을 누적하기 위한 가변 복사본.
+        // 루프 후 보정된 행으로 out[0] (base SeedVariant)를 교체한다.
+        SynthesizedInput.SeedRow baseTargetRow = base.seeds().get(targetIdx);
+        List<String> baseCols = new ArrayList<>(baseTargetRow.columns());
+        List<Object> baseVals = new ArrayList<>(baseTargetRow.values());
+        boolean baseModified = false;
+
         List<SeedVariant> out = new ArrayList<>();
-        out.add(new SeedVariant(base, null));
+        out.add(new SeedVariant(base, null));   // 플레이스홀더; 루프 후 보정된 base로 교체
         int variantIdx = 0;
         for (ConstraintExtractor.StateGuard guard : guards) {
             // NUMERIC-vs-파라미터: 입력-시드 공동 합성 (§3.3)
@@ -181,12 +188,25 @@ public class ReadInputSynthesizer {
                     // 파라미터가 body에 없으면 probeId로 결정적 대체 (scalarFor Integer/Long 규칙과 동일)
                     v = probeIdFor(endpoint);
                 }
-                // 변종 시드 컬럼값: 반대 arm 1개 (§3.3 op별 표)
+                // 변종 시드 컬럼값: 불만족 arm (§3.3 op별 표)
                 long variantColValue = numericParamVariantCol(guard.op(), v);
                 // JDBC 타입에 맞춰 시드값 결정
                 Object variantColObj = coerceToColumnType(variantColValue, col);
                 if (variantColObj == null) {
                     continue;   // 비정수 JDBC 타입 → per-guard skip
+                }
+                // base 시드 가드 컬럼을 만족 arm 값으로 보정 (§3.3 표: base col = numericParamBaseCol(op, V))
+                long baseColValue = numericParamBaseCol(guard.op(), v);
+                Object baseColObj = coerceToColumnType(baseColValue, col);
+                if (baseColObj != null) {
+                    int bi = indexOfIgnoreCase(baseCols, guard.column());
+                    if (bi >= 0) {
+                        baseVals.set(bi, baseColObj);
+                    } else {
+                        baseCols.add(col.name());
+                        baseVals.add(baseColObj);
+                    }
+                    baseModified = true;
                 }
                 variantIdx++;
                 SynthesizedInput.SeedRow targetRow = base.seeds().get(targetIdx);
@@ -262,6 +282,17 @@ public class ReadInputSynthesizer {
                 }
                 out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
             }
+        }
+        // NUMERIC-vs-PARAM 가드에서 만족 arm 값으로 보정된 base 시드 행이 있으면 out[0]을 교체한다.
+        // 이렇게 해야 base가 실제로 만족 arm을 타고 변종과 양 arm이 갈린다.
+        if (baseModified) {
+            List<SynthesizedInput.SeedRow> correctedSeeds = new ArrayList<>();
+            for (int i = 0; i < base.seeds().size(); i++) {
+                correctedSeeds.add(i == targetIdx
+                        ? new SynthesizedInput.SeedRow(baseTargetRow.table(), baseCols, baseVals)
+                        : base.seeds().get(i));
+            }
+            out.set(0, new SeedVariant(new SynthesizedInput(base.body(), correctedSeeds), null));
         }
         return out;
     }
@@ -382,7 +413,24 @@ public class ReadInputSynthesizer {
     }
 
     /**
-     * NUMERIC-vs-파라미터 op·입력값 V 기준 변종 시드 컬럼값(반대 arm) 결정 (§3.3 표).
+     * NUMERIC-vs-파라미터 op·입력값 V 기준 base 시드 컬럼값(만족 arm) 결정 (§3.3 표).
+     * >=V → V, >V → V+1, <=V → V, <V → V-1, ==V → V, !=V → V+1.
+     * Long.MIN/MAX 근처는 범위 내 결정적 대체값으로 보정.
+     */
+    private static long numericParamBaseCol(String op, long v) {
+        return switch (op) {
+            case ">=" -> v;
+            case ">"  -> v < Long.MAX_VALUE ? v + 1 : Long.MAX_VALUE;
+            case "<=" -> v;
+            case "<"  -> v > Long.MIN_VALUE ? v - 1 : Long.MIN_VALUE;
+            case "==" -> v;
+            case "!=" -> v < Long.MAX_VALUE ? v + 1 : v - 1;
+            default   -> v;
+        };
+    }
+
+    /**
+     * NUMERIC-vs-파라미터 op·입력값 V 기준 변종 시드 컬럼값(불만족 arm) 결정 (§3.3 표).
      * >=V → V-1, >V → V, <=V → V+1, <V → V, ==V → V+1, !=V → V.
      * Long.MIN/MAX 근처는 범위 내 결정적 대체값으로 보정.
      */
