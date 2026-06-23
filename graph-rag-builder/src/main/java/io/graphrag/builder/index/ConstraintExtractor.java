@@ -71,7 +71,7 @@ public class ConstraintExtractor {
     }
 
     /** 상태 의존 가드의 종류 (Stage 4 StateGuardOracle). */
-    public enum GuardKind { TEMPORAL, ENUM, BOOLEAN }
+    public enum GuardKind { TEMPORAL, ENUM, BOOLEAN, NULLITY }
 
     /**
      * 비교 피연산자(comparand)의 종류. LITERAL: 리터럴 상수(숫자·문자열·boolean); PARAM: 요청 파라미터/지역변수.
@@ -553,6 +553,24 @@ public class ConstraintExtractor {
                     List.of(), List.of(), bg.op(), ComparandKind.LITERAL, bg.comparand()));
         }
 
+        // NULLITY: CtIf 조건이 getter() == null 또는 getter() != null 형태(저장 행 getter만).
+        // null literal은 CtLiteral.getValue()==null으로 판별(boolean/enum literal과 구분).
+        for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
+            CtExpression<?> cond = ctIf.getCondition();
+            StateGuard ng = nullityGuardFromCondition(cond);
+            if (ng == null) {
+                continue;
+            }
+            CtMethod<?> method = ctIf.getParent(CtMethod.class);
+            CtType<?> type = ctIf.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                    ctIf.getPosition().getLine(), ng.column(), GuardKind.NULLITY, null,
+                    List.of(), List.of(), ng.op(), ComparandKind.LITERAL, "null"));
+        }
+
         out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
                 .thenComparingInt(StateGuard::line));
         return out;
@@ -614,6 +632,43 @@ public class ConstraintExtractor {
                     List.of(), List.of(), "==", ComparandKind.LITERAL, String.valueOf(effectiveValue));
         }
         return null;
+    }
+
+    /**
+     * CtIf 조건식에서 NULLITY 가드를 인식. 저장 행 getter invocation(getterRef != null)만.
+     * getter() == null → op="==" / getter() != null → op="!="
+     * null literal은 CtLiteral.getValue()==null으로 판별(boolean/enum literal과 구분).
+     * 인식되면 column/op만 채운 임시 StateGuard 반환(comparand는 호출부에서 "null" 고정), 아니면 null.
+     */
+    private static StateGuard nullityGuardFromCondition(CtExpression<?> cond) {
+        if (!(cond instanceof CtBinaryOperator<?> bin)) {
+            return null;
+        }
+        boolean isEq = bin.getKind() == BinaryOperatorKind.EQ;
+        boolean isNe = bin.getKind() == BinaryOperatorKind.NE;
+        if (!isEq && !isNe) {
+            return null;
+        }
+        CtExpression<?> left = bin.getLeftHandOperand();
+        CtExpression<?> right = bin.getRightHandOperand();
+        // getter() == null 또는 null == getter()
+        boolean rightIsNull = right instanceof CtLiteral<?> lit && lit.getValue() == null;
+        boolean leftIsNull = left instanceof CtLiteral<?> lit && lit.getValue() == null;
+        CtExpression<?> getterSide;
+        if (rightIsNull) {
+            getterSide = left;
+        } else if (leftIsNull) {
+            getterSide = right;
+        } else {
+            return null;
+        }
+        String ref = getterSide instanceof CtInvocation<?> inv ? getterRef(inv) : null;
+        if (ref == null) {
+            return null;
+        }
+        String op = isEq ? "==" : "!=";
+        return new StateGuard(null, null, 0, snake(ref), GuardKind.NULLITY, null,
+                List.of(), List.of(), op, ComparandKind.LITERAL, "null");
     }
 
     /** boolean 리터럴이면 Boolean 값, 아니면 null. */
