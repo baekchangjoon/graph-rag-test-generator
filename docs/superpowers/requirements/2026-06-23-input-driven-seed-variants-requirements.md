@@ -176,20 +176,22 @@
 
 | REQ-ID | Phase | 요구사항 | 수용 테스트 | Level | Status |
 |--------|-------|----------|-------------|-------|--------|
-| REQ-001 | P1 | BOOLEAN 검출 | ConstraintExtractorStateGuardTest#booleanGuard* | integration | 🔴 planned |
-| REQ-002 | P1 | NULLITY 검출 | ConstraintExtractorStateGuardTest#nullityGuard* | integration | 🔴 planned |
-| REQ-003 | P1 | NUMERIC-상수 검출 | ConstraintExtractorStateGuardTest#numericLiteralGuard* | integration | 🔴 planned |
-| REQ-004 | P1 | NUMERIC-파라미터 검출 | ConstraintExtractorStateGuardTest#numericParamGuard* | integration | 🔴 planned |
-| REQ-005 | P1 | 반대-arm 변종+격리PK | ReadInputSynthesizerVariantTest#flip* | integration | 🔴 planned |
-| REQ-006 | P1 | 입력-시드 공동 합성 | ReadInputSynthesizerVariantTest#inputSeedJoint* | integration | 🔴 planned |
-| REQ-007 | P1 | kind별 gate | EndpointExplorationRunnerStateGuardTest#gateByKind* | integration | 🔴 planned |
-| REQ-008 | P1 | 기존 회귀 불변 | 기존 StateGuard 단위 + ReadInputSynthesizerVariantTest + BuilderIntegrationTest(state-guard 단언) | integration/E2E | 🔴 planned |
-| REQ-009 | P1 | E2E order-service 양arm | BuilderIntegrationTest#eligibilityNumericTwoArms | E2E | 🔴 planned |
-| REQ-010 | P1 | record 후방호환 | 기존 StateGuard 테스트 컴파일·green | integration | 🔴 planned |
+| REQ-001 | P1 | BOOLEAN 검출 | ConstraintExtractorStateGuardTest#booleanGuard* | integration | 🟢 green |
+| REQ-002 | P1 | NULLITY 검출 | ConstraintExtractorStateGuardTest#nullityGuard* | integration | 🟢 green |
+| REQ-003 | P1 | NUMERIC-상수 검출 | ConstraintExtractorStateGuardTest#numericLiteralGuard* | integration | 🟢 green |
+| REQ-004 | P1 | NUMERIC-파라미터 검출 | ConstraintExtractorStateGuardTest#numericParamGuard* | integration | 🟢 green |
+| REQ-005 | P1 | 반대-arm 변종+격리PK | ReadInputSynthesizerVariantTest#flip* | integration | 🟢 green |
+| REQ-006 | P1 | 입력-시드 공동 합성 | ReadInputSynthesizerVariantTest#inputSeedJoint* | integration | 🟢 green |
+| REQ-007 | P1 | kind별 gate | EndpointExplorationRunnerStateGuardTest#gateByKind* | integration | 🟢 green |
+| REQ-008 | P1 | 기존 회귀 불변 | 기존 StateGuard 단위 + ReadInputSynthesizerVariantTest + BuilderIntegrationTest(state-guard 단언) | integration/E2E | 🟢 green |
+| REQ-009 | P1 | E2E order-service 양arm | BuilderIntegrationTest#eligibilityNumericTwoArms | E2E | 🟢 green |
+| REQ-010 | P1 | record 후방호환 | 기존 StateGuard 테스트 컴파일·green | integration | 🟢 green |
 | REQ-011 | P2 | reachable 1-hop | ConstraintExtractorReachableTest#oneHop* | integration | 🔴 planned |
 | REQ-012 | P2 | cross-class 귀속 | BuilderCliAttributionTest#reachable*, #joinGuardReachable | integration | 🔴 planned |
 | REQ-013 | P2 | E2E petclinic 계층형 | local sweep (.work/ 스크립트) | local sweep | 🔴 planned |
 | REQ-014 | P2 | pass-through 매칭 | ConstraintExtractorReachableTest#passThrough* | integration | 🔴 planned |
 
-Coverage: 0/14 green (0%) — target 100% (대상: Must 12 + 미연기 Should 2[REQ-010,REQ-014]).
+Coverage: 10/14 green (P1 완료) — Phase 1 대상(Must 8 P1 + Should 2 P1[REQ-010]) 10/10 (100% P1 green).
+P2 대상(REQ-011~014) 0/4 — Phase 2 미착수.
 비고: REQ-013은 외부 petclinic 의존 — in-repo CI 게이트가 아닌 로컬 스윕으로 green 판정(설계 §6, R4).
+비고: BuilderIntegrationTest 두 메서드 동시 실행 시 SUT 포트 충돌 발생(기존 이슈, stash 검증). 단독 실행 green 확인(REQ-009).
