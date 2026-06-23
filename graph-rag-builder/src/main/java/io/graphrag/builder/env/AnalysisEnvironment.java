@@ -29,7 +29,7 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
     private final DbConfig dbConfig;
     private final GenericContainer<?> redis;   // nullable — Redis 의존 SUT(예: auth-user)용
     private final KafkaContainer kafka;        // nullable — Kafka 의존 SUT(예: diary, mindgraph)용
-    private final HttpCaptureServer httpCapture = new HttpCaptureServer();
+    private final HttpCaptureServer httpCapture;
     private SutProcess sut;
     private String coverageHost = "localhost";
     private int coveragePort;
@@ -44,12 +44,22 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
     }
 
     public AnalysisEnvironment(DbConfig dbConfig, boolean withRedis, boolean withKafka) {
+        this(dbConfig, withRedis, withKafka, new NoTraceKey());
+    }
+
+    /**
+     * @param traceKey outbound trace-id 추출 모드(otel/sleuth/none). 합성 stub 재탐색에서
+     *                 unmatched 외부 호출을 요청에 귀속하는 데 쓰인다(REQ-007).
+     */
+    public AnalysisEnvironment(DbConfig dbConfig, boolean withRedis, boolean withKafka,
+                               TraceKey traceKey) {
         // Docker Engine 29+: docker-java의 구버전 API(1.32) 호출이 거부되므로 명시
         if (System.getProperty("api.version") == null) {
             System.setProperty("api.version", "1.44");
         }
         this.dbConfig = dbConfig;
         this.db = JdbcContainers.create(dbConfig);
+        this.httpCapture = new HttpCaptureServer(traceKey);
         this.redis = withRedis
                 ? new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379)
                 : null;
