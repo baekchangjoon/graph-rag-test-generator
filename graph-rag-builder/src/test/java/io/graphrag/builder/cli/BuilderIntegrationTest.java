@@ -424,11 +424,17 @@ class BuilderIntegrationTest {
                 .as("NUMERIC GE 가드: 200(nights>=V) arm과 404(nights<V) arm이 모두 존재해야 한다")
                 .contains(200, 404);
 
+        // state-guard 변종 path는 discoveredBy="state-guard"이고 requiredSeedIds가 있다.
+        // 일반 탐색 404(findById 실패 등)는 requiredSeedIds가 없으므로 필터로 state-guard 변종을 고른다.
         ExploredPath arm200 = eligibilityPaths.stream()
-                .filter(p -> p.expectedStatus() == 200).findFirst()
+                .filter(p -> p.expectedStatus() == 200)
+                .filter(p -> !p.requiredSeedIds().isEmpty())
+                .findFirst()
                 .orElseThrow(() -> new AssertionError("200 arm(nights>=minNights) 없음 — NUMERIC 가드 미검출"));
         ExploredPath arm404 = eligibilityPaths.stream()
-                .filter(p -> p.expectedStatus() == 404).findFirst()
+                .filter(p -> p.expectedStatus() == 404)
+                .filter(p -> !p.requiredSeedIds().isEmpty())   // findById 실패 404는 seeds 없음; state-guard 변종만
+                .findFirst()
                 .orElseThrow(() -> new AssertionError("404 arm(nights<minNights) 없음 — 변종 시드 미생성"));
 
         // 두 arm의 requiredSeedIds가 비어 있지 않고 서로 다른 PK로 격리됐는지 단언 (REQ-009 격리 경계)
