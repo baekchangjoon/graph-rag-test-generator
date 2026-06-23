@@ -3,6 +3,12 @@ spring:
     hibernate:
       ddl-auto: ${DDL_AUTO:create}
     open-in-view: false
+  kafka:
+    producer:
+      properties:
+        # 브로커 부재 시 send().get()이 60s(기본 max.block.ms)까지 블로킹하는 것을 막는다.
+        # 실제 브로커가 있으면 메타데이터는 즉시 받아 영향 없음(with-kafka 통합 테스트 무해).
+        max.block.ms: 3000
 management:
   endpoints:
     web:

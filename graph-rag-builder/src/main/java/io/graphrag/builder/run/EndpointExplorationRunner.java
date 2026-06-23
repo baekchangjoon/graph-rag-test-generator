@@ -198,6 +198,9 @@ public class EndpointExplorationRunner {
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
     private Set<String> appClasses = Set.of();   // path 지문을 SUT 자체 클래스로 한정
     private final List<LoudFail> externalLoudFails = new ArrayList<>();   // 현 endpoint의 외부 stub loud-fail
+    // 단계2 enum 변형이 새 arm을 연 path/합성 http call (현 endpoint). 최종 결과에 병합.
+    private final List<ExploredPath> variantPaths = new ArrayList<>();
+    private final List<io.graphrag.model.CapturedHttpCall> variantHttpCalls = new ArrayList<>();
 
     /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
@@ -298,6 +301,8 @@ public class EndpointExplorationRunner {
                               List<FormFieldBinding> formBindings) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         externalLoudFails.clear();                        // 외부 stub loud-fail도 엔드포인트마다 초기화
+        variantPaths.clear();
+        variantHttpCalls.clear();
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
         }
@@ -388,7 +393,7 @@ public class EndpointExplorationRunner {
             // 재invoke해 그 enum으로 갈리는 SUT 분기의 모든 arm을 결정적으로 연다. GRB_RESPONSE_VARIANTS=off면 skip.
             if (baseInput != null
                     && !"off".equalsIgnoreCase(System.getenv("GRB_RESPONSE_VARIANTS"))) {
-                runEnumResponseVariantLoops(endpoint, baseInput);
+                runEnumResponseVariantLoops(endpoint, baseInput, outcome);
             }
         }
 
@@ -480,6 +485,7 @@ public class EndpointExplorationRunner {
         // httpInvoker가 변종 요청의 커버리지를 cumulativeCoverage에 OR-병합하므로 report()의
         // missedBranches에서 그 라인이 사라진다(missed→covered). 변종 path/seed는 결과에 추가.
         List<ExploredPath> finalPaths = new ArrayList<>(attached.paths());
+        finalPaths.addAll(variantPaths);   // 단계2 enum 변형이 연 arm path(REQ-001)
         List<RequiredSeed> finalSeeds = new ArrayList<>(
                 attached.requiredSeeds() == null ? List.of() : attached.requiredSeeds());
         List<CapturedSql> finalSql = new ArrayList<>(bundle.allSql());
@@ -593,7 +599,9 @@ public class EndpointExplorationRunner {
         // app 분기 집계는 BuilderCli가 전 루프(Kafka+HTTP+WS) 종료 후 runWideExec로 1회 산출한다.
         // 여기선 누적 exec만 넘긴다(arm-level OR 병합 근거). report()는 cumulativeCoverage 기준이므로
         // 변종 pass 이후에 호출해야 미커버 전이가 반영된다.
-        return new EndpointResult(finalPaths, finalSql, bundle.httpCalls(),
+        List<io.graphrag.model.CapturedHttpCall> finalHttpCalls = new ArrayList<>(bundle.httpCalls());
+        finalHttpCalls.addAll(variantHttpCalls);   // 단계2 변형 합성 외부 호출(REQ-001/004)
+        return new EndpointResult(finalPaths, finalSql, finalHttpCalls,
                 finalSeeds, report(endpoint, outcome, comparisons, drops, finalPaths), cumulativeCoverage,
                 bundle.capturedEventEmits(), List.copyOf(externalLoudFails));
     }
@@ -1573,8 +1581,16 @@ public class EndpointExplorationRunner {
         ExecutionDataStore invoke(JsonNode variantBody) throws Exception;
     }
 
-    /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수. */
-    public record VariantExploreResult(List<String> keptVariantLabels, int attempted) {}
+    /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수 + 보존 변형(label,body). */
+    public record VariantExploreResult(List<String> keptVariantLabels, int attempted,
+                                       List<KeptVariant> kept) {
+        public VariantExploreResult(List<String> keptVariantLabels, int attempted) {
+            this(keptVariantLabels, attempted, List.of());
+        }
+    }
+
+    /** 새 arm을 연 변형의 자취: label + 변형 응답 body(합성 CapturedHttpCall body). */
+    public record KeptVariant(String label, JsonNode variantBody) {}
 
     /**
      * enum 응답 변형 탐색 루프 (REQ-009, REQ-010). B2 루프 수렴 후 한 외부 응답 callSite에 대해
@@ -1594,6 +1610,7 @@ public class EndpointExplorationRunner {
             boolean isolated, VariantInvoker invoker,
             ExecutionDataStore cumulative, Set<String> appClasses) {
         List<String> kept = new ArrayList<>();
+        List<KeptVariant> keptVariants = new ArrayList<>();
         int attempted = 0;
         for (EnumResponseVariantGenerator.ResponseVariant variant : plan.kept()) {
             JsonNode body = applyEnumOverrides(baselineBody, variant.enumOverrides());
@@ -1605,6 +1622,7 @@ public class EndpointExplorationRunner {
                 boolean newArm = mergeAndDetectNewArm(cumulative, delta, appClasses);
                 if (newArm) {
                     kept.add(variant.label());
+                    keptVariants.add(new KeptVariant(variant.label(), body));
                 }
             } catch (Exception e) {   // best-effort: 변형 실패는 회귀 아님(나머지 변형 계속)
                 log.warn("enum-variant invoke failed for {} {} ({}): {}",
@@ -1617,7 +1635,7 @@ public class EndpointExplorationRunner {
                 }
             }
         }
-        return new VariantExploreResult(kept, attempted);
+        return new VariantExploreResult(kept, attempted, keptVariants);
     }
 
     /**
@@ -1660,11 +1678,31 @@ public class EndpointExplorationRunner {
     static final int RESPONSE_VARIANT_BUDGET = 32;
 
     /**
+     * 외부 call site({@code site.pathLiteral})를 실제 발화시킨 탐색 입력을 고른다. 그 site로 가는
+     * httpExchange를 만든 PathCandidate의 body를 반환한다(결정적: pathId 정렬 후 첫 매칭). 없으면
+     * {@code fallback}(일반 happy). enum-응답 분기는 보통 특정 입력(type=EXPRESS 등)에서만 외부
+     * 호출이 일어나므로, 그 입력으로 재invoke해야 switch arm에 도달한다.
+     */
+    private static JsonNode inputReachingCallSite(ExplorationOutcome outcome,
+            io.graphrag.builder.index.ExternalCallSite site, JsonNode fallback) {
+        return outcome.paths().stream()
+                .filter(pc -> pc.httpExchanges().stream().anyMatch(
+                        ex -> ex.urlPath().equals(site.pathLiteral())
+                                && ex.method().equalsIgnoreCase(site.httpMethod())))
+                .sorted(java.util.Comparator.comparing(io.graphrag.builder.explore.PathCandidate::pathId))
+                .map(io.graphrag.builder.explore.PathCandidate::body)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse(fallback);
+    }
+
+    /**
      * 등록된 외부 응답 stub 중 enum 필드를 가진 callSite마다 변형 탐색 루프를 돈다(REQ-009, REQ-010).
      * 각 변형 stub은 trace-id로 격리(otel/sleuth) 또는 순차 교체(none)되고, endpoint를 happy 입력으로
      * 재invoke해 SUT의 외부-응답-의존 분기 arm을 cumulativeCoverage에 OR-병합한다.
      */
-    private void runEnumResponseVariantLoops(Endpoint endpoint, JsonNode baseInput) {
+    private void runEnumResponseVariantLoops(Endpoint endpoint, JsonNode baseInput,
+                                             ExplorationOutcome outcome) {
         boolean isolated = !(httpCapture.traceKey() instanceof io.graphrag.builder.env.NoTraceKey);
         EnumResponseVariantGenerator generator = new EnumResponseVariantGenerator();
         ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(
@@ -1692,13 +1730,45 @@ public class EndpointExplorationRunner {
             } catch (RuntimeException e) {   // 해소 불가 형상(중첩 DTO 등)은 변형 대상 아님(B2가 이미 loud-fail)
                 continue;
             }
-            VariantInvoker invoker = realVariantInvoker(endpoint, baseInput, authHeader, http);
+            // 변형 base 입력 = 그 외부 call site를 실제로 발화시킨 탐색 입력(예: type=EXPRESS).
+            // 일반 happy(baseInput)는 외부 호출 분기(if("EXPRESS"))를 타지 않아 switch에 못 가므로
+            // arm을 열 수 없다. site를 호출한 path candidate의 body를 쓴다(없으면 baseInput 폴백).
+            JsonNode triggerInput = inputReachingCallSite(outcome, site, baseInput);
+            VariantInvoker invoker = realVariantInvoker(endpoint, triggerInput, authHeader, http);
             VariantExploreResult vr = exploreEnumResponseVariants(plan, baselineResponse,
                     site.httpMethod(), site.pathLiteral(), stubSynthesizer,
                     isolated, invoker, cumulativeCoverage, appClasses);
             log.info("enum-variant loop {} for {} {}: attempted={} kept={}",
                     endpoint.id(), site.httpMethod(), site.pathLiteral(), vr.attempted(), vr.keptVariantLabels());
+
+            if (vr.kept().isEmpty()) {
+                continue;
+            }
+            // 변형마다 합성 CapturedHttpCall(SYNTHESIZED, 변형 응답 body)을 기록한다(REQ-004).
+            // 분기는 단일 변형 delta가 아니라 변형 루프가 OR-누적한 cumulativeCoverage에서 뽑는다 —
+            // JaCoCo는 라인의 covered/total 카운트만 노출하므로, arm 식별은 누적 covered 수(= distinct
+            // branchIndex)로만 가능하다(단일 arm delta는 항상 branchIndex 0뿐). 한 변형-집계 path에
+            // 모든 arm 분기를 실어 외부-의존 path로 집계되게 한다(REQ-001). 생성 제외 마커.
+            List<String> variantHttpIds = new ArrayList<>();
+            for (KeptVariant kv : vr.kept()) {
+                String httpId = "http-" + endpoint.id() + "-enumvar-" + sanitizeLabel(kv.label());
+                variantHttpCalls.add(new io.graphrag.model.CapturedHttpCall(
+                        httpId, endpoint.id() + "-enumvar", site.httpMethod(), site.pathLiteral(),
+                        Map.of(), null, 200, kv.variantBody().toString(),
+                        consumedFields(kv.variantBody().toString()), false,
+                        io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED));
+                variantHttpIds.add(httpId);
+            }
+            List<BranchRef> cumBranches = List.copyOf(analyzer.analyze(cumulativeCoverage).covered());
+            variantPaths.add(new ExploredPath(endpoint.id() + "-enumvar", endpoint.id(),
+                    triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
+                    "enum-response-variant", List.of(), List.of(), List.of()));
         }
+    }
+
+    /** 변형 label("mode=BACKORDER")을 path-id 토큰으로 정규화(영숫자 외 → '-'). */
+    private static String sanitizeLabel(String label) {
+        return label.replaceAll("[^A-Za-z0-9]+", "-");
     }
 
     /**
