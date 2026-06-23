@@ -55,7 +55,17 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 입력 생성: happy 입력 + (generic 경계 변이 ⊕ **InputOracle** 후보)를 HTTP로 호출한다. 오라클은
 교체 가능하며 현재 두 구현을 합집합으로 쓴다 — `StaticLiteralOracle`(Spoon, 소스 리터럴 비교·문자열
 동치) + `ConcolicOracle`(**ASM 바이트코드 심볼릭 스캔 + Z3**, 소스에 없는 값 도출: `amount*3==21→7`,
-`code.length()==5→"xxxxx"`). 커버리지는 요청 단위 JaCoCo exec data를 누적 병합한 **arm-level**이고,
+`code.length()==5→"xxxxx"`). 선택적으로 `LlmOracle`(**LLM 값 오라클**, `--llm-oracle` 플래그)을 union에
+더할 수 있다 — @Pattern/@Email·도메인 코드 같은 **엄격 검증 필드**에 도메인 그럴듯한 문자열(예
+`[A-Z]{4}-\d{4}`+`startsWith("GOLD")`→`"GOLD-1234"`)을 생성해 깊은/해피 경로를 연다. 값(구조 아님,
+strings 채널만). 결정성: LLM 출력을 `(endpoint.id+핸들러 본문+필드셋+모델ID)` 키로
+`src/main/resources/llm-oracle-cache/`에 커밋 → CI·재실행은 **캐시 우선·오프라인**(`ANTHROPIC_API_KEY`
+없고 캐시 miss면 skip). 기본 모델 Haiku 4.5(`--llm-model claude-sonnet-4-6`로 에스컬레이션), 단일
+structured 호출(temperature 0). 백엔드 교체 가능 — `--llm-backend api`(기본, 1st-party
+`ANTHROPIC_API_KEY`) | `bedrock`(AWS 자격증명) | `cli`(`--llm-cli`로 로컬 CLI: `claude`/`cursor-agent`/
+`agy`는 `-p --model`, `kiro-cli`는 `chat --no-interactive --model`; CLI별 모델명 상이). **내부 SUT 전용
+권고**(핸들러 소스를 프롬프트에 포함). `ANTHROPIC_API_KEY`는
+env로만, **커밋 금지**. 커버리지는 요청 단위 JaCoCo exec data를 누적 병합한 **arm-level**이고,
 path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트로 보존된다.
 
 그 위에 단계별 입력 발견(Stage 0–3b)을 쌓았다: **Stage 0** 유효 happy 합성(enum 첫 상수·날짜 ISO·이메일),

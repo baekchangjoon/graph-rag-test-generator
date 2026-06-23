@@ -18,6 +18,9 @@ dependencies {
     implementation(libs.asm.tree)
     implementation(libs.asm.analysis)
     implementation(libs.z3.turnkey)
+    implementation(libs.anthropic.java)
+    implementation(platform(libs.aws.sdk.bom))   // anthropic-java-bedrock transitive AWS SDK 버전 공급
+    implementation(libs.anthropic.java.bedrock)
     implementation(libs.testcontainers.postgresql)
     implementation(libs.testcontainers.mysql)
     implementation(libs.testcontainers.mariadb)
