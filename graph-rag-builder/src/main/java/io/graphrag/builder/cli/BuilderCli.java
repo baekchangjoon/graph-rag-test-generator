@@ -61,6 +61,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
+import java.util.AbstractMap;
 
 /**
  * 도구 1 진입점 (Phase 2: 분기 탐색 + MyBatis + 외부 HTTP 캡처).
@@ -682,6 +683,9 @@ public final class BuilderCli {
                 log.info("KafkaCaptureReceiver started for outbound event capture on {}", kafkaBootstrap);
             }
 
+            // REQ-012: 고유 핸들러당 Spoon 1회만 호출(캐시). 키 = "classFqn#method".
+            Map<String, Set<Map.Entry<String, String>>> reachableCache = new HashMap<>();
+
             try (io.graphrag.builder.run.KafkaCaptureReceiver receiverToClose = kafkaCapture) {
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
@@ -738,15 +742,19 @@ public final class BuilderCli {
                             authProvider, config.authConfig(), enumConstants, enumColumns,
                             config.requestHeaders(), sqlCapture, receiverToClose,
                             config.classifierConfig().toClassifier(), callSites);
-                    // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
+                    // REQ-012: 고유 핸들러당 Spoon 1회(computeIfAbsent 캐시) — cross-class 귀속.
+                    String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
+                    Set<Map.Entry<String, String>> reachable = reachableCache.computeIfAbsent(
+                            handlerKey,
+                            k -> constraintExtractor.reachableMethods(
+                                    config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod()));
+                    // 이 엔드포인트 reachable에 귀속된 상태가드만 전달(cross-class 포함).
                     List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
-                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
-                                    && g.method().equals(endpoint.handlerMethod()))
+                            .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
                             .toList();
-                    // 이 엔드포인트 handler에 귀속된 joinGuard만 전달(per-endpoint 필터).
+                    // 이 엔드포인트 reachable에 귀속된 joinGuard만 전달(cross-class 포함).
                     List<ConstraintExtractor.JoinGuard> endpointJoinGuards = allJoinGuards.stream()
-                            .filter(g -> g.classFqn().equals(endpoint.handlerClass())
-                                    && g.method().equals(endpoint.handlerMethod()))
+                            .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
                             .toList();
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
@@ -924,5 +932,39 @@ public final class BuilderCli {
                     "--trace-mode must be 'otel', 'sleuth', or 'none', got: " + value);
         }
         return value;
+    }
+
+    /**
+     * REQ-012: 가드 (classFqn, method)가 reachable 집합에 속하는지 판정한다.
+     * 정확 일치 우선, 이후 noClasspath 미해소 케이스를 위해 simpleName endsWith 폴백을 적용한다.
+     *
+     * <p>폴백 규칙: reachable 엔트리의 타입 FQN이 simpleName만 해소된 경우
+     * ("ReservationService") 와 가드 classFqn("com.example.ReservationService")이 같은 이름이면
+     * {@code classFqn.endsWith("." + reachableType)} 으로 매칭한다. 반대 방향(가드가 simpleName,
+     * reachable이 FQN)도 동일하게 처리한다.
+     *
+     * <p>동명 클래스가 여러 패키지에 있으면 과귀속 가능 — best-effort, 매칭 실패 시 귀속 0.
+     */
+    static boolean isReachable(Set<Map.Entry<String, String>> reachable, String classFqn, String method) {
+        // 1단계: 정확 일치
+        if (reachable.contains(new AbstractMap.SimpleEntry<>(classFqn, method))) {
+            return true;
+        }
+        // 2단계: simpleName endsWith 폴백 (noClasspath 미해소)
+        for (Map.Entry<String, String> e : reachable) {
+            if (!e.getValue().equals(method)) {
+                continue;
+            }
+            String t = e.getKey();
+            // reachable의 타입이 simpleName, 가드의 classFqn이 FQN인 경우
+            if (classFqn.endsWith("." + t)) {
+                return true;
+            }
+            // 반대: 가드의 classFqn이 simpleName, reachable의 타입이 FQN인 경우
+            if (t.endsWith("." + classFqn)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
