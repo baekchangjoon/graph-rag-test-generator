@@ -111,6 +111,36 @@ class ConstraintExtractorStateGuardTest {
     }
 
     @Test
+    void nullityGuard_eqNull() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byNote: if(b.getNote() == null) → NULLITY, column="note", op="==", comparand="null"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.NULLITY)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNote"))
+                .findFirst().orElseThrow(() -> new AssertionError("NULLITY guard for byNote not found"));
+        assertThat(g.column()).isEqualTo("note");
+        assertThat(g.op()).isEqualTo("==");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("null");
+    }
+
+    @Test
+    void nullityGuard_neNull() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byNoteNe: if(b.getNote() != null) → NULLITY, column="note", op="!=", comparand="null"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.NULLITY)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNoteNe"))
+                .findFirst().orElseThrow(() -> new AssertionError("NULLITY guard for byNoteNe not found"));
+        assertThat(g.column()).isEqualTo("note");
+        assertThat(g.op()).isEqualTo("!=");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("null");
+    }
+
+    @Test
     void doesNotRecognizePureInputComparison_asStateGuard() {
         List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
 

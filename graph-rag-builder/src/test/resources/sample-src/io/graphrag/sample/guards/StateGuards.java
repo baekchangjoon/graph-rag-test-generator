@@ -16,12 +16,14 @@ public class StateGuards {
         private LocalDate checkInDate;
         private BookingStatus status;
         private boolean active;
+        private String note;
 
         Long getId() { return id; }
         LocalDate getCheckInDate() { return checkInDate; }
         BookingStatus getStatus() { return status; }
         boolean getActive() { return active; }
         boolean isActive() { return active; }
+        String getNote() { return note; }
     }
 
     String getById(Booking b, boolean includeStale, int id) {
@@ -95,5 +97,21 @@ public class StateGuards {
             return "on";
         }
         return "off";
+    }
+
+    /** NULLITY == null: getter() == null → kind=NULLITY, column="note", op="==", comparand="null". */
+    String byNote(Booking b) {
+        if (b.getNote() == null) {
+            return "empty";
+        }
+        return "has";
+    }
+
+    /** NULLITY != null: getter() != null → kind=NULLITY, column="note", op="!=", comparand="null". */
+    String byNoteNe(Booking b) {
+        if (b.getNote() != null) {
+            return "has";
+        }
+        return "empty";
     }
 }
