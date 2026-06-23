@@ -221,7 +221,9 @@ public class ReadInputSynthesizer {
     /**
      * 가드별 결정적 대체-상태 값 리스트(다중 전이 arm). TEMPORAL=과거 날짜 1개. ENUM=
      * [EQ positive 각 상수(정렬)] + [EQ else-arm 잔여 1개(positive·negated 밖)] + [NE 잔여 상수(정렬,
-     * negated 비어있지 않을 때만)]. base 상태(happy)는 제외, 컬럼당 최대 VARIANT_CAP개.
+     * negated 비어있지 않을 때만)]. BOOLEAN=반대 boolean 1개. NULLITY=nullable 컬럼에서 반대 arm 1개
+     * (NOT NULL이면 빈 리스트). NUMERIC 상수=op별 반대 arm 정수 1개.
+     * base 상태(happy)는 제외, 컬럼당 최대 VARIANT_CAP개.
      */
     private List<Object> flipValues(ConstraintExtractor.StateGuard guard, ColumnSchema col, String baseState) {
         if (guard.kind() == ConstraintExtractor.GuardKind.TEMPORAL) {
@@ -230,6 +232,48 @@ public class ReadInputSynthesizer {
                     ? java.time.LocalDateTime.of(1900, 1, 1, 0, 0)
                     : java.time.LocalDate.of(1900, 1, 1);
             return List.of(v);
+        }
+        if (guard.kind() == ConstraintExtractor.GuardKind.BOOLEAN) {
+            // baseState가 "true"면 반대 arm = false, 그 외(false 또는 null)면 true
+            boolean opposite = !"true".equalsIgnoreCase(baseState);
+            return List.of(opposite);
+        }
+        if (guard.kind() == ConstraintExtractor.GuardKind.NULLITY) {
+            // NOT NULL 컬럼은 null arm 불가 → 변종 없음
+            if (!col.nullable()) {
+                return List.of();
+            }
+            // nullable: baseState=null이면 → defaultFor(col), non-null이면 → null
+            if (baseState == null) {
+                return List.of(defaultFor(col));
+            }
+            return java.util.Collections.singletonList(null);
+        }
+        if (guard.kind() == ConstraintExtractor.GuardKind.NUMERIC
+                && guard.comparandKind() == ConstraintExtractor.ComparandKind.LITERAL) {
+            long c;
+            try {
+                c = Long.parseLong(guard.comparand());
+            } catch (NumberFormatException e) {
+                return List.of();
+            }
+            long opposite = numericOpposite(guard.op(), c);
+            // JDBC 타입이 정수 계열일 때만 숫자 arm 산출
+            String jdbcUpper = col.jdbcType().toUpperCase();
+            if (jdbcUpper.contains("BIGINT")) {
+                return List.of(opposite);
+            }
+            if (jdbcUpper.contains("INT")) {
+                // Integer 범위 내로 clamp
+                long clamped = Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, opposite));
+                return List.of((int) clamped);
+            }
+            return List.of(opposite);
+        }
+        if (guard.kind() == ConstraintExtractor.GuardKind.NUMERIC
+                && guard.comparandKind() == ConstraintExtractor.ComparandKind.PARAM) {
+            // PARAM 비교: Task8에서 처리 — 이 task에서는 skip
+            return List.of();
         }
         List<String> all = enumConstantsForType(guard.enumType());
         if (all == null) {
@@ -273,6 +317,23 @@ public class ReadInputSynthesizer {
                     .map(Map.Entry::getValue).findFirst().orElse(null);
         }
         return consts;
+    }
+
+    /**
+     * op·상수 C 기준 반대 arm 정수 계산.
+     * >=C → C-1, >C → C, <=C → C+1, <C → C, ==C → C+1, !=C → C.
+     * Long.MIN/MAX 근처는 범위 내 결정적 대체값으로 보정.
+     */
+    private static long numericOpposite(String op, long c) {
+        return switch (op) {
+            case ">=" -> c > Long.MIN_VALUE ? c - 1 : Long.MIN_VALUE;
+            case ">"  -> c;
+            case "<=" -> c < Long.MAX_VALUE ? c + 1 : Long.MAX_VALUE;
+            case "<"  -> c;
+            case "==" -> c < Long.MAX_VALUE ? c + 1 : c - 1;
+            case "!=" -> c;
+            default   -> c;
+        };
     }
 
     /** PK 값을 변종 인덱스만큼 오프셋(정수=+idx, 문자열="_idx") — 두 행 공존·dedup 회피. */
