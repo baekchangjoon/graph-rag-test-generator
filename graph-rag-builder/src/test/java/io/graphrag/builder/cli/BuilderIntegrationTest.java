@@ -153,7 +153,7 @@ class BuilderIntegrationTest {
         assertThat(httpCall.urlPath()).isEqualTo("/inventory/stock");
         assertThat(httpCall.query()).containsEntry("type", "EXPRESS");
         assertThat(httpCall.responseBody()).contains("available");
-        assertThat(httpCall.consumedFields()).containsExactly("available");
+        assertThat(httpCall.consumedFields()).containsExactlyInAnyOrder("available", "mode");
         // OTEL javaagent가 inbound baggage를 outbound로 전파했다 (docs/06 격리 기반)
         assertThat(httpCall.baggagePropagated()).isTrue();
 
