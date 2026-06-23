@@ -72,6 +72,13 @@ import java.util.stream.Stream;
  *       [--auth-login-path /api/auth/login --auth-user admin --auth-pass password]
  *       [--auth-token-field token --auth-header Authorization --auth-scheme Bearer]
  *       [--no-incremental|--reindex]
+ *       [--llm-oracle [--llm-model <id>] [--llm-backend api|bedrock|cli] [--llm-cli claude|cursor-agent|agy|kiro-cli]]
+ * --llm-oracle: LLM 값 오라클 opt-in(엄격검증 필드에 도메인 그럴듯한 문자열 생성). 캐시 우선,
+ *   자격증명 없고 캐시 miss면 skip(CI 오프라인). 내부 SUT 전용 권고. 미지정 시 no-op.
+ *   --llm-backend: api(기본, ANTHROPIC_API_KEY) | bedrock(AWS 자격증명) | cli(--llm-cli 바이너리).
+ *   --llm-cli: claude/cursor-agent/agy(=`-p --model`) | kiro-cli(=`chat --no-interactive --model`).
+ *     CLI별 모델명이 다름 — claude: claude-haiku-4-5-20251001, kiro-cli: claude-haiku-4.5|auto 등
+ *     (`--llm-model`로 해당 CLI에 맞는 이름 지정).
  * 정적 인덱싱 캐시: 이전 빌드가 있으면 <out>/index-cache/에 Spoon 파싱 결과를 캐시하고,
  * 소스 무변경 시 캐시 복원으로 Spoon 0회 재빌드. --no-incremental으로 캐시 무시 강제 풀 리빌드.
  */
@@ -170,7 +177,12 @@ public final class BuilderCli {
                 traceMode(options.get("--trace-mode")),
                 classifierConfig,
                 options.containsKey("--no-incremental") || options.containsKey("--reindex"),
-                !options.containsKey("--no-reflect-instantiate"));
+                !options.containsKey("--no-reflect-instantiate"),
+                new io.graphrag.builder.oracle.LlmOptions(
+                        options.containsKey("--llm-oracle"),
+                        options.get("--llm-model"),
+                        options.get("--llm-backend"),
+                        options.get("--llm-cli")));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -593,8 +605,25 @@ public final class BuilderCli {
                 inputCandidates = inputCandidates.merge(
                         new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
             }
-            log.info("input oracles (concolic={}) → {} numeric field(s), {} string field(s)",
-                    useConcolic, inputCandidates.numeric().size(), inputCandidates.strings().size());
+            // LLM 값 오라클 — --llm-oracle 플래그 뒤에서만 union에 추가(비용 opt-in). 캐시 우선,
+            // 키 없고 캐시 miss면 내부에서 skip(CI 오프라인). off면 완전 no-op(회귀 0).
+            if (config.llm().enabled()) {
+                io.graphrag.builder.oracle.LlmOptions llmOpts = config.llm();
+                io.graphrag.builder.oracle.LlmBackends.Selection sel =
+                        io.graphrag.builder.oracle.LlmBackends.create(
+                                llmOpts.backend(), llmOpts.model(), llmOpts.cli());
+                io.graphrag.builder.oracle.LlmOracle llm = new io.graphrag.builder.oracle.LlmOracle(
+                        index, new io.graphrag.builder.index.ValidationConstraintExtractor(),
+                        new io.graphrag.builder.oracle.HandlerSourceExtractor(config.sutSrc()),
+                        sel.client(), io.graphrag.builder.oracle.LlmValueCache.defaultClasspath(),
+                        llmOpts.model(), sel.usable());
+                inputCandidates = inputCandidates.merge(llm.analyze(sutCode));
+                log.info("llm oracle merged (backend={}, model={}, usable={})",
+                        llmOpts.backend(), llmOpts.model(), sel.usable());
+            }
+            log.info("input oracles (concolic={}, llm={}) → {} numeric field(s), {} string field(s)",
+                    useConcolic, config.llm().enabled(),
+                    inputCandidates.numeric().size(), inputCandidates.strings().size());
 
             // @KafkaListener consumer: HTTP 탐색보다 먼저 실행(#3 순서 불변식). consumer가 쓴
             // 행을 read 엔드포인트가 관측(read 보너스)하고, consumer 자신의 실행 커버리지(delta)도

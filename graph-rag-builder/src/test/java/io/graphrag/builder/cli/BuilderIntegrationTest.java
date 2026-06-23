@@ -56,6 +56,7 @@ class BuilderIntegrationTest {
                         "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings",
                         "post-api-bookings-id-advance",
+                        "post-api-coupons",
                         "post-api-deep",
                         "post-api-orders",
                         "post-api-orders-batch", "post-api-orders-by-ids",

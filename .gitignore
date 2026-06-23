@@ -39,3 +39,6 @@ e2e/.error-envelope-out/
 
 # subagent-driven-development scratch
 /.superpowers/
+
+# LLM 오라클: gradle :run CWD가 모듈 디렉터리일 때 캐시 write가 만드는 이중경로 가드
+graph-rag-builder/graph-rag-builder/

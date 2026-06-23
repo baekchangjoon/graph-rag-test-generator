@@ -2,6 +2,7 @@ package io.graphrag.builder.cli;
 
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.oracle.ClassifierConfig;
+import io.graphrag.builder.oracle.LlmOptions;
 import io.graphrag.builder.run.AuthConfig;
 
 import java.nio.file.Path;
@@ -33,7 +34,8 @@ public record BuildConfig(
         String traceMode,
         ClassifierConfig classifierConfig,
         boolean noIncremental,
-        boolean reflectInstantiate) {
+        boolean reflectInstantiate,
+        LlmOptions llm) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -42,9 +44,10 @@ public record BuildConfig(
         endpointSelectors = endpointSelectors == null ? List.of() : endpointSelectors;
         traceMode = traceMode == null ? "otel" : traceMode;   // 기본 otel (sleuth/none은 명시)
         classifierConfig = classifierConfig == null ? ClassifierConfig.from(Map.of()) : classifierConfig;
+        llm = llm == null ? LlmOptions.disabled() : llm;
     }
 
-    /** reflectInstantiate 를 생략하는 편의 생성자 (기존 23-arg 호출부 호환). */
+    /** reflectInstantiate·llm 을 생략하는 편의 생성자 (기존 23-arg 호출부 호환 — 둘 다 기본값). */
     public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
                        String sutId, String commitSha, DbConfig dbConfig,
                        int budgetRequests, Path manualPathsDir, Path externalStubsDir,
@@ -56,7 +59,23 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
-                endpointSelectors, traceMode, classifierConfig, noIncremental, true);
+                endpointSelectors, traceMode, classifierConfig, noIncremental, true, LlmOptions.disabled());
+    }
+
+    /** llm 을 생략하는 편의 생성자 (reflectInstantiate 는 받고 llm 만 기본값 — 24-arg 호출부 호환). */
+    public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
+                       String sutId, String commitSha, DbConfig dbConfig,
+                       int budgetRequests, Path manualPathsDir, Path externalStubsDir,
+                       Map<String, String> sutEnv, Path incrementalBase, List<String> changedFiles,
+                       AuthConfig authConfig, boolean withRedis, boolean withKafka, String sutJavaHome,
+                       BuilderCli.AttachConfig attach, io.graphrag.model.RequestHeaders requestHeaders,
+                       List<String> endpointSelectors, String traceMode,
+                       ClassifierConfig classifierConfig, boolean noIncremental, boolean reflectInstantiate) {
+        this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
+                authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
+                endpointSelectors, traceMode, classifierConfig, noIncremental, reflectInstantiate,
+                LlmOptions.disabled());
     }
 
     /** 풀빌드 설정 (증분 옵션 없음). */
@@ -66,7 +85,8 @@ public record BuildConfig(
                        Map<String, String> sutEnv) {
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, null, null, null, false, false, null,
-                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null, false, true);
+                null, io.graphrag.model.RequestHeaders.empty(), List.of(), "otel", null, false, true,
+                LlmOptions.disabled());
     }
 
     /** attach/requestHeaders 를 생략하는 편의 생성자 (기존 17-arg 호출부 호환). */
@@ -78,7 +98,7 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, null, io.graphrag.model.RequestHeaders.empty(),
-                List.of(), "otel", null, false, true);
+                List.of(), "otel", null, false, true, LlmOptions.disabled());
     }
 
     /** classifierConfig/noIncremental 를 생략하는 편의 생성자 (기존 21-arg 호출부 호환). */
@@ -92,6 +112,6 @@ public record BuildConfig(
         this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
                 budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
                 authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
-                endpointSelectors, traceMode, null, false, true);
+                endpointSelectors, traceMode, null, false, true, LlmOptions.disabled());
     }
 }
