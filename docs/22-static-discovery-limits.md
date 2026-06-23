@@ -166,6 +166,38 @@ public Object handle(@PathVariable String type, @RequestBody Map<String,Object> 
   `--manual-paths` 디렉터리에 두면 `BuilderCli.mergeManualPaths`가 병합한다(id 충돌 시
   수동본 우선). 손으로 쓴 path도 path-id 보존 덕에 탐색이 캡처한 SQL과 동일하게 이어진다.
 
+## 7. `@PathVariable` 없는 라우팅 전용 path placeholder
+
+```java
+@GetMapping("/a/b/c/{d}/{e}")
+@ApiImplicitParams({@ApiImplicitParam(name = "d"), @ApiImplicitParam(name = "e")})
+public AbcDTO abcDbyE(String d, String e) { ... }   // 파라미터에 @PathVariable 없음
+```
+
+- **AST 스캔이 보는 것:** `@GetMapping`은 본다. 하지만 핸들러 파라미터 `d`/`e`에
+  `@PathVariable`이 없으므로 path 변수로 **캡처하지 않는다**(`EndpointIndexer.extractParams`는
+  `@PathVariable`에만 의존). 같은 컨트롤러 어디에도 `@PathVariable`이 없으면 역추출
+  타입 신호(`collectPathVarTypes`)도 비어 PATH 파라미터가 0개가 된다.
+- **`@ApiImplicitParam`은 무관:** Swagger 문서화 전용 메타데이터로, 인덱서도 Spring
+  런타임 바인딩도 무시한다. `@PathVariable`이 둘 다 있으면 `@ApiImplicitParams`가 끼어
+  있어도 둘 다 정상 캡처된다(애너테이션 간섭 없음 — `index/` 테스트로 검증).
+- **이유:** Spring 표준에서 애너테이션 없는 단순 타입 파라미터는 path variable이 아니라
+  `@RequestParam`(쿼리) 기본 처리다. "템플릿 변수를 암묵적으로 path variable로 묶는"
+  옵션은 Spring에 없다 — `@PathVariable` 애너테이션 자체가 필수(이름만 생략 가능). 위
+  코드의 `{d}/{e}`는 **순수 라우팅 매칭용 placeholder**(아무 값이나 매칭)일 뿐 핸들러가
+  값을 읽지 않는다.
+- **무슨 일이 일어나나:** placeholder가 PATH 파라미터로 캡처되지 않으므로 URL 합성 시
+  미바인딩으로 남는다. 캡처(`buildPathAndQuery`)·재현(`resolveLiteralPath`) **양쪽 모두**
+  잔여 placeholder를 센티널("0")로 정리해 `/a/b/c/0/0`을 만든다(라우트는 어떤 값이든
+  매칭되므로 의미상 정확, capture==reproduce 정합 유지). generator에 이 fallback이
+  빠지면 다중 path 변수의 2번째 이후가 리터럴 `{e}`로 누출되어 RestAssured가
+  `IllegalArgumentException: Invalid number of path parameters. expected 1, was 0`을
+  던진다.
+- **의도적으로 지원하지 않는 것:** 이름 매칭으로 미주석 파라미터를 PATH로 암묵 추론하는
+  것은 Spring 실제 바인딩(`@RequestParam`)과 어긋나고 회귀 위험이 있어 도입하지 않는다.
+  path 변수가 진짜 핸들러 입력이어야 하면 소스에 `@PathVariable`을 명시해야 한다(그러면
+  인덱서가 캡처해 실제 값을 합성한다).
+
 ---
 
 ## 미도달 분기를 만났을 때

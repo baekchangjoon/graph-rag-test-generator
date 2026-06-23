@@ -646,6 +646,10 @@ public class Generator {
                         .append("=").append(input.get(p.name()).asText());
             }
         }
+        // params로 잡히지 않은 잔여 placeholder({id} 외 클래스레벨/헬퍼-전용 path 변수 등)는
+        // 센티널("0")로 정리한다. 빌더의 buildPathAndQuery와 동일 — 미정리 시 {x}가 그대로 남아
+        // 생성 테스트 URL이 깨진다(다중 path 변수에서 2번째 이후가 리터럴로 누출되던 회귀).
+        path = path.replaceAll("\\{[^/}]+}", "0");
         // 게이트웨이 predicate path의 Ant wildcard(**/*) → 구체 probe 세그먼트로 치환해
         // Spring Ant 매처가 실제 요청 경로와 일치하도록 한다.
         path = concretizeAntWildcards(path);
