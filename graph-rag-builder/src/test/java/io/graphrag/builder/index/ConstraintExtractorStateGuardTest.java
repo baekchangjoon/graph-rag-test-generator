@@ -141,6 +141,47 @@ class ConstraintExtractorStateGuardTest {
     }
 
     @Test
+    void numericLiteralGuard_gt() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byCount: if(b.getCount() > 0) → NUMERIC, column="count", op=">", comparand="0"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.NUMERIC)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byCount"))
+                .findFirst().orElseThrow(() -> new AssertionError("NUMERIC guard for byCount not found"));
+        assertThat(g.column()).isEqualTo("count");
+        assertThat(g.op()).isEqualTo(">");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("0");
+    }
+
+    @Test
+    void numericLiteralGuard_negativeLiteral() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byBalance: if(b.getBalance() >= -5) → NUMERIC, column="balance", op=">=", comparand="-5"
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.NUMERIC)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byBalance"))
+                .findFirst().orElseThrow(() -> new AssertionError("NUMERIC guard for byBalance not found"));
+        assertThat(g.column()).isEqualTo("balance");
+        assertThat(g.op()).isEqualTo(">=");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.LITERAL);
+        assertThat(g.comparand()).isEqualTo("-5");
+    }
+
+    @Test
+    void numericLiteralGuard_floatExcluded() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byRate: if(b.getRate() > 1.5) → double 리터럴 → NUMERIC guard emit 안 함
+        assertThat(guards)
+                .filteredOn(g -> g.kind() == GuardKind.NUMERIC
+                        && g.classFqn().endsWith("StateGuards") && g.method().equals("byRate"))
+                .isEmpty();
+    }
+
+    @Test
     void doesNotRecognizePureInputComparison_asStateGuard() {
         List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
 

@@ -71,7 +71,7 @@ public class ConstraintExtractor {
     }
 
     /** 상태 의존 가드의 종류 (Stage 4 StateGuardOracle). */
-    public enum GuardKind { TEMPORAL, ENUM, BOOLEAN, NULLITY }
+    public enum GuardKind { TEMPORAL, ENUM, BOOLEAN, NULLITY, NUMERIC }
 
     /**
      * 비교 피연산자(comparand)의 종류. LITERAL: 리터럴 상수(숫자·문자열·boolean); PARAM: 요청 파라미터/지역변수.
@@ -571,6 +571,48 @@ public class ConstraintExtractor {
                     List.of(), List.of(), ng.op(), ComparandKind.LITERAL, "null"));
         }
 
+        // NUMERIC: CtIf 조건이 getter() OP 정수리터럴 형태(저장 행 getter만, Double/Float 제외).
+        // 음수 리터럴은 CtUnaryOperator(MINUS)로 CtLiteral을 래핑 → literalLongWithNeg으로 언랩.
+        // EQ/NE는 enum·boolean·null 가드가 이미 걸러진 뒤 정수리터럴인 경우만 도달하므로
+        // CtIf 조건을 재스캔해도 중복 emit이 없다(BOOLEAN/NULLITY는 CtIf루프, ENUM은 별도 ENUM 블록).
+        for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
+            CtExpression<?> cond = ctIf.getCondition();
+            if (!(cond instanceof CtBinaryOperator<?> bin)) {
+                continue;
+            }
+            String opStr = REL_OPS.get(bin.getKind());
+            if (opStr == null) {
+                continue;
+            }
+            CtExpression<?> left = bin.getLeftHandOperand();
+            CtExpression<?> right = bin.getRightHandOperand();
+            String getterField = getterRef(left);
+            OptionalLong rightLit = literalLongWithNeg(right);
+            if (getterField != null && rightLit.isPresent()) {
+                // getter() OP literal
+                CtMethod<?> method = ctIf.getParent(CtMethod.class);
+                CtType<?> type = ctIf.getParent(CtType.class);
+                if (method == null || type == null) continue;
+                out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                        ctIf.getPosition().getLine(), snake(getterField), GuardKind.NUMERIC, null,
+                        List.of(), List.of(), opStr, ComparandKind.LITERAL,
+                        String.valueOf(rightLit.getAsLong())));
+                continue;
+            }
+            String getterFieldR = getterRef(right);
+            OptionalLong leftLit = literalLongWithNeg(left);
+            if (getterFieldR != null && leftLit.isPresent()) {
+                // literal OP getter() → FLIP op
+                CtMethod<?> method = ctIf.getParent(CtMethod.class);
+                CtType<?> type = ctIf.getParent(CtType.class);
+                if (method == null || type == null) continue;
+                out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                        ctIf.getPosition().getLine(), snake(getterFieldR), GuardKind.NUMERIC, null,
+                        List.of(), List.of(), FLIP.get(opStr), ComparandKind.LITERAL,
+                        String.valueOf(leftLit.getAsLong())));
+            }
+        }
+
         out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
                 .thenComparingInt(StateGuard::line));
         return out;
@@ -768,6 +810,26 @@ public class ConstraintExtractor {
         if (expr instanceof CtLiteral<?> lit && lit.getValue() instanceof Number n
                 && !(lit.getValue() instanceof Double) && !(lit.getValue() instanceof Float)) {
             return OptionalLong.of(n.longValue());
+        }
+        return OptionalLong.empty();
+    }
+
+    /**
+     * 양수 정수리터럴 또는 음수 정수리터럴(CtUnaryOperator(MINUS, CtLiteral))을 longValue로 반환.
+     * Double/Float 리터럴은 제외(literalLong 위임). 정수가 아니면 empty.
+     */
+    private static OptionalLong literalLongWithNeg(CtExpression<?> expr) {
+        // 양수 리터럴: 기존 literalLong 재사용
+        OptionalLong direct = literalLong(expr);
+        if (direct.isPresent()) {
+            return direct;
+        }
+        // 음수 리터럴: CtUnaryOperator(MINUS) → 내부 CtLiteral 언랩 후 부호 반영
+        if (expr instanceof CtUnaryOperator<?> uo && uo.getKind() == UnaryOperatorKind.NEG) {
+            OptionalLong inner = literalLong(uo.getOperand());
+            if (inner.isPresent()) {
+                return OptionalLong.of(-inner.getAsLong());
+            }
         }
         return OptionalLong.empty();
     }
