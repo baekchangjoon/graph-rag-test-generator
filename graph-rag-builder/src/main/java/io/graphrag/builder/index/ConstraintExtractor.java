@@ -20,11 +20,14 @@ import spoon.reflect.declaration.CtType;
 import spoon.reflect.visitor.filter.TypeFilter;
 
 import java.nio.file.Path;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * handler 메서드의 분기 조건식을 정적으로 수집한다 (roadmap 1.2의 constraint 정보).
@@ -118,6 +121,51 @@ public class ConstraintExtractor {
 
     private static final Map<String, String> FLIP = Map.of(
             ">", "<", ">=", "<=", "<", ">", "<=", ">=", "==", "==", "!=", "!=");
+
+    /**
+     * 핸들러 메서드 본문의 직접(1-hop) {@link CtInvocation} 집합과 핸들러 자신을 반환한다 (REQ-011, Phase 2).
+     * 반환 집합의 각 Entry: key = 호출 대상 declaringType FQN (미해소이면 simpleName), value = 메서드 simpleName.
+     * 핸들러 자신 (handlerClass, handlerMethod) 도 반드시 포함.
+     * noClasspath 모드이므로 declaringType이 인터페이스 또는 null일 수 있다 — null이면 simpleName을 key로 보존.
+     * 1-hop만: 호출된 메서드 내부의 추가 호출은 따라가지 않는다.
+     */
+    public Set<Map.Entry<String, String>> reachableMethods(Path srcDir, String handlerClass, String handlerMethod) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        Set<Map.Entry<String, String>> result = new HashSet<>();
+        // 핸들러 자신을 항상 포함
+        result.add(new AbstractMap.SimpleEntry<>(handlerClass, handlerMethod));
+
+        for (CtType<?> type : model.getAllTypes()) {
+            if (!type.getQualifiedName().replace('$', '.').equals(handlerClass)) {
+                continue;
+            }
+            for (CtMethod<?> method : type.getMethods()) {
+                if (!method.getSimpleName().equals(handlerMethod)) {
+                    continue;
+                }
+                for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
+                    var executable = inv.getExecutable();
+                    String methodName = executable.getSimpleName();
+                    var declaringType = executable.getDeclaringType();
+                    String typeFqn;
+                    if (declaringType != null) {
+                        String fqn = declaringType.getQualifiedName();
+                        typeFqn = (fqn != null && !fqn.isEmpty()) ? fqn.replace('$', '.') : declaringType.getSimpleName();
+                    } else {
+                        typeFqn = executable.getSimpleName(); // 미해소 fallback: simpleName
+                    }
+                    result.add(new AbstractMap.SimpleEntry<>(typeFqn, methodName));
+                }
+            }
+        }
+        return result;
+    }
 
     public List<ConditionSpan> extract(Path srcDir, String classFqn, String methodName) {
         Launcher launcher = new Launcher();
