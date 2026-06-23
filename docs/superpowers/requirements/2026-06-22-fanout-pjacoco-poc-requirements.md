@@ -157,6 +157,25 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
   — 본 PoC는 "flush가 임계경로 밖 이동 가능 + 커버리지 무손실"까지만 검증.
 - 검증 레벨: E2E black-box (측정 하니스)
 
+### REQ-011 — 병렬 fan-out 실제 speedup + flush 큐 병목 측정 [범위확장 2026-06-23]
+- 유형: Non-functional
+- 우선순위: Must
+- 설명: 지금까지 격리 *정확성*(V2)·*비용*(REQ-010)을 검증했으나 **병렬화의 실제 목적(속도향상)은
+  미측정**이었다. 단일 SUT(petclinic, host)에 워커 풀로 fan-out 워크로드를 **순차 vs 병렬(P=1·2·4·8)**
+  로 돌려 벽시계 speedup을 실측하고, **백그라운드 flush 큐가 요청 속도를 따라잡는지(병목 여부)** 를
+  정량화한다. flush 비용이 큰 SUT를 위한 flush-pool 사이징도 도출한다.
+- 수용기준:
+  - Given petclinic + 비동기 flush(REQ-010 경로) + N 워커(각 budget B 요청, per-request traceparent),
+  - When 동일 워크로드를 순차(P=1)와 병렬(P=2·4·8)로 실행하면,
+  - Then ① 병렬 벽시계가 순차 대비 단축돼 **speedup > 1**(P 증가 시 증가, SUT 포화 전까지)이고,
+    ② 백그라운드 flush 큐의 최대 깊이·드레인 시간이 측정되어 큐가 따라잡는지/밀리는지 판정되며,
+    ③ flush 비용 C·요청율 R로부터 필요한 flush-pool 크기(≈R×C)를 도출·검증한다(무거운 SUT는 인공
+    지연 주입으로 시뮬레이션 가능).
+  - 보조: 어디가 병목인지(SUT 내부 경합 vs flush throughput) 식별.
+- 한계(문서화): petclinic은 경량이라 flush(host ~4ms)가 병목이 아니며 SUT/Tomcat 동시성이 상한. 무거운
+  SUT의 실제 flush 병목은 인공 지연 시뮬레이션 또는 fan-out 본 구현에서 재측정.
+- 검증 레벨: E2E black-box (speedup 측정 하니스)
+
 ---
 
 ## 추적 매트릭스
@@ -173,8 +192,9 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🟢 PASS (§11 종합 판정 기록 완료 2026-06-23 — A viable, V3b 오버헤드 재논의) |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟢 unit-green |
 | REQ-010 | 비동기 flush로 임계경로 오버헤드 제거 [범위확장] | `V3AsyncFlushPoc` (petclinic 주 게이트) | E2E | 🟢 PASS — honest overhead +1.73% \|x\|<5% (교차 측정; 초기 -17.13%는 측정 순서 편향 수정), exec 60/60, partition {{0,2},{1},{3}} vanilla 동등(하드 어서트). 2026-06-23 |
+| REQ-011 | 병렬 fan-out speedup + flush 큐 병목 [범위확장] | `FanoutSpeedupPoc` (순차 vs P=2·4·8) | E2E | 🔴 planned |
 
-Coverage: **10/10 gates green** — 전체 PoC 완료.
+Coverage: 10/11 gates green — REQ-011(병렬 speedup 실측) 진행 중.
 REQ-001·002·003·004·005·006·007·008·009·010 모두 🟢.
 REQ-010(비동기 flush) 2026-06-23 PASS: honest overhead +1.73%(교차 측정 — flush ≈ baseline, 임계경로 밖), 60개 exec 모두 생성, partition {{0,2},{1},{3}} vanilla와 동등(하드 어서트 PASS). 초기 -17.13%는 측정 순서 편향(편향 수정 커밋: 양방향 워밍업 + 교차 측정).
 REQ-005 최종 판정: 동기 over-threshold → REQ-010 비동기 flush로 해소. 비동기 채택 = A 진행 조건 충족.
