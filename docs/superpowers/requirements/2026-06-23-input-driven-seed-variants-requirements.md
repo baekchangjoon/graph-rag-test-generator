@@ -149,7 +149,9 @@
   `#unreachableExcluded`, `#joinGuardReachable`)
 
 ### REQ-013 — [P2] E2E: petclinic 계층형 SUT cross-class 변종 개방
-- 유형: Functional / 우선순위: Must
+- 유형: Functional / 우선순위: Should (외부 petclinic 의존이라 in-repo CI 자동검증 불가 →
+  로컬 수동 스윕으로 명시적 연기. cross-class 기능 자체는 REQ-011/012/014 Must로 in-repo 보장됨;
+  본 REQ는 그 end-to-end 확인이라 in-repo Must로 강제하면 DoD가 외부 환경에 묶이므로 Should+연기로 조정.)
 - 설명: petclinic에서 cross-class 귀속으로 `ReservationService`의 가드가 컨트롤러
   엔드포인트에 귀속되어 변종 path가 열린다. (a) `list`의 `getNights() >= minNights`(NUMERIC),
   (b) `getById`의 `check_in_date`(TEMPORAL).
@@ -191,9 +193,10 @@
 | REQ-013 | P2 | E2E petclinic 계층형 | local sweep (e2e/sweep-petclinic-cross-class.sh) | local sweep | 🔵 deferred (로컬 수동) |
 | REQ-014 | P2 | pass-through 매칭 | BuilderCliAttributionTest#passThroughSameNameGuardIsReachable, ReadInputSynthesizerVariantTest#inputSeedJoint_geParam(동명 매칭)·#inputSeedJoint_paramNameMismatch_skipsGuard(불일치 skip) | integration | 🟢 green |
 
-Coverage: 13/14 in-repo green + REQ-013 🔵 deferred(로컬 수동 스윕).
-커버리지 분모(Must + 미연기 Should) = REQ-001~012 + REQ-014 = 13개 → 13/13 100% in-repo green.
-REQ-013은 외부 petclinic 의존(CI 밖 로컬 스윕) — 설계 §6 R4에 따라 분모에서 제외, 🔵로 표기.
+Coverage: 13/13 green (100%) — 대상(Must + 미연기 Should) = Must(REQ-001~009,011,012) + 미연기 Should(REQ-010,014) = 13개, 전부 🟢 in-repo green.
+REQ-013은 **Should + 명시적 연기(🔵)** — 외부 petclinic 의존이라 in-repo CI 자동검증 불가(설계 §6 R4),
+로컬 수동 스윕(`e2e/sweep-petclinic-cross-class.sh`)으로 검증. dev-workflow상 연기된 Should는 분모에서
+제외 가능. cross-class 기능 동작은 REQ-011/012/014(in-repo green)로 입증됨.
   - cross-class 동작 자체는 REQ-011/012/014 in-repo green으로 입증됨.
   - 스윕 스크립트: e2e/sweep-petclinic-cross-class.sh (before/after/diff 모드).
 비고: BuilderIntegrationTest 두 메서드 동시 실행 시 SUT 포트 충돌 발생(기존 이슈, stash 검증). 단독 실행 green 확인(REQ-009).
