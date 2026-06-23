@@ -179,13 +179,22 @@ public class ReadInputSynthesizer {
                     continue;   // per-guard skip: 타깃 컬럼 해소 실패 → 이 가드만 건너뜀
                 }
                 String paramName = guard.comparand();   // 비교 파라미터명 P
+                // REQ-014: comparand(P)가 엔드포인트 QUERY/PATH 파라미터와 매칭될 때만 합성 대상.
+                // 직접 동명 또는 camelToSnake 동치로 매칭. 매칭 없으면 per-guard skip.
+                boolean matchedEndpointParam = endpoint.params().stream()
+                        .anyMatch(p -> (p.kind() == ParamKind.QUERY || p.kind() == ParamKind.PATH)
+                                && (p.name().equals(paramName)
+                                        || camelToSnake(p.name()).equals(camelToSnake(paramName))));
+                if (!matchedEndpointParam) {
+                    continue;   // per-guard skip: comparand가 엔드포인트 파라미터와 불일치 → 변종 생성 안 함
+                }
                 // 입력값 V: base.body()는 path/query param을 flat-merge한 ObjectNode (synthesize 참고)
                 com.fasterxml.jackson.databind.JsonNode paramNode = base.body().get(paramName);
                 long v;
                 if (paramNode != null) {
                     v = paramNode.asLong();
                 } else {
-                    // 파라미터가 body에 없으면 probeId로 결정적 대체 (scalarFor Integer/Long 규칙과 동일)
+                    // 매칭됐으나 body에 없으면 probeId로 결정적 대체 (안전망; 보통 body에 값 있음)
                     v = probeIdFor(endpoint);
                 }
                 // 변종 시드 컬럼값: 불만족 arm (§3.3 op별 표)
