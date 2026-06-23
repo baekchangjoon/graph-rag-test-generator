@@ -732,6 +732,11 @@ public final class BuilderCli {
                     allSeeds.addAll(result.seeds());
                     reportEntries.add(result.report());
                     capturedEventEmits.addAll(result.capturedEventEmits());
+                    // REQ-010: 외부 stub loud-fail 4종을 빌드 리포트(unsupportedShapes 채널)에 기록.
+                    for (EndpointExplorationRunner.LoudFail lf : result.externalLoudFails()) {
+                        unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                                endpoint.id(), lf.target(), lf.reason()));
+                    }
                     result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
                 }
             }
