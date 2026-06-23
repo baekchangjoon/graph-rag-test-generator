@@ -132,22 +132,27 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | 외부 stub 없이 형상 합성 통과 | `Stage1ExternalStubSynthesisE2E#synthesizedStubPassesExternalCall` | E2E | 🔴 planned |
-| REQ-002 | 수동 stub 대비 동등 커버리지 | `Stage1ExternalStubSynthesisE2E#equivalentCoverageToManualStub` | E2E | 🔴 planned |
-| REQ-003 | 결정성(동일 stub) | `Stage1ExternalStubSynthesisE2E#deterministicAcrossRuns` | E2E | 🔴 planned |
-| REQ-004 | 응답 DTO 형상 추출 | `ResponseDtoIndexerCallSiteTest` | integration | 🔴 planned |
-| REQ-005 | 미추출 타입 skip | `ResponseDtoIndexerCallSiteTest#unextractableYieldsEmpty` | integration | 🔴 planned |
-| REQ-006 | ShapeJsonSynthesizer | `ShapeJsonSynthesizerTest` + `SampleInputSynthesizer*Test`(green 유지) | unit | 🔴 planned |
-| REQ-007 | 모드-중립 trace-id | `TraceKeyTest` | unit | 🔴 planned |
-| REQ-008 | 재탐색 루프 수렴 | `ExternalStubReExploreTest` | integration | 🔴 planned |
-| REQ-009 | URL↔pathLiteral 매칭 | `CallSiteMatcherTest` | unit | 🔴 planned |
-| REQ-010 | loud-fail surface | `ExternalStubLoudFailTest` | integration | 🔴 planned |
-| REQ-011 | provenance 태깅 | `Stage1ExternalStubSynthesisE2E#synthesizedProvenanceTagged` | E2E | 🔴 planned |
-| REQ-012 | CapturedHttpCall 하위호환 | `CapturedHttpCallJsonRoundTripTest` | unit | 🔴 planned |
-| REQ-013 | attach 회귀 없음 | 기존 attach 통합 테스트 suite | integration | 🔴 planned |
-| REQ-014 | none 모드 직렬 폴백 | `ExternalStubNoneModeTest` | integration | 🔴 planned |
+| REQ-001 | 외부 stub 없이 형상 합성 통과 | `Stage1ExternalStubSynthesisE2E#synthesizedStubPassesExternalCall` | E2E | 🟢 green |
+| REQ-002 | 수동 stub 대비 동등 커버리지 | `Stage1ExternalStubSynthesisE2E#equivalentCoverageToManualStub` | E2E | 🟢 green |
+| REQ-003 | 결정성(동일 stub) | `Stage1ExternalStubSynthesisE2E#deterministicAcrossRuns` | E2E | 🟢 green |
+| REQ-004 | 응답 DTO 형상 추출 | `ResponseDtoIndexerCallSiteTest` | integration | 🟢 green |
+| REQ-005 | 미추출 타입 skip | `ResponseDtoIndexerCallSiteTest#unextractableResponseTypeYieldsEmptyShape` | integration | 🟢 green |
+| REQ-006 | ShapeJsonSynthesizer | `ShapeJsonSynthesizerTest` + `SampleInputSynthesizer*Test`(green 유지) | unit | 🟢 green |
+| REQ-007 | 모드-중립 trace-id | `TraceKeyTest` | unit | 🟢 green |
+| REQ-008 | 재탐색 루프 수렴 | `ExternalStubReExploreTest` | integration | 🟢 green |
+| REQ-009 | URL↔pathLiteral 매칭 | `CallSiteMatcherTest` | unit | 🟢 green |
+| REQ-010 | loud-fail surface | `ExternalStubLoudFailTest` | integration | 🟢 green |
+| REQ-011 | provenance 태깅 | `Stage1ExternalStubSynthesisE2E#synthesizedProvenanceTagged` | E2E | 🟢 green |
+| REQ-012 | CapturedHttpCall 하위호환 | `CapturedHttpCallJsonRoundTripTest` | unit | 🟢 green |
+| REQ-013 | attach 회귀 없음 | 기존 attach 통합 테스트 suite (`AttachCliConfigTest`, `AttachedComposeEnvironmentTest`, `OtelHttpCaptureIntegrationTest` 등) | integration | 🟢 green |
+| REQ-014 | none 모드 직렬 폴백 | `ExternalStubNoneModeTest` | integration | 🟢 green |
 
-Coverage: 0/14 green (0%) — target 100% (대상: Must 12 + Should 2, 모두 미연기). Won't/deferred 없음.
+Coverage: 14/14 green (100%) — target 100% (대상: Must 12 + Should 2, 모두 미연기). Won't/deferred 없음.
+
+> 검증 결과(2026-06-23): Stage1 E2E 4 메서드(REQ-001~003,011) green — system-out에
+> `re-explored post-api-orders after synthesizing 1 external stub(s) (round 1)`로 합성 경로 실증.
+> `ExternalStubNoneModeTest`(REQ-014) green. REQ-004~010,012 단위/통합은 Task 2~11에서 green
+> (`./gradlew test` 전체 회귀에 포함). REQ-013은 attach/HttpCapture 통합 suite green 유지로 확인.
 
 ## 단계 경계 (이 명세에서 제외 — 🔵 out-of-scope)
 
