@@ -45,9 +45,10 @@ PETCLINIC_ROOT="${PETCLINIC_ROOT:-$HOME/github_spring-petclinic/spring-petclinic
 PETCLINIC_SRC="$PETCLINIC_ROOT/src/main/java"
 PETCLINIC_RESOURCES="$PETCLINIC_ROOT/src/main/resources"
 # Gradle bootJar 우선, Maven jar 폴백
-PETCLINIC_JAR="${PETCLINIC_ROOT}/build/libs/spring-petclinic-4.0.0-SNAPSHOT.jar"
-if [ ! -f "$PETCLINIC_JAR" ]; then
-  PETCLINIC_JAR="${PETCLINIC_ROOT}/target/spring-petclinic-4.0.0-SNAPSHOT.jar"
+# Finding 5: jar 버전 하드코딩 제거 — env override + glob 탐색
+PETCLINIC_JAR="${PETCLINIC_JAR:-$(ls "$PETCLINIC_ROOT"/build/libs/spring-petclinic-*.jar 2>/dev/null | head -1)}"
+if [ -z "$PETCLINIC_JAR" ]; then
+  PETCLINIC_JAR="${PETCLINIC_ROOT}/target/$(ls "$PETCLINIC_ROOT"/target/spring-petclinic-*.jar 2>/dev/null | head -1 | xargs -I{} basename {})"
 fi
 
 PETCLINIC_COMPOSE="$PETCLINIC_ROOT/docker-compose.yml"
@@ -123,6 +124,18 @@ run_sweep() {
   mkdir -p "$WORK"
   rm -rf "$out_dir"
 
+  # Finding 3: 공백 경로 안전 전달 — Gradle --args 단일 문자열 한계로 경로 내 공백은
+  # 인용할 수 없음. 경로에 공백이 있으면 오류 출력 후 중단.
+  for _path_check in "$PETCLINIC_SRC" "$PETCLINIC_RESOURCES" "$PETCLINIC_JAR" "$out_dir" "$PETCLINIC_COMPOSE"; do
+    if [[ "$_path_check" == *" "* ]]; then
+      echo "[ERROR] 경로에 공백이 포함돼 있어 Gradle --args로 전달할 수 없습니다: $_path_check"
+      echo "  PETCLINIC_ROOT 경로에 공백이 없도록 심볼릭 링크 등을 활용하세요."
+      exit 1
+    fi
+  done
+
+  _commit_sha="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "sweep-${label}")"
+
   # builder 실행
   # --sut-compose: petclinic docker-compose.yml (Postgres DB 서비스 포함)
   # --auth-login-path: petclinic JWT 로그인 엔드포인트
@@ -145,7 +158,7 @@ run_sweep() {
     --endpoint $ENDPOINTS \
     --budget-requests 30 \
     --trace-mode none \
-    --commit-sha $(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo sweep-${label})"
+    --commit-sha $_commit_sha"
 
   echo ""
   echo "=== [sweep:${label}] 탐색 완료 — ReservationService 분기 추출 ==="
@@ -216,6 +229,9 @@ run_diff() {
   python3 - "$before_json" "$after_json" <<'PYEOF'
 import json, sys
 
+LIST_EID = "get-api-reservations"
+ID_EID   = "get-api-reservations-id"
+
 before = json.loads(open(sys.argv[1]).read())
 after  = json.loads(open(sys.argv[2]).read())
 
@@ -223,6 +239,13 @@ print("=== REQ-013 before/after diff ===")
 print(f"  coveredAppBranches: {before['coveredAppBranches']} → {after['coveredAppBranches']}")
 print(f"  totalAppBranches:   {before['totalAppBranches']} → {after['totalAppBranches']}")
 print()
+
+# Finding 2: after에 대상 endpoint 키가 없으면 false-positive PASS 방지
+inconclusive_eids = []
+for eid in [LIST_EID, ID_EID]:
+    if eid not in after.get("endpoints", {}):
+        print(f"[WARN] after JSON에 endpoint '{eid}' 없음 — 탐색 실패 또는 endpoint 미매칭. 판정 INCONCLUSIVE.")
+        inconclusive_eids.append(eid)
 
 for eid in before.get("endpoints", {}):
     b_ep = before["endpoints"].get(eid, {})
@@ -247,33 +270,49 @@ for eid in before.get("endpoints", {}):
     print()
 
 # REQ-013 판정
-passed_list = []
-get_list_ep = after.get("endpoints", {}).get("get-api-reservations", {})
-get_id_ep   = after.get("endpoints", {}).get("get-api-reservations-id", {})
+# Finding 7: passed_list 미사용 변수 제거
+get_list_ep = after.get("endpoints", {}).get(LIST_EID, {})
+get_id_ep   = after.get("endpoints", {}).get(ID_EID, {})
 
 b_list_missed = {(m["method"], m["line"], m["branchIndex"])
-                 for m in before.get("endpoints", {}).get("get-api-reservations", {}).get("missedReservationService", [])}
+                 for m in before.get("endpoints", {}).get(LIST_EID, {}).get("missedReservationService", [])}
 a_list_missed = {(m["method"], m["line"], m["branchIndex"])
                  for m in get_list_ep.get("missedReservationService", [])}
 list_newly_covered = b_list_missed - a_list_missed
 
 b_id_missed = {(m["method"], m["line"], m["branchIndex"])
-               for m in before.get("endpoints", {}).get("get-api-reservations-id", {}).get("missedReservationService", [])}
+               for m in before.get("endpoints", {}).get(ID_EID, {}).get("missedReservationService", [])}
 a_id_missed = {(m["method"], m["line"], m["branchIndex"])
                for m in get_id_ep.get("missedReservationService", [])}
 id_newly_covered = b_id_missed - a_id_missed
 
-list_ok = any("list" in m for (m, _, _) in list_newly_covered)
-id_ok   = any("getById" in m for (m, _, _) in id_newly_covered)
+# Finding 2: inconclusive endpoint가 있으면 해당 판정 FAIL
+if LIST_EID in inconclusive_eids:
+    list_ok = False
+    list_inconclusive = True
+else:
+    # Finding 4: substring 대신 정확 매칭 (m == "list")
+    list_ok = any(m == "list" for (m, _, _) in list_newly_covered)
+    list_inconclusive = False
+
+if ID_EID in inconclusive_eids:
+    id_ok = False
+    id_inconclusive = True
+else:
+    id_ok = any(m == "getById" for (m, _, _) in id_newly_covered)
+    id_inconclusive = False
 
 print("=== REQ-013 판정 ===")
-print(f"  (a) list nights NUMERIC 분기 missed→covered: {'✅ PASS' if list_ok else '❌ FAIL / 변화없음'}")
-print(f"  (b) getById check_in_date TEMPORAL 분기 missed→covered: {'✅ PASS' if id_ok else '❌ FAIL / 변화없음'}")
+list_label = "INCONCLUSIVE (after에 endpoint 없음)" if list_inconclusive else ("✅ PASS" if list_ok else "❌ FAIL / 변화없음")
+id_label   = "INCONCLUSIVE (after에 endpoint 없음)" if id_inconclusive   else ("✅ PASS" if id_ok   else "❌ FAIL / 변화없음")
+print(f"  (a) list nights NUMERIC 분기 missed→covered: {list_label}")
+print(f"  (b) getById check_in_date TEMPORAL 분기 missed→covered: {id_label}")
 print()
 if list_ok and id_ok:
     print("REQ-013: 🟢 GREEN (cross-class 귀속으로 petclinic 계층형 SUT 변종 개방 확인)")
 else:
     print("REQ-013: 🔴 FAIL (분기 변화 확인 안됨 — 탐색 로그/graph 직접 점검 필요)")
+    sys.exit(1)
 PYEOF
 }
 
