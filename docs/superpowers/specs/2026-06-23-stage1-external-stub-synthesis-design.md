@@ -47,7 +47,8 @@
              → 캡처된 (method, urlPath)를 인덱싱 pathLiteral과 매칭 → BodyShape 확보
 
 [합성]     ExternalStubSynthesizer.synthesizeBody(BodyShape)
-             → minimal valid JSON (Integer→0, String→sample, enum→정렬 첫 상수, nested/collection 재귀)
+             → minimal valid JSON (Integer→1, String→sample-<field>, enum→선언순 첫 상수, Boolean→true,
+               scalar/enum/collection 1-레벨; 중첩 객체 응답 DTO 필드는 unsynthesizable-shape loud-fail)
 
 [등록]     ExternalStubSynthesizer.register(method, pathLiteral, body)
              → 200 + body → HttpCaptureServer 런타임 addStubMapping (urlPathPattern)
@@ -98,7 +99,7 @@ JsonNode synthesizeBody(BodyShape shape);                 // 값 규칙 = Sample
 void register(String method, String pathLiteral, JsonNode body);  // 200 + body → 런타임 addStubMapping
 ```
 
-- `synthesizeBody`: 값 합성 규칙은 **`ShapeJsonSynthesizer`(신규 공유 헬퍼)** 를 통해 입력 측과 공유한다 — `SampleInputSynthesizer`의 현재 private 헬퍼(`scalarValue`/`boundedInt`/`applySize`/nested·collection 재귀)를 seed-row·Bean Validation·`fieldConstraints` 의존 없이 추출. 응답 합성은 table/fieldConstraints 없이 호출. **실제 기본값**(정정): `Integer`→`1`(`boundedInt`), `String`→`sample-<field>`(또는 `sample`), `enum`→정렬 첫 상수, `Boolean`→`false`. (이전 표기 "Integer→0"은 부정확.)
+- `synthesizeBody`: 값 합성 규칙은 **`ShapeJsonSynthesizer`(신규 공유 헬퍼)** 를 통해 입력 측과 공유한다 — `SampleInputSynthesizer`의 현재 private 헬퍼(`scalarValue`/`boundedInt`/`applySize`)를 seed-row·Bean Validation·`fieldConstraints` 의존 없이 추출. 응답 합성은 table/fieldConstraints 없이 호출. **실제 기본값**(정정): `Integer`→`1`(`boundedInt`), `String`→`sample-<field>`(또는 `sample`), `enum`→선언순 첫 상수, `Boolean`→`true`. 형상 범위는 스칼라/enum/시간 + collection 1-레벨(요소가 스칼라이거나 평탄 객체); **중첩 객체 응답 DTO 필드(객체 FQN)는 재귀하지 않고 `UnsupportedShapeException`을 던져 호출부가 `unsynthesizable-shape` loud-fail로 surface 한다**(silent String 폴백 금지). 입력 경로(`scalarValue` 직접 호출)는 dot-path 리터럴 방출을 그대로 유지 — loud-fail 신호는 응답 합성 경로에만 적용.
 - `register`: WireMock `urlPathEqualTo`/`urlPathPattern` + method 매칭, 200 + `application/json` + 합성 body. **멱등**(같은 (method, pathLiteral) 재등록 무시).
 - 등록을 이 한 지점으로 모아, 단계2가 `register(..., traceId)` 오버로드로 격리를 얹게 둔다.
 - 추출 리팩터는 `SampleInputSynthesizer`의 기존 단위 테스트가 그대로 green이어야 한다(위임, 동작 보존).
@@ -149,7 +150,7 @@ for endpoint in endpoints:
 
 형상-only 합성은 **순수 결정적**이라 외부 의존성·캐시·CI 분기가 전부 불필요하다(no-LLM·재현성 원칙에 그대로 부합):
 
-- `BodyShapeExtractor`(Spoon 정적) · 값 규칙(Integer→1, String→`sample-<field>`, enum→정렬 첫 상수, nested/collection 재귀) — 입력 같으면 출력 같음.
+- `BodyShapeExtractor`(Spoon 정적) · 값 규칙(Integer→1, String→`sample-<field>`, enum→선언순 첫 상수, Boolean→true, scalar/enum/collection 1-레벨; 중첩 객체 응답 DTO는 unsynthesizable-shape) — 입력 같으면 출력 같음.
 - trace-id는 `TraceParent`가 runId 시드 + 단조 카운터 SHA-256으로 발급 → 이미 결정적.
 - call site 순회·stub 등록 순서 정렬.
 
@@ -166,9 +167,9 @@ for endpoint in endpoints:
 
 ### 엣지 케이스 · 한계 (명시)
 
-- **값-의존 분기**: 형상-only는 enum을 정렬 첫 상수로만 채워 1 arm만 통과. 나머지 arm은 **단계2의 enum 상수 조합(결정적, no-LLM)으로 전부 열림**. 자유 String/숫자 값-의존은 단계2 후속 소스(리터럴/concolic) 또는 단계3 대상.
+- **값-의존 분기**: 형상-only는 enum을 선언순 첫 상수로만 채워 1 arm만 통과. 나머지 arm은 **단계2의 enum 상수 조합(결정적, no-LLM)으로 전부 열림**. 자유 String/숫자 값-의존은 단계2 후속 소스(리터럴/concolic) 또는 단계3 대상.
 - **trace-mode none + 병렬**: 격리 불가 → 직렬만. 단계1은 직렬 실행이라 무방.
-- **합성 형상 범위(YAGNI)**: `SampleInputSynthesizer`가 커버하는 형상(스칼라/enum/단순 nested/collection)만. 복잡·재귀·제네릭 형상은 skip + `unsynthesizable-shape` 기록(generic 빌더+Instancio 머지 시 후속 확장).
+- **합성 형상 범위(YAGNI)**: 스칼라/enum/시간 + collection 1-레벨(요소가 스칼라이거나 평탄 객체)만. 중첩 객체 응답 DTO·복잡·제네릭 형상은 skip + `unsynthesizable-shape` 기록(generic 빌더+Instancio 머지 시 후속 확장).
 - **다단 연쇄**(외부→외부): K회로 자연 커버, 깊은 순서-의존은 비목표.
 
 ## 테스트 전략 (double-loop TDD)
@@ -192,7 +193,7 @@ out-of-process: 빌더 CLI를 실제 실행해 order-service를 띄우고 탐색
 ### Unit 테스트 (inner loop — TDD red→green)
 
 - `ResponseDtoIndexer` 확장: `(method, pathLiteral, BodyShape)` 추출 / 미추출 형태(제네릭·WebClient·Feign·exchange 변수인자) → `empty` / 배열 `Dto[].class` → component 해석.
-- `ShapeJsonSynthesizer`(신규 공유 헬퍼): `BodyShape → JSON`(Integer→1, String→`sample-<field>`, enum→정렬 첫 상수, nested/collection 재귀). **`SampleInputSynthesizer` 기존 단위 테스트 green 유지**(위임, 동작 보존).
+- `ShapeJsonSynthesizer`(신규 공유 헬퍼): `BodyShape → JSON`(Integer→1, String→`sample-<field>`, enum→선언순 첫 상수, Boolean→true, scalar/enum/collection 1-레벨; 중첩 객체 응답 DTO는 `UnsupportedShapeException`→unsynthesizable-shape). **`SampleInputSynthesizer` 기존 단위 테스트 green 유지**(위임, 입력 동작 보존).
 - `TraceKey`: otel `traceparent` 파싱, sleuth `X-B3-TraceId`, none `empty` — sleuth 모드 trace-id 추출을 여기서 커버.
 - `ExternalStubSynthesizer.register` 멱등 + `urlPathPattern`/method 매칭.
 - `drainNewExchanges`: trace-id 귀속(병렬-safe 시뮬), unmatched(404) 재주입 분류.

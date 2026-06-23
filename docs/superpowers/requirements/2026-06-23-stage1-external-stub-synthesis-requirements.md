@@ -50,10 +50,11 @@
 ### REQ-006 — ShapeJsonSynthesizer 형상→minimal JSON (값 규칙 공유)
 - 유형: Functional
 - 우선순위: Must
-- 설명: `BodyShape`에서 minimal valid JSON을 결정적으로 합성한다(Integer→1, String→`sample-<field>`, enum→정렬 첫 상수, Boolean→false, nested/collection 재귀). 값 규칙은 `SampleInputSynthesizer`와 공유 헬퍼로 추출하되 기존 동작을 보존한다.
+- 설명: `BodyShape`에서 minimal valid JSON을 결정적으로 합성한다(Integer→1, String→`sample-<field>`, enum→선언순 첫 상수, Boolean→true, scalar/enum/collection 1-레벨; 중첩 객체 응답 DTO는 unsynthesizable-shape loud-fail). 값 규칙은 `SampleInputSynthesizer`와 공유 헬퍼로 추출하되 기존 입력 동작을 보존한다.
 - 수용기준:
   - Given `BodyShape(available:Integer)`, When `synthesizeBody`, Then `{"available":1}`을 반환한다.
-  - Given enum 필드, When 합성, Then 정렬 첫 상수가 들어가 SUT 역직렬화가 성공한다.
+  - Given enum 필드, When 합성, Then 선언순 첫 상수가 들어가 SUT 역직렬화가 성공한다(입력 동작 보존).
+  - Given Boolean 필드, When 합성, Then `true`를 반환한다(입력 동작 보존).
   - Given 공유 헬퍼 추출 리팩터, When `SampleInputSynthesizer` 기존 단위 테스트 실행, Then 전부 green을 유지한다.
 - 검증 레벨: integration (unit)
 
@@ -92,6 +93,8 @@
 - 설명: 외부 호출이 합성되지 못한 사유를 리포트에 기록한다 — `unwired-external-dep`(미추출 타입), `unmatched-external-call`(매칭 실패), `unsynthesizable-shape`(복잡 형상), `stub-ineffective`(등록 후 미도달).
 - 수용기준:
   - Given 응답 타입 미추출 호출 site를 가진 SUT, When 빌드, Then 리포트에 `unwired-external-dep ... fallback=stage3`가 기록된다.
+  - Given 중첩 객체 필드를 가진 응답 DTO site, When 합성, Then stub을 등록하지 않고 `unsynthesizable-shape`가 기록된다(silent String stub 금지).
+  - Given stub 등록 후에도 재invoke에서 여전히 404인 호출, When 수렴 후 점검, Then `stub-ineffective`가 기록된다.
 - 검증 레벨: integration
 
 ### REQ-011 — provenance 태깅
@@ -141,7 +144,7 @@
 | REQ-007 | 모드-중립 trace-id | `TraceKeyTest` | unit | 🟢 green |
 | REQ-008 | 재탐색 루프 수렴 | `ExternalStubReExploreTest` | integration | 🟢 green |
 | REQ-009 | URL↔pathLiteral 매칭 | `CallSiteMatcherTest` | unit | 🟢 green |
-| REQ-010 | loud-fail surface | `ExternalStubLoudFailTest` | integration | 🟢 green |
+| REQ-010 | loud-fail surface | `ExternalStubReExploreTest#unmatchedCallWithNoSiteRecordsLoudFail` (`unmatched-external-call`), `#matchedSiteWithEmptyShapeRecordsUnwiredLoudFail` (`unwired-external-dep`), `#nestedObjectResponseDtoRecordsUnsynthesizableShapeLoudFail` (`unsynthesizable-shape`); `ExternalStubLoudFailTest#stubRegisteredButStill404RecordsStubIneffective` (`stub-ineffective`) | integration | 🟢 green |
 | REQ-011 | provenance 태깅 | `Stage1ExternalStubSynthesisE2E#synthesizedProvenanceTagged` | E2E | 🟢 green |
 | REQ-012 | CapturedHttpCall 하위호환 | `CapturedHttpCallJsonRoundTripTest` | unit | 🟢 green |
 | REQ-013 | attach 회귀 없음 | 기존 attach 통합 테스트 suite (`AttachCliConfigTest`, `AttachedComposeEnvironmentTest`, `OtelHttpCaptureIntegrationTest` 등) | integration | 🟢 green |

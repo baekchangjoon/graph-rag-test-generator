@@ -97,6 +97,50 @@ class ExternalStubLoudFailTest {
                 .isEqualTo(CapturedHttpCall.Provenance.CAPTURED);
     }
 
+    /**
+     * REQ-010 stub-ineffective: stub 등록 후에도 재invoke에서 여전히 404로 남는 외부 호출은
+     * stub-ineffective loud-fail로 기록된다(silent 금지).
+     */
+    @Test
+    void stubRegisteredButStill404RecordsStubIneffective() throws Exception {
+        server = new HttpCaptureServer();
+        server.start(null, null);
+        List<ExternalCallSite> sites = List.of(
+                new ExternalCallSite("GET", "/inventory/stock", Optional.of(INV_SHAPE)));
+        EndpointExplorationRunner runner = runnerWith(server, sites);
+
+        // 1) stub 등록(B2 루프가 하는 일).
+        assertThat(registerViaRunner(runner, sites).newlyRegistered()).isEqualTo(1);
+
+        // 2) 등록됐는데도 재invoke에서 같은 path가 여전히 404 → stub-ineffective.
+        RawHttpExchange still404 = new RawHttpExchange("GET", "/inventory/stock", Map.of(),
+                null, 404, "", false, "");
+        var outcome = new io.graphrag.builder.explore.ExplorationOutcome(
+                List.of(candidateWith(still404)), java.util.Set.of(), Map.of());
+        recordIneffectiveStubs(runner, outcome);
+
+        assertThat(externalLoudFails(runner))
+                .anyMatch(lf -> lf.reason().equals("stub-ineffective")
+                        && lf.target().contains("/inventory/stock"));
+    }
+
+    private void recordIneffectiveStubs(EndpointExplorationRunner runner,
+                                        io.graphrag.builder.explore.ExplorationOutcome outcome) throws Exception {
+        Method m = EndpointExplorationRunner.class.getDeclaredMethod(
+                "recordIneffectiveStubs", io.graphrag.model.Endpoint.class,
+                io.graphrag.builder.explore.ExplorationOutcome.class);
+        m.setAccessible(true);
+        m.invoke(runner, null, outcome);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<EndpointExplorationRunner.LoudFail> externalLoudFails(EndpointExplorationRunner runner)
+            throws Exception {
+        java.lang.reflect.Field f = EndpointExplorationRunner.class.getDeclaredField("externalLoudFails");
+        f.setAccessible(true);
+        return (List<EndpointExplorationRunner.LoudFail>) f.get(runner);
+    }
+
     /** runner 내부 stubSynthesizer로 등록(provenance 판정이 그 인스턴스를 본다). */
     private EndpointExplorationRunner.StubSynthesisResult registerViaRunner(
             EndpointExplorationRunner runner, List<ExternalCallSite> sites) throws Exception {
