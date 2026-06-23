@@ -204,9 +204,12 @@ class ReadInputSynthesizerVariantTest {
         assertThat(variantRow.values()).contains(true);
     }
 
-    /** NULLITY: nullable 컬럼, baseState=non-null → 반대 arm = null */
+    /**
+     * NULLITY: nullable 컬럼이 base seed에 없어 baseState=null → arm = defaultFor(DATE) = LocalDate(2037,1,1).
+     * (null base → defaultFor 변종)
+     */
     @Test
-    void flipNullityNonNull_yieldsNullVariant() {
+    void flipNullityNullBase_yieldsDefaultForVariant() {
         TableSchema table = new TableSchema("bookings",
                 List.of(new ColumnSchema("id", "BIGINT", false, true),
                         new ColumnSchema("cancelled_at", "DATE", true, false)),   // nullable
@@ -215,23 +218,55 @@ class ReadInputSynthesizerVariantTest {
                 GuardKind.NULLITY, null,
                 List.of(), List.of(), "!=", ComparandKind.LITERAL, "null");
 
-        // base는 nullable이라 시드 미포함, baseState=null → 반대 arm = defaultFor(DATE) = LocalDate
-        // 아니면 null base일 때 defaultFor가 반환되므로 variant는 defaultFor(DATE).
-        // 실제로는: nullable 컬럼은 base seed에 없으므로 stateAt → null → arm = defaultFor(col).
+        // nullable 컬럼은 base seed에 미포함 → stateAt=null → arm = defaultFor(DATE) = LocalDate(2037,1,1)
         List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(nullGuard));
 
         assertThat(variants).hasSize(2);
         SeedRow variantRow = variants.get(1).input().seeds().stream()
                 .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
-        // null arm: cancelled_at 컬럼이 추가되고 값이 null이어야 함.
-        // 그런데 nullable 컬럼이 base에 없고 stateAt=null이면 → arm = defaultFor(col) (not null).
-        // 명세: baseState=null(컬럼 없으므로) → [defaultFor(col)]
         int idx = variantRow.columns().indexOf("cancelled_at");
         assertThat(idx).isGreaterThanOrEqualTo(0);
+        // baseState=null → arm = defaultFor(DATE) → LocalDate(2037, 1, 1)
+        assertThat(variantRow.values().get(idx)).isEqualTo(LocalDate.of(2037, 1, 1));
         // 변종 PK ≠ base PK
         SeedRow baseRow = variants.get(0).input().seeds().stream()
                 .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
         assertThat(variantRow.values().get(0)).isNotEqualTo(baseRow.values().get(0));
+    }
+
+    /**
+     * NULLITY: nullable 컬럼이 QUERY param으로 base seed에 non-null 값으로 포함된 상태 → arm = [null].
+     * (nullable + base non-null → null 변종)
+     */
+    @Test
+    void flipNullityNonNullBase_yieldsNullArm() {
+        // status 컬럼(nullable=true)이 QUERY param으로 base seed에 포함되도록 엔드포인트 구성
+        Endpoint getWithStatus = new Endpoint(
+                "get-api-bookings-id-status", "GET", "/api/bookings/{id}",
+                "x.BookingController", "getByIdFiltered",
+                List.of(new EndpointParam("id", "java.lang.Long", ParamKind.PATH),
+                        new EndpointParam("status", "java.lang.String", ParamKind.QUERY)),
+                false);
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("status", "VARCHAR", true, false)),   // nullable
+                List.of(), List.of());
+        StateGuard nullGuard = new StateGuard("x.B", "m", 1, "status",
+                GuardKind.NULLITY, null,
+                List.of(), List.of(), "!=", ComparandKind.LITERAL, "null");
+
+        // QUERY param "status" → mapParamToColumn → "status" 컬럼에 값 "probe-status-..." 삽입
+        // → base seed에 status가 non-null로 포함됨 → baseState non-null → arm=[null]
+        List<SeedVariant> variants = new ReadInputSynthesizer()
+                .synthesizeVariants(getWithStatus, List.of(table), List.of(nullGuard));
+
+        assertThat(variants).hasSize(2);
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        int idx = variantRow.columns().indexOf("status");
+        assertThat(idx).isGreaterThanOrEqualTo(0);
+        // baseState가 non-null(probe 문자열) → 반대 arm = null
+        assertThat(variantRow.values().get(idx)).isNull();
     }
 
     /** NULLITY: nullable 컬럼에서 baseState=non-null이면 [null] */
@@ -295,5 +330,22 @@ class ReadInputSynthesizerVariantTest {
         SeedRow baseRow = variants.get(0).input().seeds().stream()
                 .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
         assertThat(variantRow.values().get(0)).isNotEqualTo(baseRow.values().get(0));
+    }
+
+    /** NUMERIC: 비정수 JDBC 타입(DECIMAL)은 타입 불일치 위험 → 변종 없음(singleton) */
+    @Test
+    void flipNumericConst_nonIntegerJdbcType_returnsNoVariant() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("price", "DECIMAL", false, false)),
+                List.of(), List.of());
+        StateGuard numGuard = new StateGuard("x.B", "m", 1, "price",
+                GuardKind.NUMERIC, null,
+                List.of(), List.of(), ">=", ComparandKind.LITERAL, "100");
+
+        List<SeedVariant> variants = synth().synthesizeVariants(GET_BY_ID, List.of(table), List.of(numGuard));
+
+        // DECIMAL은 정수형 아님 → 변종 없음 → singleton [base]
+        assertThat(variants).hasSize(1);
     }
 }
