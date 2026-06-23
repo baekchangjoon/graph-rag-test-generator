@@ -29,12 +29,29 @@ public final class LlmValueCache {
     }
 
     /**
-     * 읽기는 classpath로 어디서든 동작. 쓰기(캐시 miss + 키 존재 시) 경로는 **repo 루트 기준
-     * 상대경로** — 라이브 생성한 캐시를 개발자가 커밋하려면 빌더를 repo 루트(CWD)에서 실행해야
-     * 한다. 다른 CWD면 write가 실패(WARN 삼킴)할 수 있으나 읽기·결정성에는 영향 없다.
+     * 읽기는 classpath로 어디서든 동작. 쓰기 경로는 CWD에서 위로 올라가며 모듈 소스트리
+     * (graph-rag-builder/src/main/resources)를 탐색해 결정한다 — repo 루트에서 실행하든
+     * gradle :run 처럼 모듈 디렉터리에서 실행하든 같은 경로로 수렴(이중경로/write 실패 방지).
      */
     public static LlmValueCache defaultClasspath() {
-        return new LlmValueCache(Path.of("graph-rag-builder/src/main/resources/llm-oracle-cache"));
+        return new LlmValueCache(resolveWriteDir());
+    }
+
+    private static Path resolveWriteDir() {
+        Path cwd = Path.of("").toAbsolutePath();
+        for (Path dir = cwd; dir != null; dir = dir.getParent()) {
+            // repo 루트에서 실행: <root>/graph-rag-builder/src/main/resources
+            Path fromRoot = dir.resolve("graph-rag-builder/src/main/resources");
+            if (Files.isDirectory(fromRoot)) {
+                return fromRoot.resolve("llm-oracle-cache");
+            }
+            // 모듈 디렉터리에서 실행(gradle :run): <root>/graph-rag-builder/src/main/resources
+            if (dir.getFileName() != null && dir.getFileName().toString().equals("graph-rag-builder")
+                    && Files.isDirectory(dir.resolve("src/main/resources"))) {
+                return dir.resolve("src/main/resources/llm-oracle-cache");
+            }
+        }
+        return Path.of("graph-rag-builder/src/main/resources/llm-oracle-cache");
     }
 
     /**
