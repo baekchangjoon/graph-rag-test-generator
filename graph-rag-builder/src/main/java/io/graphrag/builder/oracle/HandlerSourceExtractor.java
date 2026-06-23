@@ -28,7 +28,12 @@ public final class HandlerSourceExtractor {
         return model;
     }
 
-    /** 메서드 본문 소스. 클래스/메서드 미존재 시 빈 문자열. */
+    /**
+     * 메서드 본문 소스. 클래스/메서드 미존재 시 빈 문자열. Spoon pretty-printer가 일부 구문
+     * (no-classpath 모드의 enum {@code switch case} 라벨 등)에서 NPE를 던질 수 있으므로
+     * toString 실패는 빈 문자열로 흡수한다 — 한 핸들러의 인쇄 실패가 전체 LLM 오라클(및 빌드)을
+     * 중단시키면 안 된다(REQ-005 회귀 가드).
+     */
     public String extract(String handlerClass, String handlerMethod) {
         CtType<?> type = model().getAllTypes().stream()
                 .filter(t -> t.getQualifiedName().equals(handlerClass))
@@ -39,7 +44,16 @@ public final class HandlerSourceExtractor {
         return type.getMethodsByName(handlerMethod).stream()
                 .map(CtMethod::getBody)
                 .filter(Objects::nonNull)
-                .map(Object::toString)
+                .map(HandlerSourceExtractor::safeToString)
                 .findFirst().orElse("");
+    }
+
+    /** Spoon 인쇄 실패(예: no-classpath enum switch case NPE)를 빈 문자열로 흡수. */
+    private static String safeToString(Object element) {
+        try {
+            return element.toString();
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 }
