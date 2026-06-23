@@ -35,10 +35,13 @@ public class ExternalStubSynthesizer {
      */
     public boolean register(String method, String pathLiteral, BodyShape shape) {
         String key = key(method, pathLiteral);
-        if (!registered.add(key)) {
+        if (registered.contains(key)) {
             return false;
         }
+        // 형상 합성을 먼저 — 해소 불가 형상(UnsupportedShapeException)이면 키를 등록하지 않고 던져서
+        // 호출부가 unsynthesizable-shape loud-fail로 surface 하게 한다(silent 등록 금지, REQ-010).
         JsonNode body = shapes.synthesizeBody(shape);
+        registered.add(key);
         MappingBuilder builder = method.equalsIgnoreCase("POST")
                 ? post(urlPathEqualTo(pathLiteral))
                 : get(urlPathEqualTo(pathLiteral));

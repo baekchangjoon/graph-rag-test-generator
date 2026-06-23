@@ -74,6 +74,6 @@ class ExternalStubSynthesizerTest {
                         .POST(HttpRequest.BodyPublishers.noBody()).build(),
                 HttpResponse.BodyHandlers.ofString());
         assertThat(resp.statusCode()).isEqualTo(200);
-        assertThat(resp.body()).isEqualTo("{\"ok\":false}");
+        assertThat(resp.body()).isEqualTo("{\"ok\":true}");   // Boolean happy=true (입력 동작 보존, C2)
     }
 }
