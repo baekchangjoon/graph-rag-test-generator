@@ -163,6 +163,67 @@ public class ReadInputSynthesizer {
         out.add(new SeedVariant(base, null));
         int variantIdx = 0;
         for (ConstraintExtractor.StateGuard guard : guards) {
+            // NUMERIC-vs-파라미터: 입력-시드 공동 합성 (§3.3)
+            if (guard.kind() == ConstraintExtractor.GuardKind.NUMERIC
+                    && guard.comparandKind() == ConstraintExtractor.ComparandKind.PARAM) {
+                ColumnSchema col = target.columns().stream()
+                        .filter(c -> c.name().equalsIgnoreCase(guard.column())).findFirst().orElse(null);
+                if (col == null) {
+                    continue;   // per-guard skip: 타깃 컬럼 해소 실패 → 이 가드만 건너뜀
+                }
+                String paramName = guard.comparand();   // 비교 파라미터명 P
+                // 입력값 V: base.body()는 path/query param을 flat-merge한 ObjectNode (synthesize 참고)
+                com.fasterxml.jackson.databind.JsonNode paramNode = base.body().get(paramName);
+                long v;
+                if (paramNode != null) {
+                    v = paramNode.asLong();
+                } else {
+                    // 파라미터가 body에 없으면 probeId로 결정적 대체 (scalarFor Integer/Long 규칙과 동일)
+                    v = probeIdFor(endpoint);
+                }
+                // 변종 시드 컬럼값: 반대 arm 1개 (§3.3 op별 표)
+                long variantColValue = numericParamVariantCol(guard.op(), v);
+                // JDBC 타입에 맞춰 시드값 결정
+                Object variantColObj = coerceToColumnType(variantColValue, col);
+                if (variantColObj == null) {
+                    continue;   // 비정수 JDBC 타입 → per-guard skip
+                }
+                variantIdx++;
+                SynthesizedInput.SeedRow targetRow = base.seeds().get(targetIdx);
+                List<String> cols = new ArrayList<>(targetRow.columns());
+                List<Object> vals = new ArrayList<>(targetRow.values());
+                Object variantPk = offsetPk(vals.get(0), variantIdx);
+                vals.set(0, variantPk);
+                int gi = indexOfIgnoreCase(cols, guard.column());
+                if (gi >= 0) {
+                    vals.set(gi, variantColObj);
+                } else {
+                    cols.add(col.name());
+                    vals.add(variantColObj);
+                }
+                List<SynthesizedInput.SeedRow> variantSeeds = new ArrayList<>();
+                for (int i = 0; i < base.seeds().size(); i++) {
+                    variantSeeds.add(i == targetIdx
+                            ? new SynthesizedInput.SeedRow(targetRow.table(), cols, vals)
+                            : base.seeds().get(i));
+                }
+                // 변종 vbody: 비교 파라미터 P=V 명시 고정 (기준값 V 공유)
+                ObjectNode vbody = (ObjectNode) base.body().deepCopy();
+                vbody.put(paramName, String.valueOf(v));
+                // PK 매핑(기존 공통 로직과 동일)
+                if (pkColumn != null) {
+                    for (EndpointParam param : endpoint.params()) {
+                        if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
+                                && pkColumn.equalsIgnoreCase(mapParamToColumn(param, target, null))) {
+                            vbody.put(param.name(), String.valueOf(variantPk));
+                        }
+                    }
+                }
+                out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
+                continue;
+            }
+
+            // 기존 경로: TEMPORAL / ENUM / BOOLEAN / NULLITY / NUMERIC-상수
             ColumnSchema col = target.columns().stream()
                     .filter(c -> c.name().equalsIgnoreCase(guard.column())).findFirst().orElse(null);
             if (col == null) {
@@ -318,6 +379,39 @@ public class ReadInputSynthesizer {
                     .map(Map.Entry::getValue).findFirst().orElse(null);
         }
         return consts;
+    }
+
+    /**
+     * NUMERIC-vs-파라미터 op·입력값 V 기준 변종 시드 컬럼값(반대 arm) 결정 (§3.3 표).
+     * >=V → V-1, >V → V, <=V → V+1, <V → V, ==V → V+1, !=V → V.
+     * Long.MIN/MAX 근처는 범위 내 결정적 대체값으로 보정.
+     */
+    private static long numericParamVariantCol(String op, long v) {
+        return switch (op) {
+            case ">=" -> v > Long.MIN_VALUE ? v - 1 : Long.MIN_VALUE;
+            case ">"  -> v;
+            case "<=" -> v < Long.MAX_VALUE ? v + 1 : Long.MAX_VALUE;
+            case "<"  -> v;
+            case "==" -> v < Long.MAX_VALUE ? v + 1 : v - 1;
+            case "!=" -> v;
+            default   -> v;
+        };
+    }
+
+    /**
+     * 정수 long 값을 컬럼 JDBC 타입에 맞는 Java 타입으로 변환.
+     * 정수 계열(BIGINT/INT)만 지원. 비정수 계열은 null 반환 → per-guard skip.
+     */
+    private static Object coerceToColumnType(long value, ColumnSchema col) {
+        String jdbcUpper = col.jdbcType().toUpperCase();
+        if (jdbcUpper.contains("BIGINT")) {
+            return value;
+        }
+        if (jdbcUpper.contains("INT")) {
+            long clamped = Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, value));
+            return (int) clamped;
+        }
+        return null;   // 비정수 JDBC 타입 → skip
     }
 
     /**
