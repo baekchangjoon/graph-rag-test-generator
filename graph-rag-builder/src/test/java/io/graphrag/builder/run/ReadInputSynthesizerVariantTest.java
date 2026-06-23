@@ -445,6 +445,50 @@ class ReadInputSynthesizerVariantTest {
     }
 
     /**
+     * REQ-014: NUMERIC-vs-파라미터 가드의 comparand(서비스 파라미터명 "minNights")가
+     * 엔드포인트의 QUERY param 이름("minStay")과 불일치할 때, base.body().get("minNights")=null
+     * → probeIdFor(endpoint) 폴백으로 V를 결정해 공동 합성을 계속 수행한다.
+     * 즉, 이름 불일치 시 V는 공유되지 않고 probeId로 대체되어 변종은 생성된다.
+     * (동명 pass-through인 inputSeedJoint_geParam과 대비: 동명이면 body에 값이 있어 V 공유)
+     */
+    @Test
+    void inputSeedJoint_paramNameMismatch_fallsBackToProbeId() {
+        // 엔드포인트 QUERY param 이름 = "minStay" (가드 comparand "minNights"와 불일치)
+        Endpoint listEp = new Endpoint(
+                "get-api-reservations-mismatch", "GET", "/api/reservations",
+                "x.ReservationController", "listMismatch",
+                List.of(new EndpointParam("minStay", "java.lang.Long", ParamKind.QUERY)),
+                false);
+        TableSchema reservations = new TableSchema("reservations",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("nights", "INT", false, false)),
+                List.of(), List.of());
+        // 가드 comparand = "minNights" — 엔드포인트에 없는 파라미터명
+        StateGuard paramGuard = new StateGuard("x.ReservationController", "list", 10, "nights",
+                GuardKind.NUMERIC, null,
+                List.of(), List.of(), ">=", ComparandKind.PARAM, "minNights");
+
+        List<SeedVariant> variants = new ReadInputSynthesizer()
+                .synthesizeVariants(listEp, List.of(reservations), List.of(paramGuard));
+
+        // 이름 불일치 → body.get("minNights") = null → probeId 폴백으로 변종은 생성됨
+        assertThat(variants).hasSize(2);
+
+        // 변종 vbody에 "minNights" = probeId 문자열이 설정됨 (공유 V = probeId)
+        String vbodyMinNights = variants.get(1).input().body().get("minNights").asText();
+        assertThat(vbodyMinNights).isNotEmpty();
+        long v = Long.parseLong(vbodyMinNights);
+
+        // 변종 시드 nights = V-1 (불만족 arm)
+        SeedRow variantRow = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("reservations")).findFirst().orElseThrow();
+        assertThat(col(variantRow, "nights")).isEqualTo((int) (v - 1));
+
+        // 동명 케이스(inputSeedJoint_geParam)와 달리, base body에 "minNights"가 없음을 확인
+        assertThat(variants.get(0).input().body().get("minNights")).isNull();
+    }
+
+    /**
      * per-guard skip: 타깃 테이블은 해소되나 NUMERIC-param 가드 컬럼이 그 테이블에 없을 때
      * → 해당 가드만 skip하고 다른 가드(BOOLEAN 등)의 변종은 정상 생성된다.
      * path="/api/bookings/list" → target=bookings 해소됨.
