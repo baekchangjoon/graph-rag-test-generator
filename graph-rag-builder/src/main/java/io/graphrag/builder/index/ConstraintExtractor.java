@@ -126,7 +126,8 @@ public class ConstraintExtractor {
      * 핸들러 메서드 본문의 직접(1-hop) {@link CtInvocation} 집합과 핸들러 자신을 반환한다 (REQ-011, Phase 2).
      * 반환 집합의 각 Entry: key = 호출 대상 declaringType FQN (미해소이면 simpleName), value = 메서드 simpleName.
      * 핸들러 자신 (handlerClass, handlerMethod) 도 반드시 포함.
-     * noClasspath 모드이므로 declaringType이 인터페이스 또는 null일 수 있다 — null이면 simpleName을 key로 보존.
+     * noClasspath 모드이므로 declaringType이 인터페이스 또는 null일 수 있다 — null이면 타입 정보가 없어
+     * 귀속 불가이므로 skip(보수적); non-null + FQN 빈 경우는 declaringType.getSimpleName()을 key로 사용.
      * 1-hop만: 호출된 메서드 내부의 추가 호출은 따라가지 않는다.
      */
     public Set<Map.Entry<String, String>> reachableMethods(Path srcDir, String handlerClass, String handlerMethod) {
