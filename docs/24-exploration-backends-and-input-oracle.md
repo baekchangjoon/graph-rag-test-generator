@@ -167,9 +167,10 @@ InputOracle(ASM+Z3) 위에, 더 흔한 분기 종류를 여는 단계들을 쌓�
   구체 어설션. **생성 by-id 테스트가 빈 DB에서 재현**(petclinic 16/16).
 - **회귀 보호**: order-service에 **Booking 리소스**를 추가해 위 전 단계를 CI(e2e)가 라이브로 검증
   (e2e 22→45 tests).
-- **Stage 4 — 상태 의존 가드 다-arm 시드**: `extractStateGuards`(TEMPORAL stale 과거날짜 + ENUM `!=`/`==`)
+- **Stage 4 — 상태 의존 가드 다-arm 시드**: `extractStateGuards`(TEMPORAL stale 과거날짜 + ENUM `!=`/`==`
+  + BOOLEAN/NULLITY/NUMERIC(정수 상수·파라미터))
   + `ReadInputSynthesizer.synthesizeVariants`가 저장-행 상태별 대체 시드 변종을 합성해 by-id 엔드포인트의
-  여러 전이 arm을 연다. ENUM은 NE 잔여 상수 + EQ positive 각 상수 + else 잔여 1개로 **상태머신 다중 전이**를
+  여러 전이 arm을 연다. NUMERIC-파라미터는 입력값 V와 시드 컬럼을 함께 정하는 **입력-시드 공동 합성**(base=만족 arm, 변종=불만족 arm). ENUM은 NE 잔여 상수 + EQ positive 각 상수 + else 잔여 1개로 **상태머신 다중 전이**를
   커버(order-service `advance` 200/409/410). inter-field 등식은 Z3 `solveTuple`(정수) / `solveTupleReal`
   (float/double, `2026-06-16-interfield-float-double.md` — 작업 #4로 구현됨).
 

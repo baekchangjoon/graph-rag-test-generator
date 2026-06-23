@@ -302,9 +302,11 @@ base (변이 없음)         →                            → 201
 
 **Stage 4 — 일부 정공 (2026-06-15)**:
 - ✅ **상태 의존 가드 양 arm(저장된 단일 행) — 정적 StateGuardOracle로 해결**: `getter().isBefore/
-  isAfter(now)`(TEMPORAL)·`getter() != A && != B`(ENUM) 가드를 정적 인식하고, 반대 arm을 여는 **대체 시드
-  행 변종**(과거 1900-01-01 날짜 / 부정집합 밖 enum 상수)을 합성해 by-id 요청으로 구동한다. **런타임
-  에이전트 불요**(flip 값이 solve가 아니라 고정 상수). order-service GET stale 404 / DELETE conflict 409 arm을
+  isAfter(now)`(TEMPORAL)·`getter() != A && != B`(ENUM)·`getX()`(BOOLEAN)·`getX()==null`(NULLITY)·
+  `getX() OP 정수리터럴|파라미터`(NUMERIC) 가드를 정적 인식하고, 반대 arm을 여는 **대체 시드
+  행 변종**(과거 1900-01-01 날짜 / 부정집합 밖 enum 상수 / boolean flip / null↔defaultFor / 경계 정수)을
+  합성해 by-id 요청으로 구동한다. NUMERIC-파라미터는 입력값과 시드를 함께 정하는 **입력-시드 공동
+  합성**. **런타임 에이전트 불요**(flip 값이 solve가 아니라 고정 상수/입력-기준 결정값). order-service GET stale 404 / DELETE conflict 409 arm을
   missed→covered(branch 85% 106/124). `docs/superpowers/plans/2026-06-15-stage4-state-guard-two-arm-seeds.md`.
   - 여전히 보류: **집계/capacity 다중 행**(`COUNT(status==CONFIRMED)>=cap`)·인식 안 되는 임의 상태 가드
     (계산형·cross-entity)는 in-process concolic 라인(PoC `.work/concolic-poc/`)의 몫.
