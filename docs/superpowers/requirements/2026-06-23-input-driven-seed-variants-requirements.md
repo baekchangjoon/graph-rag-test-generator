@@ -186,12 +186,12 @@
 | REQ-008 | P1 | 기존 회귀 불변 | 기존 StateGuard 단위 + ReadInputSynthesizerVariantTest + BuilderIntegrationTest(state-guard 단언) | integration/E2E | 🟢 green |
 | REQ-009 | P1 | E2E order-service 양arm | BuilderIntegrationTest#eligibilityNumericTwoArms | E2E | 🟢 green |
 | REQ-010 | P1 | record 후방호환 | 기존 StateGuard 테스트 컴파일·green | integration | 🟢 green |
-| REQ-011 | P2 | reachable 1-hop | ConstraintExtractorReachableTest#oneHop* | integration | 🔴 planned |
-| REQ-012 | P2 | cross-class 귀속 | BuilderCliAttributionTest#reachable*, #joinGuardReachable | integration | 🔴 planned |
+| REQ-011 | P2 | reachable 1-hop | ConstraintExtractorReachableTest#oneHopIncludesService, #handlerSelf, #lambdaInvocationIncluded | integration | 🟢 green |
+| REQ-012 | P2 | cross-class 귀속 | BuilderCliAttributionTest#reachableIncludesServiceGuard, #unreachableExcluded, #joinGuardReachable, #sameMethodNameDifferentClassExcluded, #handlerSelfIsReachable, #joinGuardUnreachableExcluded, #simpleNameFallbackMatchesWhenFqnEndsWith, #simpleNameFallbackMatchesWhenGuardClassIsSimpleName | integration | 🟢 green |
 | REQ-013 | P2 | E2E petclinic 계층형 | local sweep (.work/ 스크립트) | local sweep | 🔴 planned |
-| REQ-014 | P2 | pass-through 매칭 | ConstraintExtractorReachableTest#passThrough* | integration | 🔴 planned |
+| REQ-014 | P2 | pass-through 매칭 | BuilderCliAttributionTest#passThroughSameNameGuardIsReachable, ReadInputSynthesizerVariantTest#inputSeedJoint_paramNameMismatch_fallsBackToProbeId | integration | 🟢 green |
 
-Coverage: 10/14 green (P1 완료) — Phase 1 대상(Must 8 P1 + Should 2 P1[REQ-010]) 10/10 (100% P1 green).
-P2 대상(REQ-011~014) 0/4 — Phase 2 미착수.
-비고: REQ-013은 외부 petclinic 의존 — in-repo CI 게이트가 아닌 로컬 스윕으로 green 판정(설계 §6, R4).
+Coverage: 13/14 green (P2 진행 중) — Phase 1 대상(REQ-001~010) 10/10 (100% P1 green).
+P2 대상(REQ-011~014): REQ-011 🟢, REQ-012 🟢, REQ-013 🔴(petclinic 로컬 스윕 미완), REQ-014 🟢.
+비고: REQ-013은 외부 petclinic 의존 — in-repo CI 게이트가 아닌 로컬 스윕으로 green 판정(설계 §6, R4). Task 13 미완료.
 비고: BuilderIntegrationTest 두 메서드 동시 실행 시 SUT 포트 충돌 발생(기존 이슈, stash 검증). 단독 실행 green 확인(REQ-009).
