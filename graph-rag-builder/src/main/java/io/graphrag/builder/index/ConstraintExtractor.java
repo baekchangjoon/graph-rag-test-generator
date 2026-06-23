@@ -11,7 +11,9 @@ import spoon.reflect.code.CtIf;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLiteral;
 import spoon.reflect.code.CtTypeAccess;
+import spoon.reflect.code.CtUnaryOperator;
 import spoon.reflect.code.CtVariableRead;
+import spoon.reflect.code.UnaryOperatorKind;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.visitor.filter.TypeFilter;
@@ -69,7 +71,7 @@ public class ConstraintExtractor {
     }
 
     /** 상태 의존 가드의 종류 (Stage 4 StateGuardOracle). */
-    public enum GuardKind { TEMPORAL, ENUM }
+    public enum GuardKind { TEMPORAL, ENUM, BOOLEAN }
 
     /**
      * 비교 피연산자(comparand)의 종류. LITERAL: 리터럴 상수(숫자·문자열·boolean); PARAM: 요청 파라미터/지역변수.
@@ -533,9 +535,93 @@ public class ConstraintExtractor {
         enumAcc.values().forEach(a -> out.add(new StateGuard(a.classFqn, a.method, a.line,
                 a.column, GuardKind.ENUM, a.enumType, List.copyOf(a.constants), List.copyOf(a.positives))));
 
+        // BOOLEAN: CtIf 조건이 (a) boolean getter 단독, (b) !getter(), (c) getter()==true/false 형태.
+        // getterRef로 파라미터·지역변수 제외(저장 행 getter invocation만). boolean literal == / != 비교도 처리.
+        for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
+            CtExpression<?> cond = ctIf.getCondition();
+            StateGuard bg = booleanGuardFromCondition(cond);
+            if (bg == null) {
+                continue;
+            }
+            CtMethod<?> method = ctIf.getParent(CtMethod.class);
+            CtType<?> type = ctIf.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new StateGuard(type.getQualifiedName().replace('$', '.'), method.getSimpleName(),
+                    ctIf.getPosition().getLine(), bg.column(), GuardKind.BOOLEAN, null,
+                    List.of(), List.of(), bg.op(), ComparandKind.LITERAL, bg.comparand()));
+        }
+
         out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
                 .thenComparingInt(StateGuard::line));
         return out;
+    }
+
+    /**
+     * CtIf 조건식에서 BOOLEAN getter 가드를 인식. 저장 행 getter invocation(getterRef != null)만.
+     * (a) 단독 getter invocation → comparand="true"
+     * (b) !getter() → comparand="false"
+     * (c) getter() == true/false 또는 getter() != true/false (BinaryOperator)
+     * 인식되면 column/op/comparand만 채운 임시 StateGuard 반환, 아니면 null.
+     */
+    private static StateGuard booleanGuardFromCondition(CtExpression<?> cond) {
+        // (a) 단독 boolean getter invocation: if(b.getActive())
+        if (cond instanceof CtInvocation<?> inv) {
+            String ref = getterRef(inv);
+            if (ref != null) {
+                return new StateGuard(null, null, 0, snake(ref), GuardKind.BOOLEAN, null,
+                        List.of(), List.of(), "==", ComparandKind.LITERAL, "true");
+            }
+        }
+        // (b) !getter(): CtUnaryOperator(NOT, getter())
+        if (cond instanceof CtUnaryOperator<?> uo && uo.getKind() == UnaryOperatorKind.NOT) {
+            CtExpression<?> operand = uo.getOperand();
+            if (operand instanceof CtInvocation<?> inv) {
+                String ref = getterRef(inv);
+                if (ref != null) {
+                    return new StateGuard(null, null, 0, snake(ref), GuardKind.BOOLEAN, null,
+                            List.of(), List.of(), "==", ComparandKind.LITERAL, "false");
+                }
+            }
+        }
+        // (c) getter() == true/false 또는 getter() != true/false
+        if (cond instanceof CtBinaryOperator<?> bin) {
+            boolean isEq = bin.getKind() == BinaryOperatorKind.EQ;
+            boolean isNe = bin.getKind() == BinaryOperatorKind.NE;
+            if (!isEq && !isNe) {
+                return null;
+            }
+            CtExpression<?> left = bin.getLeftHandOperand();
+            CtExpression<?> right = bin.getRightHandOperand();
+            // getter() == true/false 또는 true/false == getter()
+            Boolean boolLit = booleanLiteral(right);
+            CtExpression<?> getterSide = left;
+            if (boolLit == null) {
+                boolLit = booleanLiteral(left);
+                getterSide = right;
+            }
+            if (boolLit == null) {
+                return null;
+            }
+            String ref = getterSide instanceof CtInvocation<?> inv ? getterRef(inv) : null;
+            if (ref == null) {
+                return null;
+            }
+            // != true → false, != false → true (flip for NE)
+            boolean effectiveValue = isEq ? boolLit : !boolLit;
+            return new StateGuard(null, null, 0, snake(ref), GuardKind.BOOLEAN, null,
+                    List.of(), List.of(), "==", ComparandKind.LITERAL, String.valueOf(effectiveValue));
+        }
+        return null;
+    }
+
+    /** boolean 리터럴이면 Boolean 값, 아니면 null. */
+    private static Boolean booleanLiteral(CtExpression<?> expr) {
+        if (expr instanceof CtLiteral<?> lit && lit.getValue() instanceof Boolean b) {
+            return b;
+        }
+        return null;
     }
 
     /** ENUM 가드 누적기: (class,method,column)별 부정(NE)·긍정(EQ) 상수 집합(정렬). */
