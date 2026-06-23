@@ -20,6 +20,7 @@ public class StateGuards {
         private int count;
         private int balance;
         private double rate;
+        private int nights;
 
         Long getId() { return id; }
         LocalDate getCheckInDate() { return checkInDate; }
@@ -30,6 +31,7 @@ public class StateGuards {
         int getCount() { return count; }
         int getBalance() { return balance; }
         double getRate() { return rate; }
+        int getNights() { return nights; }
     }
 
     String getById(Booking b, boolean includeStale, int id) {
@@ -143,5 +145,21 @@ public class StateGuards {
             return "hi";
         }
         return "lo";
+    }
+
+    /** NUMERIC-vs-PARAM 직접참조: getter() >= paramRef → kind=NUMERIC, comparandKind=PARAM, comparand="minNights". */
+    String byNightsParam(Booking b, int minNights) {
+        if (b.getNights() >= minNights) {
+            return "ok";
+        }
+        return "below";
+    }
+
+    /** NUMERIC-vs-PARAM 중간계산 제외: getter() >= m*2 → CtBinaryOperator → NUMERIC emit 안 함. */
+    String byCalc(Booking b, int m) {
+        if (b.getNights() >= m * 2) {
+            return "ok";
+        }
+        return "below";
     }
 }

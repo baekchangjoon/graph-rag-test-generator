@@ -182,6 +182,32 @@ class ConstraintExtractorStateGuardTest {
     }
 
     @Test
+    void numericParamGuard_direct() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byNightsParam: if(b.getNights() >= minNights) → NUMERIC, comparandKind=PARAM, comparand="minNights", op=">="
+        StateGuard g = guards.stream()
+                .filter(sg -> sg.kind() == GuardKind.NUMERIC)
+                .filter(sg -> sg.classFqn().endsWith("StateGuards") && sg.method().equals("byNightsParam"))
+                .findFirst().orElseThrow(() -> new AssertionError("NUMERIC PARAM guard for byNightsParam not found"));
+        assertThat(g.column()).isEqualTo("nights");
+        assertThat(g.op()).isEqualTo(">=");
+        assertThat(g.comparandKind()).isEqualTo(ComparandKind.PARAM);
+        assertThat(g.comparand()).isEqualTo("minNights");
+    }
+
+    @Test
+    void numericParamGuard_calcExcluded() {
+        List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
+
+        // byCalc: if(b.getNights() >= m*2) → 중간계산(CtBinaryOperator) → NUMERIC emit 안 됨
+        assertThat(guards)
+                .filteredOn(g -> g.kind() == GuardKind.NUMERIC
+                        && g.classFqn().endsWith("StateGuards") && g.method().equals("byCalc"))
+                .isEmpty();
+    }
+
+    @Test
     void doesNotRecognizePureInputComparison_asStateGuard() {
         List<StateGuard> guards = new ConstraintExtractor().extractStateGuards(SAMPLE_SRC);
 
