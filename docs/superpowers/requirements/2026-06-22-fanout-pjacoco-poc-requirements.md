@@ -192,14 +192,15 @@ REQ-008(판정·중단 정책)이 담는다. 이렇게 분리해야 V3(a)/V4가 
 | REQ-008 | A 종합 판정 + 중단 정책 | `PocVerdictRecord` (§11 갱신 + 정책 점검) | doc | 🟢 PASS (§11 종합 판정 기록 완료 2026-06-23 — A viable, V3b 오버헤드 재논의) |
 | REQ-009 | pjacoco agent 해소·주입 재현성 | `PjacocoAgentTest` (unit) | E2E | 🟢 unit-green |
 | REQ-010 | 비동기 flush로 임계경로 오버헤드 제거 [범위확장] | `V3AsyncFlushPoc` (petclinic 주 게이트) | E2E | 🟢 PASS — honest overhead +1.73% \|x\|<5% (교차 측정; 초기 -17.13%는 측정 순서 편향 수정), exec 60/60, partition {{0,2},{1},{3}} vanilla 동등(하드 어서트). 2026-06-23 |
-| REQ-011 | 병렬 fan-out speedup + flush 큐 병목 [범위확장] | `FanoutSpeedupPoc` (순차 vs P=2·4·8) | E2E | 🔴 planned |
+| REQ-011 | 병렬 fan-out speedup + flush 큐 병목 [범위확장] | `FanoutSpeedupPoc` (순차 vs P=2·4·8) | E2E | 🟢 PASS — speedup P=2:2.33x P=4:3.30x P=8:3.72x; flush queueMax=17 drain=1ms(NOT bottleneck); heavy-flush(86ms) small-pool(=2) drain=7254ms vs sized-pool(=25) drain=154ms; empirical rule: pool≥ceil(R×C)≈23. 2026-06-23 |
 
-Coverage: 10/11 gates green — REQ-011(병렬 speedup 실측) 진행 중.
-REQ-001·002·003·004·005·006·007·008·009·010 모두 🟢.
+Coverage: 11/11 gates green — 전체 PASS.
+REQ-001·002·003·004·005·006·007·008·009·010·011 모두 🟢.
+REQ-011(병렬 speedup) 2026-06-23 PASS: speedup(P=8)=3.72x(T_seq=1975ms→T_p8=531ms), flush 큐 최대 깊이 17개·드레인 1ms(NOT bottleneck). heavy-flush 시뮬레이션: small-pool(=2) drain 7254ms(큐 백업), sized-pool(=25) drain 154ms(따라잡음). 경험적 사이징 규칙: pool ≥ ceil(R×C) ≈ 23 (R≈258 req/s, C=86ms).
 REQ-010(비동기 flush) 2026-06-23 PASS: honest overhead +1.73%(교차 측정 — flush ≈ baseline, 임계경로 밖), 60개 exec 모두 생성, partition {{0,2},{1},{3}} vanilla와 동등(하드 어서트 PASS). 초기 -17.13%는 측정 순서 편향(편향 수정 커밋: 양방향 워밍업 + 교차 측정).
 REQ-005 최종 판정: 동기 over-threshold → REQ-010 비동기 flush로 해소. 비동기 채택 = A 진행 조건 충족.
 종합 판정(REQ-008) 2026-06-23 기록 완료: 전략 A 아키텍처적으로 실현 가능. V3(b) 오버헤드는 flush 방식 문제(튜닝 가능) — REQ-010 PASS로 확정. 자동 B 회귀 없음.
 V4(REQ-006·007) 2026-06-23 PASS — 동일 traceId `ff6033b5cd763a028e0dfc0fd62ced45`가 diary(단일 JVM, 118 probes)·mindgraph(멀티 JVM, 72 probes / consumer 58 probes) 양쪽 귀속 확인. pjacoco PR #13 수정(OTel jar 구조적 식별)으로 크로스-JVM 귀속 정상.
 REQ-009: unit 테스트 통과(🟢).
 SUT 확정(§spec 3.1): V1~V3=spring-petclinic(`~/github_spring-petclinic/spring-petclinic`),
-V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 10/10 유지. Could/Won't 없음.
+V4=tainted-spring diary→mindgraph(`~/github_tainted-spring`, OTel 멀티 JVM). 분모 11/11 유지. Could/Won't 없음.

@@ -639,3 +639,38 @@ Docker Desktop macOS bridge ~190ms + pjacoco internal 86ms 합산 결과로 기�
 - REQ-005 최종 판정: 동기 flush over-threshold → 비동기 flush 채택으로 해소. A 진행 조건 충족.
 
 상세: `.superpowers/sdd/task-10-report.md`
+
+### REQ-011 결과 — 병렬 fan-out speedup + flush 큐 병목 실측 — 2026-06-23
+
+**하니스 설계**: `FanoutSpeedupPoc.java`. W=8 워커 × B=20 요청 = 160 총 요청. petclinic + OTel→pjacoco (host JVM). P=1·2·4·8 병렬도로 동일 워크로드 실행, 각 3회 측정 후 중앙값 취득. 워밍업 2회 버림.
+
+**Speedup curve (중앙값, 2회 워밍업 후)**:
+
+| P | median (ms) | speedup |
+|---|-------------|---------|
+| 1 (sequential) | 1975 | 1.00x |
+| 2 | 849 | 2.33x |
+| 4 | 599 | 3.30x |
+| 8 | 531 | 3.72x |
+
+P=2→4: 3.30/2.33 = 1.42x 증가. P=4→8: 3.72/3.30 = 1.13x 증가 (SUT/Tomcat 동시성 포화 접근).
+
+**flush 큐 병목 (경량 SUT, P=8)**:
+- 큐 최대 깊이: 17개 (160 요청 중), 드레인: 1ms
+- 결론: **flush NOT bottleneck** — drain이 wall-clock(620ms)의 0.2%에 불과.
+
+**heavy-flush 시뮬레이션 (인공 지연 86ms, P=8, W=8×B=20=160 요청)**:
+- 요청율 ≈ 258 req/s, 필요 flush-pool ≈ R×C = 258 × 0.086s ≈ 22.2 threads
+- **small-pool(=2)**: queueMax=152, drain=7254ms → 큐 백업, drain이 wall-clock의 15×
+- **sized-pool(=25, ceil(22.2)+2 margin)**: queueMax=90, drain=154ms → 따라잡음
+- **경험적 flush-pool 사이징 규칙**: pool ≥ ceil(R×C) ≈ ceil(258 × 0.086) = 23 threads
+
+**병목 식별**: petclinic(경량 SUT)에서는 SUT/Tomcat 동시성이 상한. P=4→8에서 speedup 증가가 둔화됨은 Tomcat 스레드 풀 포화 또는 네트워크 스택이 한계임을 시사. flush는 병목이 아님.
+
+**판정: REQ-011 PASS**
+- speedup(P=8) = **3.72x** > 1.0 → A 전략의 병렬화 핵심 주장 경험적으로 확인됨.
+- flush 큐 드레인(1ms) << wall-clock(620ms) → flush NOT bottleneck (경량 SUT).
+- heavy-flush 시뮬레이션으로 sized-pool이 small-pool 대비 drain 47x 단축(154ms vs 7254ms).
+- PoC 전체 11/11 게이트 green. **A VIABLE 최종 확정**.
+
+상세: `.superpowers/sdd/task-11-report.md`
