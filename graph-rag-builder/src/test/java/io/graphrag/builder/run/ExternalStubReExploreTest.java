@@ -106,6 +106,26 @@ class ExternalStubReExploreTest {
     }
 
     @Test
+    void nestedObjectResponseDtoRecordsUnsynthesizableShapeLoudFail() {
+        // 응답 DTO가 객체 타입 필드(중첩 DTO)를 가지면 합성 불가 → silent String stub 대신 loud-fail (I1, REQ-010).
+        ExternalStubSynthesizer syn = synthesizer();
+        BodyShape nestedShape = new BodyShape("OrderResponse",
+                List.of(new BodyShape.BodyField("warehouse", "com.x.Warehouse")), false);
+        List<ExternalCallSite> sites = List.of(
+                new ExternalCallSite("GET", "/orders/1", Optional.of(nestedShape)));
+        List<RawHttpExchange> round = List.of(ex("GET", "/orders/1", 404));
+
+        var result = EndpointExplorationRunner.synthesizeStubsForUnmatched(round, sites, syn);
+
+        assertThat(result.newlyRegistered()).isEqualTo(0);
+        assertThat(result.loudFails())
+                .anyMatch(lf -> lf.reason().equals("unsynthesizable-shape")
+                        && lf.target().contains("/orders/1"));
+        // 등록되지 않았어야 한다(재시도/멱등 키 오염 방지).
+        assertThat(syn.isRegistered("GET", "/orders/1")).isFalse();
+    }
+
+    @Test
     void matchedSiteWithEmptyShapeRecordsUnwiredLoudFail() {
         ExternalStubSynthesizer syn = synthesizer();
         List<ExternalCallSite> sites = List.of(
