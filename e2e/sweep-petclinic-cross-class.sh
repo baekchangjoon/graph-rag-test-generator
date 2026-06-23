@@ -48,7 +48,8 @@ PETCLINIC_RESOURCES="$PETCLINIC_ROOT/src/main/resources"
 # Finding 5: jar 버전 하드코딩 제거 — env override + glob 탐색
 PETCLINIC_JAR="${PETCLINIC_JAR:-$(ls "$PETCLINIC_ROOT"/build/libs/spring-petclinic-*.jar 2>/dev/null | head -1)}"
 if [ -z "$PETCLINIC_JAR" ]; then
-  PETCLINIC_JAR="${PETCLINIC_ROOT}/target/$(ls "$PETCLINIC_ROOT"/target/spring-petclinic-*.jar 2>/dev/null | head -1 | xargs -I{} basename {})"
+  # Maven 폴백: glob 직접 대입(빈 glob이면 빈 문자열 — Gradle 폴백과 동일 패턴, trailing-slash 경로 회피)
+  PETCLINIC_JAR="$(ls "$PETCLINIC_ROOT"/target/spring-petclinic-*.jar 2>/dev/null | head -1)"
 fi
 
 PETCLINIC_COMPOSE="$PETCLINIC_ROOT/docker-compose.yml"
