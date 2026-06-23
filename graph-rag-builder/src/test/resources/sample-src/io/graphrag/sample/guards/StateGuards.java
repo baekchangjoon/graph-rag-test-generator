@@ -17,6 +17,9 @@ public class StateGuards {
         private BookingStatus status;
         private boolean active;
         private String note;
+        private int count;
+        private int balance;
+        private double rate;
 
         Long getId() { return id; }
         LocalDate getCheckInDate() { return checkInDate; }
@@ -24,6 +27,9 @@ public class StateGuards {
         boolean getActive() { return active; }
         boolean isActive() { return active; }
         String getNote() { return note; }
+        int getCount() { return count; }
+        int getBalance() { return balance; }
+        double getRate() { return rate; }
     }
 
     String getById(Booking b, boolean includeStale, int id) {
@@ -113,5 +119,29 @@ public class StateGuards {
             return "has";
         }
         return "empty";
+    }
+
+    /** NUMERIC gt: getter() > 정수리터럴 → kind=NUMERIC, column="count", op=">", comparand="0". */
+    String byCount(Booking b) {
+        if (b.getCount() > 0) {
+            return "pos";
+        }
+        return "nonpos";
+    }
+
+    /** NUMERIC ge 음수리터럴: getter() >= -5 → kind=NUMERIC, column="balance", op=">=", comparand="-5". */
+    String byBalance(Booking b) {
+        if (b.getBalance() >= -5) {
+            return "ok";
+        }
+        return "low";
+    }
+
+    /** NUMERIC float 제외: getter() > 1.5 → double 리터럴 → NUMERIC emit 안 함. */
+    String byRate(Booking b) {
+        if (b.getRate() > 1.5) {
+            return "hi";
+        }
+        return "lo";
     }
 }
