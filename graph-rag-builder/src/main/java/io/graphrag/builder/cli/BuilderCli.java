@@ -188,8 +188,9 @@ public final class BuilderCli {
         List<MapperStatement> mappers = si.mappers();
         List<Set<String>> responseDtoFieldSets = si.responseDtoFieldSets();
         Map<String, List<String>> enumConstants = si.enumConstants();
-        log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s)",
-                index.endpoints().size(), mappers.size(), responseDtoFieldSets.size());
+        List<io.graphrag.builder.index.ExternalCallSite> callSites = si.callSites();
+        log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s), {} external call site(s)",
+                index.endpoints().size(), mappers.size(), responseDtoFieldSets.size(), callSites.size());
 
         IncrementalPlan plan = IncrementalPlan.exploreAll();
         if (!config.endpointSelectors().isEmpty()) {
@@ -243,7 +244,8 @@ public final class BuilderCli {
         ExplorationResult result;
         if (config.attach() != null) {
             result = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
-                    index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants, acc);
+                    index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants,
+                    callSites, acc);
         } else {
             SutOptions sutOptions = new SutOptions(
                     jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
@@ -251,14 +253,15 @@ public final class BuilderCli {
                     otel.env(config.sutId()),
                     config.sutJavaHome());
             try (AnalysisEnvironment env =
-                    new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka())) {
+                    new AnalysisEnvironment(config.dbConfig(), config.withRedis(), config.withKafka(),
+                            io.graphrag.builder.env.TraceKey.forMode(config.traceMode()))) {
                 boolean otelSqlCapture = "otel".equals(config.traceMode());
                 env.start(config.sutJar(), workDir, sutOptions,
                         config.externalStubsDir(), config.sutEnv(),
                         otelSqlCapture ? otel : null, config.sutId());
                 env.coverageEndpoint("localhost", jacoco.tcpPort());
                 result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, acc);
+                        responseDtoFieldSets, plan, enumConstants, callSites, acc);
             }
         }
         int totalAppBranches = result.totalAppBranches();
@@ -306,7 +309,8 @@ public final class BuilderCli {
     /** 정적 인덱싱 산출물 묶음(직렬화는 Task 4에서 record로 승격). */
     record StaticIndexBundle(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
             List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
-            Map<String, List<String>> enumConstants) {
+            Map<String, List<String>> enumConstants,
+            List<io.graphrag.builder.index.ExternalCallSite> callSites) {
     }
 
     /** 정적 인덱싱 블록: SUT 소스를 1회 파싱해 모든 Spoon 인덱서가 공유. (테스트 훅 겸용) */
@@ -325,11 +329,14 @@ public final class BuilderCli {
         }
         WsIndexResult ws = new WsEndpointIndexer().index(model);
         KafkaIndexResult kafka = new KafkaListenerIndexer().index(model);
-        List<Set<String>> dto = new ResponseDtoIndexer().extract(model);
+        ResponseDtoIndexer responseDtoIndexer = new ResponseDtoIndexer();
+        List<Set<String>> dto = responseDtoIndexer.extract(model);
+        List<io.graphrag.builder.index.ExternalCallSite> callSites =
+                responseDtoIndexer.extractCallSites(model);
         Map<String, List<String>> enums = new EnumConstantExtractor().extract(model);
         List<MapperStatement> mappers = Files.isDirectory(sutResources)
                 ? new MapperXmlIndexer().index(sutResources) : List.<MapperStatement>of();
-        return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums);
+        return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums, callSites);
     }
 
     /** 테스트 전용 단순 오버로드. */
@@ -350,7 +357,7 @@ public final class BuilderCli {
         }
         StaticIndexBundle b = indexStatically(config.sutSrc(), config.sutResources(), config.authConfig());
         StaticIndex result = new StaticIndex(b.index(), b.ws(), b.kafka(), b.mappers(),
-                b.responseDtoFieldSets(), b.enumConstants());
+                b.responseDtoFieldSets(), b.enumConstants(), b.callSites());
         IndexCache.save(cacheDir, current, result);
         return result;
     }
@@ -376,7 +383,9 @@ public final class BuilderCli {
             io.graphrag.builder.index.WsIndexResult wsIndex,
             io.graphrag.builder.index.KafkaIndexResult kafkaIndex, List<MapperStatement> mappers,
             List<Set<String>> responseDtoFieldSets, IncrementalPlan plan,
-            Map<String, List<String>> enumConstants, ExplorationAccumulators acc) throws Exception {
+            Map<String, List<String>> enumConstants,
+            List<io.graphrag.builder.index.ExternalCallSite> callSites,
+            ExplorationAccumulators acc) throws Exception {
         AttachConfig at = config.attach();
         Path agentsDir = Files.createDirectories(workDir.resolve("agents"));
         // jacoco/otel jar 를 컨테이너로 mount 할 호스트 디렉터리로 모은다
@@ -418,7 +427,8 @@ public final class BuilderCli {
         // 외부 HTTP 캡처(모든 attach 모드): 호스트 WireMock을 per-run token으로 띄우고, SUT env의
         // {{wiremock}}을 컨테이너가 도달 가능한 host.docker.internal:<port>[/token]로 치환한다.
         String httpToken = newOtlpSecret();   // reuse the per-run secret generator
-        io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer();
+        io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer(
+                io.graphrag.builder.env.TraceKey.forMode(config.traceMode()));
 
         // httpCapture.start()를 포함한 모든 작업(WireMock 기동, override 생성/쓰기, envCfg, env 생성/start/explore)을
         // 같은 try로 감싼다 → start() 시점 실패(포트 바인드/스텁 로드)나 env로 소유권을 넘기기 전 throw에도
@@ -456,7 +466,7 @@ public final class BuilderCli {
             try (env) {
                 env.start(workDir);
                 return explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, acc);
+                        responseDtoFieldSets, plan, enumConstants, callSites, acc);
             }
         } finally {
             if (!handedOff) {
@@ -525,6 +535,7 @@ public final class BuilderCli {
                                              List<Set<String>> responseDtoFieldSets,
                                              IncrementalPlan plan,
                                              Map<String, List<String>> enumConstants,
+                                             List<io.graphrag.builder.index.ExternalCallSite> callSites,
                                              ExplorationAccumulators acc) throws Exception {
         List<ExploredPath> paths = acc.paths();
         List<CapturedSql> sql = acc.sql();
@@ -697,7 +708,7 @@ public final class BuilderCli {
                             responseDtoFieldSets, literals,
                             authProvider, config.authConfig(), enumConstants, enumColumns,
                             config.requestHeaders(), sqlCapture, receiverToClose,
-                            config.classifierConfig().toClassifier());
+                            config.classifierConfig().toClassifier(), callSites);
                     // 이 엔드포인트 handler에 귀속된 상태가드만 전달(per-endpoint 필터).
                     List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
                             .filter(g -> g.classFqn().equals(endpoint.handlerClass())

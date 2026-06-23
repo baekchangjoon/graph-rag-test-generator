@@ -179,6 +179,8 @@ public class EndpointExplorationRunner {
     private final SqlCaptureBackend sqlCapture;             // 요청별 SQL 캡처 backend (log 폴백 / OTEL)
     private final KafkaCaptureReceiver kafkaCapture;
     private final ResponseClassifier classifier;   // 성공/실패 판정(기본 StatusOnlyClassifier)
+    private final List<io.graphrag.builder.index.ExternalCallSite> callSites;  // 외부 호출 site (B2 재탐색)
+    private final ExternalStubSynthesizer stubSynthesizer;   // 형상→stub 런타임 등록 (httpCapture null이면 null)
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -220,6 +222,29 @@ public class EndpointExplorationRunner {
                                      SqlCaptureBackend sqlCapture,
                                      KafkaCaptureReceiver kafkaCapture,
                                      ResponseClassifier classifier) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                classifier, List.of());
+    }
+
+    /** callSites(외부 호출 site)를 받는 canonical 생성자. B2 재탐색 루프에서 합성 stub을 등록한다. */
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier,
+                                     List<io.graphrag.builder.index.ExternalCallSite> callSites) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -240,6 +265,10 @@ public class EndpointExplorationRunner {
         this.sqlCapture = sqlCapture;
         this.kafkaCapture = kafkaCapture;
         this.classifier = classifier == null ? new StatusOnlyClassifier() : classifier;
+        this.callSites = callSites == null ? List.of() : callSites;
+        this.stubSynthesizer = httpCapture == null ? null
+                : new ExternalStubSynthesizer(httpCapture,
+                        new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants));
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,

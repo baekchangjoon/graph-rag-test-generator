@@ -16,5 +16,18 @@ public record StaticIndex(
         KafkaIndexResult kafka,
         List<MapperStatement> mappers,
         List<Set<String>> responseDtoFieldSets,
-        Map<String, List<String>> enumConstants) {
+        Map<String, List<String>> enumConstants,
+        List<io.graphrag.builder.index.ExternalCallSite> callSites) {
+
+    /** compact: null-guard callSites (레거시 캐시 호환). */
+    public StaticIndex {
+        callSites = callSites == null ? List.of() : callSites;
+    }
+
+    /** 6-arg 레거시 호환 (callSites 없음 → 빈 리스트). */
+    public StaticIndex(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
+            List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
+            Map<String, List<String>> enumConstants) {
+        this(index, ws, kafka, mappers, responseDtoFieldSets, enumConstants, List.of());
+    }
 }
