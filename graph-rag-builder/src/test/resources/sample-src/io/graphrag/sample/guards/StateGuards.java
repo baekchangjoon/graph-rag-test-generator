@@ -88,4 +88,12 @@ public class StateGuards {
         }
         return "on";
     }
+
+    /** BOOLEAN is-prefix getter 단독(isActive) — column="active", comparand="true". */
+    String byIsActive(Booking b) {
+        if (b.isActive()) {
+            return "on";
+        }
+        return "off";
+    }
 }
