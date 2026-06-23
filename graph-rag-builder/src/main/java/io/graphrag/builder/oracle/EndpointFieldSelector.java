@@ -46,7 +46,7 @@ public final class EndpointFieldSelector {
                     strict = true;
                 }
             }
-            if (!strict && DOMAIN_KEYWORDS.contains(f.name().toLowerCase())) {
+            if (!strict && DOMAIN_KEYWORDS.contains(f.name().toLowerCase(java.util.Locale.ROOT))) {
                 strict = true;
             }
             if (strict) {
