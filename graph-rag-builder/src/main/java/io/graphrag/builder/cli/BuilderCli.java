@@ -260,8 +260,13 @@ public final class BuilderCli {
                     index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants,
                     callSites, acc);
         } else {
+            boolean analysisSleuthMode = "sleuth".equals(config.traceMode());
+            // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) — jacoco만. 그 외: 기존대로 otel agent 포함.
+            String analysisJto = analysisSleuthMode
+                    ? jacoco.javaToolOptions()
+                    : jacoco.javaToolOptions() + " " + otel.javaToolOptions();
             SutOptions sutOptions = new SutOptions(
-                    jacoco.javaToolOptions() + " " + otel.javaToolOptions(),
+                    analysisJto,
                     mybatisLogLevels,
                     otel.env(config.sutId()),
                     config.sutJavaHome());
