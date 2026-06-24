@@ -1,5 +1,6 @@
 package io.graphrag.builder.store;
 
+import io.graphrag.builder.index.SourceRoots;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.model.Json;
 
@@ -36,6 +37,18 @@ public final class IndexCache {
         collect(sutResources, ".xml", "sutResources", files);
         String authFingerprint = buildAuthFingerprint(authConfig);
         return new IndexManifest(SCHEMA_VERSION, authFingerprint, files);
+    }
+
+    public static IndexManifest scan(SourceRoots roots, List<Path> resourceDirs, AuthConfig authConfig) {
+        Map<String, IndexManifest.FileEntry> files = new LinkedHashMap<>();
+        List<Path> parseRoots = roots.parseRoots();
+        for (int i = 0; i < parseRoots.size(); i++) {
+            collect(parseRoots.get(i), ".java", "sutSrc#" + i, files);
+        }
+        for (int i = 0; i < resourceDirs.size(); i++) {
+            collect(resourceDirs.get(i), ".xml", "sutResources#" + i, files);
+        }
+        return new IndexManifest(SCHEMA_VERSION, buildAuthFingerprint(authConfig), files);
     }
 
     private static String buildAuthFingerprint(AuthConfig authConfig) {
