@@ -595,6 +595,11 @@ public final class BuilderCli {
             List<ConstraintExtractor.StateGuard> allStateGuards =
                     "off".equalsIgnoreCase(System.getenv("GRB_STATE_GUARDS"))
                             ? List.of() : constraintExtractor.extractStateGuards(config.sutSrc());
+            // 저장행 복합 AND 조건(conjunction) — 동시 만족 시드 변종 근거 (REQ-006). 전 계층 1회.
+            // 입력-필드 allConjunctions와 구분(이쪽은 StateGuardConjunction). 동일 env 게이트로 ablation(REQ-008).
+            List<ConstraintExtractor.StateGuardConjunction> allStateGuardConjunctions =
+                    "off".equalsIgnoreCase(System.getenv("GRB_STATE_GUARDS"))
+                            ? List.of() : constraintExtractor.extractStateGuardConjunctions(config.sutSrc());
             // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
             // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
             io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
@@ -756,8 +761,11 @@ public final class BuilderCli {
                     List<ConstraintExtractor.JoinGuard> endpointJoinGuards = allJoinGuards.stream()
                             .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
                             .toList();
-                    // Task 6에서 allStateGuardConjunctions 추출 + reachable 귀속으로 교체.
-                    List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions = List.of();
+                    // 이 엔드포인트 reachable에 귀속된 conjunction만 전달(cross-class 포함, REQ-006).
+                    List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions =
+                            allStateGuardConjunctions.stream()
+                                    .filter(c -> isReachable(reachable, c.classFqn(), c.method()))
+                                    .toList();
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions,
