@@ -98,7 +98,7 @@ class EnumVariantNoneModeTest {
         };
 
         EndpointExplorationRunner.VariantExploreResult result =
-                EndpointExplorationRunner.exploreEnumResponseVariants(
+                EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
                         false, invoker, cumulative, Set.of(CLASS));
 

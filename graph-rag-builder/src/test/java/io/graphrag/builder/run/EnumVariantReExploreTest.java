@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * cumulativeCoverage에 OR-병합한다. 새 arm을 연 변형은 보존되고, 앞선 변형이 연 arm은
  * 최종 cumulative에 남는다(리셋 금지). budget 소진까지 진행한다.
  *
- * <p>루프 자체는 {@link EndpointExplorationRunner#exploreEnumResponseVariants} 정적 헬퍼로
+ * <p>루프 자체는 {@link EndpointExplorationRunner#exploreResponseVariants} 정적 헬퍼로
  * 추출해 SUT/DB 없이 임베디드 HttpCaptureServer + 가짜 invoke로 검증한다.
  */
 class EnumVariantReExploreTest {
@@ -100,7 +100,7 @@ class EnumVariantReExploreTest {
         };
 
         EndpointExplorationRunner.VariantExploreResult result =
-                EndpointExplorationRunner.exploreEnumResponseVariants(
+                EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
                         true, invoker, cumulative, Set.of(CLASS));
 
@@ -134,7 +134,7 @@ class EnumVariantReExploreTest {
         };
 
         EndpointExplorationRunner.VariantExploreResult result =
-                EndpointExplorationRunner.exploreEnumResponseVariants(
+                EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
                         true, invoker, cumulative, Set.of(CLASS));
 
@@ -164,7 +164,7 @@ class EnumVariantReExploreTest {
         };
 
         EndpointExplorationRunner.VariantExploreResult result =
-                EndpointExplorationRunner.exploreEnumResponseVariants(
+                EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
                         true, invoker, cumulative, Set.of(CLASS));
 
@@ -197,7 +197,7 @@ class EnumVariantReExploreTest {
         };
 
         EndpointExplorationRunner.VariantExploreResult result =
-                EndpointExplorationRunner.exploreEnumResponseVariants(
+                EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
                         true, invoker, cumulative, Set.of(CLASS));
 
@@ -225,7 +225,7 @@ class EnumVariantReExploreTest {
             @Override public void closePending() { closePendingCalls.incrementAndGet(); }
         };
 
-        EndpointExplorationRunner.exploreEnumResponseVariants(
+        EndpointExplorationRunner.exploreResponseVariants(
                 plan, baseline(), "GET", "/inventory/stock", syn,
                 true, invoker, cumulative, Set.of(CLASS));
 
