@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 E2E="$ROOT/e2e"
-OUT="$E2E/out-epglob"
+OUT="$E2E/out/epglob"   # under e2e/out/ which is gitignored (out/ pattern)
 PROJ="grb-epglob-$$"
 
 trap 'docker compose -p "$PROJ" -f "$E2E/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT INT TERM
