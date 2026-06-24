@@ -13,6 +13,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.HashMap;
 
 /**
  * 도구 1의 분석 환경 (docs/03): Testcontainers DB + 임베디드 WireMock +
@@ -27,6 +28,7 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
 
     private final JdbcDatabaseContainer<?> db;
     private final DbConfig dbConfig;
+    private final TraceKey traceKey;           // sleuth 모드 판별에 재사용
     private final GenericContainer<?> redis;   // nullable — Redis 의존 SUT(예: auth-user)용
     private final KafkaContainer kafka;        // nullable — Kafka 의존 SUT(예: diary, mindgraph)용
     private final HttpCaptureServer httpCapture;
@@ -34,6 +36,7 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
     private String coverageHost = "localhost";
     private int coveragePort;
     private io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver;   // OTEL SQL 캡처 모드에서만
+    private io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver zipkinReceiver;  // sleuth 모드에서만
 
     public AnalysisEnvironment(DbConfig dbConfig) {
         this(dbConfig, false, false);
@@ -58,6 +61,7 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
             System.setProperty("api.version", "1.44");
         }
         this.dbConfig = dbConfig;
+        this.traceKey = traceKey;
         this.db = JdbcContainers.create(dbConfig);
         this.httpCapture = new HttpCaptureServer(traceKey);
         this.redis = withRedis
@@ -113,6 +117,14 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
             log.info("OTEL SQL capture: otlp receiver at {}", otlpReceiver.endpoint());
         }
 
+        boolean sleuthCapture = traceKey instanceof SleuthTraceKey;
+        if (sleuthCapture) {
+            zipkinReceiver = new io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver();
+            zipkinReceiver.start();
+            extraEnv.putAll(sleuthZipkinEnv(zipkinReceiver));
+            log.info("sleuth capture: zipkin receiver at {}", zipkinReceiver.endpoint());
+        }
+
         if (redis != null) {
             redis.start();
             // Spring Boot 2.x: spring.redis.*, 3.x: spring.data.redis.* — 둘 다 주입해 호환
@@ -142,6 +154,23 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
     @Override
     public io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver() {
         return otlpReceiver;
+    }
+
+    @Override
+    public io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver zipkinReceiver() {
+        return zipkinReceiver;
+    }
+
+    /**
+     * SUT에 주입할 Zipkin export env (sleuth 모드 전용 순수 함수).
+     * 샘플러 override는 포함하지 않는다 — SUT 소스 무수정 원칙(REQ-006).
+     */
+    public static Map<String, String> sleuthZipkinEnv(
+            io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver receiver) {
+        Map<String, String> env = new HashMap<>();
+        env.put("SPRING_ZIPKIN_BASEURL", receiver.endpoint());
+        env.put("SPRING_ZIPKIN_SENDER_TYPE", "web");
+        return Map.copyOf(env);
     }
 
     public String jdbcUrl() {
@@ -192,6 +221,9 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
             }
             if (otlpReceiver != null) {
                 otlpReceiver.stop();
+            }
+            if (zipkinReceiver != null) {
+                zipkinReceiver.close();
             }
             httpCapture.close();
             if (redis != null) {

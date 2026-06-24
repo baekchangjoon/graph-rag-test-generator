@@ -18,5 +18,10 @@ public interface ExplorationEnvironment extends AutoCloseable {
         return null;
     }
 
+    /** sleuth 모드일 때 Environment가 소유한 Zipkin span receiver. 그 외 환경이면 null. */
+    default io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver zipkinReceiver() {
+        return null;
+    }
+
     @Override void close();
 }
