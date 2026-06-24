@@ -125,7 +125,7 @@ class StringLiteralVariantNoneModeTest {
         List<String> servedAtInvoke = new java.util.ArrayList<>();
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             @Override public String nextTraceId() { return null; }   // none: trace-id 없음
-            @Override public ExecutionDataStore invoke(JsonNode body) {
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 try {
                     HttpResponse<String> resp = HttpClient.newHttpClient().send(
                             HttpRequest.newBuilder(URI.create(server.baseUrl() + "/orders/status"))
@@ -137,7 +137,7 @@ class StringLiteralVariantNoneModeTest {
                 }
                 // 각 변형에서 서로 다른 arm이 열리는 것처럼 시뮬레이션 (armBit = invocation 순서 기반)
                 int arm = servedAtInvoke.size() - 1;
-                return deltaWithArm(arm);
+                return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(arm), 200);
             }
         };
 

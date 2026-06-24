@@ -89,13 +89,13 @@ class EnumVariantReExploreTest {
             }
 
             @Override
-            public ExecutionDataStore invoke(JsonNode body) {
+            public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 registeredBodies.add(body);
                 // BACKORDER → arm 2, EXPRESS_ONLY → arm 3.
                 if (body.get("mode").asText().equals("BACKORDER")) {
-                    return deltaWithArm(2);
+                    return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(2), 200);
                 }
-                return deltaWithArm(3);
+                return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(3), 200);
             }
         };
 
@@ -128,8 +128,10 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
             @Override public String nextTraceId() { return "trace00000000000" + (++n); }
-            @Override public ExecutionDataStore invoke(JsonNode body) {
-                return body.get("mode").asText().equals("BACKORDER") ? deltaWithArm(2) : deltaWithArm(3);
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
+                return body.get("mode").asText().equals("BACKORDER")
+                        ? new EndpointExplorationRunner.VariantOutcome(deltaWithArm(2), 200)
+                        : new EndpointExplorationRunner.VariantOutcome(deltaWithArm(3), 200);
             }
         };
 
@@ -157,9 +159,9 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
             @Override public String nextTraceId() { return "trace00000000000" + (++n); }
-            @Override public ExecutionDataStore invoke(JsonNode body) {
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 calls.incrementAndGet();
-                return deltaWithArm(2);
+                return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(2), 200);
             }
         };
 
@@ -188,7 +190,7 @@ class EnumVariantReExploreTest {
             @Override public String nextTraceId() {
                 return "trace00000000000" + nextTraceCalls.incrementAndGet();
             }
-            @Override public ExecutionDataStore invoke(JsonNode body) {
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 throw new RuntimeException("send failed");   // 변형 invoke가 항상 실패
             }
             @Override public void closePending() {
@@ -221,7 +223,9 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
             @Override public String nextTraceId() { return "trace00000000000" + (++n); }
-            @Override public ExecutionDataStore invoke(JsonNode body) { return deltaWithArm(2); }
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
+                return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(2), 200);
+            }
             @Override public void closePending() { closePendingCalls.incrementAndGet(); }
         };
 

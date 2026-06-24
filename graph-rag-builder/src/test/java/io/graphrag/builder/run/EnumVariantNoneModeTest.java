@@ -83,7 +83,7 @@ class EnumVariantNoneModeTest {
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
             @Override public String nextTraceId() { return null; }   // none: trace-id 없음
-            @Override public ExecutionDataStore invoke(JsonNode body) {
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 try {
                     // 헤더 없는 요청 → 현재 활성 변형 stub이 응답해야 한다(전역보다 우선 priority).
                     HttpResponse<String> resp = HttpClient.newHttpClient().send(
@@ -93,7 +93,8 @@ class EnumVariantNoneModeTest {
                 } catch (Exception e) {
                     throw new RuntimeException(e);
                 }
-                return deltaWithArm(body.get("mode").asText().equals("BACKORDER") ? 2 : 3);
+                int arm = body.get("mode").asText().equals("BACKORDER") ? 2 : 3;
+                return new EndpointExplorationRunner.VariantOutcome(deltaWithArm(arm), 200);
             }
         };
 

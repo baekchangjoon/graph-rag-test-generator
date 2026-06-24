@@ -1713,8 +1713,8 @@ public class EndpointExplorationRunner {
          */
         String nextTraceId();
 
-        /** 변형 body로 endpoint를 1회 invoke하고 그 요청의 per-request 커버리지 delta를 반환한다. */
-        ExecutionDataStore invoke(JsonNode variantBody) throws Exception;
+        /** 변형 body로 endpoint를 1회 invoke하고 그 요청의 per-request 커버리지 delta와 SUT HTTP 상태를 반환한다. */
+        VariantOutcome invoke(JsonNode variantBody) throws Exception;
 
         /**
          * nextTraceId()가 열었으나 invoke()가 소비하지 못한 scope를 정리한다(registerVariant/invoke가
@@ -1724,6 +1724,9 @@ public class EndpointExplorationRunner {
         default void closePending() {}
     }
 
+    /** 변형 invoke의 결과: per-request 커버리지 delta + SUT HTTP 응답 상태. */
+    public record VariantOutcome(ExecutionDataStore coverage, int sutStatus) {}
+
     /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수 + 보존 변형(label,body). */
     public record VariantExploreResult(List<String> keptVariantLabels, int attempted,
                                        List<KeptVariant> kept) {
@@ -1732,8 +1735,8 @@ public class EndpointExplorationRunner {
         }
     }
 
-    /** 새 arm을 연 변형의 자취: label + 변형 응답 body(합성 CapturedHttpCall body). */
-    public record KeptVariant(String label, JsonNode variantBody) {}
+    /** 새 arm을 연 변형의 자취: label + 변형 응답 body(합성 CapturedHttpCall body) + SUT 상태 + 관측 분기. */
+    public record KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches) {}
 
     /**
      * enum 응답 변형 탐색 루프 (REQ-009, REQ-010). B2 루프 수렴 후 한 외부 응답 callSite에 대해
@@ -1761,12 +1764,13 @@ public class EndpointExplorationRunner {
             java.util.UUID variantId = null;
             try {
                 variantId = synthesizer.registerVariant(method, pathLiteral, body, traceId);
-                ExecutionDataStore delta = invoker.invoke(body);
+                VariantOutcome vo = invoker.invoke(body);
                 attempted++;
-                boolean newArm = mergeAndDetectNewArm(cumulative, delta, appClasses);
+                boolean newArm = mergeAndDetectNewArm(cumulative, vo.coverage(), appClasses);
                 if (newArm) {
                     kept.add(variant.label());
-                    keptVariants.add(new KeptVariant(variant.label(), body));
+                    // branches는 analyzer가 있는 runResponseVariantLoops에서 채워진다(List.of() placeholder).
+                    keptVariants.add(new KeptVariant(variant.label(), body, vo.sutStatus(), List.of()));
                 }
             } catch (Exception e) {   // best-effort: 변형 실패는 회귀 아님(나머지 변형 계속)
                 log.warn("response-variant invoke failed for {} {} ({}): {}",
@@ -1969,6 +1973,9 @@ public class EndpointExplorationRunner {
             if (vr.kept().isEmpty()) {
                 continue;
             }
+            // 변형 루프 OR-누적 후 분기 목록 — cumulativeCoverage에서 뽑는다.
+            List<BranchRef> cumBranches = List.copyOf(analyzer.analyze(cumulativeCoverage).covered());
+
             // 변형마다 합성 CapturedHttpCall(SYNTHESIZED, 변형 응답 body)을 기록한다(REQ-004).
             // 분기는 단일 변형 delta가 아니라 변형 루프가 OR-누적한 cumulativeCoverage에서 뽑는다 —
             // JaCoCo는 라인의 covered/total 카운트만 노출하므로, arm 식별은 누적 covered 수(= distinct
@@ -1984,16 +1991,65 @@ public class EndpointExplorationRunner {
                         io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED));
                 variantHttpIds.add(httpId);
             }
-            List<BranchRef> cumBranches = List.copyOf(analyzer.analyze(cumulativeCoverage).covered());
             variantPaths.add(new ExploredPath(endpoint.id() + "-responsevar", endpoint.id(),
                     triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
                     "response-variant", List.of(), List.of(), List.of()));
+
+            // 각 보존 변형마다 egress-assertion 단언 path를 생성한다(REQ-F012-006, REQ-F012-007).
+            // KeptVariant.branches는 cumBranches(변형 루프 누적)를 per-변형에 주입한다 —
+            // per-variant delta가 정적 헬퍼에 노출되지 않으므로, analyzer가 있는 여기서 채운다.
+            List<KeptVariant> keptWithBranches = vr.kept().stream()
+                    .map(kv -> new KeptVariant(kv.label(), kv.variantBody(), kv.sutStatus(), cumBranches))
+                    .toList();
+            List<ExploredPath> assertionPaths = buildEgressAssertionPaths(
+                    endpoint.id(), triggerInput, site.httpMethod(), site.pathLiteral(),
+                    keptWithBranches, variantHttpCalls);
+            variantPaths.addAll(assertionPaths);
         }
     }
 
     /** 변형 label("mode=BACKORDER")을 path-id 토큰으로 정규화(영숫자 외 → '-'). */
     private static String sanitizeLabel(String label) {
         return label.replaceAll("[^A-Za-z0-9]+", "-");
+    }
+
+    /**
+     * 보존된 변형(KeptVariant) 목록으로부터 egress-assertion ExploredPath 목록을 생성하는 순수 헬퍼.
+     *
+     * <p>각 KeptVariant마다:
+     * <ul>
+     *   <li>CONTRACT CapturedHttpCall(id {@code http-<endpointId>-egressassert-<sanitizedLabel>})을
+     *       {@code outVariantCalls}에 추가한다.</li>
+     *   <li>discoveredBy="egress-assertion", expectedStatus=sutStatus, branchesTaken=branches,
+     *       capturedHttpCallIds=[그 call id]인 ExploredPath(14-arg 생성자)를 반환 목록에 담는다.</li>
+     * </ul>
+     *
+     * @param endpointId      엔드포인트 식별자 (path-id 접두사)
+     * @param triggerInput    단언 path의 sampleInput (탐색에서 그 callSite를 발화시킨 입력)
+     * @param method          외부 callSite HTTP 메서드
+     * @param pathLiteral     외부 callSite 경로
+     * @param kept            보존된 변형 목록 (sutStatus + branches 포함)
+     * @param outVariantCalls CONTRACT CapturedHttpCall이 추가될 out-parameter 목록
+     * @return discoveredBy="egress-assertion" ExploredPath 목록 (kept.size()와 동일)
+     */
+    public static List<ExploredPath> buildEgressAssertionPaths(
+            String endpointId, JsonNode triggerInput, String method, String pathLiteral,
+            List<KeptVariant> kept, List<io.graphrag.model.CapturedHttpCall> outVariantCalls) {
+        List<ExploredPath> result = new ArrayList<>();
+        for (KeptVariant kv : kept) {
+            String callId = "http-" + endpointId + "-egressassert-" + sanitizeLabel(kv.label());
+            outVariantCalls.add(new io.graphrag.model.CapturedHttpCall(
+                    callId, endpointId + "-egressassert", method, pathLiteral,
+                    Map.of(), null, 200, kv.variantBody().toString(),
+                    List.of(), false,
+                    io.graphrag.model.CapturedHttpCall.Provenance.CONTRACT));
+            result.add(new ExploredPath(
+                    endpointId + "-egressassert-" + sanitizeLabel(kv.label()), endpointId,
+                    triggerInput, kv.sutStatus(), null,
+                    List.of(), List.of(callId), kv.branches(),
+                    "egress-assertion", List.of(), List.of(), List.of(), List.of(), Map.of()));
+        }
+        return result;
     }
 
     /**
@@ -2014,7 +2070,7 @@ public class EndpointExplorationRunner {
             }
 
             @Override
-            public ExecutionDataStore invoke(JsonNode variantBody) throws Exception {
+            public VariantOutcome invoke(JsonNode variantBody) throws Exception {
                 SqlCaptureBackend.Scope scope = pendingScope != null ? pendingScope : sqlCapture.begin();
                 pendingScope = null;
                 return sendVariantAndDumpDelta(http, endpoint, baseInput, authHeader, scope);
@@ -2035,10 +2091,10 @@ public class EndpointExplorationRunner {
 
     /**
      * 변형 invoke 전용 전송: 직전 구간을 baseline으로 컷(coverage.dump)한 뒤 동일 scope로 happy 입력을
-     * 보내고, 이 invoke의 커버리지 delta를 반환한다. cumulativeCoverage 병합은 호출자(변형 루프 헬퍼)가
-     * 한다 — doSend와 달리 여기서는 병합하지 않는다(이중 병합 방지).
+     * 보내고, 이 invoke의 커버리지 delta와 SUT HTTP 응답 상태를 VariantOutcome으로 반환한다.
+     * cumulativeCoverage 병합은 호출자(변형 루프 헬퍼)가 한다 — doSend와 달리 여기서는 병합하지 않는다(이중 병합 방지).
      */
-    private ExecutionDataStore sendVariantAndDumpDelta(HttpClient http, Endpoint endpoint,
+    private VariantOutcome sendVariantAndDumpDelta(HttpClient http, Endpoint endpoint,
             JsonNode input, String authHeaderValue, SqlCaptureBackend.Scope sqlScope) throws Exception {
         coverage.baselineCut();   // baseline: pjacoco no-op(traceId별 스토어 빈 시작) — 이 변형 invoke delta만 측정
         // pjacoco: 변형 invoke도 요청별 고유 traceId로 격리 (doSendWithScope와 동일 패턴)
@@ -2083,12 +2139,14 @@ public class EndpointExplorationRunner {
             builder.method(method, HttpRequest.BodyPublishers.ofString(
                     Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
         }
+        int status;
         try {
-            http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            var resp = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            status = resp.statusCode();
         } finally {
             sqlScope.drain();   // scope 닫기(send 실패해도 리시버 버퍼 정리; SQL은 변형 루프 미사용)
         }
-        return coverage.requestDelta(coverageTraceId);   // 이 invoke의 delta (pjacoco per-trace)
+        return new VariantOutcome(coverage.requestDelta(coverageTraceId), status);   // 이 invoke의 delta+status (pjacoco per-trace)
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
