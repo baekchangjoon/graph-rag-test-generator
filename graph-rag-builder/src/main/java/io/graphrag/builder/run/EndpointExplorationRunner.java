@@ -909,7 +909,10 @@ public class EndpointExplorationRunner {
                 if (variant.conjunction() != null) {
                     // conjunction 변종: gate 미적용(동시 만족이 목적), 전용 discoveredBy/tag 사용
                     discoveredBy = "state-guard-conjunction";
-                    tag = "state-guard-conjunction:" + label.substring("conjunction:".length());
+                    String cols = variant.conjunction().leaves().stream()
+                            .map(io.graphrag.builder.index.ConstraintExtractor.StateGuard::column)
+                            .collect(java.util.stream.Collectors.joining("+"));
+                    tag = "state-guard-conjunction:" + cols;
                 } else {
                     // 단일 가드 변종: 기존 gate 로직 그대로 적용
                     ConstraintExtractor.GuardKind gkind = variant.guard().kind();
@@ -954,7 +957,7 @@ public class EndpointExplorationRunner {
      * 변종 식별자 레이블(로깅·태그용). null-safe — guard/conjunction 양쪽 처리.
      * <ul>
      *   <li>단일 가드: guard.column()</li>
-     *   <li>conjunction: "conjunction:col1+col2(+col3)"</li>
+     *   <li>conjunction: "conjunction:col1+col2+col3"</li>
      *   <li>base(둘 다 null): "base"</li>
      * </ul>
      */
