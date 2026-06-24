@@ -132,7 +132,7 @@
 | REQ-005 | 같은컬럼 병합·skip | ReadInputSynthesizerVariantTest#sameColumnMerge, #contradictionSkip | integration | 🟢 green |
 | REQ-006 | cross-class 귀속 | BuilderCliAttributionTest#conjunctionReachable, #conjunctionUnreachableExcluded | integration | 🟢 green |
 | REQ-007 | early-return 게이트 | ReadInputSynthesizerVariantTest#conjunctionOnlyNotSkipped + EndpointExplorationRunnerStateGuardTest#conjunctionOnlyGatePasses | integration | 🟢 green |
-| REQ-008 | GRB ablation | ConstraintExtractorConjunctionTest#ablationOff | integration | 🟢 green |
+| REQ-008 | GRB ablation | BuilderCliAttributionTest#stateGuardsAblationGate(게이트 술어 off/null/on) + ConstraintExtractorConjunctionTest#ablationOff(추출기 env-독립) | integration | 🟢 green |
 | REQ-009 | 기존 회귀 | 기존 StateGuard/Attribution/Variant + BuilderIntegrationTest(3개 green) + EndpointExplorationRunnerStateGuardTest#attachReadPathSeeds_assignsPathIdWhenSuccess, #attachReadPathSeeds_dropsOrphansWhenNoSuccess | integration/E2E | 🟢 green |
 | REQ-010 | E2E 동시만족 arm | BuilderIntegrationTest#premiumEligibleConjunction | E2E | 🟢 green |
 

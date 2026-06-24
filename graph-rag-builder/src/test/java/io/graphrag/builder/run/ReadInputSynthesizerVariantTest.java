@@ -614,6 +614,32 @@ class ReadInputSynthesizerVariantTest {
         SeedRow tsRow = tsVariants.get(1).input().seeds().stream()
                 .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
         assertThat(col(tsRow, "created_at")).isEqualTo(LocalDateTime.of(1900, 1, 1, 0, 0));
+
+        // isAfter → 미래(2037) LocalDate (DATE 컬럼)
+        StateGuard afterLeaf = new StateGuard("x.B", "m", 10, "check_in_date",
+                GuardKind.TEMPORAL, null,
+                List.of(), List.of(), "isAfter", ComparandKind.LITERAL, null);
+        StateGuardConjunction conjAfter = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(afterLeaf, statusLeaf));
+        List<SeedVariant> afterVariants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjAfter));
+        assertThat(afterVariants).hasSize(2);
+        SeedRow afterRow = afterVariants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(afterRow, "check_in_date")).isEqualTo(LocalDate.of(2037, 1, 1));
+
+        // op=null(기존 단일 TEMPORAL emit 혼입 안전망) → isBefore 폴백(과거 1900)
+        StateGuard nullOpLeaf = new StateGuard("x.B", "m", 10, "check_in_date",
+                GuardKind.TEMPORAL, null,
+                List.of(), List.of(), null, ComparandKind.LITERAL, null);
+        StateGuardConjunction conjNullOp = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(nullOpLeaf, statusLeaf));
+        List<SeedVariant> nullOpVariants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjNullOp));
+        assertThat(nullOpVariants).hasSize(2);
+        SeedRow nullOpRow = nullOpVariants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(nullOpRow, "check_in_date")).isEqualTo(LocalDate.of(1900, 1, 1));
     }
 
     /**
@@ -709,7 +735,7 @@ class ReadInputSynthesizerVariantTest {
     }
 
     /**
-     * REQ-004: 같은 컬럼 다중 leaf 병합 — status!=PENDING && status!=CANCELLED → CONFIRMED.
+     * REQ-005: 같은 컬럼 다중 leaf 병합 — status!=PENDING && status!=CANCELLED → CONFIRMED.
      */
     @Test
     void sameColumnMerge() {
@@ -733,7 +759,7 @@ class ReadInputSynthesizerVariantTest {
     }
 
     /**
-     * REQ-004: 모순 conjunction(status==X && status==Y) → 변종 없음(base만).
+     * REQ-005: 모순 conjunction(status==X && status==Y) → 변종 없음(base만).
      */
     @Test
     void contradictionSkip() {
