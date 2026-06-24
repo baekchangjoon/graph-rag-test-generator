@@ -1044,10 +1044,7 @@ public class ConstraintExtractor {
     }
 
     private static String stringLiteral(CtExpression<?> expr) {
-        if (expr instanceof CtLiteral<?> lit && lit.getValue() instanceof String s) {
-            return s;
-        }
-        return null;
+        return SpoonExpressionRefs.stringLiteral(expr);
     }
 
     private static void addComparison(List<Comparison> out, CtExpression<?> left,
@@ -1104,22 +1101,6 @@ public class ConstraintExtractor {
     }
 
     private static String fieldRef(CtExpression<?> expr) {
-        if (expr instanceof CtInvocation<?> inv) {
-            String m = inv.getExecutable().getSimpleName();
-            if (m.startsWith("get") && m.length() > 3) {
-                return Character.toLowerCase(m.charAt(3)) + m.substring(4);
-            }
-            if (m.startsWith("is") && m.length() > 2) {
-                return Character.toLowerCase(m.charAt(2)) + m.substring(3);
-            }
-            return m;   // record accessor: amount()
-        }
-        if (expr instanceof CtVariableRead<?> vr) {
-            return vr.getVariable().getSimpleName();
-        }
-        if (expr instanceof CtFieldRead<?> fr) {
-            return fr.getVariable().getSimpleName();
-        }
-        return null;
+        return SpoonExpressionRefs.fieldRef(expr);
     }
 }
