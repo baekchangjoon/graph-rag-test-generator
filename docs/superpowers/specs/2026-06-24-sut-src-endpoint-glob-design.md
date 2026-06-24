@@ -89,6 +89,9 @@ graph-rag-builder는 한 번에 **SUT 하나**만 분석한다. `BuildConfig`는
 - **dedup·정렬**: 전체 패턴 확장 결과의 `parseRoots`는 canonical 경로 기준 **중복 제거
   + 안정 정렬**한다(여러 패턴이 같은 디렉터리를 매칭해도 1회, "첫 루트" 결정이
   결정적).
+- **혼용 가능**: 각 패턴이 독립 확장되므로, **리터럴 디렉터리와 glob 패턴을 한
+  플래그에 섞어** 쓸 수 있다(예: `--sut-src 'a/b/c/orders, a/b/c/common/**'` → 리터럴
+  `orders` + `common` 재귀, 합집합·dedup).
 - 매칭 결과가 0개(또는 전부 비-디렉터리)면 후보 안내와 함께 실패(§8).
 
 ### 4.2 `--sut-resources` (primary 결정)
@@ -117,8 +120,11 @@ graph-rag-builder는 한 번에 **SUT 하나**만 분석한다. `BuildConfig`는
   1·2단계(정확 매칭)에서 잡히므로 glob으로 가지 않는다. glob 모드에서 `{...}`는 택일
   그룹으로 해석되므로, path 변수를 리터럴로 매칭하려면 정확 셀렉터를 쓰거나 `*`로
   대체한다(문서화).
+- **혼용 가능**: 각 셀렉터가 정확→glob 순으로 독립 해석되므로, **정확 id/`METHOD
+  /path` 나열과 glob을 한 플래그에 섞어** 쓸 수 있다(매칭 합집합).
+  - 예(혼용): `--endpoint 'post-api-orders, GET /api/users/**, get-api-foo'`
+  - 예(glob): `--endpoint 'POST /api/orders/**'`, `--endpoint 'post-api-orders-*'`
 - glob 셀렉터가 0개 단위에 매칭되면 후보와 함께 실패(기존 정확-미스 동작과 동일 톤).
-  - 예: `--endpoint 'POST /api/orders/**'`, `--endpoint 'post-api-orders-*'`.
 
 ## 5. 동작 의미 (semantics)
 
