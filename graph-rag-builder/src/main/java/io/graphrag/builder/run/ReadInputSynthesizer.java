@@ -125,8 +125,20 @@ public class ReadInputSynthesizer {
         return new SynthesizedInput(input, seeds);
     }
 
-    /** base happy + 상태가드 변종 1개. guard==null이면 base. */
-    public record SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard) {
+    /**
+     * 상태가드/conjunction 변종 시드. guard 또는 conjunction 중 하나만 non-null.
+     * <ul>
+     *   <li>단일 가드 변종: guard!=null, conjunction==null</li>
+     *   <li>conjunction 변종: guard==null, conjunction!=null</li>
+     *   <li>base: 둘 다 null</li>
+     * </ul>
+     */
+    public record SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard,
+                              ConstraintExtractor.StateGuardConjunction conjunction) {
+        /** 기존 2-arg 호출부 후방호환 오버로드 (conjunction=null 위임). */
+        public SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard) {
+            this(input, guard, null);
+        }
     }
 
     /**
