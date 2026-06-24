@@ -898,19 +898,31 @@ public class EndpointExplorationRunner {
         for (int v = 1; v < variants.size(); v++) {
             ReadInputSynthesizer.SeedVariant variant = variants.get(v);
             vseq++;
+            String label = variantLabel(variant);   // null-safe: guard 또는 conjunction 중 하나
             try {
                 for (SynthesizedInput.SeedRow row : variant.input().seeds()) {
                     Seeds.insert(connection, dbType, row);   // 변종 행(offset PK) — 기존 happy 행과 공존
                 }
-                ConstraintExtractor.GuardKind gkind = variant.guard().kind();
                 ObjectNode body = (ObjectNode) variant.input().body().deepCopy();
-                if (appliesBooleanGate(gkind)) {
-                    boolean gate = booleanGateValueFor(gkind);
-                    for (EndpointParam param : endpoint.params()) {
-                        if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
-                            body.put(param.name(), gate);
+                String discoveredBy;
+                String tag;
+                if (variant.conjunction() != null) {
+                    // conjunction 변종: gate 미적용(동시 만족이 목적), 전용 discoveredBy/tag 사용
+                    discoveredBy = "state-guard-conjunction";
+                    tag = "state-guard-conjunction:" + label.substring("conjunction:".length());
+                } else {
+                    // 단일 가드 변종: 기존 gate 로직 그대로 적용
+                    ConstraintExtractor.GuardKind gkind = variant.guard().kind();
+                    if (appliesBooleanGate(gkind)) {
+                        boolean gate = booleanGateValueFor(gkind);
+                        for (EndpointParam param : endpoint.params()) {
+                            if (param.kind() == ParamKind.QUERY && isBooleanType(param.javaType())) {
+                                body.put(param.name(), gate);
+                            }
                         }
                     }
+                    discoveredBy = "state-guard";
+                    tag = "state-guard:" + variant.guard().kind() + ":" + variant.guard().column();
                 }
                 InvocationOutcome out = invoker.invoke(body);
                 String pathId = endpoint.id() + "-sg" + vseq;
@@ -927,15 +939,36 @@ public class EndpointExplorationRunner {
                 }
                 paths.add(new ExploredPath(pathId, endpoint.id(), body, out.status(), out.response(),
                         sql.stream().map(CapturedSql::id).toList(), List.of(),
-                        List.copyOf(out.coveredBranches()), "state-guard",
-                        List.of("state-guard:" + variant.guard().kind() + ":" + variant.guard().column()),
+                        List.copyOf(out.coveredBranches()), discoveredBy,
+                        List.of(tag),
                         List.of(), seedIds));
             } catch (Exception e) {   // best-effort: 변종 실패는 회귀 아님(base 결과 유지)
                 log.warn("state-guard variant failed for {} ({}): {}",
-                        endpoint.id(), variant.guard().column(), e.getMessage());
+                        endpoint.id(), label, e.getMessage());
             }
         }
         return new VariantResult(paths, seeds, sqls);
+    }
+
+    /**
+     * 변종 식별자 레이블(로깅·태그용). null-safe — guard/conjunction 양쪽 처리.
+     * <ul>
+     *   <li>단일 가드: guard.column()</li>
+     *   <li>conjunction: "conjunction:col1+col2(+col3)"</li>
+     *   <li>base(둘 다 null): "base"</li>
+     * </ul>
+     */
+    static String variantLabel(ReadInputSynthesizer.SeedVariant variant) {
+        if (variant.guard() != null) {
+            return variant.guard().column();
+        }
+        if (variant.conjunction() != null) {
+            String cols = variant.conjunction().leaves().stream()
+                    .map(ConstraintExtractor.StateGuard::column)
+                    .collect(java.util.stream.Collectors.joining("+"));
+            return "conjunction:" + cols;
+        }
+        return "base";
     }
 
     /**
