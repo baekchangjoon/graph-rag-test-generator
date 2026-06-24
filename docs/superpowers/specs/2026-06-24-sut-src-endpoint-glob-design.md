@@ -346,6 +346,12 @@ io/graphrag/sample/multiroot/other/OtherController.java       // @GetMapping("/a
 
 정의된 완료 = E2E-1..7 전부 green + 단위/통합 테스트 green.
 
+**테스트 자원 정리(전역 게이트)**: docker compose·SUT·백그라운드 프로세스를 띄우는 E2E
+(E2E-3/5 및 풀 빌드 케이스)는 모든 종료 경로에서 teardown 보장(고유 `-p grb-…` project
+name·label로 자기 것만 `down -v --remove-orphans` 또는 Ryuk/`@AfterAll`, 백그라운드는
+PID 한정 종료), 무차별 정리 금지, 스위트 종료 후 자기 자원 잔존 0 확인. 잔존 시
+green/완료 주장 불가(PR 전 게이트). 요구사항명세 REQ-020.
+
 ## 10. 위험과 완화
 
 - **R1. 추출기 시그니처 변경의 회귀**: 기계적 변경이나 광범위(§6.3 두 부류). 완화 —
