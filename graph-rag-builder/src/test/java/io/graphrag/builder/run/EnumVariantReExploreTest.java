@@ -102,7 +102,7 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        true, invoker, cumulative, Set.of(CLASS));
+                        true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // 두 변형 모두 새 arm을 열었으므로 보존(kept=2).
         assertThat(result.keptVariantLabels()).containsExactlyInAnyOrder("mode=BACKORDER", "mode=EXPRESS_ONLY");
@@ -138,7 +138,7 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        true, invoker, cumulative, Set.of(CLASS));
+                        true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // 두 변형 모두 새 arm 없음 → 보존 0.
         assertThat(result.keptVariantLabels()).isEmpty();
@@ -168,7 +168,7 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        true, invoker, cumulative, Set.of(CLASS));
+                        true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         assertThat(calls.get()).isEqualTo(1);   // budget 1 → 1회 invoke로 수렴
         assertThat(result.attempted()).isEqualTo(1);
@@ -201,7 +201,7 @@ class EnumVariantReExploreTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        true, invoker, cumulative, Set.of(CLASS));
+                        true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // 변형마다 closePending이 정확히 1회씩(invoke 실패해도) — scope drain 보장.
         assertThat(closePendingCalls.get()).isEqualTo(nextTraceCalls.get());
@@ -231,9 +231,59 @@ class EnumVariantReExploreTest {
 
         EndpointExplorationRunner.exploreResponseVariants(
                 plan, baseline(), "GET", "/inventory/stock", syn,
-                true, invoker, cumulative, Set.of(CLASS));
+                true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         assertThat(closePendingCalls.get()).isEqualTo(plan.kept().size());
+    }
+
+    /**
+     * REQ-F012-018: envelope-sourced 변형은 coverage-delta 무관 항상 보존된다.
+     *
+     * <p>fake invoker가 새 arm 없음(빈 delta)을 반환해도, envelopeFields에 속한 필드를
+     * override하는 변형은 keptVariants에 포함된다. 반면 envelopeFields에 없는 필드를
+     * override하는 non-envelope 변형은 새 arm이 없으면 버려진다.
+     */
+    @Test
+    void envelopeVariantIsKeptEvenWithNoNewArm_nonEnvelopeVariantWithNoNewArmIsDropped() throws Exception {
+        ExternalStubSynthesizer syn = synthesizer();
+        syn.register("GET", "/pricing/quote", new BodyShape("PricingDto", List.of(
+                new BodyShape.BodyField("errorCode", "java.lang.String"),
+                new BodyShape.BodyField("mode", "java.lang.String")), false));
+        // cumulative가 이미 모든 arm을 포함 → mergeAndDetectNewArm은 항상 false 반환.
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+        cumulative.put(new ExecutionData(123L, CLASS, armBits(1, 2, 3, 4, 5)));
+
+        // plan: errorCode=ERROR(envelope 출처) + mode=BACKORDER(non-envelope).
+        Map<String, List<String>> candidates = new java.util.TreeMap<>();
+        candidates.put("errorCode", List.of("ERROR"));     // envelope-sourced
+        candidates.put("mode", List.of("BACKORDER"));      // non-envelope
+        VariantPlan plan = new ResponseFieldVariantGenerator().generate(candidates, 32);
+
+        // invoker: 항상 새 arm 없음(빈 delta).
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            private int n;
+            @Override public String nextTraceId() { return "trace00000000000" + (++n); }
+            @Override public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
+                return new EndpointExplorationRunner.VariantOutcome(new ExecutionDataStore(), 200);
+            }
+        };
+
+        // envelopeFields = {"errorCode"} → errorCode 포함 변형은 unconditional keep.
+        EndpointExplorationRunner.VariantExploreResult result =
+                EndpointExplorationRunner.exploreResponseVariants(
+                        plan, MAPPER.readTree("{\"errorCode\":\"sample\",\"mode\":\"STANDARD\"}"),
+                        "GET", "/pricing/quote", syn,
+                        true, invoker, cumulative, Set.of(CLASS), Set.of("errorCode"));
+
+        // errorCode=ERROR 변형은 새 arm 없어도 보존된다.
+        assertThat(result.keptVariantLabels())
+                .as("envelope 변형(errorCode=ERROR)은 coverage-delta 무관 항상 보존돼야 한다")
+                .contains("errorCode=ERROR");
+
+        // mode=BACKORDER 변형: non-envelope + 새 arm 없음 → 버려진다.
+        assertThat(result.keptVariantLabels())
+                .as("non-envelope 변형(mode=BACKORDER)은 새 arm 없으면 버려져야 한다")
+                .doesNotContain("mode=BACKORDER");
     }
 
     /**

@@ -101,7 +101,7 @@ class EnumVariantNoneModeTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        false, invoker, cumulative, Set.of(CLASS));
+                        false, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // 각 invoke에서 그 변형의 mode가 응답됐다(순차 교체 — 한 번에 변형 하나만 활성).
         assertThat(servedAtInvoke.get(0)).contains("BACKORDER").doesNotContain("EXPRESS_ONLY");

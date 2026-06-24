@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * REQ-F012-005: mergeEnvelopeCandidates 순수 헬퍼 단위 테스트.
  * errorContract → 후보 맵 병합 동작: null 입력 / 필드 존재 / 필드 미존재 케이스.
+ * 반환 타입 EnvelopeMergeResult: candidates 맵과 envelopeFields 집합 함께 검증.
  */
 class EnvelopeVariantCandidateTest {
 
@@ -31,12 +32,13 @@ class EnvelopeVariantCandidateTest {
         // ⇒ errorWhenPresent 비어있는 descriptor: 합성 결과 빈 ObjectNode → 병합 결과 변경 없음.
         var emptyContract = new ErrorContractDescriptor(
                 List.of(), null, null, null);
-        Map<String, List<String>> merged = EndpointExplorationRunner.mergeEnvelopeCandidates(
+        var result = EndpointExplorationRunner.mergeEnvelopeCandidates(
                 original, shape, emptyContract, synth);
 
-        assertThat(merged).containsKey("status");
-        assertThat(merged.get("status")).containsExactly("ACTIVE");
-        assertThat(merged).hasSize(1);
+        assertThat(result.candidates()).containsKey("status");
+        assertThat(result.candidates().get("status")).containsExactly("ACTIVE");
+        assertThat(result.candidates()).hasSize(1);
+        assertThat(result.envelopeFields()).isEmpty();
     }
 
     /** (b) non-null errorContract + responseShape에 errorCode 필드 존재 → candidates["errorCode"] 에 "ERROR" 포함 */
@@ -49,11 +51,12 @@ class EnvelopeVariantCandidateTest {
         var descriptor = new ErrorContractDescriptor(
                 List.of("errorCode"), "errorCode", null, null);
 
-        Map<String, List<String>> merged = EndpointExplorationRunner.mergeEnvelopeCandidates(
+        var result = EndpointExplorationRunner.mergeEnvelopeCandidates(
                 original, shape, descriptor, synth);
 
-        assertThat(merged).containsKey("errorCode");
-        assertThat(merged.get("errorCode")).contains("ERROR");
+        assertThat(result.candidates()).containsKey("errorCode");
+        assertThat(result.candidates().get("errorCode")).contains("ERROR");
+        assertThat(result.envelopeFields()).containsExactly("errorCode");
     }
 
     /** (c) envelope 필드가 responseShape에 없으면 candidates에 추가되지 않음 */
@@ -67,10 +70,11 @@ class EnvelopeVariantCandidateTest {
         var descriptor = new ErrorContractDescriptor(
                 List.of("errorCode"), "errorCode", null, null);
 
-        Map<String, List<String>> merged = EndpointExplorationRunner.mergeEnvelopeCandidates(
+        var result = EndpointExplorationRunner.mergeEnvelopeCandidates(
                 original, shape, descriptor, synth);
 
-        assertThat(merged).doesNotContainKey("errorCode");
-        assertThat(merged.get("someField")).containsExactly("A");
+        assertThat(result.candidates()).doesNotContainKey("errorCode");
+        assertThat(result.candidates().get("someField")).containsExactly("A");
+        assertThat(result.envelopeFields()).isEmpty();
     }
 }
