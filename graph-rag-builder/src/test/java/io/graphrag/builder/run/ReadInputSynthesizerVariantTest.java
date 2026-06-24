@@ -752,4 +752,27 @@ class ReadInputSynthesizerVariantTest {
         // 모순: CONFIRMED == status == CANCELLED 불가 → conjunction skip → base only
         assertThat(variants).hasSize(1);
     }
+
+    /**
+     * REQ-007: 단일 가드 없고(guards 빈) conjunction만 있어도 early-return 하지 않고 변종 생성.
+     */
+    @Test
+    void conjunctionOnlyNotSkipped() {
+        StateGuard statusLeaf = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuard tierLeaf = new StateGuard("x.B", "m", 10, "tier",
+                GuardKind.ENUM, "io.graphrag.sample.orders.TierStatus",
+                List.of(), List.of("VIP"), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(statusLeaf, tierLeaf));
+
+        // guards = 빈 리스트, conjunctions만 전달
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjunction));
+
+        // early-return 안 함: base + conjunction 변종
+        assertThat(variants).hasSize(2);
+        assertThat(variants.get(1).conjunction()).isEqualTo(conjunction);
+    }
 }
