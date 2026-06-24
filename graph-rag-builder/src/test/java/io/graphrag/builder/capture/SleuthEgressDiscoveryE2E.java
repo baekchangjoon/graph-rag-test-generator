@@ -91,10 +91,15 @@ class SleuthEgressDiscoveryE2E {
 
         // RESERVATION_URL → 호스트 stub (WireMock/redirect 미사용 — REQ-010)
         // SPRING_ZIPKIN_BASEURL + SPRING_ZIPKIN_SENDER_TYPE 은 AnalysisEnvironment.sleuthZipkinEnv()로 자동 주입됨
+        // SPRING_SLEUTH_SAMPLER_PROBABILITY=0.0 → SUT 자체 Brave 샘플러를 0%로 설정.
+        // 빌더는 이 값을 주입하지 않는다 — 테스트가 의도적으로 설정해
+        // "주입 X-B3-Sampled:1만으로 export 강제"(REQ-008 AC2)를 실증한다.
         env.start(jarPath, Files.createTempDirectory("sleuth-egress-e2e"),
                 SutOptions.none(),
                 null,
-                Map.of("RESERVATION_URL", reservationBaseUrl));
+                Map.of(
+                        "RESERVATION_URL", reservationBaseUrl,
+                        "SPRING_SLEUTH_SAMPLER_PROBABILITY", "0.0"));
 
         base = env.sut().baseUri();
         System.out.println("=== SUT up at " + base + " ===");
@@ -186,13 +191,13 @@ class SleuthEgressDiscoveryE2E {
     // ─── REQ-008: 샘플러 override 없이 주입 Sampled=1만으로 발견 ─────────────
 
     @Test
-    @DisplayName("REQ-008: #samplerOffStillExports — SPRING_SLEUTH_SAMPLER_PROBABILITY=0.0이어도 주입 X-B3-Sampled:1만으로 발견")
+    @DisplayName("REQ-008 AC2: SUT sampler probability=0.0 + 주입 X-B3-Sampled:1 → (POST,/reservations) 발견")
     void samplerOffStillExports() throws Exception {
         // 이 테스트는 sleuth 샘플러가 PROBABILITY=0.0일 때도
         // 주입된 B3 Sampled=1 헤더 덕분에 Brave가 export한다는 것을 검증한다.
         // PoC FINDINGS.md §결과: "SUT sampler=0.0이어도 주입 X-B3-Sampled:1만으로 export 강제 ✅"
         //
-        // 이 E2E에서 SUT는 기본 샘플러(PROBABILITY=0.1)로 기동된다.
+        // SUT는 BeforeAll에서 SPRING_SLEUTH_SAMPLER_PROBABILITY=0.0으로 기동된다(진짜 sampler-off).
         // 주입 B3 헤더에 X-B3-Sampled:1이 포함되어 있으므로 SUT는 무조건 샘플링해야 한다.
         // 이 테스트는 위 sleuthMode_discoversReservationEgressWithoutRedirect와 동일 SUT를 재사용하되,
         // 별도 B3 ID를 주입하여 독립적으로 검증한다.
