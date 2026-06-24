@@ -147,18 +147,27 @@ class StringLiteralVariantNoneModeTest {
                         false, invoker, cumulative, Set.of(CLASS));
 
         // 각 invoke에서 그 변형의 status 값이 응답됐다(순차 교체 — 한 번에 변형 하나만 활성).
-        // plan 순서: TreeMap(status→[DELIVERED, PENDING, SHIPPED]) → 단일 필드 변형 알파벳순.
-        assertThat(servedAtInvoke).isNotEmpty();
-        // 모든 응답이 String 리터럴 중 하나만 포함하고, baseline("sample-status")은 없어야 한다.
-        for (String body : servedAtInvoke) {
-            assertThat(body).doesNotContain("sample-status");
-            boolean hasLiteral = body.contains("PENDING")
-                    || body.contains("SHIPPED")
-                    || body.contains("DELIVERED");
-            assertThat(hasLiteral)
-                    .as("invoke 응답에 String 리터럴 변형이 포함돼야 한다: %s", body)
-                    .isTrue();
-        }
+        // plan 순서: TreeMap(status→sorted["DELIVERED","PENDING","SHIPPED"]) → 알파벳순.
+        // get(0)=DELIVERED, get(1)=PENDING, get(2)=SHIPPED.
+        assertThat(servedAtInvoke).hasSize(3);
+        // invoke 0: DELIVERED만 활성, PENDING·SHIPPED·baseline은 없다.
+        assertThat(servedAtInvoke.get(0))
+                .contains("DELIVERED")
+                .doesNotContain("PENDING")
+                .doesNotContain("SHIPPED")
+                .doesNotContain("sample-status");
+        // invoke 1: PENDING만 활성.
+        assertThat(servedAtInvoke.get(1))
+                .contains("PENDING")
+                .doesNotContain("DELIVERED")
+                .doesNotContain("SHIPPED")
+                .doesNotContain("sample-status");
+        // invoke 2: SHIPPED만 활성.
+        assertThat(servedAtInvoke.get(2))
+                .contains("SHIPPED")
+                .doesNotContain("DELIVERED")
+                .doesNotContain("PENDING")
+                .doesNotContain("sample-status");
 
         // 루프 종료 후: 변형 stub은 모두 제거 → 헤더 없는 요청은 전역 baseline 응답.
         assertThat(syn.isVariantRegistered("GET", "/orders/status")).isFalse();
