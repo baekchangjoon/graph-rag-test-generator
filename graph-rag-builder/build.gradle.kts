@@ -65,4 +65,10 @@ tasks.test {
     // PoC: pjacoco.agent.jar 경로를 테스트 JVM으로 전달 (-Dpjacoco.agent.jar=<path> 로 지정)
     val pjacocoAgentJar: String? = System.getProperty("pjacoco.agent.jar")
     if (pjacocoAgentJar != null) systemProperty("pjacoco.agent.jar", pjacocoAgentJar)
+
+    // Sleuth egress E2E: -Dsut.egress.sleuth=true 로 활성화 (Docker + MySQL Testcontainers 필요)
+    val sleuthEgressEnabled: String? = System.getProperty("sut.egress.sleuth")
+    if (sleuthEgressEnabled != null) systemProperty("sut.egress.sleuth", sleuthEgressEnabled)
+    val orderWebSrc: String? = System.getProperty("order.web.src")
+    if (orderWebSrc != null) systemProperty("order.web.src", orderWebSrc)
 }
