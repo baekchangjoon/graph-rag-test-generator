@@ -682,35 +682,42 @@ public final class BuilderCli {
                     new org.jacoco.core.data.ExecutionDataStore()).totalBranches();
             ConstraintExtractor constraintExtractor = new ConstraintExtractor();
             LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
+            // R5: Spoon 모델을 스레드당 1회만 빌드해 그 스레드의 전 추출 호출에 재사용한다(이전엔 추출기 호출마다
+            // SharedSpoonModel.build → 핸들러 수 비례 O(E)). 순차(P=1, 기본)에선 메인 스레드 모델 1개로
+            // whole-app + 전 엔드포인트 = O(1). 병렬 fan-out(P>1)에선 워커 스레드별 독립 모델 → Spoon의
+            // lazy 참조 해소(read 중 상태 변형)가 스레드 비안전이므로 모델을 공유하지 않고 스레드 격리한다.
+            long spoonBuildsBefore = SharedSpoonModel.buildCount();
+            ThreadLocal<spoon.reflect.CtModel> sharedModel =
+                    ThreadLocal.withInitial(() -> SharedSpoonModel.build(config.sourceRoots()));
             // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
             List<ConstraintExtractor.Comparison> allComparisons =
-                    constraintExtractor.extractComparisons(config.sourceRoots());
+                    constraintExtractor.extractComparisons(sharedModel.get());
             // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
             List<ConstraintExtractor.Conjunction> allConjunctions =
-                    constraintExtractor.extractConjunctions(config.sourceRoots());
+                    constraintExtractor.extractConjunctions(sharedModel.get());
             // 양변 모두 필드 참조인 비교 가드(REQ-006, REQ-008a) — joinGuards 변이 합성 근거. 전 계층 1회.
             List<ConstraintExtractor.JoinGuard> allJoinGuards =
-                    constraintExtractor.extractJoinGuards(config.sourceRoots());
+                    constraintExtractor.extractJoinGuards(sharedModel.get());
             // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
             Map<String, List<String>> enumColumns =
-                    constraintExtractor.extractEnumColumns(config.sourceRoots());
+                    constraintExtractor.extractEnumColumns(sharedModel.get());
             // 상태 의존 가드(TEMPORAL/ENUM) + conjunction(저장행 복합 AND) ablation 게이트.
             // GRB_STATE_GUARDS=off 면 둘 다 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control, REQ-008).
             boolean stateGuardsEnabled = stateGuardsEnabled(System.getenv("GRB_STATE_GUARDS"));
             // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
             List<ConstraintExtractor.StateGuard> allStateGuards =
-                    stateGuardsEnabled ? constraintExtractor.extractStateGuards(config.sourceRoots()) : List.of();
+                    stateGuardsEnabled ? constraintExtractor.extractStateGuards(sharedModel.get()) : List.of();
             // 저장행 복합 AND 조건(conjunction) — 동시 만족 시드 변종 근거 (REQ-006). 전 계층 1회.
             // 입력-필드 allConjunctions와 구분(이쪽은 StateGuardConjunction).
             List<ConstraintExtractor.StateGuardConjunction> allStateGuardConjunctions =
-                    stateGuardsEnabled ? constraintExtractor.extractStateGuardConjunctions(config.sourceRoots()) : List.of();
+                    stateGuardsEnabled ? constraintExtractor.extractStateGuardConjunctions(sharedModel.get()) : List.of();
             // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
             // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
             io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
                     new io.graphrag.builder.oracle.InputOracle.SutCode(config.sourceRoots(), config.sutJar());
             boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
             io.graphrag.builder.oracle.InputCandidates inputCandidates =
-                    new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode);
+                    new io.graphrag.builder.oracle.StaticLiteralOracle(sharedModel.get()).analyze(sutCode);
             if (useConcolic) {
                 inputCandidates = inputCandidates.merge(
                         new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
@@ -724,9 +731,9 @@ public final class BuilderCli {
                                 llmOpts.backend(), llmOpts.model(), llmOpts.cli());
                 io.graphrag.builder.oracle.LlmOracle llm = new io.graphrag.builder.oracle.LlmOracle(
                         index, new io.graphrag.builder.index.ValidationConstraintExtractor(),
-                        new io.graphrag.builder.oracle.HandlerSourceExtractor(config.sourceRoots()),
+                        new io.graphrag.builder.oracle.HandlerSourceExtractor(sharedModel.get()),
                         sel.client(), io.graphrag.builder.oracle.LlmValueCache.defaultClasspath(),
-                        llmOpts.model(), sel.usable());
+                        llmOpts.model(), sel.usable(), sharedModel.get());
                 inputCandidates = inputCandidates.merge(llm.analyze(sutCode));
                 log.info("llm oracle merged (backend={}, model={}, usable={})",
                         llmOpts.backend(), llmOpts.model(), sel.usable());
@@ -898,13 +905,16 @@ public final class BuilderCli {
                             }
                         }
 
+                        // R5: 이 워커 스레드의 모델(ThreadLocal)을 재사용 — 스레드당 1회 빌드. 병렬에서도
+                        // 스레드 격리라 Spoon lazy-resolve race 없음.
+                        spoon.reflect.CtModel workerSpoon = sharedModel.get();
                         var conditions = sharedConstraintExtractor.extract(
-                                config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod());
-                        var literals = sharedLiteralExtractor.extract(config.sourceRoots(), endpoint.handlerClass());
+                                workerSpoon, endpoint.handlerClass(), endpoint.handlerMethod());
+                        var literals = sharedLiteralExtractor.extract(workerSpoon, endpoint.handlerClass());
                         Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
                                 shape == null ? Map.of()
                                         : new ValidationConstraintExtractor()
-                                                .extract(config.sourceRoots(), shape.javaType());
+                                                .extract(workerSpoon, shape.javaType());
 
                         // 공유 CoverageProbe를 직접 사용한다 — pjacoco는 traceId별 격리로 concurrent-safe.
                         EndpointExplorationRunner runner = new EndpointExplorationRunner(
@@ -919,11 +929,12 @@ public final class BuilderCli {
                                 sharedTraceParentRef);
 
                         // REQ-012: handler당 reachable 집합(cross-class 귀속). 병렬 워커 공유 → ConcurrentHashMap.
+                        // computeIfAbsent는 키별 1회 실행(실행 스레드의 workerSpoon 사용) — Spoon 재빌드 없이 traversal만.
                         String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
                         Set<Map.Entry<String, String>> reachable = sharedReachableCache.computeIfAbsent(
                                 handlerKey,
                                 k -> sharedConstraintExtractor.reachableMethods(
-                                        config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod()));
+                                        workerSpoon, endpoint.handlerClass(), endpoint.handlerMethod()));
                         List<ConstraintExtractor.StateGuard> endpointStateGuards = sharedAllStateGuards.stream()
                                 .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
                                 .toList();
@@ -992,6 +1003,10 @@ public final class BuilderCli {
                     result.cumulativeExec().accept(runWideExec);   // OR 병합 (line 집계용)
                 }
             }
+
+            // R5: 탐색 정적 분석이 유발한 Spoon 빌드 수 = 스레드 수(순차=1). 핸들러 수와 무관(스레드당 1회 재사용).
+            log.info("R5: explore static-analysis Spoon builds = {} (스레드당 1회; 핸들러 수 무관)",
+                    SharedSpoonModel.buildCount() - spoonBuildsBefore);
 
             io.graphrag.builder.run.WsCaptureRunner wsRunner =
                     new io.graphrag.builder.run.WsCaptureRunner(
