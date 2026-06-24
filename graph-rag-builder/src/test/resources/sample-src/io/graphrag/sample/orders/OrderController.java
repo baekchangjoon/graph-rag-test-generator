@@ -1,5 +1,6 @@
 package io.graphrag.sample.orders;
 
+import java.util.Objects;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -10,6 +11,9 @@ import org.springframework.web.server.ResponseStatusException;
 @RestController
 @RequestMapping("/api/orders")
 public class OrderController {
+
+    /** static final String 상수 — extractor 소스트리 상수 해석 테스트용. */
+    private static final String CONST_REGION = "X4";
 
     public record CreateOrderRequest(String userId, Integer amount, String type) {
     }
@@ -40,9 +44,38 @@ public class OrderController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
         if ("EXPRESS".equals(request.type())) {
             InventoryClient.InventoryResponse stock = inventory.check(request.type());
+
+            // 패턴 1: 기존 equals (리터럴.equals(accessor)) — "EMBARGOED"
             if ("EMBARGOED".equals(stock.region())) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "region embargoed");
             }
+
+            // 패턴 2: equalsIgnoreCase — "X1"
+            if (stock.region().equalsIgnoreCase("X1")) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "region X1 conflict");
+            }
+
+            // 패턴 3: Objects.equals (accessor, literal) — "X2"
+            if (Objects.equals(stock.region(), "X2")) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "region X2 conflict");
+            }
+
+            // 패턴 4: 로컬 변수 바인딩 후 equals — "X3"
+            String r = stock.region();
+            if ("X3".equals(r)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "region X3 conflict");
+            }
+
+            // 패턴 5: static final 상수 equals — "X4" (CONST_REGION)
+            if (CONST_REGION.equals(stock.region())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "region X4 conflict");
+            }
+
+            // 패턴 6: startsWith — non-equality, loud skip 대상
+            if (stock.region().startsWith("EMBARGO")) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "region embargo prefix");
+            }
+
             switch (stock.mode()) {
                 case BACKORDER ->
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "backordered");
