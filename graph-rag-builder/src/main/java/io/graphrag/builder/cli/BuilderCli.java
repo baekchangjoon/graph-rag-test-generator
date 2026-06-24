@@ -596,30 +596,30 @@ public final class BuilderCli {
             LiteralCandidateExtractor literalExtractor = new LiteralCandidateExtractor();
             // 비교식(분기 조건)은 전 계층 1회 추출 — rec-1(solverRelevantMissed) 라인 매칭용.
             List<ConstraintExtractor.Comparison> allComparisons =
-                    constraintExtractor.extractComparisons(config.sutSrc());
+                    constraintExtractor.extractComparisons(config.sourceRoots());
             // 메서드 내 && conjunction(다필드 동시 가드) — joint 입력 합성 근거. 전 계층 1회.
             List<ConstraintExtractor.Conjunction> allConjunctions =
-                    constraintExtractor.extractConjunctions(config.sutSrc());
+                    constraintExtractor.extractConjunctions(config.sourceRoots());
             // 양변 모두 필드 참조인 비교 가드(REQ-006, REQ-008a) — joinGuards 변이 합성 근거. 전 계층 1회.
             List<ConstraintExtractor.JoinGuard> allJoinGuards =
-                    constraintExtractor.extractJoinGuards(config.sutSrc());
+                    constraintExtractor.extractJoinGuards(config.sourceRoots());
             // 가드에서 직접 유래한 컬럼→유효 enum 상수 (시드 행 읽기 500 방지, Bug 3).
             Map<String, List<String>> enumColumns =
-                    constraintExtractor.extractEnumColumns(config.sutSrc());
+                    constraintExtractor.extractEnumColumns(config.sourceRoots());
             // 상태 의존 가드(TEMPORAL/ENUM) + conjunction(저장행 복합 AND) ablation 게이트.
             // GRB_STATE_GUARDS=off 면 둘 다 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control, REQ-008).
             boolean stateGuardsEnabled = stateGuardsEnabled(System.getenv("GRB_STATE_GUARDS"));
             // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
             List<ConstraintExtractor.StateGuard> allStateGuards =
-                    stateGuardsEnabled ? constraintExtractor.extractStateGuards(config.sutSrc()) : List.of();
+                    stateGuardsEnabled ? constraintExtractor.extractStateGuards(config.sourceRoots()) : List.of();
             // 저장행 복합 AND 조건(conjunction) — 동시 만족 시드 변종 근거 (REQ-006). 전 계층 1회.
             // 입력-필드 allConjunctions와 구분(이쪽은 StateGuardConjunction).
             List<ConstraintExtractor.StateGuardConjunction> allStateGuardConjunctions =
-                    stateGuardsEnabled ? constraintExtractor.extractStateGuardConjunctions(config.sutSrc()) : List.of();
+                    stateGuardsEnabled ? constraintExtractor.extractStateGuardConjunctions(config.sourceRoots()) : List.of();
             // 입력 후보 = 교체가능 오라클들의 합집합 (정적 리터럴 + ASM+Z3 concolic).
             // GRB_ORACLE=static 이면 concolic 제외 (오라클 기여도 ablation 측정용).
             io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
-                    new io.graphrag.builder.oracle.InputOracle.SutCode(config.sutSrc(), config.sutJar());
+                    new io.graphrag.builder.oracle.InputOracle.SutCode(config.sourceRoots(), config.sutJar());
             boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
             io.graphrag.builder.oracle.InputCandidates inputCandidates =
                     new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode);
@@ -636,7 +636,7 @@ public final class BuilderCli {
                                 llmOpts.backend(), llmOpts.model(), llmOpts.cli());
                 io.graphrag.builder.oracle.LlmOracle llm = new io.graphrag.builder.oracle.LlmOracle(
                         index, new io.graphrag.builder.index.ValidationConstraintExtractor(),
-                        new io.graphrag.builder.oracle.HandlerSourceExtractor(config.sutSrc()),
+                        new io.graphrag.builder.oracle.HandlerSourceExtractor(config.sourceRoots()),
                         sel.client(), io.graphrag.builder.oracle.LlmValueCache.defaultClasspath(),
                         llmOpts.model(), sel.usable());
                 inputCandidates = inputCandidates.merge(llm.analyze(sutCode));
@@ -749,12 +749,12 @@ public final class BuilderCli {
                         continue;
                     }
                     var conditions = constraintExtractor.extract(
-                            config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod());
-                    var literals = literalExtractor.extract(config.sutSrc(), endpoint.handlerClass());
+                            config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod());
+                    var literals = literalExtractor.extract(config.sourceRoots(), endpoint.handlerClass());
                     Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
                             shape == null ? Map.of()
                                     : new ValidationConstraintExtractor()
-                                            .extract(config.sutSrc(), shape.javaType());
+                                            .extract(config.sourceRoots(), shape.javaType());
                     EndpointExplorationRunner runner = new EndpointExplorationRunner(
                             env.sut(), connection, env.dbType(),
                             coverageClient, analyzer,
@@ -768,7 +768,7 @@ public final class BuilderCli {
                     Set<Map.Entry<String, String>> reachable = reachableCache.computeIfAbsent(
                             handlerKey,
                             k -> constraintExtractor.reachableMethods(
-                                    config.sutSrc(), endpoint.handlerClass(), endpoint.handlerMethod()));
+                                    config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod()));
                     // 이 엔드포인트 reachable에 귀속된 상태가드만 전달(cross-class 포함).
                     List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
                             .filter(g -> isReachable(reachable, g.classFqn(), g.method()))

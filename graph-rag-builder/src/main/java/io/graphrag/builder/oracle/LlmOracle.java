@@ -59,7 +59,7 @@ public final class LlmOracle implements InputOracle {
             }
             // 제약(@Pattern/@Email)은 DTO/커맨드 바디 타입에서만 추출 가능. 파라미터는 도메인코드 이름 휴리스틱으로 선별.
             Map<String, List<FieldConstraint>> constraints =
-                    bodyShape == null ? Map.of() : valid.extract(sut.srcDir(), bodyShape.javaType());
+                    bodyShape == null ? Map.of() : valid.extract(sut.roots(), bodyShape.javaType());
             EndpointFieldSelector.Selected selected =
                     EndpointFieldSelector.select(shape.fields(), constraints);
             if (selected.fields().isEmpty()) {

@@ -1,6 +1,5 @@
 package io.graphrag.builder.index;
 
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtLiteral;
@@ -33,13 +32,8 @@ public class ValidationConstraintExtractor {
     public record FieldConstraint(String field, Kind kind, long numArg, String strArg) {
     }
 
-    public Map<String, List<FieldConstraint>> extract(Path srcDir, String dtoQualifiedName) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public Map<String, List<FieldConstraint>> extract(SourceRoots roots, String dtoQualifiedName) {
+        CtModel model = SharedSpoonModel.build(roots);
 
         Map<String, List<FieldConstraint>> result = new LinkedHashMap<>();
         for (CtType<?> type : model.getAllTypes()) {
@@ -59,6 +53,11 @@ public class ValidationConstraintExtractor {
             return result;
         }
         return result;
+    }
+
+    /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String)} 에 위임. */
+    public Map<String, List<FieldConstraint>> extract(Path srcDir, String dtoQualifiedName) {
+        return extract(SourceRoots.single(srcDir), dtoQualifiedName);
     }
 
     /**

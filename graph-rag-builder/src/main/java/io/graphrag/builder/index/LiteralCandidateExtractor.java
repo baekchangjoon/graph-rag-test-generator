@@ -1,6 +1,5 @@
 package io.graphrag.builder.index;
 
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.CtLiteral;
 import spoon.reflect.declaration.CtType;
@@ -20,13 +19,8 @@ public class LiteralCandidateExtractor {
 
     private static final Pattern ENUM_STYLE = Pattern.compile("[A-Z][A-Z0-9_]{1,15}");
 
-    public List<String> extract(Path srcDir, String classFqn) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<String> extract(SourceRoots roots, String classFqn) {
+        CtModel model = SharedSpoonModel.build(roots);
 
         TreeSet<String> literals = new TreeSet<>();
         for (CtType<?> type : model.getAllTypes()) {
@@ -40,5 +34,10 @@ public class LiteralCandidateExtractor {
             });
         }
         return List.copyOf(literals);
+    }
+
+    /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String)} 에 위임. */
+    public List<String> extract(Path srcDir, String classFqn) {
+        return extract(SourceRoots.single(srcDir), classFqn);
     }
 }

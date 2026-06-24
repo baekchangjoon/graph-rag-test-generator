@@ -1,6 +1,7 @@
 package io.graphrag.builder.oracle;
 
-import spoon.Launcher;
+import io.graphrag.builder.index.SharedSpoonModel;
+import io.graphrag.builder.index.SourceRoots;
 import spoon.reflect.CtModel;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
@@ -10,20 +11,21 @@ import java.util.Objects;
 
 /** 핸들러 (class, method) → 메서드 본문 소스 텍스트(Spoon). 캐시 키 해시·LLM 프롬프트 입력용. */
 public final class HandlerSourceExtractor {
-    private final Path srcDir;
+    private final SourceRoots roots;
     private CtModel model;   // lazy 단일 파싱
 
+    public HandlerSourceExtractor(SourceRoots roots) {
+        this.roots = roots;
+    }
+
+    /** Path 위임 — 단일 루트로 {@link #HandlerSourceExtractor(SourceRoots)} 에 위임. */
     public HandlerSourceExtractor(Path srcDir) {
-        this.srcDir = srcDir;
+        this(SourceRoots.single(srcDir));
     }
 
     private CtModel model() {
         if (model == null) {
-            Launcher launcher = new Launcher();
-            launcher.getEnvironment().setNoClasspath(true);
-            launcher.addInputResource(srcDir.toString());
-            launcher.buildModel();
-            model = launcher.getModel();
+            model = SharedSpoonModel.build(roots);
         }
         return model;
     }
