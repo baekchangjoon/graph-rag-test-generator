@@ -40,4 +40,22 @@ class CapturedHttpCallJsonRoundTripTest {
                 "h", "p", "GET", "/x", Map.of(), null, 200, "{}", List.of(), false, null);
         assertThat(c.responseProvenance()).isEqualTo(CapturedHttpCall.Provenance.CAPTURED);
     }
+
+    @Test
+    void contractProvenanceRoundTrips() throws Exception {
+        var call = new CapturedHttpCall("h1", "p1", "GET", "/x", Map.of(), null,
+                200, "{\"region\":\"EMBARGOED\"}", List.of(), false,
+                CapturedHttpCall.Provenance.CONTRACT);
+        String json = Json.mapper().writeValueAsString(call);
+        var back = Json.mapper().readValue(json, CapturedHttpCall.class);
+        assertThat(back.responseProvenance()).isEqualTo(CapturedHttpCall.Provenance.CONTRACT);
+    }
+
+    @Test
+    void legacyJsonWithoutProvenanceDefaultsToCaptured() throws Exception {
+        String legacy = "{\"id\":\"h1\",\"pathId\":\"p1\",\"method\":\"GET\",\"urlPath\":\"/x\","
+                + "\"responseStatus\":200,\"responseBody\":\"{}\"}";
+        var back = Json.mapper().readValue(legacy, CapturedHttpCall.class);
+        assertThat(back.responseProvenance()).isEqualTo(CapturedHttpCall.Provenance.CAPTURED);
+    }
 }
