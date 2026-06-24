@@ -28,6 +28,10 @@ public final class EndpointSelector {
             if (ids.contains(spec)) { resolved.add(spec); continue; }
             String byMethodPath = matchMethodPath(spec, endpoints);
             if (byMethodPath != null) { resolved.add(byMethodPath); continue; }
+            if (GlobMatcher.hasGlobMeta(spec)) {
+                List<String> globHits = matchGlob(spec, endpoints, wsEndpoints, kafkaConsumers);
+                if (!globHits.isEmpty()) { resolved.addAll(globHits); continue; }
+            }
             throw new IllegalArgumentException(
                     "no explorable unit matches --endpoint '" + spec + "'. candidates: "
                             + candidates(endpoints, wsEndpoints, kafkaConsumers));
@@ -50,6 +54,36 @@ public final class EndpointSelector {
             }
         }
         return null;
+    }
+
+    /** glob 셀렉터 → id 또는 "METHOD /path" 매칭 단위 id들(순서 보존). */
+    private static List<String> matchGlob(String spec, List<Endpoint> endpoints,
+            List<WsEndpoint> wsEndpoints, List<KafkaConsumer> kafkaConsumers) {
+        List<String> hits = new ArrayList<>();
+        // method 토큰만 대문자화(httpMethod는 EndpointIndexer가 대문자로 저장). path 는 case 보존
+        // — spec 전체를 toUpperCase 하면 "/API/ORDERS"가 되어 소문자 path와 영구 미스(critical).
+        String specMethodUpper = upperFirstToken(spec);
+        for (Endpoint e : endpoints) {
+            String methodPath = e.httpMethod().toUpperCase() + " " + e.path();
+            if (GlobMatcher.matches(spec, e.id())
+                    || GlobMatcher.matches(specMethodUpper, methodPath)) {
+                hits.add(e.id());
+            }
+        }
+        for (WsEndpoint w : wsEndpoints) {
+            if (GlobMatcher.matches(spec, w.id())) { hits.add(w.id()); }
+        }
+        for (KafkaConsumer k : kafkaConsumers) {
+            if (GlobMatcher.matches(spec, k.id())) { hits.add(k.id()); }
+        }
+        return hits;
+    }
+
+    /** spec 의 첫 공백 이전(=HTTP method 토큰)만 대문자화. 공백 없으면(=id glob) 원본 그대로. */
+    private static String upperFirstToken(String spec) {
+        int sp = spec.indexOf(' ');
+        if (sp <= 0) { return spec; }
+        return spec.substring(0, sp).toUpperCase() + spec.substring(sp);
     }
 
     private static String candidates(List<Endpoint> endpoints, List<WsEndpoint> wsEndpoints,
