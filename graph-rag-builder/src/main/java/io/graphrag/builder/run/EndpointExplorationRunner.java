@@ -206,6 +206,8 @@ public class EndpointExplorationRunner {
     private final List<io.graphrag.model.CapturedHttpCall> variantHttpCalls = new ArrayList<>();
     // pjacoco per-trace: 전체 빌드 런 공유 생성기 — runner 간 traceId 충돌 없음 (Phase 2 동시 실행 안전).
     private final io.graphrag.builder.capture.TraceParent traceParent;
+    /** 에러 envelope 계약 기술자(nullable) — errorWhenPresent 미지정 SUT은 null. Task 4. */
+    private final ErrorContractDescriptor errorContract;
 
     /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
@@ -225,7 +227,7 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                null, null);
+                null, null, null);
     }
 
     /** classifier 명시 호환 생성자 (traceParent는 null → 로컬 생성기 사용). */
@@ -247,7 +249,7 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, List.of(), null, Map.of(), null);
+                classifier, List.of(), null, Map.of(), null, null);
     }
 
     /** callSites(외부 호출 site)를 받는 레거시 호환 생성자 — egressCollector null + stringLiteralsByDto 빈 맵 + traceParent null로 체인. */
@@ -270,7 +272,7 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, callSites, null, Map.of(), null);
+                classifier, callSites, null, Map.of(), null, null);
     }
 
     /** callSites + egressCollector를 받는 호환 생성자 — stringLiteralsByDto 빈 맵 + traceParent null로 canonical 체인. */
@@ -294,10 +296,10 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, callSites, egressCollector, Map.of(), null);
+                classifier, callSites, egressCollector, Map.of(), null, null);
     }
 
-    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) 포함. */
+    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) + errorContract(nullable) 포함. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
@@ -316,7 +318,8 @@ public class EndpointExplorationRunner {
                                      List<io.graphrag.builder.index.ExternalCallSite> callSites,
                                      io.graphrag.builder.capture.egress.EgressCollector egressCollector,
                                      Map<String, Map<String, List<String>>> stringLiteralsByDto,
-                                     io.graphrag.builder.capture.TraceParent traceParent) {
+                                     io.graphrag.builder.capture.TraceParent traceParent,
+                                     ErrorContractDescriptor errorContract) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -346,6 +349,7 @@ public class EndpointExplorationRunner {
         // traceParent가 null이면 이 인스턴스 전용 로컬 생성기를 만든다 (테스트 호환 및 traceparent 미주입(WS 등) 폴백).
         this.traceParent = traceParent != null ? traceParent
                 : new io.graphrag.builder.capture.TraceParent("local-" + System.nanoTime());
+        this.errorContract = errorContract;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,

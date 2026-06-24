@@ -935,7 +935,8 @@ public final class BuilderCli {
                                 config.requestHeaders(), sharedSqlCapture, receiverToClose,
                                 config.classifierConfig().toClassifier(), callSites,
                                 io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto,
-                                sharedTraceParentRef);
+                                sharedTraceParentRef,
+                                io.graphrag.builder.run.ErrorContractDescriptor.fromClassifierConfig(config.classifierConfig()));
 
                         // REQ-012: handler당 reachable 집합(cross-class 귀속). 병렬 워커 공유 → ConcurrentHashMap.
                         // computeIfAbsent는 키별 1회 실행(실행 스레드의 workerSpoon 사용) — Spoon 재빌드 없이 traversal만.
