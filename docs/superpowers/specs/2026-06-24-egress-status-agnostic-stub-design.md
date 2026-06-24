@@ -89,94 +89,151 @@ span-발견 호출에 대해 404 없이 `register()` 호출.
 ## 4. 상세 설계 (접근 A)
 
 ### 4.1 신규 컴포넌트 — `EgressStubComposer` (builder)
-패키지: `io.graphrag.builder.capture.egress` (또는 `...run`, 구현 시 응집도로 확정).
+패키지: **`io.graphrag.builder.run`** — `CallSiteMatcher`·`ShapeJsonSynthesizer`·
+`EndpointExplorationRunner.LoudFail`이 모두 이 패키지에 있어 패키지 사이클을 만들지 않는다
+(`capture.egress`에 두면 run↔capture.egress 상호 의존 발생 — 3-벤더 리뷰 합의로 기각).
+
+책임을 좁힌다: **match + body 합성만** 하고 `CapturedHttpCall` 조립은 호출자(`captureHttpCalls`)가
+한다. 이렇게 해야 `consumedFields` 산출을 redirect 경로와 동일한 runner의
+`consumedFields(responseBody)`로 일관되게 재사용할 수 있다(별도 클래스에서 private 메서드 접근 불가
+문제 회피, Cursor 리뷰 I1).
 
 ```
-record Result(CapturedHttpCall call, Optional<LoudFail> loudFail)
+// LoudFail = EndpointExplorationRunner.LoudFail (기존 nested record 재사용)
+record Outcome(String responseBody,                       // 합성 성공 시 형상 JSON, 실패 시 ""
+               CapturedHttpCall.Provenance provenance,    // 성공=SYNTHESIZED, 실패=CAPTURED
+               Optional<LoudFail> loudFail)
 
-Result compose(EgressCall e, String pathId, int seq,
-               List<ExternalCallSite> callSites, ShapeJsonSynthesizer shapes)
+static Outcome compose(EgressCall e,
+                       List<ExternalCallSite> callSites,
+                       ShapeJsonSynthesizer shapes)
 ```
 
 로직:
 1. `CallSiteMatcher.match(e.method(), e.path(), callSites)`.
-2. site 없음 → `Result(빈-body CAPTURED CapturedHttpCall, LoudFail("unmatched-external-call",
-   method+" "+path))`.
-3. site 있고 `responseShape` 없음 → `Result(빈-body CAPTURED, LoudFail("unwired-external-dep", ...))`.
-4. site 있고 shape 있음:
-   - `JsonNode body = shapes.synthesizeBody(shape)` (UnsupportedShapeException →
-     `Result(빈-body CAPTURED, LoudFail("unsynthesizable-shape", pathLiteral))`).
-   - `CapturedHttpCall(id="http-{pathId}-egress-{seq}", pathId, e.method(), e.path(),
-     query=Map.of(), requestBody=null, responseStatus=statusOrNull==null?200:statusOrNull,
-     responseBody=body.toString(), consumedFields=형상 최상위 필드명,
-     baggagePropagated=false, provenance=SYNTHESIZED)`.
+2. site 없음 → `Outcome("", CAPTURED, LoudFail("unmatched-external-call", e.method()+" "+e.path()))`.
+3. site 있고 `responseShape` 비어있음 → `Outcome("", CAPTURED,
+   LoudFail("unwired-external-dep", e.method()+" "+e.path()))`.
+4. site 있고 shape 있음 → `shapes.synthesizeBody(shape)`:
+   - 성공 → `Outcome(body.toString(), SYNTHESIZED, Optional.empty())`.
+   - `UnsupportedShapeException` → `Outcome("", CAPTURED,
+     LoudFail("unsynthesizable-shape", site.pathLiteral()))`.
 
-빈-body fallback은 기존 `EgressCallMapper.toCapturedHttpCall`을 재사용한다(중복 제거).
+`compose`는 `static`이며 `EgressCall` 외 상태를 갖지 않는다.
 
-### 4.2 `EndpointExplorationRunner.captureHttpCalls` 변경
-egress 루프를 `EgressStubComposer.compose(...)` 호출로 교체:
-- `ShapeJsonSynthesizer`는 runner가 이미 보유(stubSynthesizer 생성 시 `new
-  ShapeJsonSynthesizer(enumConstants)` 사용). 동일 enum 맵으로 인스턴스 재사용/보관.
-- 각 `Result.loudFail()`을 `externalLoudFails`에 수집(기존 loud-fail 집계와 동일 채널).
-- `EgressCallMapper.mergeDedup(calls, egress)`는 그대로 — redirect(existing)이 egress보다
-  우선하는 dedup 규칙 유지(REQ-005). 즉 redirect로 이미 잡힌 호출은 egress가 덮지 않는다.
+### 4.2 `EndpointExplorationRunner` 변경
+
+(a) **`private final ShapeJsonSynthesizer egressShapes` 필드 추가.** 현재 runner는
+`ShapeJsonSynthesizer`를 필드로 보관하지 않고 `ExternalStubSynthesizer` 생성 시 인라인으로만 쓴다
+(3-벤더 합의 I). egress enrichment는 **`httpCapture==null`(WireMock 미배선)에서도 동작해야 하므로**
+`stubSynthesizer`에 의존하면 안 된다. canonical 생성자에서 `enumConstants`(null이면 `Map.of()`)로
+`new ShapeJsonSynthesizer(...)`를 만들어 필드에 보관하고, egress/404 양쪽이 공유한다.
+
+(b) **`captureHttpCalls`의 egress 루프를 교체.** 각 `EgressCall e`에 대해:
+- `callSites`가 **비어 있으면**(정적 인덱스 없음/none-mode) 기존
+  `EgressCallMapper.toCapturedHttpCall(e, pathId, seq)`를 그대로 쓴다 — **loud-fail 없음**
+  (인덱스 부재 환경에서 호출마다 경고가 쏟아지는 노이즈 방지, Sonnet 리뷰 I3).
+- 비어 있지 않으면 `EgressStubComposer.compose(e, callSites, egressShapes)`:
+  - `responseBody`가 비어있지 않으면(성공) `consumedFields(responseBody)`(redirect 경로와 동일
+    메서드)로 필드를 산출해 `CapturedHttpCall(id="http-{pathId}-egress-{seq}", pathId, e.method(),
+    e.path(), Map.of(), null, status(e), responseBody, consumedFields, false, provenance)` 조립.
+    `status(e)` = `e.statusOrNull()==null ? 200 : e.statusOrNull()`.
+  - 실패(빈 body)면 `EgressCallMapper.toCapturedHttpCall(...)`(빈-body CAPTURED) 사용.
+  - `outcome.loudFail()`이 있으면 수집한다. **단 `externalLoudFails`에 append하기 전 중복을
+    검사**한다 — `captureHttpCalls`→`buildPaths`는 SQL 2-pass 보정에서 복수 실행될 수 있어 그대로
+    append하면 동일 loud-fail이 누적된다(Gemini 리뷰 I5). `!externalLoudFails.contains(lf)` 가드.
+- `EgressCallMapper.mergeDedup(calls, egress)`는 그대로 — redirect(existing) 우선 dedup 유지.
 
 ### 4.3 데이터 흐름
 ```
-EgressCall(span) ─ EgressStubComposer(match+synthesize) ─▶ CapturedHttpCall(형상 body, SYNTHESIZED)
-                                                              │ (mergeDedup; redirect 우선)
-                                                              ▼
-                                       graph httpCalls(pathId) ─▶ FileGraphRagClient.httpCallsForPath
-                                                              ▼
-                                       HttpMockComposer ─▶ scope.http().stub(m,p).respondJson(status, 형상body).register()
+EgressCall(span) ─ EgressStubComposer.compose(match+synthesize) ─▶ captureHttpCalls 조립
+                                                                     │ CapturedHttpCall(형상 body, SYNTHESIZED)
+                                                                     │ (mergeDedup; redirect 우선)
+                                                                     ▼
+                                          graph httpCalls(pathId) ─▶ FileGraphRagClient.httpCallsForPath
+                                                                     ▼
+                                          HttpMockComposer ─▶ scope.http().stub(m,p).respondJson(status, 형상body).register()
 ```
 
 ### 4.4 에러 처리 (loud failure, silent 금지)
 - unmatched callSite → WARN `unmatched-external-call` + 빈-body stub 유지.
 - responseShape 없음 → WARN `unwired-external-dep` + 빈-body stub 유지.
-- 형상 합성 불가(UnsupportedShapeException) → WARN `unsynthesizable-shape` + 빈-body stub 유지.
+- 형상 합성 불가(`UnsupportedShapeException`) → WARN `unsynthesizable-shape` + 빈-body stub 유지.
 - 어느 경우에도 **발견된 호출을 graph/생성 테스트에서 드롭하지 않는다**(관측된 사실 보존).
+- WARN 로깅 위치: `captureHttpCalls`가 `outcome.loudFail()` 수집 시 1회 로깅(composer는 순수 함수,
+  로깅 부작용 없음 — 책임 분리, Cursor 리뷰 I7).
 
 ### 4.5 provenance 의미
 span은 body를 포함하지 않는다. 매칭+합성된 body는 형상에서 만든 것이므로 `SYNTHESIZED`가 정확하다
-(REQ-011 의미: SYNTHESIZED=형상 합성, CAPTURED=실 외부 응답). 빈-body fallback은 기존대로 CAPTURED
-유지(실측도 합성도 아닌 미해결 상태, loud-fail로 별도 가시화).
+— 근거는 `CapturedHttpCall.Provenance` enum Javadoc("실 SUT 외부 호출 캡처=CAPTURED vs 형상에서
+합성한 stub=SYNTHESIZED"). 빈-body fallback은 CAPTURED 유지(실측도 합성도 아닌 미해결, loud-fail로
+별도 가시화). ※ egress 요구사항의 REQ-011은 "자원 정리"이므로 provenance 근거로 인용하지 않는다
+(Cursor 리뷰 I5).
+
+### 4.6 `consumedFields`와 collection 형상
+`shapes.synthesizeBody`는 `collection()==true` 형상에서 **ArrayNode**를 반환한다. 이 경우 runner의
+`consumedFields(responseBody)`는 object root가 아니어서 빈 리스트를 돌려주고, `HttpMockComposer.
+stubBody`도 ObjectNode가 아니면 필드 투영을 건너뛰어 array body 전체를 stub으로 쓴다. 따라서 array
+형상도 **비어있지 않은 stub body**가 보장된다(투영만 비활성). object root 형상은 `consumedFields`
+교집합 투영이 redirect 경로와 동일하게 적용된다.
 
 ## 5. 테스트 (이중 루프)
 
-### 5.1 E2E / 수용 (outer, 먼저 red)
-- **otel**: `samples/order-service`(`InventoryClient`→`GET /inventory/stock`)를 redirect 없이
-  egress 모드로 기동→탐색→generator 실행. **생성 테스트 소스**에
-  `scope.http().stub("GET", "/inventory/stock") ... .respondJson(200, <비어있지 않은 형상 body>)
-  ... .register()`가 포함됨을 단언(빈 `""`가 아님). redirect/`--external-stubs` 미사용.
-- **sleuth**: `samples/legacy-tram/order-web`(`RestTemplate`→`POST /reservations`) 동형.
-- 기존 `OtelEgressDiscoveryE2E`/`SleuthEgressDiscoveryE2E` 하니스(조건부: sut.jar /
-  `sut.egress.sleuth=true`)를 확장해 generator 산출까지 잇는다. 자원 정리/누수 게이트(REQ-011)
-  준수(고유 project/PID 한정 teardown, 잔존 0 검증).
-- **practical outer loop(인프라 무의존)**: 합성 `EgressCall` + `ExternalCallSite`를
-  `captureHttpCalls`→graph→`HttpMockComposer`로 통과시켜 방출 stub body가 비어있지 않은 형상
-  body임을 단언하는 **통합 테스트**. 풀 E2E는 SUT 빌드/도커 가용 시 최상위로.
+> **모듈 경계 주의(Cursor 리뷰 I3).** `HttpMockComposer`는 `test-generator` 모듈,
+> `captureHttpCalls`/`EgressStubComposer`는 `graph-rag-builder` 모듈이다. 한 in-process 테스트로
+> 빌더→generator를 잇지 않는다 — 빌더 측은 `CapturedHttpCall`까지, generator 측은 stub 방출까지
+> 각 모듈에서 검증한다.
+
+### 5.1 통합/E2E (outer, 먼저 red)
+- **(빌더, 인프라 무의존 — 1차 outer loop)** `graph-rag-builder`에서 합성 `EgressCall` +
+  `ExternalCallSite`(responseShape 보유)를 `captureHttpCalls`에 통과시켜, 결과 `CapturedHttpCall`이
+  `responseProvenance==SYNTHESIZED` + `responseBody`가 비어있지 않은 형상 JSON임을 단언. callSites
+  빈 경우 기존 빈-body CAPTURED 유지도 단언.
+- **(generator)** `test-generator`에서 비어있지 않은 `responseBody`를 가진 egress
+  `CapturedHttpCall`을 `HttpMockComposer.compose`에 넣어, 방출 블록이
+  `respondJson(<status>, "<비어있지 않은 형상 body>")`를 포함함을 단언.
+- **(full E2E, SUT 빌드 가용 시 — 최상위)** 기존 egress E2E 하니스는 **확장 대상이 아니다** —
+  `OtelEgressDiscoveryE2E`/`SleuthEgressDiscoveryE2E`는 `EgressCollector.collect`까지만 검증하고,
+  `Stage1ExternalStubSynthesisE2E`는 `EXTERNAL_INVENTORY_URL={{wiremock}}` 리다이렉트 전제다(Cursor
+  리뷰 I4). 따라서 **신규 E2E 클래스**를 둔다: 외부 의존을 직접 URL(WireMock 치환 아님)로 두고
+  `BuilderCli.build`(trace mode otel/sleuth, `externalStubsDir=null`) 실행 → 발견된 egress가
+  graph `CapturedHttpCall`에 비어있지 않은 형상 body로 기록 → (선택) generator 실행해 생성 테스트
+  소스에 비어있지 않은 stub body 포함을 단언. otel=`order-service`(GET /inventory/stock),
+  sleuth=`legacy-tram/order-web`(POST /reservations, `-Dsut.egress.sleuth=true`·`order.web.src` 등
+  기존 조건). 자원 정리/누수 게이트 준수(고유 project/PID 한정 teardown, 잔존 0; egress 요구사항
+  REQ-011).
 
 ### 5.2 단위 (inner, TDD red→green)
-`EgressStubComposer`:
-- 매칭+형상 → SYNTHESIZED + 비어있지 않은 body + consumedFields(형상 필드).
-- unmatched → 빈-body CAPTURED + `unmatched-external-call` loud-fail.
-- 형상 없음 → 빈-body CAPTURED + `unwired-external-dep` loud-fail.
-- UnsupportedShapeException → 빈-body CAPTURED + `unsynthesizable-shape` loud-fail.
+`EgressStubComposer.compose`:
+- 매칭+형상 → `SYNTHESIZED` + 비어있지 않은 body + 빈 loudFail.
+- unmatched → `""` + CAPTURED + `unmatched-external-call` loudFail.
+- 형상 없음 → `""` + CAPTURED + `unwired-external-dep` loudFail.
+- `UnsupportedShapeException` → `""` + CAPTURED + `unsynthesizable-shape` loudFail.
 
 `captureHttpCalls` 배선:
-- loud-fail이 `externalLoudFails`에 수집됨.
+- callSites 비면 `EgressCallMapper` 경로(loud-fail 없음).
+- 매칭 성공 시 `consumedFields`가 redirect 경로와 동일하게 산출됨.
+- loud-fail이 `externalLoudFails`에 수집되며 2-pass 중복 append가 없음.
 - redirect-exchange와 egress의 dedup에서 redirect 우선(기존 규칙) 불변.
 
 ## 6. 영향 / 위험
 - `EgressCallMapper.toCapturedHttpCall`은 fallback로 잔존(삭제 안 함) — 빈-body 경로 재사용.
 - generator/testlib **무변경** — 표면 회귀 위험 낮음.
-- provenance가 일부 egress 호출에서 CAPTURED→SYNTHESIZED로 바뀐다. provenance 단언이 있는
-  기존 테스트가 있으면 갱신 필요(구현 시 회귀 확인).
+- provenance가 매칭+합성된 egress 호출에서 CAPTURED→SYNTHESIZED로 바뀐다. **이는 egress 요구사항
+  REQ-005의 현행 수용기준(egress 매핑은 항상 CAPTURED·빈 body)과 충돌**하므로 §7대로 요구사항을
+  갱신해야 한다(Cursor 리뷰 I6). provenance 단언이 있는 기존 테스트가 있으면 갱신(구현 시 회귀 확인).
+- `callSites`가 비어 있을 때는 기존 빈-body CAPTURED 경로를 유지하므로 none-mode/인덱스 부재 환경의
+  동작·로그는 불변(loud-fail 노이즈 없음).
 - 형상-시드 body가 빈 body를 대체하므로, 빈-body에 의존하던(없을 것으로 추정) 기존 동작은 변할 수
   있다 — 회귀 스위트로 확인.
 
 ## 7. 완료 정의
 - 5.2 단위 + 5.1 통합/E2E 전부 green(요구사항명세 추적 매트릭스 100%, Must+미연기 Should 기준).
-- 회귀 스위트 green + 자원 누수 0(REQ-011 게이트).
-- 영향 문서(`docs/03`, 본 spec, 요구사항명세) 갱신.
+- 회귀 스위트 green + 자원 누수 0(자원 정리 게이트).
+- **요구사항 갱신**(다음 단계 `requirements-spec`에서 수행):
+  - REQ-015를 deferred→in-scope로 활성화하고 본 설계의 수용기준·추적 매트릭스 행을 추가.
+  - egress 요구사항 REQ-005의 수용기준을 "성공 매칭 시 `responseProvenance=SYNTHESIZED`·형상 body,
+    그 외 CAPTURED·빈 body"로 정정(현행은 항상 CAPTURED).
+- **영향 문서 갱신**: `docs/03-graph-rag-builder.md`(egress가 "발견까지"→"형상-시드 stub 등록까지"),
+  `docs/superpowers/specs/2026-06-24-egress-span-capture-design.md` §2/§8(1순위 body 빈 값 서술이
+  구식이 됨), 본 spec, 요구사항명세.
