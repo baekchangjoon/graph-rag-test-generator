@@ -51,6 +51,7 @@
   - Given `EgressCall(GET, /inventory/stock, null, tid, t)`, When 매핑, Then `CapturedHttpCall.method="GET"`, `urlPath="/inventory/stock"`, **`responseStatus=200`**(기본), `responseBody=""`, `requestBody=null`, `query=빈 Map`, `baggagePropagated=false`, **`responseProvenance=CAPTURED`**.
   - Given `responseBody`가 빈 문자열/null, When 매핑 경로의 `consumedFields` 산출, Then 예외 없이 빈 리스트(공개 mapper/integration 경계에서 검증; `consumedFields` private이므로 직접 호출 아님).
   - **(중복 제거)** Given 한 요청(단일 trace)에서 redirect 캡처와 span 발견이 동일 `(method, urlPath)`를 산출, When 환류, Then `CapturedHttpCall`이 1건만 기록된다(redirect 우선; 요청 단위 dedup, 교차-trace 아님).
+  - **(REQ-015 보강)** Given `callSites`가 비어있지 않고 span-발견 호출이 `ExternalCallSite`(responseShape 보유)에 매칭, When `captureHttpCalls` enrichment 경로로 환류, Then `responseProvenance=SYNTHESIZED`·형상-시드 body로 기록된다(REQ-015, `2026-06-24-egress-status-agnostic-stub-requirements.md`). **단 `EgressCallMapper.toCapturedHttpCall` 단위 계약(항상 CAPTURED·빈 body)은 fallback로 유지**되며 `EgressCallMapperTest`는 불변.
 - 검증 레벨: unit + integration
 
 ### REQ-006 — ZipkinSpanReceiver 수신 인프라
@@ -117,9 +118,11 @@
 - 유형: Functional / 우선순위: Should(연기) / 상태: 🔵 deferred (분모 제외)
 - 설명: span의 path만으로 모호할 때 SUT config(`*.url`)로 target host 매핑.
 
-### REQ-015 — (deferred) status-무관 stub register 경로
-- 유형: Functional / 우선순위: Should(연기) / 상태: 🔵 deferred (분모 제외)
+### REQ-015 — status-무관 stub register 경로 (활성화됨)
+- 유형: Functional / 우선순위: Should / 상태: ✅ in-scope (별도 명세로 이관)
 - 설명: redirect 없이 발견된 호출을 stub으로 등록하는 status-무관 경로(현행 404-driven 합성과 별개).
+- 이관: 본 REQ는 별도 명세 `2026-06-24-egress-status-agnostic-stub-requirements.md`(REQ-S015-001~008)로
+  상세화·구현되었다. 추적은 그 문서의 매트릭스를 따른다.
 
 ### REQ-016 — (deferred) attach 모드 Zipkin 토큰 인증
 - 유형: Non-functional / 우선순위: Should(연기) / 상태: 🔵 deferred (분모 제외)
@@ -142,7 +145,7 @@
 | REQ-012 | (4순위) stub body 충실도 | — | — | 🔵 out-of-scope |
 | REQ-013 | (연기) 리포터 런타임 주입성 | — | — | 🔵 deferred |
 | REQ-014 | (연기) host 식별 매핑 | — | — | 🔵 deferred |
-| REQ-015 | (연기) status-무관 register | — | — | 🔵 deferred |
+| REQ-015 | status-무관 register (활성화) | 별도 명세 `egress-status-agnostic-stub` REQ-S015-001~008 | — | ✅ 이관 |
 | REQ-016 | (연기) attach Zipkin 토큰 인증 | — | — | 🔵 deferred |
 
 Coverage: 11/11 green (100%) — Must 11개: REQ-001~011 전부 🟢. Won't: 1(REQ-012), Deferred: 4(REQ-013/014/015/016) 🔵 분모 제외. (확인일: 2026-06-24)

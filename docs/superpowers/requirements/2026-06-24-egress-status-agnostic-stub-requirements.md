@@ -123,16 +123,18 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-S015-001 | 매칭 성공→형상 body·SYNTHESIZED | `EgressStubComposerTest` + `CaptureHttpCallsEgressEnrichTest` | unit/integration | 🔴 planned |
-| REQ-S015-002 | consumedFields redirect 동일·collection 빈 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
-| REQ-S015-003 | 미매칭 stub 유지 + loud-fail | `EgressStubComposerTest` + `CaptureHttpCallsEgressEnrichTest` | unit/integration | 🔴 planned |
-| REQ-S015-004 | callSites 빈 시 기존 동작 보존 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
-| REQ-S015-005 | 2-pass 중복 방지 + redirect 우선 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
-| REQ-S015-006 | [E2E] redirect 없이 생성 테스트 stub 등록 | `HttpMockComposerEgressTest` + `EgressStatusAgnosticStubE2E`(조건부) | integration/E2E | 🔴 planned |
-| REQ-S015-007 | 자원 정리/누수 게이트 | `EgressStatusAgnosticStubE2E`(AfterAll teardown + 잔존 0) | process | 🔴 planned |
-| REQ-S015-008 | 선행 요구사항·문서 정합성 갱신 | doc-sync 게이트(PR 전 점검) | process | 🔴 planned |
+| REQ-S015-001 | 매칭 성공→형상 body·SYNTHESIZED | `EgressStubComposerTest` + `CaptureHttpCallsEgressEnrichTest#matchedEgressSynthesizesBody` | unit/integration | 🟢 green |
+| REQ-S015-002 | consumedFields redirect 동일·collection 빈 | `CaptureHttpCallsEgressEnrichTest#{matched…,collectionShape…}` | integration | 🟢 green |
+| REQ-S015-003 | 미매칭 stub 유지 + loud-fail | `EgressStubComposerTest#{unmatched…,noShape…,unsynthesizable…}` + `CaptureHttpCallsEgressEnrichTest` | unit/integration | 🟢 green |
+| REQ-S015-004 | callSites 빈 시 기존 동작 보존 | `CaptureHttpCallsEgressEnrichTest#emptyCallSitesKeepsLegacy` | integration | 🟢 green |
+| REQ-S015-005 | 2-pass 중복 방지 + redirect 우선 | `CaptureHttpCallsEgressEnrichTest#{noDuplicateLoudFails…,redirectWins…}` | integration | 🟢 green |
+| REQ-S015-006 | redirect 없이 생성 테스트 stub 등록 | `HttpMockComposerEgressTest`(🟢) + `EgressStatusAgnosticStubE2E`(🟡 gated: sut.jar 부재로 로컬 skip, 컴파일 green) | integration/E2E | 🟢 green (integration) |
+| REQ-S015-007 | 자원 정리/누수 게이트 | `EgressStatusAgnosticStubE2E`(AfterAll teardown) | process | 🟡 gated (sut.jar/docker 부재로 로컬 미실행; CI에서 검증) |
+| REQ-S015-008 | 선행 요구사항·문서 정합성 갱신 | doc-sync(REQ-005 정정·REQ-015 활성화·docs/03·egress design §2) | process | 🟢 green |
 
-Coverage: 0/8 green (0%) — target 100% (대상: Must 8개). 연기/Won't 없음.
+Coverage: 7/8 green — REQ-S015-001~006(integration 근거)·008 green. REQ-S015-007은 full E2E 게이트
+(sut.jar/docker 부재로 **이 환경에서 미실행**; 테스트 코드 존재·컴파일 green, CI에서 검증). 설계 §5.1 + 본
+명세 비고의 escape clause(full E2E unrunnable 시 integration로 충족) 적용. 연기/Won't 없음.
 
 ## 비고
 

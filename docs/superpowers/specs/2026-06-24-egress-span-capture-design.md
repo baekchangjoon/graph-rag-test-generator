@@ -43,6 +43,12 @@ order-web→reservation 동기 호출).
 합성 경로를 대체하지 않는다. redirect 없이 발견된 호출을 stub으로 **등록**까지 하려면 status-무관
 register 경로가 필요하고, 이는 별도 요구사항(§8)으로 분리한다.
 
+> **갱신(REQ-015 구현됨):** status-무관 register 경로는
+> [docs/superpowers/specs/2026-06-24-egress-status-agnostic-stub-design.md]로 구현되었다. 이제
+> span-발견 호출은 `ExternalCallSite` 매칭 시 형상-시드 body로 `CapturedHttpCall`(SYNTHESIZED)에
+> 기록되어 생성 테스트 stub에 등록된다(빈 body가 더 이상 1차 산출물이 아니다). 실측 body 충실도만
+> 여전히 별도(4순위).
+
 ### Out of scope — 4순위(외부 stub 합성 "입력 품질")
 > **4순위 정의:** 발견된 외부 호출에 붙는 stub의 **응답 body 충실도**를, 현재의 happy-path
 > minimal JSON(형상 기반 최소 유효 body)에서 **실제로 캡처한 응답 body / 에러 계약(error
