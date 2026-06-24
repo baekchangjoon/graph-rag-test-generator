@@ -112,7 +112,13 @@ stub은 소비 코드가 기대하는 값이 아닌 placeholder를 반환한다.
   을 채운 happy body를 합성한다. 리터럴 출처가 하나라도 적용되면 provenance `CONTRACT`, 아니면
   기존 형상-시드 `SYNTHESIZED`. 형상 해소 불가는 빈-body + loud-fail(REQ-015 규칙 유지).
 - 호출부 `EndpointExplorationRunner.captureHttpCalls`(L2122)는 runner 필드 `stringLiteralsByDto`(L195
-  이미 존재)와 신규 주입 `errorContract`를 전달한다.
+  이미 존재)와 신규 runner 필드 `errorContract`를 전달한다.
+- **`errorContract` 주입 경로(배선)**: 현재 `BuilderCli`(L927 부근)는 `config.classifierConfig()
+  .toClassifier()`로 `ClassifierConfig`를 `ResponseClassifier`로 변환해 runner에 넘기므로, 원시
+  디스크립터(`semanticStatusField`/`errorDetailField`/`errorDetailContains`)가 runner에 닿지 않는다.
+  해소: `ErrorContractDescriptor`(이 세 필드의 불변 값 객체)를 `ClassifierConfig`에서 파생해
+  `EndpointExplorationRunner` canonical 생성자에 **신규 파라미터**로 추가하고, `BuilderCli`가
+  `toClassifier()`와 함께 같은 `ClassifierConfig`에서 만들어 전달한다(null 허용 = envelope 미적용).
 - 순수 함수성 유지(상태·로깅 없음).
 
 ### 4.2 `CapturedHttpCall.Provenance`에 `CONTRACT` 추가
@@ -128,10 +134,16 @@ stub은 소비 코드가 기대하는 값이 아닌 placeholder를 반환한다.
 - 목표: redirect-capable 호출에서 값-충실 변형(happy + 에러분기 각 1)을 **단언하는 생성 테스트**로
   환류한다. 기존 cumulative 변형 path(생성 제외, L1984)는 **건드리지 않고 별도로 추가**한다.
 - 메커니즘: `exploreResponseVariants`/`VariantInvoker`를 확장해, 변형 invoke 시 커버리지 delta뿐
-  아니라 **SUT의 HTTP 응답 status(필요 시 body)**도 캡처한다. 새 arm을 연 변형(`KeptVariant`)마다:
-  - 그 변형 stub body(`CONTRACT`)를 가진 `CapturedHttpCall`과,
-  - 그 변형 입력으로 SUT를 호출한 **단언 가능한 `ExploredPath`**(관측 status를 기대값으로,
-    `"response-variant"` 생성-제외 마커 없이)를 환류한다.
+  아니라 **SUT의 HTTP 응답 status**도 캡처한다. 구체:
+  - `VariantInvoker.invoke()` 반환형을 `ExecutionDataStore` → 신규 record `VariantOutcome(
+    ExecutionDataStore coverage, int sutStatus)`로 변경. 실 구현 `sendVariantAndDumpDelta`(현재
+    `http.send(...)` 응답을 버림, L2083)가 `response.statusCode()`를 캡처해 함께 반환.
+  - blast-radius(동시 갱신 대상 테스트): `EnumVariantReExploreTest`, `EnumVariantNoneModeTest`,
+    `StringLiteralVariantReExploreTest`, `StringLiteralVariantNoneModeTest`(스텁 invoker가
+    `VariantOutcome` 반환하도록).
+  - 새 arm을 연 변형(`KeptVariant`)마다 그 변형 stub body(`CONTRACT`)를 가진 `CapturedHttpCall`과,
+    **단언 가능한 `ExploredPath`**(현재 cumulative path의 `expectedStatus=0`(L1985)과 달리 관측
+    `sutStatus`를 `expectedStatus`로, `"response-variant"` 생성-제외 마커 없이)를 환류한다.
 - 결과: 생성기는 happy(예 201) + 값-변형(예 region=EMBARGOED→422, mode=BACKORDER→409)을 **각각
   별개 생성 테스트**로 방출하며, 각 테스트는 해당 외부 stub body + 관측된 SUT status를 단언한다.
 - 변형 수는 기존 `RESPONSE_VARIANT_BUDGET`(32) 및 `ResponseFieldVariantGenerator` 결정적 절단을
@@ -207,7 +219,8 @@ graph 환류 → HttpMockComposer.compose
   구동·관측해, 생성 테스트가 **(i)** happy(예 mode=STANDARD·region≠EMBARGOED → 201), **(ii)**
   `region="EMBARGOED"` → 422, **(iii)** `mode="BACKORDER"` → 409 를 **각각 별개 테스트로 단언**하고,
   각 외부 stub이 placeholder가 아닌 그 값(`"EMBARGOED"`/`"BACKORDER"`) body를 반환함을 검증한다.
-  graph JSON에서 해당 `httpCalls[].responseProvenance == CONTRACT` 및 body 값도 단언.
+  (위 셋은 최소 요구이며, `mode="EXPRESS_ONLY"` 등 새 arm을 여는 다른 kept 변형도 budget 내에서
+  함께 방출될 수 있다.) graph JSON에서 해당 `httpCalls[].responseProvenance == CONTRACT` 및 body 값도 단언.
 - **span-only(body 충실도 층)**: 외부 호출이 recorder를 거치지 않는 발견 경로에서, 생성 테스트 stub
   body가 CONTRACT 값-충실(예 String 리터럴 반영)이고 provenance=CONTRACT임을 검증. 외부-응답 분기는
   단언하지 않으며, 분기 미구동이 loud(`egress-branch-undriven`)로 노출됨을 검증.
