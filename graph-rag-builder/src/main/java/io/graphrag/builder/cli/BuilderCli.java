@@ -769,7 +769,8 @@ public final class BuilderCli {
                             responseDtoFieldSets, literals,
                             authProvider, config.authConfig(), enumConstants, enumColumns,
                             config.requestHeaders(), sqlCapture, receiverToClose,
-                            config.classifierConfig().toClassifier(), callSites);
+                            config.classifierConfig().toClassifier(), callSites,
+                            io.graphrag.builder.capture.egress.EgressCollector.forMode(env));
                     // REQ-012: 고유 핸들러당 Spoon 1회(computeIfAbsent 캐시) — cross-class 귀속.
                     String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
                     Set<Map.Entry<String, String>> reachable = reachableCache.computeIfAbsent(
