@@ -83,7 +83,7 @@ class EgressStatusAgnosticStubE2E {
         Path sutJar = Path.of(System.getProperty("sut.jar"));
         Path sutResources = sutSrc.resolveSibling("resources");
         Path buildOut = Files.createTempDirectory(out, "build");
-        Path noExternalStubs = Files.createTempDirectory("egress-no-stubs");   // .json 없음 → 합성/redirect 미사용
+        Path noExternalStubs = Files.createTempDirectory(out, "egress-no-stubs");   // @TempDir 하위 → 자동 정리; .json 없음 → 합성/redirect 미사용
 
         AuthConfig authConfig = new AuthConfig(
                 "/api/auth/login", "admin", "password",
