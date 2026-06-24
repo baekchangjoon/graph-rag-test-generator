@@ -19,17 +19,8 @@ public final class EgressNormalizer {
         if (p != null) return stripQuery(p);
         String full = firstNonNull(a.get("url.full"), a.get("http.url"));
         if (full == null) return null;
-        try {
-            String stripped = stripQuery(full);
-            // Remove scheme prefix (e.g., "http://") if present
-            int schemeEnd = stripped.indexOf("://");
-            if (schemeEnd != -1) {
-                stripped = stripped.substring(schemeEnd + 3);
-            }
-            // Treat remaining as path, ensuring it starts with /
-            if (stripped.isEmpty()) return null;
-            return stripped.startsWith("/") ? stripped : "/" + stripped;
-        } catch (RuntimeException e) { return stripQuery(full); }
+        try { return stripQuery(URI.create(full).getPath()); }
+        catch (RuntimeException e) { return stripQuery(full); }
     }
     private static String stripQuery(String s){ if (s==null) return null; int q=s.indexOf('?'); return q<0?s:s.substring(0,q); }
     private static String firstNonNull(String... v){ for (String x:v) if (x!=null) return x; return null; }
