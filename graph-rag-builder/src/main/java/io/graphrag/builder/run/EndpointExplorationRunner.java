@@ -1984,6 +1984,7 @@ public class EndpointExplorationRunner {
     }
 
     private List<String> consumedFields(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) return List.of();
         Set<String> responseFields = new LinkedHashSet<>();
         try {
             Json.mapper().readTree(responseBody).fieldNames()
