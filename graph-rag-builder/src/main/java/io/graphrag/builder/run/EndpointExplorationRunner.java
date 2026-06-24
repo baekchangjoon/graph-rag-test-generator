@@ -269,6 +269,30 @@ public class EndpointExplorationRunner {
                 classifier, callSites, null, Map.of());
     }
 
+    /** callSites + egressCollector를 받는 호환 생성자 — stringLiteralsByDto 빈 맵으로 canonical 체인(egress 배선 테스트용). */
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier,
+                                     List<io.graphrag.builder.index.ExternalCallSite> callSites,
+                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                classifier, callSites, egressCollector, Map.of());
+    }
+
     /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto 포함. egress 수집 + 단계2-A string-literal fuzzing 배선. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
