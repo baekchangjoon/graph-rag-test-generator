@@ -208,6 +208,29 @@ class ReproVerificationTest {
         assertThat(result.dropped()).isEmpty();
     }
 
+    // ─── egress-assertion 마커 path: GET + non-2xx + verifier가 2xx 반환 → KEEP (변형 stub 의존) ─
+    @Test
+    void egressAssertionPath_getWithNon2xx_isKeptEvenWhenVerifierReturns2xx() {
+        // GET 엔드포인트에 non-2xx(404) egress-assertion 경로: verifier는 2xx(200) 반환 → 기존 로직이면 DROP
+        ExploredPath egressPath = new ExploredPath("p-egress-404", GET_ENDPOINT.id(),
+                input(1), 404, null, List.of(), List.of(), List.of(), "egress-assertion",
+                List.of(), List.of(), List.of());
+        List<ExploredPath> inputPaths = List.of(egressPath);
+        List<RequiredSeed> seeds = List.of();
+
+        // clean-replay에서는 변형 stub 없이 SUT가 2xx 반환 → 기존 필터라면 DROP 판정
+        EndpointExplorationRunner.ReproVerifier verifier = (endpoint, p, requiredSeeds) -> 200;
+
+        EndpointExplorationRunner.FilterResult result =
+                EndpointExplorationRunner.verifyAndFilterNonTwoxx(
+                        GET_ENDPOINT, inputPaths, seeds, verifier);
+
+        // egress-assertion path는 변형 stub 의존이므로 verifier 호출 없이 항상 KEEP
+        assertThat(result.kept()).extracting(ExploredPath::id)
+                .containsExactly("p-egress-404");
+        assertThat(result.dropped()).isEmpty();
+    }
+
     // ─── verifier 예외 발생 시: conservative KEEP + drops에 기록 안 함 ─────────────────────────
     @Test
     void verifierException_conservativelyKeepsPath() {

@@ -2945,8 +2945,9 @@ public class EndpointExplorationRunner {
      *       여기에는 error-envelope path(와이어 2xx, outcome FAILURE)도 포함된다 — 와이어 status가
      *       2xx이므로 이 분기에서 KEEP된다. buildPaths가 discoveredBy="error-envelope"를 부여해
      *       Task 11 생성기가 올바른 검증 전략을 선택할 수 있게 한다.
-     *   <li>negative-auth / negative-validation / state-guard 마커 path → 검증 없이 KEEP
-     *       (discoveredBy 필드로 식별; 이 경로는 DB 상태와 독립적인 인증/검증 거부).
+     *   <li>negative-auth / negative-validation / state-guard / egress-assertion 마커 path → 검증 없이 KEEP
+     *       (discoveredBy 필드로 식별; 이 경로는 DB 상태와 독립적인 인증/검증 거부 또는 변형 stub 의존
+     *       egress 단언 경로로, clean-replay 없이는 재현할 수 없다).
      *   <li>GET(read) non-2xx → verifier.replay() 호출:
      *       replay 상태 == 캡처 상태 → KEEP; 다르면 → DROP + DroppedPath 기록.
      *   <li>non-GET non-2xx (mutating) → conservative KEEP: 재실행 자체가 DB를 변이시켜
@@ -2972,10 +2973,12 @@ public class EndpointExplorationRunner {
                 kept.add(path);
                 continue;
             }
-            // 마커 path(negative-auth, negative-validation, state-guard) → 검증 범위 외, 항상 KEEP
+            // 마커 path(negative-auth, negative-validation, state-guard, egress-assertion) → 검증 범위 외, 항상 KEEP
+            // egress-assertion path는 변형 stub이 있어야만 비-2xx를 재현할 수 있어, clean-replay로 재현 불가.
             String discoveredBy = path.discoveredBy();
             if (discoveredBy != null
-                    && (discoveredBy.startsWith("negative-") || discoveredBy.startsWith("state-guard"))) {
+                    && (discoveredBy.startsWith("negative-") || discoveredBy.startsWith("state-guard")
+                            || discoveredBy.equals("egress-assertion"))) {
                 kept.add(path);
                 continue;
             }
