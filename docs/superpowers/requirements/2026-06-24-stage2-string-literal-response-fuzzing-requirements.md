@@ -117,13 +117,13 @@
 |--------|----------|-------------|-------|--------|
 | REQ-001 | String 변형 새 arm 도달 | `Stage2AStringLiteralFuzzingE2E#stringVariantReachesEmbargoedArm` | E2E | 🟢 pass |
 | REQ-002 | 결정성 | `Stage2AStringLiteralFuzzingE2E#deterministicAcrossRuns` | E2E | 🟢 pass |
-| REQ-003 | 비동치/미해석 loud skip | `ResponseStringLiteralExtractorTest#loudSkips` | unit | 🟢 pass |
+| REQ-003 | 비동치/미해석 loud skip | `ResponseStringLiteralExtractorTest#nonequalityLoudLogFiredForStartsWith` | unit | 🟢 pass |
 | REQ-004 | 변형 provenance | `Stage2AStringLiteralFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 pass |
 | REQ-005 | 단계1·2 회귀 (enum byte-동일) | `Stage1ExternalStubSynthesisE2E` + `Stage2EnumResponseFuzzingE2E` + `ResponseFieldVariantGeneratorTest#enumPathByteIdenticalToStage2` | E2E+unit | 🟢 pass |
 | REQ-006 | budget 절단 loud | `ResponseFieldVariantGeneratorTest#budgetTruncationLoud` | unit | 🟢 pass |
 | REQ-007 | ResponseStringLiteralExtractor | `ResponseStringLiteralExtractorTest` | unit | 🟢 pass |
 | REQ-008 | 생성기 통합 | `ResponseFieldVariantGeneratorTest` | unit | 🟢 pass |
-| REQ-009 | 변형 루프 통합·후보맵·마커 rename | `StringLiteralVariantReExploreTest` + `GeneratorVariantExclusionTest`(갱신) | integration | 🟢 pass |
+| REQ-009 | 변형 루프 통합·후보맵·마커 rename | `StringLiteralVariantReExploreTest` + `GeneratorVariantExclusionTest` | integration | 🟢 pass |
 | REQ-010 | 인덱싱 배선·캐시 호환 | `StaticIndexSerdeTest`(갱신) + `IndexCacheTest`(갱신) + `IndexCacheWiringTest` | integration | 🟢 pass |
 | REQ-011 | SUT fixture + stub/단언 갱신 | `OrderExpressApiTest`·`Stage1ExternalStubSynthesisE2E`·`Stage2EnumResponseFuzzingE2E`·`BuilderIntegrationTest`(갱신) | E2E+integration | 🟢 pass |
 | REQ-012 | none 모드 String 순차 교체 | `StringLiteralVariantNoneModeTest` | integration | 🟢 pass |
