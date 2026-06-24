@@ -20,11 +20,12 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
 - 설명: span-발견 `EgressCall`이 callSite에 매칭되고 `responseShape`가 있으면, 형상에서 합성한
   body를 가진 `CapturedHttpCall`로 기록한다.
 - 수용기준:
-  - Given `callSites`가 비어있지 않고 `(method, path)`가 `responseShape` 보유 `ExternalCallSite`에
-    매칭, When `captureHttpCalls`가 그 `EgressCall`을 처리, Then 결과 `CapturedHttpCall.responseBody`
+  - Given `callSites`가 비어있지 않고 `(method, path)`가 `CallSiteMatcher.match`(method 일치 +
+    `urlPath` endsWith `pathLiteral`, 설계 §4.1)로 `responseShape().isPresent()`인 `ExternalCallSite`
+    에 매칭, When `captureHttpCalls`가 그 `EgressCall`을 처리, Then 결과 `CapturedHttpCall.responseBody`
     가 비어있지 않은 형상 JSON이고 `responseProvenance == SYNTHESIZED`이며 `responseStatus`는
-    `statusOrNull`(없으면 200)이다.
-- 검증 레벨: integration (graph-rag-builder, in-process)
+    `e.statusOrNull()`(없으면 200)이다.
+- 검증 레벨: unit + integration (graph-rag-builder, in-process)
 
 ### REQ-S015-002 — `consumedFields`를 redirect 경로와 동일 규칙으로 산출
 - 유형: Functional / 우선순위: Must
@@ -32,7 +33,8 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
   (응답 최상위 키 ∩ `responseDtoFieldSets`)로 산출한다.
 - 수용기준:
   - Given object-root 형상 body와 겹치는 `responseDtoFieldSets`, When 매칭 성공 기록, Then
-    `consumedFields`가 redirect 경로 산출값과 동일(응답 키 ∩ DTO 필드).
+    `consumedFields`가 redirect 경로의 private `consumedFields(responseBody)`와 동일한 결과
+    (응답 최상위 키와 `responseDtoFieldSets` **중 최대 overlap 집합**의 교집합, runner line 2125~)이다.
   - Given collection(array-root) 형상 body, When 기록, Then `consumedFields`는 빈 리스트이고
     stub body는 array 전체(투영 비활성)로 비어있지 않다.
 - 검증 레벨: integration
@@ -41,32 +43,41 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
 - 유형: Functional / 우선순위: Must
 - 설명: callSite 매칭 실패·형상 부재·형상 합성 실패 시 호출을 드롭하지 않고 빈-body CAPTURED stub을
   유지하며 사유별 loud-fail을 기록한다.
+- 설명(보강): loud-fail은 redirect 경로와 동일 컨테이너 `EndpointExplorationRunner.externalLoudFails`
+  에 수집된다(빌드 리포트 loud-fail 연계, `ExternalStubLoudFailTest` 패턴과 동형).
 - 수용기준:
   - Given 매칭되는 callSite 없음, When 처리, Then 빈-body CAPTURED `CapturedHttpCall` 유지 +
-    `unmatched-external-call` loud-fail 기록.
-  - Given 매칭되나 `responseShape` 없음, When 처리, Then 빈-body CAPTURED 유지 +
-    `unwired-external-dep` loud-fail.
+    `externalLoudFails`에 reason `unmatched-external-call` 항목 1건.
+  - Given 매칭되나 `responseShape().isEmpty()`, When 처리, Then 빈-body CAPTURED 유지 +
+    `externalLoudFails`에 reason `unwired-external-dep` 항목 1건.
   - Given 형상 합성이 `UnsupportedShapeException`, When 처리, Then 빈-body CAPTURED 유지 +
-    `unsynthesizable-shape` loud-fail.
-- 검증 레벨: unit (EgressStubComposer) + integration
+    `externalLoudFails`에 reason `unsynthesizable-shape` 항목 1건.
+- 검증 레벨: unit (EgressStubComposer) + integration (externalLoudFails 수집)
 
 ### REQ-S015-004 — 정적 인덱스 부재(callSites 빈) 시 기존 동작 보존
 - 유형: Functional / 우선순위: Must
-- 설명: `callSites`가 비어 있으면(none-mode/인덱스 없음) 기존 `EgressCallMapper.toCapturedHttpCall`
-  빈-body CAPTURED 경로를 그대로 쓰고 loud-fail을 발생시키지 않는다(경고 노이즈 방지).
+- 설명: 주입된 `callSites`(StaticIndex의 외부 call-site 인덱싱 결과)가 빈 리스트이면 기존
+  `EgressCallMapper.toCapturedHttpCall` 빈-body CAPTURED 경로를 그대로 쓰고 loud-fail을 발생시키지
+  않는다(인덱스 없는 환경의 경고 노이즈 방지).
+  - ※ trace-mode `none`은 이 조건과 **무관**하다 — none 모드도 callSites가 채워질 수 있으며
+    (`ExternalStubNoneModeTest`가 404-driven 합성·SYNTHESIZED 기록을 검증), 조건은 오직
+    "주입 callSites가 빈 리스트인지"다.
 - 수용기준:
-  - Given `callSites`가 빈 리스트, When egress 호출 처리, Then 결과는 기존과 동일한 빈-body CAPTURED
-    이며 loud-fail이 추가되지 않는다.
+  - Given 주입된 `callSites`가 빈 리스트, When egress 호출 처리, Then 결과는 기존과 동일한 빈-body
+    CAPTURED이며 `externalLoudFails`에 항목이 추가되지 않는다.
 - 검증 레벨: integration
 
 ### REQ-S015-005 — loud-fail 2-pass 중복 누적 방지 + dedup/redirect 우선 불변
 - 유형: Functional / 우선순위: Must
-- 설명: `captureHttpCalls`→`buildPaths`가 SQL 2-pass 보정으로 복수 실행돼도 동일 loud-fail이
-  중복 누적되지 않으며, redirect-exchange와 egress의 `(method, urlPath)` dedup에서 redirect 우선
-  규칙이 유지된다.
+- 설명: `buildPaths`가 SQL 2-pass 보정으로 복수 실행될 때 그 내부의 `captureHttpCalls`가 반복
+  호출돼도 동일 loud-fail이 중복 누적되지 않으며, redirect-exchange와 egress의 `(method, urlPath)`
+  dedup에서 redirect 우선 규칙이 유지된다.
+  - ※ 본 dedup 가드는 **신규 egress loud-fail 수집**(captureHttpCalls)에 한정한다 — 기존 404
+    경로(`synthesizeStubsForUnmatched`의 `externalLoudFails.addAll(...)`)는 변경하지 않는다(그
+    루프는 newlyRegistered==0에서 수렴해 동일 loud-fail 재방출이 드묾).
 - 수용기준:
-  - Given 동일 egress 호출이 2-pass로 두 번 처리, When loud-fail 수집, Then `externalLoudFails`에
-    동일 항목이 중복 추가되지 않는다.
+  - Given `buildPaths`가 2-pass로 두 번 실행돼 동일 egress 호출이 두 번 처리, When loud-fail 수집,
+    Then `externalLoudFails`에 동일 항목이 중복 추가되지 않는다.
   - Given 같은 `(method, urlPath)`가 redirect-exchange와 egress 양쪽에 존재, When mergeDedup, Then
     redirect(existing) 항목이 유지되고 egress가 덮지 않는다.
 - 검증 레벨: integration
@@ -100,8 +111,10 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
 - 설명: 본 변경으로 구식이 되는 선행 요구사항·문서를 갱신해 spec↔code drift를 막는다.
 - 수용기준:
   - Given REQ-005(egress 매핑은 항상 CAPTURED·빈 body)와 본 변경 충돌, When 갱신, Then egress
-    요구사항 REQ-005 수용기준이 "성공 매칭 시 SYNTHESIZED·형상 body, 그 외 CAPTURED·빈 body"로
-    정정되고, 그 문서의 REQ-015가 deferred→in-scope(본 명세 참조)로 활성화.
+    요구사항 REQ-005 수용기준이 "**`captureHttpCalls` enrichment 경로**에서 성공 매칭 시
+    SYNTHESIZED·형상 body, 그 외 CAPTURED·빈 body"로 정정된다. **단 `EgressCallMapper.toCapturedHttpCall`
+    의 단위 계약(항상 CAPTURED·빈 body, fallback 용도)은 그대로 유지**되며 `EgressCallMapperTest`는
+    변경하지 않는다. 그 문서의 REQ-015는 deferred→in-scope(본 명세 참조)로 활성화.
   - Given `docs/03-graph-rag-builder.md` 및 `2026-06-24-egress-span-capture-design.md` §2/§8의
     "발견까지/빈 body" 서술, When 갱신, Then 형상-시드 stub 등록까지로 최신화.
 - 검증 레벨: process (문서 동기화 게이트)
@@ -112,7 +125,7 @@ status-무관(404 비의존) 경로를 추가한다. body 충실도(실측 body�
 |--------|----------|-------------|-------|--------|
 | REQ-S015-001 | 매칭 성공→형상 body·SYNTHESIZED | `EgressStubComposerTest` + `CaptureHttpCallsEgressEnrichTest` | unit/integration | 🔴 planned |
 | REQ-S015-002 | consumedFields redirect 동일·collection 빈 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
-| REQ-S015-003 | 미매칭 stub 유지 + loud-fail | `EgressStubComposerTest` | unit | 🔴 planned |
+| REQ-S015-003 | 미매칭 stub 유지 + loud-fail | `EgressStubComposerTest` + `CaptureHttpCallsEgressEnrichTest` | unit/integration | 🔴 planned |
 | REQ-S015-004 | callSites 빈 시 기존 동작 보존 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
 | REQ-S015-005 | 2-pass 중복 방지 + redirect 우선 | `CaptureHttpCallsEgressEnrichTest` | integration | 🔴 planned |
 | REQ-S015-006 | [E2E] redirect 없이 생성 테스트 stub 등록 | `HttpMockComposerEgressTest` + `EgressStatusAgnosticStubE2E`(조건부) | integration/E2E | 🔴 planned |
