@@ -83,8 +83,9 @@ EgressCall(method, path, statusOrNull, traceId, startNanos)
   `?` 앞부분 ↔ Zipkin tag `http.path`(이미 path-only). 근거: WireMock `urlPathEqualTo`가 path-only
   매칭이고, 기존 `HttpCaptureServer.drainNewExchanges`도 `getUrl().split("?")[0]`로 strip(L109).
 - **status:** OTEL `http.response.status_code`(신)/`http.status_code`(구) ↔ Zipkin tag
-  `http.status_code`. **Brave 기본은 성공 status를 생략** → 태그가 있으면 그 정수, 없으면
-  **기본 200**(success)으로 둔다(§4.7의 `CapturedHttpCall.status`가 primitive int이므로 구체값 필요).
+  `http.status_code`. **Brave 기본은 성공 status를 생략** → 태그가 있으면 그 정수, **없으면
+  `null`**. (기본 200 환원은 `EgressCall` 계층이 아니라 매핑 단계(§4.7)에서 — `EgressCall`은 span의
+  충실한 표현으로 두고, primitive int인 `CapturedHttpCall.responseStatus`에 구체값을 매핑 시 부여.)
 
 ### 4.2 otel 모드
 `OtlpTraceReceiver`는 이미 한 trace의 **모든** span을 보관한다. egress 수집기는
@@ -113,6 +114,15 @@ EgressCall(method, path, statusOrNull, traceId, startNanos)
   | `extra_hosts` (compose) | — | `host.docker.internal:host-gateway` |
   | (Boot3 micrometer-brave) | `management.zipkin.tracing.endpoint` | 동일, host 치환 |
 
+  - **Boot3 주의:** `management.zipkin.tracing.endpoint`는 **full path `/api/v2/spans`까지** 줘야
+    export됨(Boot2 `SPRING_ZIPKIN_BASEURL`은 base만 받고 클라이언트가 path를 붙임).
+  - **상수 재사용:** `OtlpTraceReceiver`의 `MAX_TRACES`/`MAX_SPANS_PER_TRACE`/`HEX_32`는 현재
+    `private`이라 직접 재사용 불가 → 공유 상수(예: `TraceReceiverLimits`)로 추출하거나 package-private로
+    공개한다(구현 task).
+  - **attach 토큰(미해결):** attach wildcard 바인드 시 per-run secret(`x-graphrag-token`)은 Zipkin
+    sender의 custom-header 지원에 의존(Sleuth `spring.zipkin.custom-headers` 등). 미지원 sender면 401.
+    → **초기 범위는 analysis-mode loopback(무인증)**, attach 토큰 인증은 별도 REQ(요구사항명세 REQ-016).
+
 ### 4.4 탐색 루프 연동
 요청 1건 scope에서: `requestHeaders()`로 trace-id(+B3 Sampled=1) 주입 → 요청 발사 →
 SQL `drain()` 직후 **그 요청의 egress 수집** → §4.7로 `CapturedHttpCall` 환류.
@@ -129,8 +139,9 @@ SQL `drain()` 직후 **그 요청의 egress 수집** → §4.7로 `CapturedHttpC
   상한으로 둔다. 정확값은 구현 시 PoC 환경에서 실측해 확정(FINDINGS 보강).
 
 ### 4.7 EgressCall → CapturedHttpCall 매핑 (통합 seam)
-`captureHttpCalls`가 만드는 `CapturedHttpCall(id, pathId, method, urlPath, query, requestBody,
-status, responseBody, consumedFields, baggagePresent, provenance)`로 환원한다.
+`captureHttpCalls`가 만드는 실제 record `CapturedHttpCall(id, pathId, method, urlPath, query,
+requestBody, **responseStatus**(int), responseBody, consumedFields, **baggagePropagated**(boolean),
+**responseProvenance**(Provenance{CAPTURED,SYNTHESIZED}))`로 환원한다.
 
 | CapturedHttpCall 필드 | EgressCall 출처 / 기본값 |
 |---|---|
@@ -138,11 +149,14 @@ status, responseBody, consumedFields, baggagePresent, provenance)`로 환원한�
 | `urlPath` | `EgressCall.path` (query-stripped) |
 | `query` | 빈 `Map`(span은 분해된 query를 주지 않음) |
 | `requestBody` | `null`(span에 없음 — 기존 blank→null 규약과 일치) |
-| `status` | `EgressCall.statusOrNull` ?? **200** |
+| `responseStatus` | `EgressCall.statusOrNull` ?? **200** |
 | `responseBody` | **빈 문자열 `""`**(`null` 아님 — null-safety) |
-| `consumedFields` | `consumedFields("")` → **빈 리스트**(아래 null-safety) |
-| `baggagePresent` | `false`(span 경로엔 baggage 매칭 없음) |
-| `provenance` | `CAPTURED`(실 외부 호출; 합성 stub site 매칭 시 SYNTHESIZED) |
+| `consumedFields` | blank/null body → **빈 리스트**(아래 null-safety) |
+| `baggagePropagated` | `false`(span 경로엔 baggage 매칭 없음) |
+| `responseProvenance` | `CAPTURED`(실 외부 호출; 합성 stub site 매칭 시 SYNTHESIZED) |
+
+**중복 제거:** 한 요청에서 redirect 캡처(`drainNewExchanges`)와 span 발견이 동일 `(method, urlPath,
+traceId)`를 산출하면 `CapturedHttpCall`을 1건만 기록한다(span↔redirect 중복 방지).
 
 **null-safety(검증된 위험):** `consumedFields(responseBody)`는 `Json.mapper().readTree(responseBody)
 .fieldNames()`를 호출하므로(runner L1920) `null`/`""`에서 깨질 수 있다. egress 경로는 `responseBody=""`
@@ -232,3 +246,7 @@ E2E-1/E2E-2는 docker compose·SUT 프로세스를 띄우므로 다음을 accept
   path query-strip·status 기본 200(§4.1), 404-driven 합성과의 경계·status무관 register REQ 분리
   (§2/§8), positive http 판별(§4.1), 픽스처 주(§4.6), E2E assert 대상 명시(§7). 거부: 없음(전
   지적 채택, 일부는 altitude상 "상수 실측은 구현 시"로 위임).
+- 2026-06-24 요구사항명세 3벤더 리뷰의 코드-검증 지적을 design에 역전파: `CapturedHttpCall` 실제
+  필드명(`responseStatus`/`baggagePropagated`/`responseProvenance`, §4.7), `EgressCall.statusOrNull`=
+  null-when-absent로 일관화(§4.1, 200은 매핑 단계), 상수 private→추출/공개(§4.3), Boot3 full-path·
+  attach 토큰 custom-header 미해결→REQ-016 분리(§4.3), span↔redirect 중복 제거 규칙 명시(§4.7).
