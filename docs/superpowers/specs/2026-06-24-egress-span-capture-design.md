@@ -125,13 +125,22 @@ EgressCall(method, path, statusOrNull, traceId, startNanos)
 
 ### 4.4 탐색 루프 연동
 요청 1건 scope에서: `requestHeaders()`로 trace-id(+B3 Sampled=1) 주입 → 요청 발사 →
-SQL `drain()` 직후 **그 요청의 egress 수집** → §4.7로 `CapturedHttpCall` 환류.
-- **traceId 취득:** `TraceKey.forMode(traceMode).readTraceId(scope.requestHeaders())`로 통일
-  (otel=traceparent, sleuth=X-B3-TraceId; 기존 `OtelTraceKey`/`SleuthTraceKey` 재사용). 기존 runner의
-  `traceparentTraceId(...)` ad-hoc 파싱 대신 이 API로.
-- **수집 지점:** `EndpointExplorationRunner.invoke()`의 drain 직후(현재 `httpCapture.drainNewExchanges()`를
-  `InvocationOutcome.httpExchanges`에 넣는 지점과 병렬). redirect 캡처와 span 발견은 공존 가능하되
-  중복 제거(method+path+traceId 기준).
+**egress 수집(SQL `drain()` 이전)** → §4.7로 `CapturedHttpCall` 환류.
+- **수집 순서(중요 — otel):** `OtelSpanCapture.OtelScope.drain()`은 finally에서
+  `receiver.remove(traceId)`로 그 trace 버퍼를 비운다. 따라서 egress는 **`sqlScope.drain()` 호출
+  이전**(span이 아직 receiver에 있을 때)에 수집해야 한다. sleuth는 SQL=로그파싱이라 ZipkinSpanReceiver
+  버퍼가 SQL drain에 영향받지 않으나, 일관성을 위해 동일 순서로 둔다(수집 후 `zipkinReceiver.remove(traceId)`).
+- **traceId 취득:** `httpCapture.traceKey().readTraceId(scope.requestHeaders())`로 통일(모드 인지:
+  `OtelTraceKey`=traceparent, `SleuthTraceKey`=X-B3-TraceId). 기존 `traceparentTraceId(...)`(otel 전용)
+  대신 이 API로 — sleuth 귀속이 깨지지 않도록.
+- **수집 지점:** `doSendWithScope`의 `http.send()` 직후, `sqlScope.drain()` 이전. 수집한 egress는
+  `InvocationOutcome`→`PathCandidate`로 전달되어 `captureHttpCalls(candidate)`가 환류한다.
+- **중복 제거:** redirect 캡처와 span 발견은 공존 가능. 한 요청(동일 traceId 범위)의 redirect
+  exchange와 egress를 `(method, urlPath)`로 dedup(redirect 우선). `CapturedHttpCall`에는 traceId
+  필드가 없으므로 dedup은 요청 단위로만 적용한다(교차-trace dedup 아님).
+- **analysis 모드 sleuth(중요):** 현재 analysis 경로는 traceMode와 무관하게 OTEL javaagent를 SUT에
+  부착한다. sleuth 모드에서는 attach 경로와 동일하게 **OTEL javaagent를 제외**해야 한다(Brave/OTEL 이중
+  계측·`brave.Tracing` 빈 충돌 회피).
 - **await/quiescence(모드별 상이 — SQL 상수 그대로 못 씀):** **Brave AsyncReporter는 기본 flush
   주기가 ~1s**로 OTEL BSP(100ms)·OtelSpanCapture QUIESCENCE(150ms)와 무관하다. SQL drain 상수를
   그대로 쓰면 늦은 span을 침묵 누락한다. → egress용 별도 상수: otel은 OTLP 도착 기준(기존
@@ -155,8 +164,10 @@ requestBody, **responseStatus**(int), responseBody, consumedFields, **baggagePro
 | `baggagePropagated` | `false`(span 경로엔 baggage 매칭 없음) |
 | `responseProvenance` | `CAPTURED`(실 외부 호출; 합성 stub site 매칭 시 SYNTHESIZED) |
 
-**중복 제거:** 한 요청에서 redirect 캡처(`drainNewExchanges`)와 span 발견이 동일 `(method, urlPath,
-traceId)`를 산출하면 `CapturedHttpCall`을 1건만 기록한다(span↔redirect 중복 방지).
+**중복 제거:** 한 요청(동일 traceId 범위)에서 redirect 캡처(`drainNewExchanges`)와 span 발견이 동일
+`(method, urlPath)`를 산출하면 `CapturedHttpCall`을 1건만 기록한다(redirect 우선). dedup은 요청 단위로만
+적용 — `CapturedHttpCall`에 traceId 필드가 없고 collect는 이미 단일 trace 결과이므로 `(method, urlPath)`로
+충분(교차-trace dedup 아님).
 
 **null-safety(검증된 위험):** `consumedFields(responseBody)`는 `Json.mapper().readTree(responseBody)
 .fieldNames()`를 호출하므로(runner L1920) `null`/`""`에서 깨질 수 있다. egress 경로는 `responseBody=""`
