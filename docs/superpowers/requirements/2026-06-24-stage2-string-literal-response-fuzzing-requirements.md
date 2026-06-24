@@ -115,20 +115,24 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | String 변형 새 arm 도달 | `Stage2AStringLiteralFuzzingE2E#stringVariantReachesEmbargoedArm` | E2E | 🔴 planned |
-| REQ-002 | 결정성 | `Stage2AStringLiteralFuzzingE2E#deterministicAcrossRuns` | E2E | 🔴 planned |
-| REQ-003 | 비동치/미해석 loud skip | `ResponseStringLiteralExtractorTest#loudSkips` | unit | 🔴 planned |
-| REQ-004 | 변형 provenance | `Stage2AStringLiteralFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🔴 planned |
-| REQ-005 | 단계1·2 회귀 (enum byte-동일) | `Stage1ExternalStubSynthesisE2E` + `Stage2EnumResponseFuzzingE2E` + `ResponseFieldVariantGeneratorTest#enumPathByteIdenticalToStage2` | E2E+unit | 🔴 planned |
-| REQ-006 | budget 절단 loud | `ResponseFieldVariantGeneratorTest#budgetTruncationLoud` | unit | 🔴 planned |
-| REQ-007 | ResponseStringLiteralExtractor | `ResponseStringLiteralExtractorTest` | unit | 🔴 planned |
-| REQ-008 | 생성기 통합 | `ResponseFieldVariantGeneratorTest` | unit | 🔴 planned |
-| REQ-009 | 변형 루프 통합·후보맵·마커 rename | `StringLiteralVariantReExploreTest` + `GeneratorVariantExclusionTest`(갱신) | integration | 🔴 planned |
-| REQ-010 | 인덱싱 배선·캐시 호환 | `StaticIndexSerdeTest`(갱신) + `IndexCacheTest`(갱신) + `IndexCacheWiringTest` | integration | 🔴 planned |
-| REQ-011 | SUT fixture + stub/단언 갱신 | `OrderExpressApiTest`·`Stage1ExternalStubSynthesisE2E`·`Stage2EnumResponseFuzzingE2E`·`BuilderIntegrationTest`(갱신) | E2E+integration | 🔴 planned |
-| REQ-012 | none 모드 String 순차 교체 | `StringLiteralVariantNoneModeTest` | integration | 🔴 planned |
+| REQ-001 | String 변형 새 arm 도달 | `Stage2AStringLiteralFuzzingE2E#stringVariantReachesEmbargoedArm` | E2E | 🟢 pass |
+| REQ-002 | 결정성 | `Stage2AStringLiteralFuzzingE2E#deterministicAcrossRuns` | E2E | 🟢 pass |
+| REQ-003 | 비동치/미해석 loud skip | `ResponseStringLiteralExtractorTest#loudSkips` | unit | 🟢 pass |
+| REQ-004 | 변형 provenance | `Stage2AStringLiteralFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 pass |
+| REQ-005 | 단계1·2 회귀 (enum byte-동일) | `Stage1ExternalStubSynthesisE2E` + `Stage2EnumResponseFuzzingE2E` + `ResponseFieldVariantGeneratorTest#enumPathByteIdenticalToStage2` | E2E+unit | 🟢 pass |
+| REQ-006 | budget 절단 loud | `ResponseFieldVariantGeneratorTest#budgetTruncationLoud` | unit | 🟢 pass |
+| REQ-007 | ResponseStringLiteralExtractor | `ResponseStringLiteralExtractorTest` | unit | 🟢 pass |
+| REQ-008 | 생성기 통합 | `ResponseFieldVariantGeneratorTest` | unit | 🟢 pass |
+| REQ-009 | 변형 루프 통합·후보맵·마커 rename | `StringLiteralVariantReExploreTest` + `GeneratorVariantExclusionTest`(갱신) | integration | 🟢 pass |
+| REQ-010 | 인덱싱 배선·캐시 호환 | `StaticIndexSerdeTest`(갱신) + `IndexCacheTest`(갱신) + `IndexCacheWiringTest` | integration | 🟢 pass |
+| REQ-011 | SUT fixture + stub/단언 갱신 | `OrderExpressApiTest`·`Stage1ExternalStubSynthesisE2E`·`Stage2EnumResponseFuzzingE2E`·`BuilderIntegrationTest`(갱신) | E2E+integration | 🟢 pass |
+| REQ-012 | none 모드 String 순차 교체 | `StringLiteralVariantNoneModeTest` | integration | 🟢 pass |
 
-Coverage: 0/12 green (0%) — target 12/12 (100%). 대상 분모=12 전체(REQ-001~011 Must[002·005는 Non-functional Must] + REQ-012 미연기 Should). Won't/deferred 없음.
+Coverage: 12/12 green (100%) — target 12/12 (100%). 대상 분모=12 전체(REQ-001~011 Must[002·005는 Non-functional Must] + REQ-012 미연기 Should). Won't/deferred 없음.
+
+> 회귀 확인(2026-06-24): `./gradlew :graph-rag-builder:test --rerun-tasks` BUILD SUCCESSFUL in 1h 2m 7s.
+> graph-rag-builder 647 tests(0 fail, 12 skip), order-service 23 tests(0 fail), shared-model 41 tests(0 fail), test-generator 85 tests(0 fail).
+> SUT 누수 게이트: 스위트 종료 후 `feat-stage2-string-literal-fuzzing.*order-service` JVM 프로세스 0개 확인.
 
 ## 단계 경계 (이 명세에서 제외 — 🔵 out-of-scope)
 

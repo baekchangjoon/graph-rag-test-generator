@@ -55,3 +55,29 @@ EnumVariantNoneModeTest: tests=1, failures=0, errors=0, skipped=0
 ## 우려사항
 
 없음. 테스트가 GREEN으로 통과했고 프로덕션 변경이 없으므로 회귀 위험 없음.
+
+---
+
+## Review Fix: invoke별 인덱스 단언 강화 (커밋 a9c5d72)
+
+### 강화된 단언 내용
+
+`noneModeSequentiallyReplacesStringVariantsAndPreservesGlobal()` 에서 기존의 "하나라도 포함하면 통과" 루프 단언을 EnumVariantNoneModeTest 방식의 인덱스별 단언으로 교체.
+
+**확정된 서빙 순서:** `ResponseFieldVariantGenerator.generate()`가 값 목록을 `vals.stream().sorted().toList()`로 알파벳 정렬하므로 `["PENDING","SHIPPED","DELIVERED"]` → sorted → `["DELIVERED","PENDING","SHIPPED"]`.
+
+- `servedAtInvoke.get(0)` → `"DELIVERED"` (PENDING/SHIPPED/sample-status 없음)
+- `servedAtInvoke.get(1)` → `"PENDING"` (DELIVERED/SHIPPED/sample-status 없음)
+- `servedAtInvoke.get(2)` → `"SHIPPED"` (DELIVERED/PENDING/sample-status 없음)
+- `assertThat(servedAtInvoke).hasSize(3)` — 정확히 3 항목만 존재
+
+### 테스트 실행 결과
+
+```
+./gradlew :graph-rag-builder:test --tests StringLiteralVariantNoneModeTest
+
+BUILD SUCCESSFUL in 13s
+14 actionable tasks: 2 executed, 12 up-to-date
+```
+
+PASS — 알파벳순 결정적 서빙 순서가 실제 실행에서 확인됨.
