@@ -1428,6 +1428,23 @@ public class EndpointExplorationRunner {
         return kafkaByTrace.getOrDefault(traceId, java.util.List.of());
     }
 
+    /**
+     * read-path(GET) happy 시드를 success path에 부착한다(REQ-009).
+     * <ul>
+     *   <li>successPathId != null: 모든 시드의 pathId를 그 값으로 재기록.</li>
+     *   <li>successPathId == null: 2xx success path가 없으므로(예: conjunction base가 404)
+     *       happy 시드는 어떤 emitted path도 참조하지 않는다 → drop(null pathId orphan 누출 방지).</li>
+     * </ul>
+     */
+    static List<RequiredSeed> attachReadPathSeeds(String successPathId, List<RequiredSeed> requiredSeeds) {
+        if (successPathId == null) {
+            return List.of();
+        }
+        return requiredSeeds.stream()
+                .map(s -> new RequiredSeed(s.id(), successPathId, s.table(), s.columns(), s.values()))
+                .toList();
+    }
+
     /** 시드를 path에 연결: GET은 첫 2xx path, 비-GET by-id는 path별 고유 PK 복제. */
     private AttachResult attachSeeds(Endpoint endpoint, boolean readPath,
                                      List<ExploredPath> paths, List<RequiredSeed> requiredSeeds) {
@@ -1441,16 +1458,15 @@ public class EndpointExplorationRunner {
             for (int i = 0; i < paths.size(); i++) {
                 if (paths.get(i).outcome() == Outcome.Kind.SUCCESS) { successIdx = i; break; }
             }
+            String successPathId = null;
             if (successIdx >= 0) {
                 ExploredPath p = paths.get(successIdx);
                 List<String> seedIds = requiredSeeds.stream().map(RequiredSeed::id).toList();
                 paths.set(successIdx, withSeedIds(p, seedIds));
-                String pid = p.id();
-                requiredSeeds = requiredSeeds.stream()
-                        .map(s -> new RequiredSeed(s.id(), pid, s.table(), s.columns(), s.values()))
-                        .toList();
+                successPathId = p.id();
             }
-            return new AttachResult(paths, requiredSeeds);
+            // success path가 있으면 그 pathId로 시드 재기록, 없으면 orphan 시드 drop(null pathId 누출 방지).
+            return new AttachResult(paths, attachReadPathSeeds(successPathId, requiredSeeds));
         }
         // 비-GET by-id: id를 변이하지 않으므로 모든 path가 대상 리소스에 의존한다.
         // path마다 리소스 시드를 고유 PK로 복제(병렬 테스트 PK 충돌 방지)하고, 그 path의

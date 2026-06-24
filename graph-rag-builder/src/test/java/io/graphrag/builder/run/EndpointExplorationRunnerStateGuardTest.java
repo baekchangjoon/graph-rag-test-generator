@@ -167,4 +167,28 @@ class EndpointExplorationRunnerStateGuardTest {
         assertThat(EndpointExplorationRunner.shouldExploreStateGuardVariants(
                 false, List.of(), List.of(CONJUNCTION))).isFalse();
     }
+
+    // ---- REQ-009: read-path seed 부착 — success path 없으면 orphan 시드 drop(null pathId 누출 방지) ----
+
+    @Test
+    void attachReadPathSeeds_assignsPathIdWhenSuccess() {
+        // success path가 있으면 모든 happy 시드에 그 pathId가 채워진다(null pathId 없음).
+        io.graphrag.model.RequiredSeed orphan = new io.graphrag.model.RequiredSeed(
+                "seed-x-1", null, "bookings", List.of("id"), List.of("1"));
+        List<io.graphrag.model.RequiredSeed> result =
+                EndpointExplorationRunner.attachReadPathSeeds("path-success", List.of(orphan));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).pathId()).isEqualTo("path-success");
+    }
+
+    @Test
+    void attachReadPathSeeds_dropsOrphansWhenNoSuccess() {
+        // 2xx success path가 없으면(예: conjunction base가 404) happy 시드는 어떤 path도 참조하지 않으므로
+        // null pathId로 누출되지 않고 drop된다(REQ-009: asset.seeds()에 null pathId 시드 없음).
+        io.graphrag.model.RequiredSeed orphan = new io.graphrag.model.RequiredSeed(
+                "seed-x-1", null, "bookings", List.of("id"), List.of("1"));
+        List<io.graphrag.model.RequiredSeed> result =
+                EndpointExplorationRunner.attachReadPathSeeds(null, List.of(orphan));
+        assertThat(result).isEmpty();
+    }
 }
