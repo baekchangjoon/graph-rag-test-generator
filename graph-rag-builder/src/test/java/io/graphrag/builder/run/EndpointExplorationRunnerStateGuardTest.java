@@ -149,4 +149,22 @@ class EndpointExplorationRunnerStateGuardTest {
         String label = EndpointExplorationRunner.variantLabel(guardVariant);
         assertThat(label).isEqualTo("status");
     }
+
+    // ---- REQ-007: conjunction-only 호출 게이트 ----
+
+    @Test
+    void conjunctionOnlyGatePasses() {
+        // stateGuards 비어있고 conjunction만 있어도 seedResource면 변종 탐색 게이트 통과.
+        assertThat(EndpointExplorationRunner.shouldExploreStateGuardVariants(
+                true, List.of(), List.of(CONJUNCTION))).isTrue();
+        // 단일 가드만 있어도 통과(기존 동작 후방호환).
+        assertThat(EndpointExplorationRunner.shouldExploreStateGuardVariants(
+                true, List.of(LEAF_STATUS), List.of())).isTrue();
+        // 둘 다 비면 미실행.
+        assertThat(EndpointExplorationRunner.shouldExploreStateGuardVariants(
+                true, List.of(), List.of())).isFalse();
+        // seedResource=false면 conjunction 있어도 미실행.
+        assertThat(EndpointExplorationRunner.shouldExploreStateGuardVariants(
+                false, List.of(), List.of(CONJUNCTION))).isFalse();
+    }
 }

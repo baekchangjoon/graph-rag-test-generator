@@ -296,6 +296,7 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.Conjunction> conjunctions,
                               List<ConstraintExtractor.JoinGuard> joinGuards,
                               List<ConstraintExtractor.StateGuard> stateGuards,
+                              List<ConstraintExtractor.StateGuardConjunction> stateGuardConjunctions,
                               boolean validBody,
                               Map<String, BodyShape> shapesByType,
                               List<FormFieldBinding> formBindings) throws Exception {
@@ -489,8 +490,8 @@ public class EndpointExplorationRunner {
         List<RequiredSeed> finalSeeds = new ArrayList<>(
                 attached.requiredSeeds() == null ? List.of() : attached.requiredSeeds());
         List<CapturedSql> finalSql = new ArrayList<>(bundle.allSql());
-        if (seedResource && stateGuards != null && !stateGuards.isEmpty()) {
-            VariantResult vr = exploreStateGuardVariants(endpoint, tables, stateGuards);
+        if (shouldExploreStateGuardVariants(seedResource, stateGuards, stateGuardConjunctions)) {
+            VariantResult vr = exploreStateGuardVariants(endpoint, tables, stateGuards, stateGuardConjunctions);
             finalPaths.addAll(vr.paths());
             finalSeeds.addAll(vr.seeds());
             finalSql.addAll(vr.sql());
@@ -881,15 +882,28 @@ public class EndpointExplorationRunner {
      * 게이팅 규칙(검증된 두 family): TEMPORAL(stale)→boolean=false(예: includeStale=false),
      * ENUM(conflict)→boolean=true(예: confirm=true).
      */
+    /**
+     * 상태가드 변종 pass 호출 게이트(REQ-007). seedResource이고, 단일 가드 또는 conjunction 중
+     * 하나라도 있으면 변종 탐색을 실행한다. conjunction-only 엔드포인트도 실행되도록 OR 조건.
+     */
+    static boolean shouldExploreStateGuardVariants(boolean seedResource,
+            List<ConstraintExtractor.StateGuard> stateGuards,
+            List<ConstraintExtractor.StateGuardConjunction> stateGuardConjunctions) {
+        return seedResource
+                && (((stateGuards != null && !stateGuards.isEmpty()))
+                        || (stateGuardConjunctions != null && !stateGuardConjunctions.isEmpty()));
+    }
+
     private VariantResult exploreStateGuardVariants(Endpoint endpoint, List<TableSchema> tables,
-                                                    List<ConstraintExtractor.StateGuard> stateGuards)
+                                                    List<ConstraintExtractor.StateGuard> stateGuards,
+                                                    List<ConstraintExtractor.StateGuardConjunction> stateGuardConjunctions)
             throws Exception {
         List<ExploredPath> paths = new ArrayList<>();
         List<RequiredSeed> seeds = new ArrayList<>();
         List<CapturedSql> sqls = new ArrayList<>();
         List<ReadInputSynthesizer.SeedVariant> variants =
                 new ReadInputSynthesizer(enumConstants, enumColumns)
-                        .synthesizeVariants(endpoint, tables, stateGuards);
+                        .synthesizeVariants(endpoint, tables, stateGuards, stateGuardConjunctions);
         if (variants.size() <= 1) {
             return new VariantResult(paths, seeds, sqls);
         }

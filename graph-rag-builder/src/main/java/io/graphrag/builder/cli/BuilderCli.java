@@ -756,10 +756,12 @@ public final class BuilderCli {
                     List<ConstraintExtractor.JoinGuard> endpointJoinGuards = allJoinGuards.stream()
                             .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
                             .toList();
+                    // Task 6에서 allStateGuardConjunctions 추출 + reachable 귀속으로 교체.
+                    List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions = List.of();
                     EndpointExplorationRunner.EndpointResult result =
                             runner.run(endpoint, shape, tables, conditions,
                                     allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                    endpointJoinGuards, endpointStateGuards,
+                                    endpointJoinGuards, endpointStateGuards, endpointStateGuardConjunctions,
                                     index.validBodyEndpointIds().contains(endpoint.id()),
                                     index.bodyShapes(),
                                     index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
