@@ -13,8 +13,10 @@
 - 수용기준:
   - Given `if (b.getStatus()==CONFIRMED && b.getTier()==VIP)`, When extract, Then leaves 2개
     (status ENUM, tier ENUM)인 conjunction 1개.
+  - Given 저장행 leaf 3개 AND(모두 분류 성공), Then leaves 3개 conjunction 1개.
+  - Given 저장행 leaf 4개 AND, Then emit 안 됨(leaf 상한 3 초과 skip).
   - Given leaf가 1개(단일)면, Then conjunction emit 안 됨(기존 단일 가드 경로).
-- 검증 레벨: integration (sample-src 픽스처)
+- 검증 레벨: integration (sample-src 픽스처 — `StateGuards.java`에 복합 AND 메서드 추가)
 
 ### REQ-002 — leaf 분류 순서·배제
 - 유형: Functional / 우선순위: Must
@@ -49,8 +51,11 @@
 - 수용기준:
   - Given status·tier ENUM conjunction + base 시드, When synthesizeVariants, Then 변종 시드 1행에
     status=CONFIRMED & tier=VIP 동시 설정, 변종 PK≠base PK(격리).
-  - Given TEMPORAL `isBefore` leaf + DATE 컬럼, Then 만족값=과거 LocalDate(미래 아님).
+  - Given TEMPORAL `isBefore` leaf + DATE 컬럼, Then 만족값=과거 `LocalDate(1900,1,1)`(미래 아님);
+    TIMESTAMP/DATETIME 컬럼이면 `LocalDateTime`; `op=null`이면 isBefore 폴백. `isAfter`면 미래(2037).
   - Given BOOLEAN leaf, Then 만족값이 Boolean 타입(문자열 "true" 아님).
+  - Given NUMERIC-상수 leaf 2개 conjunction, Then 각 만족 경계값(numericParamBaseCol)이 동시 설정.
+  - Given 단일 가드 변종 N개 + conjunction 변종, Then conjunction variantIdx가 N부터 연속(전체 PK 중복 0).
 - 검증 레벨: integration (ReadInputSynthesizerVariantTest)
 
 ### REQ-005 — 같은 컬럼 병합·모순/엣지 skip
@@ -78,32 +83,38 @@
   base.seeds().isEmpty()`로, `run()` 호출 게이트를 `!stateGuards.isEmpty() || !stateGuardConjunctions.isEmpty()`로
   확장. 단일 가드 없고 conjunction만 있는 엔드포인트도 변종 pass 실행.
 - 수용기준:
-  - Given 단일 state-guard는 없고 conjunction만 있는 엔드포인트, When 탐색, Then conjunction 변종이
-    생성됨(early-return으로 skip되지 않음).
-- 검증 레벨: integration
+  - Given conjunction만 있고 단일 가드 없을 때, When `synthesizeVariants`, Then early-return 안 하고
+    conjunction 변종 생성(unit).
+  - Given conjunction만 있고 `stateGuards` 비어있는 엔드포인트, When `run()`, Then 호출 게이트
+    (`!stateGuards.isEmpty() || !stateGuardConjunctions.isEmpty()`)로 `exploreStateGuardVariants` 실행됨.
+- 검증 레벨: integration (synthesizeVariants 단위 + runner 게이트)
 
 ### REQ-008 — GRB_STATE_GUARDS ablation
 - 유형: Functional / 우선순위: Should
-- 설명: `GRB_STATE_GUARDS=off`이면 `extractStateGuardConjunctions`도 빈 리스트·변종 no-op(기존
-  state-guard ablation과 동일).
+- 설명: `GRB_STATE_GUARDS=off`이면 `BuilderCli`가 `extractStateGuardConjunctions` 호출을 동일 env
+  게이트로 skip하고 `endpointStateGuardConjunctions`에 빈 리스트 전달 → 변종 no-op(기존 state-guard
+  ablation과 동일 배선).
 - 수용기준:
-  - Given `GRB_STATE_GUARDS=off`, When 추출, Then conjunction 0개·변종 no-op.
+  - Given `GRB_STATE_GUARDS=off`, When BuilderCli 인덱싱, Then `allStateGuardConjunctions` 빈 리스트·변종 no-op.
 - 검증 레벨: integration
 
 ### REQ-009 — 기존 회귀 불변
 - 유형: Functional / 우선순위: Must
-- 설명: conjunction 추가가 기존 단일 가드(TEMPORAL/ENUM/BOOLEAN/NULLITY/NUMERIC) 검출·합성·gate·E2E를
-  바꾸지 않는다.
+- 설명: conjunction 추가가 기존 단일 가드(TEMPORAL/ENUM/BOOLEAN/NULLITY/NUMERIC) 검출·합성·gate **동작**을
+  바꾸지 않는다. (BuilderIntegrationTest endpoint inventory `containsExactly`는 REQ-010 신규 엔드포인트로
+  갱신 — 그 갱신은 REQ-010 범위. 본 REQ는 state-guard path/seed 동작 단언만.)
 - 수용기준:
   - Given 기존 `ConstraintExtractorStateGuardTest`/`ReadInputSynthesizerVariantTest`/
-    `BuilderCliAttributionTest` 및 `BuilderIntegrationTest` state-guard 단언, When 전체 테스트, Then 불변 green.
+    `BuilderCliAttributionTest` 및 `BuilderIntegrationTest` state-guard 동작 단언, When 전체 테스트, Then 불변 green.
+  - Given `SeedVariant(input, guard)` 2-arg 호출부(기존 테스트 포함), When 컴파일, Then 오류 없음(2-arg 오버로드 보존).
 - 검증 레벨: integration + E2E
 
 ### REQ-010 — E2E: order-service 복합 AND 동시 만족 arm
 - 유형: Functional / 우선순위: Must
-- 설명: `BookingController`에 `GET /api/bookings/{id}/premium-eligible`
+- 설명: **선행조건(구현 task)** — `BookingController`에 `GET /api/bookings/{id}/premium-eligible`
   (endpointId=`get-api-bookings-id-premium-eligible`) 추가: `if (b.getStatus()==CONFIRMED &&
-  b.getTier()==VIP) return 200; else throw 404`. builder 탐색이 동시 만족 시드 1행으로 200 arm을 연다.
+  b.getTier()==VIP) return 200; else throw 404`. + BuilderIntegrationTest endpoint inventory 갱신.
+  builder 탐색이 동시 만족 시드 1행으로 200 arm을 연다.
 - 수용기준:
   - Given premium-eligible 엔드포인트, When `BuilderIntegrationTest`가 `pathsOf(asset,
     "get-api-bookings-id-premium-eligible")` 조회, Then `discoveredBy="state-guard-conjunction"`,
@@ -114,13 +125,13 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | conjunction 검출 | ConstraintExtractorConjunctionTest#detect* | integration | 🔴 planned |
+| REQ-001 | conjunction 검출 | ConstraintExtractorConjunctionTest#detect2Leaf, #threeLeafEmit, #fourLeafSkip, #singleNotConjunction | integration | 🔴 planned |
 | REQ-002 | 분류 순서·배제 | ConstraintExtractorConjunctionTest#temporalFirst, #numericParamSkip, #orSkip | integration | 🔴 planned |
-| REQ-003 | SeedVariant 모델·NPE | ReadInputSynthesizerVariantTest#conjunctionVariant + 후방호환 컴파일 | integration | 🔴 planned |
-| REQ-004 | satisfyingValue 동시만족 | ReadInputSynthesizerVariantTest#conjunctionSimultaneous, #temporalType, #booleanType | integration | 🔴 planned |
+| REQ-003 | SeedVariant 모델·NPE | ReadInputSynthesizerVariantTest#conjunctionVariant + EndpointExplorationRunnerStateGuardTest#conjunctionCatchNpeAvoided + 2-arg 후방호환 컴파일 | integration | 🔴 planned |
+| REQ-004 | satisfyingValue 동시만족 | ReadInputSynthesizerVariantTest#conjunctionSimultaneous, #temporalType, #booleanType, #numericLiteral, #variantIdxContinuous | integration | 🔴 planned |
 | REQ-005 | 같은컬럼 병합·skip | ReadInputSynthesizerVariantTest#sameColumnMerge, #contradictionSkip | integration | 🔴 planned |
 | REQ-006 | cross-class 귀속 | BuilderCliAttributionTest#conjunctionReachable | integration | 🔴 planned |
-| REQ-007 | early-return 게이트 | ReadInputSynthesizerVariantTest#conjunctionOnlyNotSkipped | integration | 🔴 planned |
+| REQ-007 | early-return 게이트 | ReadInputSynthesizerVariantTest#conjunctionOnlyNotSkipped + EndpointExplorationRunnerStateGuardTest#conjunctionOnlyGatePasses | integration | 🔴 planned |
 | REQ-008 | GRB ablation | ConstraintExtractorConjunctionTest#ablationOff | integration | 🔴 planned |
 | REQ-009 | 기존 회귀 | 기존 StateGuard/Attribution/Variant + BuilderIntegrationTest | integration/E2E | 🔴 planned |
 | REQ-010 | E2E 동시만족 arm | BuilderIntegrationTest#premiumEligibleConjunction | E2E | 🔴 planned |
