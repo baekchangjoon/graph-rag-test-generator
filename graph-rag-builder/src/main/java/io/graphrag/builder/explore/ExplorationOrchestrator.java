@@ -118,7 +118,8 @@ public class ExplorationOrchestrator {
                     proto.input().outcome().capturedSql(),
                     proto.input().outcome().capturedEventEmits(),
                     proto.input().outcome().kafkaTraceId(),
-                    proto.input().outcome().responseHeaders()));
+                    proto.input().outcome().responseHeaders(),
+                    proto.input().outcome().egressCalls()));
         }
         return new ExplorationOutcome(paths, known.covered(), pathsByEngine);
     }
