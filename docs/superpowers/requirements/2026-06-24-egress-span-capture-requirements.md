@@ -50,7 +50,7 @@
 - 수용기준:
   - Given `EgressCall(GET, /inventory/stock, null, tid, t)`, When 매핑, Then `CapturedHttpCall.method="GET"`, `urlPath="/inventory/stock"`, **`responseStatus=200`**(기본), `responseBody=""`, `requestBody=null`, `query=빈 Map`, `baggagePropagated=false`, **`responseProvenance=CAPTURED`**.
   - Given `responseBody`가 빈 문자열/null, When 매핑 경로의 `consumedFields` 산출, Then 예외 없이 빈 리스트(공개 mapper/integration 경계에서 검증; `consumedFields` private이므로 직접 호출 아님).
-  - **(중복 제거)** Given 한 요청에서 redirect 캡처와 span 발견이 동일 `(method, urlPath, traceId)`를 산출, When 환류, Then `CapturedHttpCall`이 1건만 기록된다(중복 없음).
+  - **(중복 제거)** Given 한 요청(단일 trace)에서 redirect 캡처와 span 발견이 동일 `(method, urlPath)`를 산출, When 환류, Then `CapturedHttpCall`이 1건만 기록된다(redirect 우선; 요청 단위 dedup, 교차-trace 아님).
 - 검증 레벨: unit + integration
 
 ### REQ-006 — ZipkinSpanReceiver 수신 인프라
@@ -128,13 +128,13 @@
 ## 추적 매트릭스
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | otel CLIENT span 추출 | `OtelEgressExtractorTest` | integration/unit | 🔴 planned |
-| REQ-002 | sleuth Zipkin CLIENT span 추출(method+path) | `ZipkinEgressExtractorTest` | integration/unit | 🔴 planned |
-| REQ-003 | 공통 정규화(strip/semconv/status/non-http) | `EgressCallNormalizerTest` | unit | 🔴 planned |
-| REQ-004 | 요청별 trace-id 귀속 | `EgressTraceAttributionTest` | integration | 🔴 planned |
-| REQ-005 | EgressCall→CapturedHttpCall 환류·null-safety·dedup | `EgressToCapturedHttpCallTest` | unit/integration | 🔴 planned |
-| REQ-006 | ZipkinSpanReceiver 인프라 | `ZipkinSpanReceiverTest` | integration | 🔴 planned |
-| REQ-007 | egress await/quiescence(모드별) | `EgressQuiescenceTest` | integration | 🔴 planned |
+| REQ-001 | otel CLIENT span 추출 | `EgressNormalizerTest` | unit | 🔴 planned |
+| REQ-002 | sleuth Zipkin CLIENT span 추출(method+path) | `EgressNormalizerTest` + `ZipkinSpanReceiverTest` | unit/integration | 🔴 planned |
+| REQ-003 | 공통 정규화(strip/semconv/status/non-http) | `EgressNormalizerTest` | unit | 🔴 planned |
+| REQ-004 | 요청별 trace-id 귀속 | `EgressCollectorTest` + `EgressDiscoveryWiringTest` | unit/integration | 🔴 planned |
+| REQ-005 | EgressCall→CapturedHttpCall 환류·null-safety·dedup | `EgressCallMapperTest` + `EgressDiscoveryWiringTest` | unit/integration | 🔴 planned |
+| REQ-006 | ZipkinSpanReceiver 인프라 | `ZipkinSpanReceiverTest` + `TraceReceiverLimitsTest` | integration/unit | 🔴 planned |
+| REQ-007 | egress await/quiescence(모드별) | `EgressCollectorTest#awaitsLate` + `EgressCollectorWiringTest` | unit/integration | 🔴 planned |
 | REQ-008 | 샘플링 강제(override 불요) | `SleuthEgressDiscoveryE2E#samplerOffStillExports` + `ZipkinSutEnvInjectionTest#noSamplerOverride` | E2E/integration | 🔴 planned |
 | REQ-009 | [E2E] otel redirect-비의존 발견 | `OtelEgressDiscoveryE2E` | E2E | 🔴 planned |
 | REQ-010 | [E2E] sleuth redirect-비의존 발견 | `SleuthEgressDiscoveryE2E` | E2E | 🔴 planned |
