@@ -1739,6 +1739,14 @@ public class EndpointExplorationRunner {
     public record KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches) {}
 
     /**
+     * mergeEnvelopeCandidates의 반환 타입: 병합된 후보 맵 + envelope 출처 필드 이름 집합.
+     *
+     * <p>envelopeFields는 exploreResponseVariants에 전달되어 해당 필드를 포함한 변형을
+     * coverage-delta 무관하게 항상 보존(unconditional keep)하는 데 쓰인다.
+     */
+    public record EnvelopeMergeResult(Map<String, List<String>> candidates, Set<String> envelopeFields) {}
+
+    /**
      * enum 응답 변형 탐색 루프 (REQ-009, REQ-010). B2 루프 수렴 후 한 외부 응답 callSite에 대해
      * 호출한다. 각 변형 V에 대해:
      * <ul>
@@ -1749,12 +1757,17 @@ public class EndpointExplorationRunner {
      * </ul>
      * 각 변형 delta는 {@code cumulative}에 OR-병합(리셋 금지)한다. 병합 전 cumulative에 없던 probe를
      * 켠 변형(=새 arm)은 보존 목록에 담는다. budget(plan.kept().size())까지 진행한다.
+     *
+     * <p>envelope-sourced 변형: {@code envelopeFields}에 속한 필드를 포함한 변형은
+     * coverage-delta 무관하게 항상 보존된다(CONTRACT-CONTRACT 시나리오 지원, REQ-F012-018).
+     * non-envelope 변형은 기존 new-arm 게이팅 유지. 빈 집합이면 기존 동작과 동일하다.
      */
     static VariantExploreResult exploreResponseVariants(
             ResponseFieldVariantGenerator.VariantPlan plan, JsonNode baselineBody,
             String method, String pathLiteral, ExternalStubSynthesizer synthesizer,
             boolean isolated, VariantInvoker invoker,
-            ExecutionDataStore cumulative, Set<String> appClasses) {
+            ExecutionDataStore cumulative, Set<String> appClasses,
+            Set<String> envelopeFields) {
         List<String> kept = new ArrayList<>();
         List<KeptVariant> keptVariants = new ArrayList<>();
         int attempted = 0;
@@ -1767,7 +1780,10 @@ public class EndpointExplorationRunner {
                 VariantOutcome vo = invoker.invoke(body);
                 attempted++;
                 boolean newArm = mergeAndDetectNewArm(cumulative, vo.coverage(), appClasses);
-                if (newArm) {
+                // envelope-sourced 변형은 coverage-delta 무관 항상 보존(REQ-F012-018).
+                boolean envelopeVariant = !envelopeFields.isEmpty()
+                        && variant.overrides().keySet().stream().anyMatch(envelopeFields::contains);
+                if (newArm || envelopeVariant) {
                     kept.add(variant.label());
                     // branches는 analyzer가 있는 runResponseVariantLoops에서 채워진다(List.of() placeholder).
                     keptVariants.add(new KeptVariant(variant.label(), body, vo.sutStatus(), List.of()));
@@ -2008,9 +2024,12 @@ public class EndpointExplorationRunner {
                     buildVariantCandidates(responseShape, effectiveEnumConstants, stringLiteralsByDto, shapes);
             // REQ-F012-005: errorContract가 있으면 envelope 필드를 후보 맵에 병합해 기존 변형 파이프라인으로 소비한다.
             // 이를 통해 dangling CONTRACT call 없이 egress-assertion ExploredPath로 올바르게 참조된다.
+            Set<String> envelopeFields = Set.of();
             if (errorContract != null) {
-                candidates = mergeEnvelopeCandidates(candidates, responseShape, errorContract,
+                EnvelopeMergeResult emr = mergeEnvelopeCandidates(candidates, responseShape, errorContract,
                         new ErrorEnvelopeSynthesizer());
+                candidates = emr.candidates();
+                envelopeFields = emr.envelopeFields();
             }
             ResponseFieldVariantGenerator.VariantPlan plan =
                     generator.generate(candidates, RESPONSE_VARIANT_BUDGET);
@@ -2030,7 +2049,7 @@ public class EndpointExplorationRunner {
             VariantInvoker invoker = realVariantInvoker(endpoint, triggerInput, authHeader, http);
             VariantExploreResult vr = exploreResponseVariants(plan, baselineResponse,
                     site.httpMethod(), site.pathLiteral(), stubSynthesizer,
-                    isolated, invoker, cumulativeCoverage, appClasses);
+                    isolated, invoker, cumulativeCoverage, appClasses, envelopeFields);
             log.info("response-variant loop {} for {} {}: attempted={} kept={}",
                     endpoint.id(), site.httpMethod(), site.pathLiteral(), vr.attempted(), vr.keptVariantLabels());
 
@@ -2136,13 +2155,17 @@ public class EndpointExplorationRunner {
      * baseline-exclusion은 적용하지 않는다(envelope 센티넬은 강제 주입 대상).
      * 반환 값은 입력 candidates와 독립된 변경 가능한 맵이다.
      *
+     * <p>반환 {@link EnvelopeMergeResult#envelopeFields()}는 실제로 병합에 기여한
+     * (shape에 존재하는) envelope 필드 이름 집합이다. 이 집합은 {@code exploreResponseVariants}에
+     * 전달되어 해당 필드를 포함한 변형을 coverage-delta 무관 항상 보존하는 데 쓰인다(REQ-F012-018).
+     *
      * @param candidates    기존 변형 후보 맵(buildVariantCandidates 결과)
      * @param responseShape 외부 callSite 응답 형상(필드 목록)
      * @param errorContract 에러 envelope 계약 기술자
      * @param synth         {@link ErrorEnvelopeSynthesizer} 인스턴스
-     * @return candidates에 envelope 필드가 병합된 새 맵
+     * @return 병합된 후보 맵과 envelope 출처 필드 이름 집합을 담은 결과
      */
-    static Map<String, List<String>> mergeEnvelopeCandidates(
+    static EnvelopeMergeResult mergeEnvelopeCandidates(
             Map<String, List<String>> candidates,
             BodyShape responseShape,
             ErrorContractDescriptor errorContract,
@@ -2152,11 +2175,13 @@ public class EndpointExplorationRunner {
         Set<String> shapeFieldNames = responseShape.fields().stream()
                 .map(BodyShape.BodyField::name)
                 .collect(Collectors.toSet());
+        Set<String> injected = new java.util.LinkedHashSet<>();
         env.fields().forEachRemaining(entry -> {
             String fieldName = entry.getKey();
             if (!shapeFieldNames.contains(fieldName)) {
                 return;
             }
+            injected.add(fieldName);
             String value = entry.getValue().asText();
             List<String> existing = merged.get(fieldName);
             if (existing == null) {
@@ -2167,7 +2192,7 @@ public class EndpointExplorationRunner {
                 merged.put(fieldName, updated);
             }
         });
-        return merged;
+        return new EnvelopeMergeResult(merged, Set.copyOf(injected));
     }
 
     /**

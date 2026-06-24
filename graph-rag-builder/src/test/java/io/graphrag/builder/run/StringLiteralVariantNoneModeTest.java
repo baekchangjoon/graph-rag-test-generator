@@ -144,7 +144,7 @@ class StringLiteralVariantNoneModeTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/orders/status", syn,
-                        false, invoker, cumulative, Set.of(CLASS));
+                        false, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // 각 invoke에서 그 변형의 status 값이 응답됐다(순차 교체 — 한 번에 변형 하나만 활성).
         // plan 순서: TreeMap(status→sorted["DELIVERED","PENDING","SHIPPED"]) → 알파벳순.

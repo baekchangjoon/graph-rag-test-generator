@@ -194,7 +194,7 @@ class StringLiteralVariantReExploreTest {
         EndpointExplorationRunner.VariantExploreResult result =
                 EndpointExplorationRunner.exploreResponseVariants(
                         plan, baseline(), "GET", "/inventory/stock", syn,
-                        true, invoker, cumulative, Set.of(CLASS));
+                        true, invoker, cumulative, Set.of(CLASS), Set.of());
 
         // String 리터럴 변형 모두 새 arm → 보존
         assertThat(result.keptVariantLabels()).as("us-east, eu-west 모두 새 arm 열어 보존")
