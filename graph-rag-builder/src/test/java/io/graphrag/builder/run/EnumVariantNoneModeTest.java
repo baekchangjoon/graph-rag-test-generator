@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.graphrag.builder.env.HttpCaptureServer;
 import io.graphrag.builder.env.NoTraceKey;
 import io.graphrag.builder.index.BodyShape;
-import io.graphrag.builder.run.EnumResponseVariantGenerator.VariantPlan;
+import io.graphrag.builder.run.ResponseFieldVariantGenerator.VariantPlan;
 import org.jacoco.core.data.ExecutionData;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.junit.jupiter.api.AfterEach;
@@ -71,7 +71,11 @@ class EnumVariantNoneModeTest {
         ExternalStubSynthesizer syn = synthesizer();
         syn.register("GET", "/inventory/stock", INV_SHAPE);   // 전역 baseline STANDARD
 
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        // 호출자 책임: baseline(선언순 첫 상수) 제외한 enum 후보 맵을 직접 구성.
+        // FulfillmentMode {STANDARD(baseline),EXPRESS_ONLY,BACKORDER} → non-baseline {EXPRESS_ONLY,BACKORDER}
+        Map<String, List<String>> enumCandidates = new java.util.TreeMap<>();
+        enumCandidates.put("mode", List.of("EXPRESS_ONLY", "BACKORDER"));   // STANDARD baseline 제외
+        VariantPlan plan = new ResponseFieldVariantGenerator().generate(enumCandidates, 32);
         ExecutionDataStore cumulative = new ExecutionDataStore();
 
         // none 모드: invoke 시점에 변형 stub이 활성(헤더 없는 요청에 변형 응답), 직전 변형은 제거됐어야 함.
