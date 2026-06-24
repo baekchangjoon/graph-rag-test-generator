@@ -18,6 +18,12 @@ public final class HandlerSourceExtractor {
         this.roots = roots;
     }
 
+    /** 공유 모델 주입 — 빌드 없이 주어진 CtModel을 그대로 사용(탐색 단계 단일 모델 재사용). */
+    public HandlerSourceExtractor(CtModel model) {
+        this.roots = null;
+        this.model = model;
+    }
+
     /** Path 위임 — 단일 루트로 {@link #HandlerSourceExtractor(SourceRoots)} 에 위임. */
     public HandlerSourceExtractor(Path srcDir) {
         this(SourceRoots.single(srcDir));

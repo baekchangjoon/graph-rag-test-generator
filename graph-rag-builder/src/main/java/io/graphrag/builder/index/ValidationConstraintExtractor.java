@@ -32,9 +32,7 @@ public class ValidationConstraintExtractor {
     public record FieldConstraint(String field, Kind kind, long numArg, String strArg) {
     }
 
-    public Map<String, List<FieldConstraint>> extract(SourceRoots roots, String dtoQualifiedName) {
-        CtModel model = SharedSpoonModel.build(roots);
-
+    public Map<String, List<FieldConstraint>> extract(CtModel model, String dtoQualifiedName) {
         Map<String, List<FieldConstraint>> result = new LinkedHashMap<>();
         for (CtType<?> type : model.getAllTypes()) {
             CtType<?> dto = BodyShapeExtractor.findNested(type, dtoQualifiedName);
@@ -53,6 +51,11 @@ public class ValidationConstraintExtractor {
             return result;
         }
         return result;
+    }
+
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extract(CtModel, String)} 에 위임. */
+    public Map<String, List<FieldConstraint>> extract(SourceRoots roots, String dtoQualifiedName) {
+        return extract(SharedSpoonModel.build(roots), dtoQualifiedName);
     }
 
     /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String)} 에 위임. */

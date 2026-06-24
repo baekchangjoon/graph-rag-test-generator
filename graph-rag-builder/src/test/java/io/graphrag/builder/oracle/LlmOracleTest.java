@@ -2,12 +2,15 @@ package io.graphrag.builder.oracle;
 
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.index.IndexResult;
+import io.graphrag.builder.index.SharedSpoonModel;
+import io.graphrag.builder.index.SourceRoots;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
 import io.graphrag.model.Endpoint;
 import io.graphrag.model.EndpointParam;
 import io.graphrag.model.ParamKind;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import spoon.reflect.CtModel;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -91,6 +94,19 @@ class LlmOracleTest {
         InputCandidates out = oracle.analyze(SUT);
         assertThat(out.strings()).containsKey("status");          // 도메인코드 쿼리 파라미터 선별+기여
         assertThat(out.strings().get("status")).contains("ACTIVE");
+    }
+
+    @Test
+    void reusesInjectedSharedModelWithoutExtraBuild(@TempDir Path dir) {  // R5
+        SharedSpoonModel.resetBuildCount();
+        CtModel model = SharedSpoonModel.build(SourceRoots.single(SUT.srcDir()));   // 유일한 빌드
+        var oracle = new LlmOracle(index(), new ValidationConstraintExtractor(),
+                new HandlerSourceExtractor(model), FakeValueClient.of("code", "ABC"),
+                new LlmValueCache(dir), "claude-haiku-4-5-20251001", true, model);
+        oracle.analyze(SUT);
+        assertThat(SharedSpoonModel.buildCount())
+                .as("주입된 공유 모델 재사용 — validation/handlerSrc 추출이 엔드포인트마다 재빌드하지 않음")
+                .isEqualTo(1);
     }
 
     @Test

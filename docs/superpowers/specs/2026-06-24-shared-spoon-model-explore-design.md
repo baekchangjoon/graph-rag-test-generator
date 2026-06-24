@@ -162,6 +162,21 @@ CtModel sharedModel = SharedSpoonModel.build(config.sourceRoots());
 위 5.1~5.3 전부 green + PR에 before/after 빌드 횟수(단위 테스트 측정값) 기록 + 코드 리뷰(spec-compliance +
 `pr-review-toolkit:code-reviewer`) triage 완료.
 
+### 5.5 실측 결과 (2026-06-24)
+- **빌드 횟수 before/after (단위 측정):** `SharedModelReuseTest` — 동일 추출 시퀀스를 `SourceRoots` 오버로드로
+  호출 시 `buildCount==13`(O(N)), `CtModel` 오버로드로 호출 시 `buildCount==1`(O(1)). LlmOracle/StaticLiteralOracle
+  주입 모델 재사용도 `buildCount==1` 유지.
+- **e2e 라이브 측정:** `run-e2e.sh` 로그 `R5: explore static-analysis Spoon builds = 1` — 전 엔드포인트 탐색에서
+  공유 모델 1회만 빌드(핸들러 수 무관).
+- **공유 모델 변형 가드:** `SharedModelReuseTest.handlerSourceStableAfterSharedModelTraversal` — 전 추출기로
+  traverse한 공유 모델의 핸들러 본문 toString이 fresh 모델과 동일(LLM 캐시 키 sha256 보존).
+- **E2E:** `run-e2e.sh` ✅ tests=78 failures=0 errors=0. `run-endpoint-glob-e2e.sh` ✅(아래 게이트).
+- **기존 실패(이 변경 무관, 규명 완료):**
+  - `LlmOracleE2E::REQ-012` — clean base `8784c1bf`(이 브랜치 base)에서도 **동일 실패**(REQ-011은 양쪽 통과).
+    즉 origin/main 선재 실패이며 이 리팩터와 무관. 본문 안정성 가드로 캐시 키 메커니즘 영향 없음을 별도 입증.
+  - `BuilderIntegrationTest::build_exploresMultiplePathsAndCapturesBothOrms` — 48분 병렬 풀스위트에서
+    "SUT process died during boot"(자원 경합). 격리 재실행 시 통과 → 환경성, 이 변경 무관.
+
 ## 6. 리스크
 
 - **위임 누락:** 한 `SourceRoots` 오버로드라도 `CtModel` 오버로드로 위임 안 하면 로직 중복·드리프트. → 본문은

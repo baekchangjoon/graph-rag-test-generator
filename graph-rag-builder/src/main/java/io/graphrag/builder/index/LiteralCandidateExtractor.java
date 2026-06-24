@@ -19,9 +19,7 @@ public class LiteralCandidateExtractor {
 
     private static final Pattern ENUM_STYLE = Pattern.compile("[A-Z][A-Z0-9_]{1,15}");
 
-    public List<String> extract(SourceRoots roots, String classFqn) {
-        CtModel model = SharedSpoonModel.build(roots);
-
+    public List<String> extract(CtModel model, String classFqn) {
         TreeSet<String> literals = new TreeSet<>();
         for (CtType<?> type : model.getAllTypes()) {
             if (!type.getQualifiedName().replace('$', '.').equals(classFqn)) {
@@ -34,6 +32,11 @@ public class LiteralCandidateExtractor {
             });
         }
         return List.copyOf(literals);
+    }
+
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extract(CtModel, String)} 에 위임. */
+    public List<String> extract(SourceRoots roots, String classFqn) {
+        return extract(SharedSpoonModel.build(roots), classFqn);
     }
 
     /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String)} 에 위임. */
