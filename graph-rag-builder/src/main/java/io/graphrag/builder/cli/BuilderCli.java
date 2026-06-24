@@ -24,6 +24,7 @@ import io.graphrag.builder.index.KafkaListenerIndexer;
 import io.graphrag.builder.index.LiteralCandidateExtractor;
 import io.graphrag.builder.index.MapperXmlIndexer;
 import io.graphrag.builder.index.ResponseDtoIndexer;
+import io.graphrag.builder.index.ResponseStringLiteralExtractor;
 import io.graphrag.builder.index.RouterFunctionIndexer;
 import io.graphrag.builder.index.SharedSpoonModel;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
@@ -206,6 +207,7 @@ public final class BuilderCli {
         List<Set<String>> responseDtoFieldSets = si.responseDtoFieldSets();
         Map<String, List<String>> enumConstants = si.enumConstants();
         List<io.graphrag.builder.index.ExternalCallSite> callSites = si.callSites();
+        Map<String, Map<String, List<String>>> stringLiteralsByDto = si.stringLiteralsByDto();
         log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s), {} external call site(s)",
                 index.endpoints().size(), mappers.size(), responseDtoFieldSets.size(), callSites.size());
 
@@ -262,7 +264,7 @@ public final class BuilderCli {
         if (config.attach() != null) {
             result = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
                     index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants,
-                    callSites, acc);
+                    callSites, stringLiteralsByDto, acc);
         } else {
             boolean analysisSleuthMode = "sleuth".equals(config.traceMode());
             // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) — jacoco만. 그 외: 기존대로 otel agent 포함.
@@ -283,7 +285,7 @@ public final class BuilderCli {
                         otelSqlCapture ? otel : null, config.sutId());
                 env.coverageEndpoint("localhost", jacoco.tcpPort());
                 result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, callSites, acc);
+                        responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc);
             }
         }
         int totalAppBranches = result.totalAppBranches();
@@ -332,7 +334,8 @@ public final class BuilderCli {
     record StaticIndexBundle(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
             List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
             Map<String, List<String>> enumConstants,
-            List<io.graphrag.builder.index.ExternalCallSite> callSites) {
+            List<io.graphrag.builder.index.ExternalCallSite> callSites,
+            Map<String, Map<String, List<String>>> stringLiteralsByDto) {
     }
 
     /** 정적 인덱싱 블록: SUT 소스를 1회 파싱해 모든 Spoon 인덱서가 공유. (테스트 훅 겸용) */
@@ -362,13 +365,15 @@ public final class BuilderCli {
         List<io.graphrag.builder.index.ExternalCallSite> callSites =
                 responseDtoIndexer.extractCallSites(model);
         Map<String, List<String>> enums = new EnumConstantExtractor().extract(model);
+        Map<String, Map<String, List<String>>> stringLiterals =
+                new ResponseStringLiteralExtractor().extract(model, callSites);
         List<MapperStatement> mappers = new ArrayList<>();
         for (Path resDir : resourceDirs) {
             if (Files.isDirectory(resDir)) {
                 mappers.addAll(new MapperXmlIndexer().index(resDir));   // REQ-019 멀티 resources
             }
         }
-        return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums, callSites);
+        return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums, callSites, stringLiterals);
     }
 
     /** 테스트 전용 단순 오버로드. */
@@ -393,7 +398,7 @@ public final class BuilderCli {
         }
         StaticIndexBundle b = indexStatically(roots, resourceDirs, config.authConfig());
         StaticIndex result = new StaticIndex(b.index(), b.ws(), b.kafka(), b.mappers(),
-                b.responseDtoFieldSets(), b.enumConstants(), b.callSites());
+                b.responseDtoFieldSets(), b.enumConstants(), b.callSites(), b.stringLiteralsByDto());
         IndexCache.save(cacheDir, current, result);
         return result;
     }
@@ -421,6 +426,7 @@ public final class BuilderCli {
             List<Set<String>> responseDtoFieldSets, IncrementalPlan plan,
             Map<String, List<String>> enumConstants,
             List<io.graphrag.builder.index.ExternalCallSite> callSites,
+            Map<String, Map<String, List<String>>> stringLiteralsByDto,
             ExplorationAccumulators acc) throws Exception {
         AttachConfig at = config.attach();
         Path agentsDir = Files.createDirectories(workDir.resolve("agents"));
@@ -502,7 +508,7 @@ public final class BuilderCli {
             try (env) {
                 env.start(workDir);
                 return explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, callSites, acc);
+                        responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc);
             }
         } finally {
             if (!handedOff) {
@@ -572,6 +578,7 @@ public final class BuilderCli {
                                              IncrementalPlan plan,
                                              Map<String, List<String>> enumConstants,
                                              List<io.graphrag.builder.index.ExternalCallSite> callSites,
+                                             Map<String, Map<String, List<String>>> stringLiteralsByDto,
                                              ExplorationAccumulators acc) throws Exception {
         List<ExploredPath> paths = acc.paths();
         List<CapturedSql> sql = acc.sql();
@@ -770,7 +777,7 @@ public final class BuilderCli {
                             authProvider, config.authConfig(), enumConstants, enumColumns,
                             config.requestHeaders(), sqlCapture, receiverToClose,
                             config.classifierConfig().toClassifier(), callSites,
-                            io.graphrag.builder.capture.egress.EgressCollector.forMode(env));
+                            io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto);
                     // REQ-012: 고유 핸들러당 Spoon 1회(computeIfAbsent 캐시) — cross-class 귀속.
                     String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
                     Set<Map.Entry<String, String>> reachable = reachableCache.computeIfAbsent(

@@ -192,6 +192,7 @@ public class EndpointExplorationRunner {
     private final KafkaCaptureReceiver kafkaCapture;
     private final ResponseClassifier classifier;   // 성공/실패 판정(기본 StatusOnlyClassifier)
     private final List<io.graphrag.builder.index.ExternalCallSite> callSites;  // 외부 호출 site (B2 재탐색)
+    private final Map<String, Map<String, List<String>>> stringLiteralsByDto;  // dtoFqn→field→리터럴 (단계2-A, Task 6에서 사용)
     private final ExternalStubSynthesizer stubSynthesizer;   // 형상→stub 런타임 등록 (httpCapture null이면 null)
     private final io.graphrag.builder.capture.egress.EgressCollector egressCollector;  // nullable — Task 8에서 실제 주입
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
@@ -245,7 +246,7 @@ public class EndpointExplorationRunner {
                 classifier, List.of());
     }
 
-    /** callSites(외부 호출 site)를 받는 기존 생성자 — egressCollector null로 체인. */
+    /** callSites(외부 호출 site)를 받는 레거시 호환 생성자 — egressCollector null + stringLiteralsByDto 빈 맵으로 체인. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
@@ -265,10 +266,10 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, callSites, null);
+                classifier, callSites, null, Map.of());
     }
 
-    /** canonical 생성자 — egressCollector(nullable) 포함. Task 8에서 실제 주입; null이면 비활성. */
+    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto 포함. egress 수집 + 단계2-A string-literal fuzzing 배선. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
@@ -285,7 +286,8 @@ public class EndpointExplorationRunner {
                                      KafkaCaptureReceiver kafkaCapture,
                                      ResponseClassifier classifier,
                                      List<io.graphrag.builder.index.ExternalCallSite> callSites,
-                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector) {
+                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector,
+                                     Map<String, Map<String, List<String>>> stringLiteralsByDto) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -308,6 +310,7 @@ public class EndpointExplorationRunner {
         this.classifier = classifier == null ? new StatusOnlyClassifier() : classifier;
         this.callSites = callSites == null ? List.of() : callSites;
         this.egressCollector = egressCollector;
+        this.stringLiteralsByDto = stringLiteralsByDto == null ? Map.of() : stringLiteralsByDto;
         this.stubSynthesizer = httpCapture == null ? null
                 : new ExternalStubSynthesizer(httpCapture,
                         new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),

@@ -17,17 +17,27 @@ public record StaticIndex(
         List<MapperStatement> mappers,
         List<Set<String>> responseDtoFieldSets,
         Map<String, List<String>> enumConstants,
-        List<io.graphrag.builder.index.ExternalCallSite> callSites) {
+        List<io.graphrag.builder.index.ExternalCallSite> callSites,
+        Map<String, Map<String, List<String>>> stringLiteralsByDto) {
 
-    /** compact: null-guard callSites (레거시 캐시 호환). */
+    /** compact: null-guard callSites + stringLiteralsByDto (레거시 캐시 호환). */
     public StaticIndex {
         callSites = callSites == null ? List.of() : callSites;
+        stringLiteralsByDto = stringLiteralsByDto == null ? Map.of() : stringLiteralsByDto;
     }
 
-    /** 6-arg 레거시 호환 (callSites 없음 → 빈 리스트). */
+    /** 7-arg 레거시 호환 (stringLiteralsByDto 없음 → 빈 맵). */
+    public StaticIndex(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
+            List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
+            Map<String, List<String>> enumConstants,
+            List<io.graphrag.builder.index.ExternalCallSite> callSites) {
+        this(index, ws, kafka, mappers, responseDtoFieldSets, enumConstants, callSites, Map.of());
+    }
+
+    /** 6-arg 레거시 호환 (callSites 없음 → 빈 리스트, stringLiteralsByDto 없음 → 빈 맵). */
     public StaticIndex(IndexResult index, WsIndexResult ws, KafkaIndexResult kafka,
             List<MapperStatement> mappers, List<Set<String>> responseDtoFieldSets,
             Map<String, List<String>> enumConstants) {
-        this(index, ws, kafka, mappers, responseDtoFieldSets, enumConstants, List.of());
+        this(index, ws, kafka, mappers, responseDtoFieldSets, enumConstants, List.of(), Map.of());
     }
 }

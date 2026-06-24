@@ -58,6 +58,26 @@ class StaticIndexSerdeTest {
     }
 
     @Test
+    void stringLiteralsByDtoRoundTrip() throws Exception {
+        StaticIndex idx = new StaticIndex(
+                new IndexResult(List.of(), Map.of(), Set.of(), Map.of()),
+                new WsIndexResult(List.of(), Map.of()),
+                new KafkaIndexResult(List.of(), Map.of()),
+                List.of(), List.of(), Map.of("p.E", List.of("X")), List.of(),
+                Map.of("io.graphrag.sample.orders.InventoryClient$InventoryResponse",
+                        Map.of("region", List.of("EMBARGOED"))));
+
+        String json = Json.mapper().writeValueAsString(idx);
+        StaticIndex loaded = Json.mapper().readValue(json, StaticIndex.class);
+
+        assertThat(loaded.stringLiteralsByDto())
+                .containsKey("io.graphrag.sample.orders.InventoryClient$InventoryResponse");
+        assertThat(loaded.stringLiteralsByDto()
+                .get("io.graphrag.sample.orders.InventoryClient$InventoryResponse"))
+                .containsEntry("region", List.of("EMBARGOED"));
+    }
+
+    @Test
     void manifestRoundTrips() throws Exception {
         IndexManifest m = new IndexManifest(2, "loginPath=/login;publicPaths=/health",
                 Map.of("a/Foo.java", new IndexManifest.FileEntry("sutSrc", "h1")));
