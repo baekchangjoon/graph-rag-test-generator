@@ -126,6 +126,21 @@ public class BookingController {
     }
 
     /**
+     * 복합 AND 상태 가드(StateGuard conjunction, REQ-010): 저장된 행의 status==CONFIRMED && tier==VIP
+     * 두 조건이 동시에 참일 때만 200, 그 외 404. 빌더가 이 conjunction 가드를 검출하면
+     * CONFIRMED+VIP 시드 행(200 arm)을 discoveredBy="state-guard-conjunction"로 생성해야 한다.
+     */
+    @GetMapping("/{id}/premium-eligible")
+    public BookingResponse premiumEligible(@PathVariable Long id) {
+        Booking b = bookings.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "booking " + id + " not found"));
+        if (b.getStatus() == BookingStatus.CONFIRMED && b.getTier() == BookingTier.VIP) {
+            return toResponse(b);
+        }
+        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "booking " + id + " not premium-eligible");
+    }
+
+    /**
      * NUMERIC 파라미터 가드(입력-주도 시드 변종 Phase 1): 저장된 행의 nights 값이 minNights 이상이면 200,
      * 미만이면 404. 빌더가 이 GE 가드를 검출하면 nights=V(200 arm)와 nights=V-1(404 arm) 두 시드 변종을
      * 생성해야 한다. 두 시드는 서로 다른 PK의 격리된 행이어야 한다.
