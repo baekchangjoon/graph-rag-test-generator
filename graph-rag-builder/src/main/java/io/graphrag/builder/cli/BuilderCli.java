@@ -497,6 +497,9 @@ public final class BuilderCli {
         // host-gateway 는 외부 HTTP 캡처(모든 attach 모드)와 OTLP receiver 도달에 모두 필요 — 항상 1회 점검.
         warnIfHostGatewayUnsupported();
         io.graphrag.builder.capture.otlp.OtlpTraceReceiver otlpReceiver = null;
+        // sleuth egress: 호스트에 Zipkin 리시버를 띄우고 SUT가 host.docker.internal로 export하게 한다.
+        // EgressCollector.forMode(env)가 이를 집어 otel(otlpReceiver)과 동일한 egress 발견 경로를 탄다.
+        io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver zipkinReceiver = null;
         Map<String, String> otelEnv;
         if (otelSqlCapture) {
             String secret = newOtlpSecret();
@@ -506,9 +509,14 @@ public final class BuilderCli {
             log.info("OTEL SQL capture (attach): otlp receiver {} (container reaches via {})",
                     otlpReceiver.endpoint(), otlpReceiver.hostEndpoint());
         } else if (sleuthMode) {
-            otelEnv = Map.of();   // OTEL agent 미사용 → OTEL_* env 불필요. 상관은 B3 헤더 주입으로.
-            log.info("sleuth SQL capture (attach): B3 trace-id log correlation over services {}",
-                    effectiveCaptureServices(at));
+            // 0.0.0.0 바인드 → 컨테이너 SUT가 host.docker.internal:<port>로 Brave CLIENT span을 보고.
+            // SQL 상관은 B3 헤더 주입으로(별도 OTEL agent 미사용), egress 발견은 이 Zipkin span으로.
+            zipkinReceiver = new io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver();
+            zipkinReceiver.start("0.0.0.0");
+            otelEnv = io.graphrag.builder.env.AnalysisEnvironment.sleuthZipkinEnv(zipkinReceiver.hostEndpoint());
+            log.info("sleuth SQL+egress capture (attach): zipkin receiver {} (container reaches {}), "
+                    + "B3 trace-id log correlation over services {}",
+                    zipkinReceiver.endpoint(), zipkinReceiver.hostEndpoint(), effectiveCaptureServices(at));
         } else {
             otelEnv = otel.env(config.sutId());   // none: 기존 log 동작(OTEL env 동등, exporter none + baggage)
         }
@@ -552,7 +560,7 @@ public final class BuilderCli {
                     effectiveCaptureServices(at));   // app 포함 목록(Config도 빈 목록은 [app]로 정규화)
 
             AttachedComposeEnvironment env = new AttachedComposeEnvironment(
-                    envCfg, config.dbConfig().type(), otlpReceiver, httpCapture);
+                    envCfg, config.dbConfig().type(), otlpReceiver, httpCapture, zipkinReceiver);
             handedOff = true;
             try (env) {
                 env.start(workDir);
@@ -572,6 +580,7 @@ public final class BuilderCli {
             if (!handedOff) {
                 httpCapture.close();
                 if (otlpReceiver != null) { otlpReceiver.stop(); }
+                if (zipkinReceiver != null) { zipkinReceiver.stop(); }
             }
         }
     }
