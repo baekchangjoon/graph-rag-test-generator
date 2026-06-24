@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,7 +33,7 @@ class EgressStubComposerTest {
                 List.of(new BodyShape.BodyField("type", "java.lang.String")));
         EgressStubComposer.Outcome o = EgressStubComposer.compose(
                 call("GET", "/inventory/stock"),
-                List.of(site("GET", "/inventory/stock", shape)), SHAPES);
+                List.of(site("GET", "/inventory/stock", shape)), SHAPES, Map.of());
         assertThat(o.provenance()).isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
         assertThat(o.responseBody()).contains("type").isNotBlank();
         assertThat(o.loudFail()).isEmpty();
@@ -44,7 +45,7 @@ class EgressStubComposerTest {
         EgressStubComposer.Outcome o = EgressStubComposer.compose(
                 call("GET", "/other"),
                 List.of(site("GET", "/inventory/stock",
-                        new BodyShape("io.example.Resp", List.of()))), SHAPES);
+                        new BodyShape("io.example.Resp", List.of()))), SHAPES, Map.of());
         assertThat(o.provenance()).isEqualTo(CapturedHttpCall.Provenance.CAPTURED);
         assertThat(o.responseBody()).isEmpty();
         assertThat(o.loudFail()).get().extracting("reason").isEqualTo("unmatched-external-call");
@@ -55,7 +56,7 @@ class EgressStubComposerTest {
     void noShapeLoudFails() {
         EgressStubComposer.Outcome o = EgressStubComposer.compose(
                 call("GET", "/inventory/stock"),
-                List.of(site("GET", "/inventory/stock", null)), SHAPES);
+                List.of(site("GET", "/inventory/stock", null)), SHAPES, Map.of());
         assertThat(o.responseBody()).isEmpty();
         assertThat(o.loudFail()).get().extracting("reason").isEqualTo("unwired-external-dep");
     }
@@ -67,7 +68,7 @@ class EgressStubComposerTest {
                 List.of(new BodyShape.BodyField("nested", "com.example.Nested")));
         EgressStubComposer.Outcome o = EgressStubComposer.compose(
                 call("GET", "/inventory/stock"),
-                List.of(site("GET", "/inventory/stock", bad)), SHAPES);
+                List.of(site("GET", "/inventory/stock", bad)), SHAPES, Map.of());
         assertThat(o.responseBody()).isEmpty();
         assertThat(o.loudFail()).get().extracting("reason").isEqualTo("unsynthesizable-shape");
     }

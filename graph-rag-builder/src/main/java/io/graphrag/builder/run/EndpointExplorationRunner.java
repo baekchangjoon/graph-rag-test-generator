@@ -2119,7 +2119,7 @@ public class EndpointExplorationRunner {
                         e, candidate.pathId(), egressSeq));
                 continue;
             }
-            EgressStubComposer.Outcome outcome = EgressStubComposer.compose(e, callSites, egressShapes);
+            EgressStubComposer.Outcome outcome = EgressStubComposer.compose(e, callSites, egressShapes, stringLiteralsByDto);
             outcome.loudFail().ifPresent(lf -> {
                 if (!externalLoudFails.contains(lf)) {   // 2-pass 중복 누적 방지(REQ-S015-005)
                     log.warn("{}: {}", lf.reason(), lf.target());
