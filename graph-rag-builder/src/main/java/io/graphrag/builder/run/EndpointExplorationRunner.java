@@ -1704,15 +1704,15 @@ public class EndpointExplorationRunner {
      * 켠 변형(=새 arm)은 보존 목록에 담는다. budget(plan.kept().size())까지 진행한다.
      */
     static VariantExploreResult exploreEnumResponseVariants(
-            EnumResponseVariantGenerator.VariantPlan plan, JsonNode baselineBody,
+            ResponseFieldVariantGenerator.VariantPlan plan, JsonNode baselineBody,
             String method, String pathLiteral, ExternalStubSynthesizer synthesizer,
             boolean isolated, VariantInvoker invoker,
             ExecutionDataStore cumulative, Set<String> appClasses) {
         List<String> kept = new ArrayList<>();
         List<KeptVariant> keptVariants = new ArrayList<>();
         int attempted = 0;
-        for (EnumResponseVariantGenerator.ResponseVariant variant : plan.kept()) {
-            JsonNode body = applyEnumOverrides(baselineBody, variant.enumOverrides());
+        for (ResponseFieldVariantGenerator.ResponseVariant variant : plan.kept()) {
+            JsonNode body = applyEnumOverrides(baselineBody, variant.overrides());
             String traceId = isolated ? invoker.nextTraceId() : null;
             java.util.UUID variantId = null;
             try {
@@ -1776,6 +1776,22 @@ public class EndpointExplorationRunner {
         return copy;
     }
 
+    /**
+     * enum 상수 해석: FQN 직접 매칭, 없으면 simple-name 폴백.
+     * (ShapeJsonSynthesizer 및 구 EnumResponseVariantGenerator와 동일 규칙.)
+     */
+    private static List<String> resolveEnumConstants(String javaType,
+                                                     Map<String, List<String>> enumConstants) {
+        List<String> direct = enumConstants.get(javaType);
+        if (direct != null) {
+            return direct;
+        }
+        String simple = javaType.substring(javaType.lastIndexOf('.') + 1);
+        return enumConstants.entrySet().stream()
+                .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
+    }
+
     /** enum 응답 변형 budget(엔드포인트당 변형 stub 시도 상한). generator budget과 동일. */
     static final int RESPONSE_VARIANT_BUDGET = 32;
 
@@ -1806,12 +1822,13 @@ public class EndpointExplorationRunner {
     private void runEnumResponseVariantLoops(Endpoint endpoint, JsonNode baseInput,
                                              ExplorationOutcome outcome) {
         boolean isolated = !(httpCapture.traceKey() instanceof io.graphrag.builder.env.NoTraceKey);
-        EnumResponseVariantGenerator generator = new EnumResponseVariantGenerator();
+        ResponseFieldVariantGenerator generator = new ResponseFieldVariantGenerator();
         ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(
                 enumConstants == null ? Map.of() : enumConstants);
         String authHeader = (authProvider != null && endpoint.authRequired())
                 ? authConfig.headerValue(authProvider.token()) : null;
         HttpClient http = HttpClient.newHttpClient();
+        Map<String, List<String>> effectiveEnumConstants = enumConstants == null ? Map.of() : enumConstants;
         for (io.graphrag.builder.index.ExternalCallSite site : callSites) {
             if (site.responseShape().isEmpty() || site.httpMethod().isBlank()) {
                 continue;
@@ -1820,9 +1837,17 @@ public class EndpointExplorationRunner {
             if (!stubSynthesizer.isRegistered(site.httpMethod(), site.pathLiteral())) {
                 continue;   // B2가 stub을 등록하지 못한 site는 변형 대상 아님(loud-fail은 이미 기록)
             }
-            EnumResponseVariantGenerator.VariantPlan plan =
-                    generator.generate(responseShape, enumConstants == null ? Map.of() : enumConstants,
-                            RESPONSE_VARIANT_BUDGET);
+            // enum-only 후보 맵: 각 응답 필드에 대해 enum 상수를 해석하고 baseline(선언순 첫 상수) 제외.
+            Map<String, List<String>> enumCandidates = new java.util.TreeMap<>();
+            for (BodyShape.BodyField field : responseShape.fields()) {
+                List<String> consts = resolveEnumConstants(field.javaType(), effectiveEnumConstants);
+                if (consts != null && consts.size() > 1) {
+                    // baseline = 선언순 첫 상수 → skip(1)로 non-baseline만 넘긴다.
+                    enumCandidates.put(field.name(), consts.stream().skip(1).toList());
+                }
+            }
+            ResponseFieldVariantGenerator.VariantPlan plan =
+                    generator.generate(enumCandidates, RESPONSE_VARIANT_BUDGET);
             if (plan.kept().isEmpty()) {
                 continue;   // enum 필드 없음 → 변형 0(정상, 단계1 단일 stub만)
             }

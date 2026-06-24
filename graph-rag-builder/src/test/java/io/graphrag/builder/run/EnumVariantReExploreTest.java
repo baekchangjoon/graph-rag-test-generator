@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.graphrag.builder.env.HttpCaptureServer;
 import io.graphrag.builder.env.OtelTraceKey;
 import io.graphrag.builder.index.BodyShape;
-import io.graphrag.builder.run.EnumResponseVariantGenerator.VariantPlan;
+import io.graphrag.builder.run.ResponseFieldVariantGenerator.VariantPlan;
 import org.jacoco.core.data.ExecutionData;
 import org.jacoco.core.data.ExecutionDataStore;
 import org.junit.jupiter.api.AfterEach;
@@ -77,7 +77,7 @@ class EnumVariantReExploreTest {
         ExecutionDataStore cumulative = new ExecutionDataStore();
         cumulative.put(new ExecutionData(123L, CLASS, armBits(1)));
 
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        VariantPlan plan = enumPlan(32);
         // kept = [mode=BACKORDER, mode=EXPRESS_ONLY] — 각각 다른 arm을 연다.
         List<JsonNode> registeredBodies = new ArrayList<>();
         AtomicInteger seq = new AtomicInteger();
@@ -124,7 +124,7 @@ class EnumVariantReExploreTest {
         ExecutionDataStore cumulative = new ExecutionDataStore();
         cumulative.put(new ExecutionData(123L, CLASS, armBits(1, 2, 3)));   // 이미 모든 arm 누적
 
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        VariantPlan plan = enumPlan(32);
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
             @Override public String nextTraceId() { return "trace00000000000" + (++n); }
@@ -150,7 +150,7 @@ class EnumVariantReExploreTest {
         syn.register("GET", "/inventory/stock", INV_SHAPE);
         ExecutionDataStore cumulative = new ExecutionDataStore();
         // budget=1 → 단 1개 변형만 kept 목록으로 들어온다.
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 1);
+        VariantPlan plan = enumPlan(1);
         assertThat(plan.kept()).hasSize(1);
 
         AtomicInteger calls = new AtomicInteger();
@@ -180,7 +180,7 @@ class EnumVariantReExploreTest {
         syn.register("GET", "/inventory/stock", INV_SHAPE);
         ExecutionDataStore cumulative = new ExecutionDataStore();
 
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        VariantPlan plan = enumPlan(32);
         AtomicInteger nextTraceCalls = new AtomicInteger();
         AtomicInteger closePendingCalls = new AtomicInteger();
 
@@ -216,7 +216,7 @@ class EnumVariantReExploreTest {
         syn.register("GET", "/inventory/stock", INV_SHAPE);
         ExecutionDataStore cumulative = new ExecutionDataStore();
 
-        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        VariantPlan plan = enumPlan(32);
         AtomicInteger closePendingCalls = new AtomicInteger();
         EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
             private int n;
@@ -230,6 +230,16 @@ class EnumVariantReExploreTest {
                 true, invoker, cumulative, Set.of(CLASS));
 
         assertThat(closePendingCalls.get()).isEqualTo(plan.kept().size());
+    }
+
+    /**
+     * 호출자 책임: baseline(선언순 첫 상수) 제외한 enum 후보 맵 구성 후 새 generator 호출.
+     * FulfillmentMode {STANDARD(baseline), EXPRESS_ONLY, BACKORDER} → non-baseline {EXPRESS_ONLY, BACKORDER}.
+     */
+    private static VariantPlan enumPlan(int budget) {
+        Map<String, List<String>> candidates = new java.util.TreeMap<>();
+        candidates.put("mode", List.of("EXPRESS_ONLY", "BACKORDER"));   // STANDARD baseline 제외
+        return new ResponseFieldVariantGenerator().generate(candidates, budget);
     }
 
     private static boolean[] armBits(int... bits) {
