@@ -12,6 +12,7 @@ import io.graphrag.builder.env.ExplorationEnvironment;
 import io.graphrag.builder.env.OverrideComposeGenerator;
 import io.graphrag.builder.env.SutOptions;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.SourceRoots;
 import io.graphrag.oracle.ReflectiveBodyInstantiator;
 import io.graphrag.builder.index.ConstraintExtractor;
 import io.graphrag.builder.index.EndpointIndexer;
@@ -329,7 +330,13 @@ public final class BuilderCli {
 
     /** 정적 인덱싱 블록: SUT 소스를 1회 파싱해 모든 Spoon 인덱서가 공유. (테스트 훅 겸용) */
     static StaticIndexBundle indexStatically(Path sutSrc, Path sutResources, AuthConfig authConfig) {
-        spoon.reflect.CtModel model = SharedSpoonModel.build(sutSrc);
+        return indexStatically(SourceRoots.single(sutSrc),
+                Files.isDirectory(sutResources) ? List.of(sutResources) : List.<Path>of(), authConfig);
+    }
+
+    /** 멀티 루트 정적 인덱싱: 공유 Spoon 모델 + 멀티 resources MapperXml 순회. (REQ-001/002/019) */
+    static StaticIndexBundle indexStatically(SourceRoots roots, List<Path> resourceDirs, AuthConfig authConfig) {
+        spoon.reflect.CtModel model = SharedSpoonModel.build(roots);
         IndexResult index = new EndpointIndexer().index(model, authConfig);
         IndexResult functional = new RouterFunctionIndexer().index(model);
         if (!functional.endpoints().isEmpty()) {
@@ -348,8 +355,12 @@ public final class BuilderCli {
         List<io.graphrag.builder.index.ExternalCallSite> callSites =
                 responseDtoIndexer.extractCallSites(model);
         Map<String, List<String>> enums = new EnumConstantExtractor().extract(model);
-        List<MapperStatement> mappers = Files.isDirectory(sutResources)
-                ? new MapperXmlIndexer().index(sutResources) : List.<MapperStatement>of();
+        List<MapperStatement> mappers = new ArrayList<>();
+        for (Path resDir : resourceDirs) {
+            if (Files.isDirectory(resDir)) {
+                mappers.addAll(new MapperXmlIndexer().index(resDir));   // REQ-019 멀티 resources
+            }
+        }
         return new StaticIndexBundle(index, ws, kafka, mappers, dto, enums, callSites);
     }
 
@@ -361,7 +372,11 @@ public final class BuilderCli {
     /** 캐시 우선 정적 인덱싱: 신선하면 복원(Spoon 0회), 미스 또는 noIncremental이면 풀 리빌드 후 저장. */
     static StaticIndex staticIndexWithCache(BuildConfig config) {
         Path cacheDir = config.out().resolve("index-cache");
-        IndexManifest current = IndexCache.scan(config.sutSrc(), config.sutResources(), config.authConfig());
+        SourceRoots roots = config.sourceRoots();
+        // resources 결정 한 곳에 위임(REQ-011): config.sutResources()는 --sut-resources 명시 시 그 값,
+        // 미지정 시 null(Task 11). null → resourceDirs 가 전 parseRoots sibling resources 순회.
+        List<Path> resourceDirs = SutSrcResolver.resourceDirs(roots, config.sutResources());
+        IndexManifest current = IndexCache.scan(roots, resourceDirs, config.authConfig());
         if (!config.noIncremental()) {
             Optional<StaticIndex> hit = IndexCache.load(cacheDir, current);
             if (hit.isPresent()) {
@@ -369,7 +384,7 @@ public final class BuilderCli {
                 return hit.get();
             }
         }
-        StaticIndexBundle b = indexStatically(config.sutSrc(), config.sutResources(), config.authConfig());
+        StaticIndexBundle b = indexStatically(roots, resourceDirs, config.authConfig());
         StaticIndex result = new StaticIndex(b.index(), b.ws(), b.kafka(), b.mappers(),
                 b.responseDtoFieldSets(), b.enumConstants(), b.callSites());
         IndexCache.save(cacheDir, current, result);
