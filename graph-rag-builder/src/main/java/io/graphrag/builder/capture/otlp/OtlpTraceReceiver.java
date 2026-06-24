@@ -2,6 +2,7 @@ package io.graphrag.builder.capture.otlp;
 
 import com.google.protobuf.ByteString;
 import com.sun.net.httpserver.HttpServer;
+import io.graphrag.builder.capture.trace.TraceReceiverLimits;
 import io.opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest;
 import io.opentelemetry.proto.common.v1.AnyValue;
 import io.opentelemetry.proto.common.v1.KeyValue;
@@ -22,7 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.regex.Pattern;
 
 /**
  * In-process OTLP/protobuf 트레이스 수신기. SUT의 OTEL agent가 POST /v1/traces 로 보내는
@@ -39,9 +39,6 @@ public final class OtlpTraceReceiver implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(OtlpTraceReceiver.class);
 
     private static final int MAX_BODY_BYTES = 16 * 1024 * 1024;   // SUT 오동작 시 빌더 OOM 방지
-    private static final int MAX_TRACES = 50_000;                 // orphan trace 누적 상한
-    private static final int MAX_SPANS_PER_TRACE = 10_000;
-    private static final Pattern HEX_32 = Pattern.compile("[0-9a-f]{32}");
 
     /** 인증 헤더 이름 (attach 모드 per-run shared secret). */
     public static final String AUTH_HEADER = "x-graphrag-token";
@@ -145,14 +142,14 @@ public final class OtlpTraceReceiver implements AutoCloseable {
 
     private void record(SpanRecord span) {
         // traceId는 맵 키 — W3C 32-hex가 아니면 무시(비정상 키로 인한 상태 폭주/주입 방어).
-        if (!HEX_32.matcher(span.traceId()).matches()) {
+        if (!TraceReceiverLimits.HEX_32.matcher(span.traceId()).matches()) {
             return;
         }
         List<SpanRecord> spans = byTrace.computeIfAbsent(span.traceId(), k -> {
             evictOldestIfFull();
             return new CopyOnWriteArrayList<>();
         });
-        if (spans.size() >= MAX_SPANS_PER_TRACE) {
+        if (spans.size() >= TraceReceiverLimits.MAX_SPANS_PER_TRACE) {
             return;   // 한 trace의 span 폭주 상한
         }
         spans.add(span);
@@ -161,7 +158,7 @@ public final class OtlpTraceReceiver implements AutoCloseable {
 
     /** trace 수가 상한을 넘으면 가장 오래된(마지막 도착이 가장 이른) trace를 축출. */
     private void evictOldestIfFull() {
-        if (byTrace.size() < MAX_TRACES) {
+        if (byTrace.size() < TraceReceiverLimits.MAX_TRACES) {
             return;
         }
         lastArrivalNanos.entrySet().stream()
