@@ -14,7 +14,6 @@ import spoon.reflect.reference.CtFieldReference;
 import spoon.reflect.visitor.filter.TypeFilter;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -75,7 +74,8 @@ public final class ResponseStringLiteralExtractor {
         Set<String> allResponseStringFields = fieldToDtos.keySet();
 
         // 2. 동일 소스트리 static final String 상수값 인덱스(simpleName → value).
-        Map<String, String> stringConstants = new HashMap<>();
+        //    TreeMap: 동명 simple-name 키가 여러 클래스에 존재해도 순서가 결정적(no-classpath 환경에서 HashMap은 비결정적).
+        Map<String, String> stringConstants = new TreeMap<>();
         for (CtField<?> field : model.getElements(new TypeFilter<>(CtField.class))) {
             if (field.getModifiers().contains(ModifierKind.FINAL)
                     && field.getModifiers().contains(ModifierKind.STATIC)
@@ -121,8 +121,7 @@ public final class ResponseStringLiteralExtractor {
             }
 
             // 3c. 비동치 호출이지만 target이 응답 String 필드 접근자 → loud skip
-            if (inv.getTarget() != null && !EQUALITY_METHODS.contains(simple)
-                    && !"equals".equals(simple)) {
+            if (inv.getTarget() != null && !EQUALITY_METHODS.contains(simple)) {
                 String accessorField = fieldRefResolvingLocal(inv.getTarget(), inv);
                 if (accessorField != null && allResponseStringFields.contains(accessorField)) {
                     LOG.warning("string-literal-nonequality-skipped: method=" + simple
