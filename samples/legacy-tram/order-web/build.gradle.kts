@@ -11,6 +11,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-jpa")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.springframework.cloud:spring-cloud-starter-sleuth")
+    implementation("org.springframework.cloud:spring-cloud-sleuth-zipkin")  // Brave finished-span export (Zipkin v2 JSON) → egress CLIENT span capture
     runtimeOnly("mysql:mysql-connector-java:8.0.28")  // Eventuate BOM 없이 버전 명시 (Boot 2.7 BOM은 com.mysql:mysql-connector-j만 관리)
 }
 dependencyManagement {
