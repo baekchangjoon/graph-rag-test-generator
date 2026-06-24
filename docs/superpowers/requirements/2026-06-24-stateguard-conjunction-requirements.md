@@ -125,15 +125,15 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | conjunction 검출 | ConstraintExtractorConjunctionTest#detect2Leaf, #threeLeafEmit, #fourLeafSkip, #singleNotConjunction | integration | 🔴 planned |
-| REQ-002 | 분류 순서·배제 | ConstraintExtractorConjunctionTest#temporalFirst, #numericParamSkip, #orSkip | integration | 🔴 planned |
-| REQ-003 | SeedVariant 모델·NPE | ReadInputSynthesizerVariantTest#conjunctionVariant + EndpointExplorationRunnerStateGuardTest#conjunctionCatchNpeAvoided + 2-arg 후방호환 컴파일 | integration | 🔴 planned |
-| REQ-004 | satisfyingValue 동시만족 | ReadInputSynthesizerVariantTest#conjunctionSimultaneous, #temporalType, #booleanType, #numericLiteral, #variantIdxContinuous | integration | 🔴 planned |
-| REQ-005 | 같은컬럼 병합·skip | ReadInputSynthesizerVariantTest#sameColumnMerge, #contradictionSkip | integration | 🔴 planned |
-| REQ-006 | cross-class 귀속 | BuilderCliAttributionTest#conjunctionReachable | integration | 🔴 planned |
-| REQ-007 | early-return 게이트 | ReadInputSynthesizerVariantTest#conjunctionOnlyNotSkipped + EndpointExplorationRunnerStateGuardTest#conjunctionOnlyGatePasses | integration | 🔴 planned |
-| REQ-008 | GRB ablation | ConstraintExtractorConjunctionTest#ablationOff | integration | 🔴 planned |
-| REQ-009 | 기존 회귀 | 기존 StateGuard/Attribution/Variant + BuilderIntegrationTest | integration/E2E | 🔴 planned |
-| REQ-010 | E2E 동시만족 arm | BuilderIntegrationTest#premiumEligibleConjunction | E2E | 🔴 planned |
+| REQ-001 | conjunction 검출 | ConstraintExtractorConjunctionTest#detect2Leaf, #threeLeafEmit, #fourLeafSkip, #singleNotConjunction | integration | 🟢 green |
+| REQ-002 | 분류 순서·배제 | ConstraintExtractorConjunctionTest#temporalFirst, #numericParamSkip, #orSkip | integration | 🟢 green |
+| REQ-003 | SeedVariant 모델·NPE | EndpointExplorationRunnerStateGuardTest#seedVariantXor_…, #conjunctionCatchNpeAvoided_…(variantLabel/gate/singleGuard) + 2-arg 후방호환 컴파일 | integration | 🟢 green |
+| REQ-004 | satisfyingValue 동시만족 | ReadInputSynthesizerVariantTest#conjunctionSimultaneous, #temporalType, #booleanType, #numericLiteral, #variantIdxContinuous | integration | 🟢 green |
+| REQ-005 | 같은컬럼 병합·skip | ReadInputSynthesizerVariantTest#sameColumnMerge, #contradictionSkip | integration | 🟢 green |
+| REQ-006 | cross-class 귀속 | BuilderCliAttributionTest#conjunctionReachable, #conjunctionUnreachableExcluded | integration | 🟢 green |
+| REQ-007 | early-return 게이트 | ReadInputSynthesizerVariantTest#conjunctionOnlyNotSkipped + EndpointExplorationRunnerStateGuardTest#conjunctionOnlyGatePasses | integration | 🟢 green |
+| REQ-008 | GRB ablation | ConstraintExtractorConjunctionTest#ablationOff | integration | 🟢 green |
+| REQ-009 | 기존 회귀 | 기존 StateGuard/Attribution/Variant + BuilderIntegrationTest(3개 green) + EndpointExplorationRunnerStateGuardTest#attachReadPathSeeds_assignsPathIdWhenSuccess, #attachReadPathSeeds_dropsOrphansWhenNoSuccess | integration/E2E | 🟢 green |
+| REQ-010 | E2E 동시만족 arm | BuilderIntegrationTest#premiumEligibleConjunction | E2E | 🟢 green |
 
-Coverage: 0/10 green (0%) — target 100% (대상: Must 9 + 미연기 Should 1[REQ-008]).
+Coverage: 10/10 green (100%) — target 100% (대상: Must 9 + 미연기 Should 1[REQ-008]). 달성.
