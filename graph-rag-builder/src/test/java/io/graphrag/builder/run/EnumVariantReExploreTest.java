@@ -172,6 +172,66 @@ class EnumVariantReExploreTest {
         assertThat(result.attempted()).isEqualTo(1);
     }
 
+    @Test
+    void closePendingIsCalledEvenWhenInvokeThrows() throws Exception {
+        // #1/#2 scope 누수 가드: invoke가 던져도(예: http.send 실패) 루프는 변형마다 closePending을
+        // finally로 호출해 nextTraceId가 연 scope를 drain한다. 호출 누락 시 OTLP 버퍼 누수.
+        ExternalStubSynthesizer syn = synthesizer();
+        syn.register("GET", "/inventory/stock", INV_SHAPE);
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+
+        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        AtomicInteger nextTraceCalls = new AtomicInteger();
+        AtomicInteger closePendingCalls = new AtomicInteger();
+
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            @Override public String nextTraceId() {
+                return "trace00000000000" + nextTraceCalls.incrementAndGet();
+            }
+            @Override public ExecutionDataStore invoke(JsonNode body) {
+                throw new RuntimeException("send failed");   // 변형 invoke가 항상 실패
+            }
+            @Override public void closePending() {
+                closePendingCalls.incrementAndGet();
+            }
+        };
+
+        EndpointExplorationRunner.VariantExploreResult result =
+                EndpointExplorationRunner.exploreEnumResponseVariants(
+                        plan, baseline(), "GET", "/inventory/stock", syn,
+                        true, invoker, cumulative, Set.of(CLASS));
+
+        // 변형마다 closePending이 정확히 1회씩(invoke 실패해도) — scope drain 보장.
+        assertThat(closePendingCalls.get()).isEqualTo(nextTraceCalls.get());
+        assertThat(closePendingCalls.get()).isEqualTo(plan.kept().size());
+        // best-effort: 모든 변형 실패했지만 회귀 아님(보존 0, 시도는 budget만큼).
+        assertThat(result.keptVariantLabels()).isEmpty();
+        assertThat(result.attempted()).isEqualTo(plan.kept().size());
+    }
+
+    @Test
+    void closePendingIsCalledOnSuccessfulInvokeToo() throws Exception {
+        // 성공 경로에서도 closePending이 변형마다 불린다(invoke가 scope를 소비했으면 no-op).
+        ExternalStubSynthesizer syn = synthesizer();
+        syn.register("GET", "/inventory/stock", INV_SHAPE);
+        ExecutionDataStore cumulative = new ExecutionDataStore();
+
+        VariantPlan plan = new EnumResponseVariantGenerator().generate(INV_SHAPE, ENUMS, 32);
+        AtomicInteger closePendingCalls = new AtomicInteger();
+        EndpointExplorationRunner.VariantInvoker invoker = new EndpointExplorationRunner.VariantInvoker() {
+            private int n;
+            @Override public String nextTraceId() { return "trace00000000000" + (++n); }
+            @Override public ExecutionDataStore invoke(JsonNode body) { return deltaWithArm(2); }
+            @Override public void closePending() { closePendingCalls.incrementAndGet(); }
+        };
+
+        EndpointExplorationRunner.exploreEnumResponseVariants(
+                plan, baseline(), "GET", "/inventory/stock", syn,
+                true, invoker, cumulative, Set.of(CLASS));
+
+        assertThat(closePendingCalls.get()).isEqualTo(plan.kept().size());
+    }
+
     private static boolean[] armBits(int... bits) {
         boolean[] p = new boolean[8];
         for (int b : bits) {
