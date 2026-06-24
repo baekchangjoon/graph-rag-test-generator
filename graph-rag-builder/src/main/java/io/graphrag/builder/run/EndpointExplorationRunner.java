@@ -194,6 +194,7 @@ public class EndpointExplorationRunner {
     private final List<io.graphrag.builder.index.ExternalCallSite> callSites;  // 외부 호출 site (B2 재탐색)
     private final Map<String, Map<String, List<String>>> stringLiteralsByDto;  // dtoFqn→field→리터럴 (단계2-A, Task 6에서 사용)
     private final ExternalStubSynthesizer stubSynthesizer;   // 형상→stub 런타임 등록 (httpCapture null이면 null)
+    private final ShapeJsonSynthesizer egressShapes;   // egress enrich용 (httpCapture==null에도 보유; stubSynthesizer와 공유)
     private final io.graphrag.builder.capture.egress.EgressCollector egressCollector;  // nullable — Task 8에서 실제 주입
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
@@ -339,10 +340,9 @@ public class EndpointExplorationRunner {
         this.callSites = callSites == null ? List.of() : callSites;
         this.egressCollector = egressCollector;
         this.stringLiteralsByDto = stringLiteralsByDto == null ? Map.of() : stringLiteralsByDto;
+        this.egressShapes = new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants);
         this.stubSynthesizer = httpCapture == null ? null
-                : new ExternalStubSynthesizer(httpCapture,
-                        new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),
-                        httpCapture.traceKey());
+                : new ExternalStubSynthesizer(httpCapture, egressShapes, httpCapture.traceKey());
         // traceParent가 null이면 이 인스턴스 전용 로컬 생성기를 만든다 (테스트 호환 및 traceparent 미주입(WS 등) 폴백).
         this.traceParent = traceParent != null ? traceParent
                 : new io.graphrag.builder.capture.TraceParent("local-" + System.nanoTime());
@@ -2108,11 +2108,37 @@ public class EndpointExplorationRunner {
                     provenanceOf(exchange)));
         }
         // egress 병합 + (method, urlPath) dedup — redirect(existing) 우선(REQ-005).
+        // span-발견 호출은 callSite에 매칭되면 형상-시드 body로 SYNTHESIZED 등록(REQ-S015-001~005).
         List<io.graphrag.model.CapturedHttpCall> egress = new ArrayList<>();
         int egressSeq = 0;
         for (io.graphrag.builder.capture.egress.EgressCall e : candidate.egressCalls()) {
-            egress.add(io.graphrag.builder.capture.egress.EgressCallMapper.toCapturedHttpCall(
-                    e, candidate.pathId(), ++egressSeq));
+            egressSeq++;
+            if (callSites.isEmpty()) {
+                // 정적 인덱스 없음 → 기존 빈-body CAPTURED 경로(loud-fail 노이즈 방지, REQ-S015-004).
+                egress.add(io.graphrag.builder.capture.egress.EgressCallMapper.toCapturedHttpCall(
+                        e, candidate.pathId(), egressSeq));
+                continue;
+            }
+            EgressStubComposer.Outcome outcome = EgressStubComposer.compose(e, callSites, egressShapes);
+            outcome.loudFail().ifPresent(lf -> {
+                if (!externalLoudFails.contains(lf)) {   // 2-pass 중복 누적 방지(REQ-S015-005)
+                    log.warn("{}: {}", lf.reason(), lf.target());
+                    externalLoudFails.add(lf);
+                }
+            });
+            if (outcome.responseBody().isEmpty()) {
+                egress.add(io.graphrag.builder.capture.egress.EgressCallMapper.toCapturedHttpCall(
+                        e, candidate.pathId(), egressSeq));
+            } else {
+                egress.add(new io.graphrag.model.CapturedHttpCall(
+                        "http-" + candidate.pathId() + "-egress-" + egressSeq,
+                        candidate.pathId(), e.method(), e.path(),
+                        Map.of(), null,
+                        e.statusOrNull() == null ? 200 : e.statusOrNull(),
+                        outcome.responseBody(),
+                        consumedFields(outcome.responseBody()),   // redirect 경로와 동일(REQ-S015-002)
+                        false, outcome.provenance()));
+            }
         }
         return io.graphrag.builder.capture.egress.EgressCallMapper.mergeDedup(calls, egress);
     }
