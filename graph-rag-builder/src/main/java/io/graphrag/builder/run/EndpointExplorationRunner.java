@@ -2059,7 +2059,7 @@ public class EndpointExplorationRunner {
                     triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
                     "response-variant", List.of(), List.of(), List.of()));
 
-            // variantHttpCalls: SYNTHESIZED(responsevar) + CONTRACT(egressassert/egressenvelope) 혼재 — provenance로 구분
+            // variantHttpCalls: SYNTHESIZED(responsevar) + CONTRACT(egressassert) 혼재 — provenance로 구분
             // 각 보존 변형마다 egress-assertion 단언 path를 생성한다(REQ-F012-006, REQ-F012-007).
             // KeptVariant.branches는 cumBranches(변형 루프 누적)를 per-변형에 주입한다 —
             // per-variant delta가 정적 헬퍼에 노출되지 않으므로, analyzer가 있는 여기서 채운다.
