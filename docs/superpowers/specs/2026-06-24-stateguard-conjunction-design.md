@@ -176,6 +176,12 @@ exploreStateGuardVariants → synthesizeVariants(+ conjunctions)
 - `variant.conjunction()!=null` 분기로 NPE 회피(gate 미적용).
 - `GRB_STATE_GUARDS=off` → no-op.
 - 변종 best-effort. 기존 단일 가드/TEMPORAL/ENUM 검출·합성·gate 불변(회귀 0).
+- **read-path orphan 시드(REQ-009)**: conjunction base는 보정하지 않으므로 premium-eligible 같은
+  GET 핸들러의 base(예: CANCELLED/STANDARD)는 404를 반환 → 2xx success path가 없다. 이때
+  `attachSeeds`(read-path)가 happy 시드를 `pathId=null`로 남겨 `asset.seeds()`로 누출하면 소비측
+  NPE(`RequiredSeed.pathId()`). `attachReadPathSeeds(successPathId, seeds)` 헬퍼로 분리해 success
+  path가 없으면 orphan 시드를 drop한다(어떤 emitted path도 참조하지 않으므로). 동시 만족 200 arm은
+  conjunction 변종이 자체 시드(pathId 보유)로 별도 제공.
 
 ## 6. E2E/수용 테스트 (definition of done)
 - **E2E (in-repo, order-service)**: `BookingController`에 복합 AND GET 엔드포인트 추가 —
