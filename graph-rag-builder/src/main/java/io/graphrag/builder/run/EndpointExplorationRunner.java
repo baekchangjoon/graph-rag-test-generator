@@ -1841,6 +1841,64 @@ public class EndpointExplorationRunner {
     }
 
     /**
+     * span-발견됐지만 recorder가 한 번도 서빙하지 않은(미구동) egress callSite를 찾아 loud-fail을 반환한다
+     * (REQ-F012-010 loud part).
+     *
+     * <p>조건: (a) responseShape가 present, (b) 변형 후보가 존재(String 필드의 stringLiteralsByDto 리터럴,
+     * 또는 enum 필드의 비-첫 상수), (c) {@code isRegistered.test(method, pathLiteral)}가 false(span-only).
+     * target은 중복 제거 후 {@code "<METHOD> <pathLiteral>"} 형태로 반환한다.
+     *
+     * @param callSites          인덱싱된 외부 callSite 목록
+     * @param stringLiteralsByDto dtoFqn→field→리터럴 목록
+     * @param enumConstants      enum FQN→상수 목록
+     * @param isRegistered       stub이 recorder에 등록됐는지 여부 판별자(method, pathLiteral)
+     * @return egress-branch-undriven loud-fail 목록(중복 없음)
+     */
+    public static List<LoudFail> undrivenEgressBranches(
+            List<io.graphrag.builder.index.ExternalCallSite> callSites,
+            Map<String, Map<String, List<String>>> stringLiteralsByDto,
+            Map<String, List<String>> enumConstants,
+            java.util.function.BiPredicate<String, String> isRegistered) {
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        List<LoudFail> result = new ArrayList<>();
+        for (io.graphrag.builder.index.ExternalCallSite site : callSites) {
+            if (site.responseShape().isEmpty()) {
+                continue;
+            }
+            BodyShape shape = site.responseShape().get();
+            // 변형 후보 존재 여부 — enum 비-첫 상수 or String 리터럴
+            boolean hasCandidates = false;
+            for (BodyShape.BodyField field : shape.fields()) {
+                List<String> consts = resolveEnumConstants(field.javaType(), enumConstants);
+                if (consts != null && consts.size() > 1) {
+                    hasCandidates = true;
+                    break;
+                }
+                if ("java.lang.String".equals(field.javaType())) {
+                    List<String> lits = stringLiteralsByDto
+                            .getOrDefault(shape.javaType(), Map.of())
+                            .getOrDefault(field.name(), List.of());
+                    if (!lits.isEmpty()) {
+                        hasCandidates = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasCandidates) {
+                continue;
+            }
+            if (isRegistered.test(site.httpMethod(), site.pathLiteral())) {
+                continue;
+            }
+            String target = site.httpMethod() + " " + site.pathLiteral();
+            if (seen.add(target)) {
+                result.add(new LoudFail("egress-branch-undriven", target));
+            }
+        }
+        return result;
+    }
+
+    /**
      * 응답 형상의 각 필드에 대해 enum∪String 변형 후보 맵을 조립한다(REQ-009, REQ-010).
      *
      * <p>조립 규칙:
@@ -2011,6 +2069,16 @@ public class EndpointExplorationRunner {
             buildEnvelopeVariantCall(endpoint.id(), site.httpMethod(), site.pathLiteral(),
                     errorContract, new ErrorEnvelopeSynthesizer())
                     .ifPresent(variantHttpCalls::add);
+        }
+        // ---- egress-branch-undriven loud-fail (REQ-F012-010) ----
+        // 변형 후보가 있지만 recorder가 한 번도 서빙하지 않은(span-only) site를 가시화한다.
+        // runResponseVariantLoops 루프가 isRegistered=false인 site를 skip했으므로, 루프 종료 후
+        // 한 번만 검사하면 전체 callSites에 대해 정확히 커버된다.
+        for (LoudFail lf : undrivenEgressBranches(callSites, stringLiteralsByDto, enumConstants,
+                stubSynthesizer::isRegistered)) {
+            if (!externalLoudFails.contains(lf)) {
+                externalLoudFails.add(lf);
+            }
         }
     }
 
