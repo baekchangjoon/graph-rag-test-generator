@@ -270,6 +270,17 @@ record SourceRoots(List<Path> parseRoots, Path primary) {
   **모든 `parseRoots`의 `.java`를 합산**해 manifest를 만든다. `staticIndexWithCache`는
   이 오버로드를 쓴다. (수용 기준: §9 E2E-6.)
 
+> **구현 편차 메모 (spec↔code 동기화):** 아래 3가지는 설계 초안과 실제 구현이 다르다.
+> (a) `sourceRoots`는 `BuildConfig` record의 **마지막 컴포넌트**(초안은 2번째) 위치에
+>     있으며, compact 생성자에서 `sourceRoots == null` 시 `SourceRoots.single(sutSrc)`로
+>     정규화한다.
+> (b) `IndexCache.scan` 및 `indexStatically(SourceRoots, List<Path>, AuthConfig)`는
+>     `Path sutResources` 대신 **`List<Path> resourceDirs`**(멀티 resources 리스트)를
+>     받는다 — `SutSrcResolver.resourceDirs(roots, config.sutResources())`가 이를 해석.
+> (c) `config.sutResources()`는 `--sut-resources` **명시 시에만 non-null**이며, 미지정 시
+>     `null`(→ `resourceDirs`가 각 루트의 sibling `resources`를 자동 순회). 초안의 "단일
+>     `Path sutResources`" 표기는 구현에서 이 null-or-explicit 의미로 반영됐다.
+
 ### 6.5 `EndpointSelector.resolve`
 
 - 정확 매칭(id, `"METHOD /path"`) 실패 후, 셀렉터에 glob 메타문자(`* ? { [`)가 있으면
