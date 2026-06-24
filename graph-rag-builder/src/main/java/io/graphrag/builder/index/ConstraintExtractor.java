@@ -142,9 +142,7 @@ public class ConstraintExtractor {
      * 귀속 불가이므로 skip(보수적); non-null + FQN 빈 경우는 declaringType.getSimpleName()을 key로 사용.
      * 1-hop만: 호출된 메서드 내부의 추가 호출은 따라가지 않는다.
      */
-    public Set<Map.Entry<String, String>> reachableMethods(SourceRoots roots, String handlerClass, String handlerMethod) {
-        CtModel model = buildModel(roots);
-
+    public Set<Map.Entry<String, String>> reachableMethods(CtModel model, String handlerClass, String handlerMethod) {
         Set<Map.Entry<String, String>> result = new HashSet<>();
         // 핸들러 자신을 항상 포함
         result.add(new AbstractMap.SimpleEntry<>(handlerClass, handlerMethod));
@@ -175,14 +173,17 @@ public class ConstraintExtractor {
         return result;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #reachableMethods(CtModel, String, String)} 에 위임. */
+    public Set<Map.Entry<String, String>> reachableMethods(SourceRoots roots, String handlerClass, String handlerMethod) {
+        return reachableMethods(buildModel(roots), handlerClass, handlerMethod);
+    }
+
     /** Path 위임 — 단일 루트로 {@link #reachableMethods(SourceRoots, String, String)} 에 위임. */
     public Set<Map.Entry<String, String>> reachableMethods(Path srcDir, String handlerClass, String handlerMethod) {
         return reachableMethods(SourceRoots.single(srcDir), handlerClass, handlerMethod);
     }
 
-    public List<ConditionSpan> extract(SourceRoots roots, String classFqn, String methodName) {
-        CtModel model = buildModel(roots);
-
+    public List<ConditionSpan> extract(CtModel model, String classFqn, String methodName) {
         List<ConditionSpan> conditions = new ArrayList<>();
         for (CtType<?> type : model.getAllTypes()) {
             if (!type.getQualifiedName().replace('$', '.').equals(classFqn)) {
@@ -210,6 +211,11 @@ public class ConstraintExtractor {
         conditions.add(new ConditionSpan(start, Math.max(start, end), text));
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extract(CtModel, String, String)} 에 위임. */
+    public List<ConditionSpan> extract(SourceRoots roots, String classFqn, String methodName) {
+        return extract(buildModel(roots), classFqn, methodName);
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String, String)} 에 위임. */
     public List<ConditionSpan> extract(Path srcDir, String classFqn, String methodName) {
         return extract(SourceRoots.single(srcDir), classFqn, methodName);
@@ -220,9 +226,7 @@ public class ConstraintExtractor {
      * AST에서 직접 추출한다(정규식 아님). field op literal / literal op field, 정수 리터럴만.
      * 각 비교는 발생 위치 (classFqn, method, line)로 태깅된다. 1회 빌드.
      */
-    public List<Comparison> extractComparisons(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<Comparison> extractComparisons(CtModel model) {
         List<Comparison> comparisons = new ArrayList<>();
         for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
             String opStr = REL_OPS.get(op.getKind());
@@ -245,6 +249,11 @@ public class ConstraintExtractor {
         return comparisons;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractComparisons(CtModel)} 에 위임. */
+    public List<Comparison> extractComparisons(SourceRoots roots) {
+        return extractComparisons(buildModel(roots));
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extractComparisons(SourceRoots)} 에 위임. */
     public List<Comparison> extractComparisons(Path srcDir) {
         return extractComparisons(SourceRoots.single(srcDir));
@@ -254,9 +263,7 @@ public class ConstraintExtractor {
      * SUT 소스 전체에서 문자열 동치 {@code field.equals("LIT")} / {@code "LIT".equals(field)}를
      * AST로 추출한다(전 계층, 1회 빌드). 숫자 extractComparisons의 문자열 짝.
      */
-    public List<StringEquality> extractStringEqualities(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<StringEquality> extractStringEqualities(CtModel model) {
         List<StringEquality> out = new ArrayList<>();
         for (CtInvocation<?> inv : model.getElements(new TypeFilter<>(CtInvocation.class))) {
             if (!"equals".equals(inv.getExecutable().getSimpleName())
@@ -294,6 +301,11 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractStringEqualities(CtModel)} 에 위임. */
+    public List<StringEquality> extractStringEqualities(SourceRoots roots) {
+        return extractStringEqualities(buildModel(roots));
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extractStringEqualities(SourceRoots)} 에 위임. */
     public List<StringEquality> extractStringEqualities(Path srcDir) {
         return extractStringEqualities(SourceRoots.single(srcDir));
@@ -305,9 +317,7 @@ public class ConstraintExtractor {
      * STRING: {@code field.equals(field)} 형태이고 양변이 fieldRef != null이며 문자열 리터럴이 없는 것.
      * 1회 빌드. 정렬·dedupe는 기존 패턴과 동일.
      */
-    public List<JoinGuard> extractJoinGuards(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<JoinGuard> extractJoinGuards(CtModel model) {
         List<JoinGuard> out = new ArrayList<>();
 
         // NUMERIC: field op field (리터럴 없음)
@@ -370,6 +380,11 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractJoinGuards(CtModel)} 에 위임. */
+    public List<JoinGuard> extractJoinGuards(SourceRoots roots) {
+        return extractJoinGuards(buildModel(roots));
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extractJoinGuards(SourceRoots)} 에 위임. */
     public List<JoinGuard> extractJoinGuards(Path srcDir) {
         return extractJoinGuards(SourceRoots.single(srcDir));
@@ -380,9 +395,7 @@ public class ConstraintExtractor {
      * 조건 루트(CtIf/CtConditional의 getCondition)가 AND인 것만 대상 — getElements(CtBinaryOperator)로
      * 전역 AND를 훑으면 중첩 &&가 중복 수집되므로 쓰지 않는다. 서로 다른 fieldRef 2개+만 보존.
      */
-    public List<Conjunction> extractConjunctions(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<Conjunction> extractConjunctions(CtModel model) {
         List<CtExpression<?>> conditions = new ArrayList<>();
         for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
             conditions.add(ctIf.getCondition());
@@ -421,6 +434,11 @@ public class ConstraintExtractor {
                 .thenComparing(Conjunction::method)
                 .thenComparingInt(Conjunction::line));
         return out;
+    }
+
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractConjunctions(CtModel)} 에 위임. */
+    public List<Conjunction> extractConjunctions(SourceRoots roots) {
+        return extractConjunctions(buildModel(roots));
     }
 
     /** Path 위임 — 단일 루트로 {@link #extractConjunctions(SourceRoots)} 에 위임. */
@@ -489,9 +507,7 @@ public class ConstraintExtractor {
      * 전 계층에서 수집. 휴리스틱(컬럼명 추측)이 아니라 가드가 직접 알려주는 유효 enum 값 →
      * 시드 행의 enum 컬럼을 유효값으로 채워 읽기 500을 방지(Bug 3). 1회 빌드.
      */
-    public Map<String, List<String>> extractEnumColumns(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public Map<String, List<String>> extractEnumColumns(CtModel model) {
         java.util.TreeMap<String, java.util.TreeSet<String>> acc = new java.util.TreeMap<>();
         for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
             if (op.getKind() != BinaryOperatorKind.EQ && op.getKind() != BinaryOperatorKind.NE) {
@@ -517,6 +533,11 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractEnumColumns(CtModel)} 에 위임. */
+    public Map<String, List<String>> extractEnumColumns(SourceRoots roots) {
+        return extractEnumColumns(buildModel(roots));
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extractEnumColumns(SourceRoots)} 에 위임. */
     public Map<String, List<String>> extractEnumColumns(Path srcDir) {
         return extractEnumColumns(SourceRoots.single(srcDir));
@@ -527,9 +548,7 @@ public class ConstraintExtractor {
      * (false negative만). TEMPORAL: {@code getter().isBefore/isAfter(LocalDate(Time).now())}.
      * ENUM: {@code getter() != A && != B} (NE만; == 가드는 반대-arm 의미가 달라 v1 제외). 1회 빌드.
      */
-    public List<StateGuard> extractStateGuards(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<StateGuard> extractStateGuards(CtModel model) {
         List<StateGuard> out = new ArrayList<>();
 
         // TEMPORAL: row.getX().isBefore/isAfter(LocalDate(Time).now())
@@ -699,6 +718,11 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractStateGuards(CtModel)} 에 위임. */
+    public List<StateGuard> extractStateGuards(SourceRoots roots) {
+        return extractStateGuards(buildModel(roots));
+    }
+
     /** Path 위임 — 단일 루트로 {@link #extractStateGuards(SourceRoots)} 에 위임. */
     public List<StateGuard> extractStateGuards(Path srcDir) {
         return extractStateGuards(SourceRoots.single(srcDir));
@@ -710,9 +734,7 @@ public class ConstraintExtractor {
      * NUMERIC-param / 미인식 leaf가 하나라도 있으면 해당 조건 통째 skip.
      * 1회 빌드. 기존 extractStateGuards 불변(독립 메서드).
      */
-    public List<StateGuardConjunction> extractStateGuardConjunctions(SourceRoots roots) {
-        CtModel model = buildModel(roots);
-
+    public List<StateGuardConjunction> extractStateGuardConjunctions(CtModel model) {
         List<CtExpression<?>> conditions = new ArrayList<>();
         for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
             conditions.add(ctIf.getCondition());
@@ -771,6 +793,11 @@ public class ConstraintExtractor {
                 .thenComparing(StateGuardConjunction::method)
                 .thenComparingInt(StateGuardConjunction::line));
         return out;
+    }
+
+    /** SourceRoots 위임 — 전 루트로 모델 1회 빌드 후 {@link #extractStateGuardConjunctions(CtModel)} 에 위임. */
+    public List<StateGuardConjunction> extractStateGuardConjunctions(SourceRoots roots) {
+        return extractStateGuardConjunctions(buildModel(roots));
     }
 
     /** Path 위임 — 단일 루트로 {@link #extractStateGuardConjunctions(SourceRoots)} 에 위임. */

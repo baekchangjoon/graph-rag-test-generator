@@ -8,6 +8,7 @@ import io.graphrag.model.Endpoint;
 import io.graphrag.model.ParamKind;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import spoon.reflect.CtModel;
 
 import java.util.List;
 import java.util.Map;
@@ -29,10 +30,19 @@ public final class LlmOracle implements InputOracle {
     private final LlmValueCache cache;
     private final String modelId;
     private final boolean clientUsable;
+    /** 탐색 단계가 주입한 공유 Spoon 모델(null이면 analyze에서 sut.roots()로 빌드). */
+    private final CtModel sharedModel;
 
     public LlmOracle(IndexResult index, ValidationConstraintExtractor valid,
                      HandlerSourceExtractor handlerSrc, LlmValueClient client,
                      LlmValueCache cache, String modelId, boolean clientUsable) {
+        this(index, valid, handlerSrc, client, cache, modelId, clientUsable, null);
+    }
+
+    /** 공유 모델 주입 — validation 추출이 엔드포인트마다 재빌드하지 않고 단일 모델 재사용. */
+    public LlmOracle(IndexResult index, ValidationConstraintExtractor valid,
+                     HandlerSourceExtractor handlerSrc, LlmValueClient client,
+                     LlmValueCache cache, String modelId, boolean clientUsable, CtModel sharedModel) {
         this.index = index;
         this.valid = valid;
         this.handlerSrc = handlerSrc;
@@ -40,6 +50,7 @@ public final class LlmOracle implements InputOracle {
         this.cache = cache;
         this.modelId = modelId;
         this.clientUsable = clientUsable;
+        this.sharedModel = sharedModel;
     }
 
     @Override
@@ -59,7 +70,9 @@ public final class LlmOracle implements InputOracle {
             }
             // 제약(@Pattern/@Email)은 DTO/커맨드 바디 타입에서만 추출 가능. 파라미터는 도메인코드 이름 휴리스틱으로 선별.
             Map<String, List<FieldConstraint>> constraints =
-                    bodyShape == null ? Map.of() : valid.extract(sut.roots(), bodyShape.javaType());
+                    bodyShape == null ? Map.of()
+                            : sharedModel != null ? valid.extract(sharedModel, bodyShape.javaType())
+                            : valid.extract(sut.roots(), bodyShape.javaType());
             EndpointFieldSelector.Selected selected =
                     EndpointFieldSelector.select(shape.fields(), constraints);
             if (selected.fields().isEmpty()) {
