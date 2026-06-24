@@ -144,6 +144,21 @@ class BuilderCliAttributionTest {
         assertThat(result).isTrue();
     }
 
+    // --- REQ-008: GRB_STATE_GUARDS ablation 게이트 ---
+
+    /**
+     * REQ-008: GRB_STATE_GUARDS=off(대소문자 무시)면 비활성 → allStateGuards·allStateGuardConjunctions
+     * 모두 빈 리스트(변종 no-op). null/미설정/그 외 값은 활성. state-guard와 conjunction이 동일 게이트 사용.
+     */
+    @Test
+    void stateGuardsAblationGate() {
+        assertThat(BuilderCli.stateGuardsEnabled("off")).isFalse();
+        assertThat(BuilderCli.stateGuardsEnabled("OFF")).isFalse();
+        assertThat(BuilderCli.stateGuardsEnabled(null)).isTrue();
+        assertThat(BuilderCli.stateGuardsEnabled("on")).isTrue();
+        assertThat(BuilderCli.stateGuardsEnabled("")).isTrue();
+    }
+
     /**
      * REQ-006: conjunction이 reachable에 없는 클래스면 귀속 안 됨.
      */
