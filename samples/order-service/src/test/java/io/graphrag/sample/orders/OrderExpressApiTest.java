@@ -37,11 +37,14 @@ class OrderExpressApiTest {
     /** 재고 stub 응답 mode. 케이스별로 갈아끼워 switch arm을 단언한다. */
     static volatile String stubMode = "STANDARD";
 
+    /** 재고 stub 응답 available. EXPRESS_ONLY arm의 소진(<=0) 분기 단언용. */
+    static volatile int stubAvailable = 50;
+
     @BeforeAll
     static void startInventoryStub() throws IOException {
         inventoryStub = HttpServer.create(new InetSocketAddress(0), 0);
         inventoryStub.createContext("/inventory/stock", exchange -> {
-            byte[] body = ("{\"available\":50,\"mode\":\"" + stubMode + "\"}").getBytes();
+            byte[] body = ("{\"available\":" + stubAvailable + ",\"mode\":\"" + stubMode + "\"}").getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -74,6 +77,7 @@ class OrderExpressApiTest {
         token = AuthHelper.obtainToken(rest);
         users.save(new User("u-express", "Express"));
         stubMode = "STANDARD";
+        stubAvailable = 50;
     }
 
     private ResponseEntity<String> post(String json) {
@@ -104,12 +108,23 @@ class OrderExpressApiTest {
     }
 
     @Test
-    void expressOnlyMode_nonExpressOrder_returns400() {
+    void expressOnlyMode_withStock_returns201() {
+        // EXPRESS_ONLY 재고 + 재고 있음(available>0) → express 주문 허용(201).
         stubMode = "EXPRESS_ONLY";
+        stubAvailable = 50;
         ResponseEntity<String> response =
                 post("{\"userId\":\"u-express\",\"amount\":10,\"type\":\"EXPRESS\"}");
-        // express 변수는 type==EXPRESS면 true → EXPRESS_ONLY arm은 통과(201)
         assertThat(response.getStatusCode().value()).isEqualTo(201);
+    }
+
+    @Test
+    void expressOnlyMode_depletedStock_returns409() {
+        // EXPRESS_ONLY 재고가 소진(available<=0) → 거절(409). EXPRESS_ONLY arm의 의미 있는 분기.
+        stubMode = "EXPRESS_ONLY";
+        stubAvailable = 0;
+        ResponseEntity<String> response =
+                post("{\"userId\":\"u-express\",\"amount\":10,\"type\":\"EXPRESS\"}");
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
     }
 
     @Test
