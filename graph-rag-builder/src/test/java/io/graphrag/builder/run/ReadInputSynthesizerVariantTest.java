@@ -3,6 +3,7 @@ package io.graphrag.builder.run;
 import io.graphrag.builder.index.ConstraintExtractor.ComparandKind;
 import io.graphrag.builder.index.ConstraintExtractor.GuardKind;
 import io.graphrag.builder.index.ConstraintExtractor.StateGuard;
+import io.graphrag.builder.index.ConstraintExtractor.StateGuardConjunction;
 import io.graphrag.builder.run.ReadInputSynthesizer.SeedVariant;
 import io.graphrag.builder.run.SynthesizedInput.SeedRow;
 import io.graphrag.model.ColumnSchema;
@@ -13,6 +14,7 @@ import io.graphrag.model.TableSchema;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -510,5 +512,244 @@ class ReadInputSynthesizerVariantTest {
 
         // 변종의 guard는 boolGuard (unknownColGuard는 skip됨)
         assertThat(variants.get(1).guard()).isEqualTo(boolGuard);
+    }
+
+    // ── Task 4: conjunction 동시 만족 변종 합성 ──────────────────────────────
+
+    private static final TableSchema BOOKINGS_WITH_TIER = new TableSchema("bookings",
+            List.of(new ColumnSchema("id", "BIGINT", false, true),
+                    new ColumnSchema("check_in_date", "DATE", false, false),
+                    new ColumnSchema("status", "VARCHAR", false, false),
+                    new ColumnSchema("tier", "VARCHAR", false, false),
+                    new ColumnSchema("customer_email", "VARCHAR", false, false)),
+            List.of(), List.of());
+
+    private static ReadInputSynthesizer synthWithTier() {
+        return new ReadInputSynthesizer(
+                Map.of("io.graphrag.sample.orders.BookingStatus",
+                        List.of("PENDING", "CONFIRMED", "CANCELLED"),
+                        "io.graphrag.sample.orders.TierStatus",
+                        List.of("STANDARD", "VIP", "PREMIUM")),
+                Map.of("status", List.of("CANCELLED", "PENDING"),
+                       "tier", List.of("STANDARD", "VIP")));
+    }
+
+    /**
+     * REQ-004: conjunction(status==CONFIRMED & tier==VIP) → 동시 만족 변종 1행.
+     * status=CONFIRMED, tier=VIP가 동시에 설정된 행 + 격리 PK.
+     */
+    @Test
+    void conjunctionSimultaneous() {
+        StateGuard statusLeaf = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuard tierLeaf = new StateGuard("x.B", "m", 10, "tier",
+                GuardKind.ENUM, "io.graphrag.sample.orders.TierStatus",
+                List.of(), List.of("VIP"), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(statusLeaf, tierLeaf));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjunction));
+
+        // base + conjunction 변종 1개
+        assertThat(variants).hasSize(2);
+        SeedVariant conjVariant = variants.get(1);
+        assertThat(conjVariant.conjunction()).isEqualTo(conjunction);
+        assertThat(conjVariant.guard()).isNull();
+
+        SeedRow row = conjVariant.input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(row, "status")).isEqualTo("CONFIRMED");
+        assertThat(col(row, "tier")).isEqualTo("VIP");
+
+        // PK 격리: base PK ≠ conjunction PK
+        SeedRow baseRow = bookingsRow(variants.get(0));
+        assertThat(row.values().get(0)).isNotEqualTo(baseRow.values().get(0));
+    }
+
+    /**
+     * REQ-004: TEMPORAL leaf — isBefore → 1900 LocalDate (DATE 컬럼),
+     *           TIMESTAMP 컬럼 → LocalDateTime.
+     */
+    @Test
+    void temporalType() {
+        // DATE 컬럼 + isBefore
+        StateGuard dateLeaf = new StateGuard("x.B", "m", 10, "check_in_date",
+                GuardKind.TEMPORAL, null,
+                List.of(), List.of(), "isBefore", ComparandKind.LITERAL, null);
+        StateGuard statusLeaf = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuardConjunction conjDate = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(dateLeaf, statusLeaf));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjDate));
+
+        assertThat(variants).hasSize(2);
+        SeedRow row = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(row, "check_in_date")).isEqualTo(LocalDate.of(1900, 1, 1));
+
+        // TIMESTAMP 컬럼 → LocalDateTime
+        TableSchema withTs = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("created_at", "TIMESTAMP", false, false),
+                        new ColumnSchema("status", "VARCHAR", false, false)),
+                List.of(), List.of());
+        StateGuard tsLeaf = new StateGuard("x.B", "m", 10, "created_at",
+                GuardKind.TEMPORAL, null,
+                List.of(), List.of(), "isBefore", ComparandKind.LITERAL, null);
+        StateGuard statusLeaf2 = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuardConjunction conjTs = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(tsLeaf, statusLeaf2));
+
+        List<SeedVariant> tsVariants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(withTs), List.of(), List.of(conjTs));
+
+        assertThat(tsVariants).hasSize(2);
+        SeedRow tsRow = tsVariants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(tsRow, "created_at")).isEqualTo(LocalDateTime.of(1900, 1, 1, 0, 0));
+    }
+
+    /**
+     * REQ-004: BOOLEAN leaf → Boolean 타입으로 만족값 설정.
+     */
+    @Test
+    void booleanType() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("is_premium", "BOOLEAN", false, false),
+                        new ColumnSchema("status", "VARCHAR", false, false)),
+                List.of(), List.of());
+        StateGuard boolLeaf = new StateGuard("x.B", "m", 10, "is_premium",
+                GuardKind.BOOLEAN, null,
+                List.of(), List.of(), "==", ComparandKind.LITERAL, "true");
+        StateGuard statusLeaf = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(boolLeaf, statusLeaf));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(table), List.of(), List.of(conjunction));
+
+        assertThat(variants).hasSize(2);
+        SeedRow row = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        // Boolean 타입(String "true"가 아님)
+        assertThat(col(row, "is_premium")).isInstanceOf(Boolean.class);
+        assertThat(col(row, "is_premium")).isEqualTo(true);
+    }
+
+    /**
+     * REQ-004: NUMERIC-상수 leaf 2개 동시 만족.
+     * amount >= 100 & count == 5 → amount=100, count=5.
+     */
+    @Test
+    void numericLiteral() {
+        TableSchema table = new TableSchema("bookings",
+                List.of(new ColumnSchema("id", "BIGINT", false, true),
+                        new ColumnSchema("amount", "INT", false, false),
+                        new ColumnSchema("count", "INT", false, false)),
+                List.of(), List.of());
+        StateGuard amountLeaf = new StateGuard("x.B", "m", 10, "amount",
+                GuardKind.NUMERIC, null,
+                List.of(), List.of(), ">=", ComparandKind.LITERAL, "100");
+        StateGuard countLeaf = new StateGuard("x.B", "m", 10, "count",
+                GuardKind.NUMERIC, null,
+                List.of(), List.of(), "==", ComparandKind.LITERAL, "5");
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(amountLeaf, countLeaf));
+
+        List<SeedVariant> variants = new ReadInputSynthesizer().synthesizeVariants(
+                GET_BY_ID, List.of(table), List.of(), List.of(conjunction));
+
+        assertThat(variants).hasSize(2);
+        SeedRow row = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        assertThat(col(row, "amount")).isEqualTo(100);  // >=100 → 100
+        assertThat(col(row, "count")).isEqualTo(5);     // ==5 → 5
+    }
+
+    /**
+     * REQ-005: 단일 가드 변종 N개 + conjunction 변종 → variantIdx 연속(PK 중복 없음).
+     */
+    @Test
+    void variantIdxContinuous() {
+        StateGuard enumGuard = new StateGuard("x.B", "m", 5, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of("CANCELLED"), List.of());
+        StateGuard statusLeaf = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuard tierLeaf = new StateGuard("x.B", "m", 10, "tier",
+                GuardKind.ENUM, "io.graphrag.sample.orders.TierStatus",
+                List.of(), List.of("VIP"), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(statusLeaf, tierLeaf));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(enumGuard), List.of(conjunction));
+
+        // base + 단일 가드 변종들(CONFIRMED 1개) + conjunction 변종 1개
+        assertThat(variants.size()).isGreaterThanOrEqualTo(3);
+
+        // 모든 변종의 bookings PK가 중복 없음
+        List<Object> pks = variants.stream()
+                .map(v -> v.input().seeds().stream()
+                        .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow())
+                .map(r -> r.values().get(0))
+                .toList();
+        assertThat(pks).doesNotHaveDuplicates();
+    }
+
+    /**
+     * REQ-004: 같은 컬럼 다중 leaf 병합 — status!=PENDING && status!=CANCELLED → CONFIRMED.
+     */
+    @Test
+    void sameColumnMerge() {
+        StateGuard leaf1 = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of("PENDING"), List.of(), null, null, null);
+        StateGuard leaf2 = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of("CANCELLED"), List.of(), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(leaf1, leaf2));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjunction));
+
+        assertThat(variants).hasSize(2);
+        SeedRow row = variants.get(1).input().seeds().stream()
+                .filter(s -> s.table().equals("bookings")).findFirst().orElseThrow();
+        // negated 합집합={PENDING, CANCELLED} 밖 첫째 = CONFIRMED
+        assertThat(col(row, "status")).isEqualTo("CONFIRMED");
+    }
+
+    /**
+     * REQ-004: 모순 conjunction(status==X && status==Y) → 변종 없음(base만).
+     */
+    @Test
+    void contradictionSkip() {
+        StateGuard leaf1 = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CONFIRMED"), null, null, null);
+        StateGuard leaf2 = new StateGuard("x.B", "m", 10, "status",
+                GuardKind.ENUM, "io.graphrag.sample.orders.BookingStatus",
+                List.of(), List.of("CANCELLED"), null, null, null);
+        StateGuardConjunction conjunction = new StateGuardConjunction(
+                "x.B", "m", 10, List.of(leaf1, leaf2));
+
+        List<SeedVariant> variants = synthWithTier().synthesizeVariants(
+                GET_BY_ID, List.of(BOOKINGS_WITH_TIER), List.of(), List.of(conjunction));
+
+        // 모순: CONFIRMED == status == CANCELLED 불가 → conjunction skip → base only
+        assertThat(variants).hasSize(1);
     }
 }

@@ -12,6 +12,7 @@ import io.graphrag.model.TableSchema;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -158,8 +159,22 @@ public class ReadInputSynthesizer {
      */
     public List<SeedVariant> synthesizeVariants(Endpoint endpoint, List<TableSchema> tables,
                                                 List<ConstraintExtractor.StateGuard> guards) {
+        return synthesizeVariants(endpoint, tables, guards, List.of());
+    }
+
+    /**
+     * 단일 가드 + conjunction(저장행 복합 AND) 변종 합성 (REQ-004/005).
+     * 단일 가드 변종(위 오버로드와 동일) 다음에, conjunction마다 모든 leaf를 동시에 만족하는 시드 1행을
+     * variantIdx 연속(offsetPk 충돌 0)으로 추가한다. conjunction 변종의 guard는 null, conjunction 동봉.
+     */
+    public List<SeedVariant> synthesizeVariants(Endpoint endpoint, List<TableSchema> tables,
+                                                List<ConstraintExtractor.StateGuard> guards,
+                                                List<ConstraintExtractor.StateGuardConjunction> conjunctions) {
+        List<ConstraintExtractor.StateGuard> safeGuards = guards == null ? List.of() : guards;
+        List<ConstraintExtractor.StateGuardConjunction> safeConjunctions =
+                conjunctions == null ? List.of() : conjunctions;
         SynthesizedInput base = synthesize(endpoint, tables);
-        if (guards == null || guards.isEmpty() || base.seeds().isEmpty()) {
+        if ((safeGuards.isEmpty() && safeConjunctions.isEmpty()) || base.seeds().isEmpty()) {
             return List.of(new SeedVariant(base, null));
         }
         TableSchema target = resolveTargetTable(endpoint, tables, null);
@@ -189,7 +204,7 @@ public class ReadInputSynthesizer {
         List<SeedVariant> out = new ArrayList<>();
         out.add(new SeedVariant(base, null));   // 플레이스홀더; 루프 후 보정된 base로 교체
         int variantIdx = 0;
-        for (ConstraintExtractor.StateGuard guard : guards) {
+        for (ConstraintExtractor.StateGuard guard : safeGuards) {
             // NUMERIC-vs-파라미터: 입력-시드 공동 합성 (§3.3)
             if (guard.kind() == ConstraintExtractor.GuardKind.NUMERIC
                     && guard.comparandKind() == ConstraintExtractor.ComparandKind.PARAM) {
@@ -311,6 +326,65 @@ public class ReadInputSynthesizer {
                 }
                 out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), guard));
             }
+        }
+        // conjunction(저장행 복합 AND) 변종: leaf 전부 동시 만족하는 시드 1행. 단일 가드 변종 다음
+        // variantIdx부터 연속(offsetPk 충돌 0). 보정된 base 행(baseCols/baseVals)을 출발점으로 복제.
+        for (ConstraintExtractor.StateGuardConjunction conjunction : safeConjunctions) {
+            // 같은 컬럼 leaf 병합: column(소문자)별로 묶어 단일 만족값 산출.
+            LinkedHashMap<String, List<ConstraintExtractor.StateGuard>> byColumn = new LinkedHashMap<>();
+            for (ConstraintExtractor.StateGuard leaf : conjunction.leaves()) {
+                byColumn.computeIfAbsent(leaf.column().toLowerCase(), k -> new ArrayList<>()).add(leaf);
+            }
+            LinkedHashMap<String, Object> columnToValue = new LinkedHashMap<>();
+            boolean skip = false;
+            for (Map.Entry<String, List<ConstraintExtractor.StateGuard>> entry : byColumn.entrySet()) {
+                ColumnSchema col = target.columns().stream()
+                        .filter(c -> c.name().equalsIgnoreCase(entry.getKey())).findFirst().orElse(null);
+                if (col == null) {   // 타깃 테이블에 없는 컬럼 → conjunction skip
+                    skip = true;
+                    break;
+                }
+                Object value = mergedSatisfyingValue(entry.getValue(), col);
+                if (value == CONJ_SKIP) {   // 모순/만족값 없음/NOT NULL null 등 → conjunction skip
+                    skip = true;
+                    break;
+                }
+                columnToValue.put(col.name(), value);
+            }
+            if (skip || columnToValue.isEmpty()) {
+                continue;   // conjunction 변종 미생성 (best-effort)
+            }
+            variantIdx++;
+            // 보정된 base 행 복제 후 각 leaf 컬럼을 만족값으로 동시 설정.
+            List<String> cols = new ArrayList<>(baseCols);
+            List<Object> vals = new ArrayList<>(baseVals);
+            Object variantPk = offsetPk(vals.get(0), variantIdx);
+            vals.set(0, variantPk);
+            for (Map.Entry<String, Object> cv : columnToValue.entrySet()) {
+                int ci = indexOfIgnoreCase(cols, cv.getKey());
+                if (ci >= 0) {
+                    vals.set(ci, cv.getValue());
+                } else {
+                    cols.add(cv.getKey());   // base seed에 없던(nullable) 컬럼 추가 → arm을 연다
+                    vals.add(cv.getValue());
+                }
+            }
+            List<SynthesizedInput.SeedRow> variantSeeds = new ArrayList<>();
+            for (int i = 0; i < base.seeds().size(); i++) {
+                variantSeeds.add(i == targetIdx
+                        ? new SynthesizedInput.SeedRow(baseTargetRow.table(), cols, vals)
+                        : base.seeds().get(i));   // FK 부모 공유
+            }
+            ObjectNode vbody = (ObjectNode) base.body().deepCopy();
+            if (pkColumn != null) {
+                for (EndpointParam param : endpoint.params()) {
+                    if ((param.kind() == ParamKind.PATH || param.kind() == ParamKind.QUERY)
+                            && pkColumn.equalsIgnoreCase(mapParamToColumn(param, target, null))) {
+                        vbody.put(param.name(), String.valueOf(variantPk));
+                    }
+                }
+            }
+            out.add(new SeedVariant(new SynthesizedInput(vbody, variantSeeds), null, conjunction));
         }
         // NUMERIC-vs-PARAM 가드에서 만족 arm 값으로 보정된 base 시드 행이 있으면 out[0]을 교체한다.
         // 이렇게 해야 base가 실제로 만족 arm을 타고 변종과 양 arm이 갈린다.
@@ -456,6 +530,113 @@ public class ReadInputSynthesizer {
             case "!=" -> v < Long.MAX_VALUE ? v + 1 : v - 1;
             default   -> v;
         };
+    }
+
+    /** conjunction leaf 만족값 산출 실패(모순·만족값 없음·NOT NULL null 등)를 나타내는 센티넬. */
+    private static final Object CONJ_SKIP = new Object();
+
+    /**
+     * 한 컬럼의 leaf(들)을 모두 만족하는 단일 값. 같은 컬럼에 leaf가 여럿이면 제약을 병합한다.
+     * ENUM은 positive/negated 집합을 합쳐 병합(2+ 상이 positive=모순 → {@link #CONJ_SKIP});
+     * 그 외 kind는 각 leaf 만족값이 일치할 때만 채택, 불일치=모순. 병합 불가면 CONJ_SKIP.
+     */
+    private Object mergedSatisfyingValue(List<ConstraintExtractor.StateGuard> leaves, ColumnSchema col) {
+        if (leaves.size() == 1) {
+            return satisfyingValue(leaves.get(0), col);
+        }
+        boolean allEnum = leaves.stream()
+                .allMatch(l -> l.kind() == ConstraintExtractor.GuardKind.ENUM);
+        if (allEnum) {
+            java.util.LinkedHashSet<String> positives = new java.util.LinkedHashSet<>();
+            java.util.LinkedHashSet<String> negated = new java.util.LinkedHashSet<>();
+            for (ConstraintExtractor.StateGuard leaf : leaves) {
+                positives.addAll(leaf.positiveConstants());
+                negated.addAll(leaf.negatedConstants());
+            }
+            if (!positives.isEmpty()) {
+                if (positives.size() > 1) {
+                    return CONJ_SKIP;   // status==X && status==Y → 모순
+                }
+                String only = positives.iterator().next();
+                return negated.contains(only) ? CONJ_SKIP : only;
+            }
+            List<String> all = enumConstantsForType(leaves.get(0).enumType());
+            if (all == null) {
+                return CONJ_SKIP;
+            }
+            return all.stream().sorted().filter(c -> !negated.contains(c))
+                    .map(c -> (Object) c).findFirst().orElse(CONJ_SKIP);
+        }
+        // 비-ENUM 다중 leaf: 각 만족값이 동일할 때만 채택(보수적; 불일치=모순 skip).
+        Object merged = satisfyingValue(leaves.get(0), col);
+        if (merged == CONJ_SKIP) {
+            return CONJ_SKIP;
+        }
+        for (int i = 1; i < leaves.size(); i++) {
+            Object v = satisfyingValue(leaves.get(i), col);
+            if (v == CONJ_SKIP || !java.util.Objects.equals(v, merged)) {
+                return CONJ_SKIP;
+            }
+        }
+        return merged;
+    }
+
+    /**
+     * leaf kind별 if-true 만족값(§design 3.3 표). {@link #flipValues}(불만족 arm)와 분리.
+     * ENUM EQ→positive 첫째(정렬), ENUM NE→negated 밖 첫째(없으면 CONJ_SKIP), BOOLEAN→Boolean,
+     * NULLITY ==null→null(NOT NULL이면 skip)/!=null→defaultFor, NUMERIC-상수→numericParamBaseCol,
+     * TEMPORAL→방향별 날짜 + 컬럼 JDBC 타입 변환(op=null이면 isBefore 폴백). 만족값 없으면 CONJ_SKIP.
+     */
+    private Object satisfyingValue(ConstraintExtractor.StateGuard leaf, ColumnSchema col) {
+        switch (leaf.kind()) {
+            case ENUM -> {
+                if (!leaf.positiveConstants().isEmpty()) {
+                    return leaf.positiveConstants().stream().sorted().findFirst().orElse(null);
+                }
+                List<String> all = enumConstantsForType(leaf.enumType());
+                if (all == null) {
+                    return CONJ_SKIP;
+                }
+                return all.stream().sorted().filter(c -> !leaf.negatedConstants().contains(c))
+                        .map(c -> (Object) c).findFirst().orElse(CONJ_SKIP);
+            }
+            case BOOLEAN -> {
+                return Boolean.valueOf(leaf.comparand());   // "true"/"false" → Boolean
+            }
+            case NULLITY -> {
+                if ("==".equals(leaf.op())) {   // getter()==null → null 필요
+                    return col.nullable() ? null : CONJ_SKIP;
+                }
+                return defaultFor(col);   // !=null → non-null 만족값
+            }
+            case NUMERIC -> {
+                if (leaf.comparandKind() == ConstraintExtractor.ComparandKind.PARAM) {
+                    return CONJ_SKIP;   // NUMERIC-param leaf는 검출 단계에서 skip — 방어적
+                }
+                long c;
+                try {
+                    c = Long.parseLong(leaf.comparand());
+                } catch (NumberFormatException e) {
+                    return CONJ_SKIP;
+                }
+                Object coerced = coerceToColumnType(numericParamBaseCol(leaf.op(), c), col);
+                return coerced == null ? CONJ_SKIP : coerced;
+            }
+            case TEMPORAL -> {
+                String op = leaf.op() == null ? "isBefore" : leaf.op();
+                String type = col.jdbcType().toUpperCase();
+                boolean dateTime = type.contains("TIMESTAMP") || type.contains("DATETIME");
+                if ("isAfter".equals(op)) {   // 미래 만족값
+                    return dateTime ? java.time.LocalDateTime.of(2037, 1, 1, 0, 0)
+                            : java.time.LocalDate.of(2037, 1, 1);
+                }
+                return dateTime ? java.time.LocalDateTime.of(1900, 1, 1, 0, 0)
+                        : java.time.LocalDate.of(1900, 1, 1);   // 과거(isBefore)
+            }
+            default -> {
+                return CONJ_SKIP;
+            }
+        }
     }
 
     /**
