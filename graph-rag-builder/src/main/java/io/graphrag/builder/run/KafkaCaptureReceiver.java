@@ -255,6 +255,10 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
     /**
      * End-of-exploration drain: brief settle for stragglers, then remove & return ALL buffered
      * records grouped by their traceparent traceId. Non-per-request → no per-request blocking.
+     *
+     * <p><b>병렬 비안전</b>: 큐 전체를 비운다. 동시 워커가 호출하면 먼저 lock을 잡은 워커가 다른
+     * 워커의 레코드까지 drain·clear해 소실시킨다(P2-5 capturedEventEmits 누락 원인). 병렬 경로는
+     * {@link #drainByTraceIds(java.util.Set, long)}를 써서 자기 traceId 레코드만 가져간다.
      */
     public java.util.Map<String, java.util.List<CapturedRecord>> drainAllByTraceId(long settleMillis) {
         try { Thread.sleep(settleMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
@@ -268,6 +272,41 @@ public final class KafkaCaptureReceiver implements AutoCloseable {
             queueSize = 0;
         }
         return byTrace;
+    }
+
+    /**
+     * 병렬 안전 drain: {@code traceIds}에 속한 레코드만 큐에서 제거·반환하고, 다른 traceId(다른
+     * 워커의 emit)는 큐에 남긴다. 병렬 워커가 각자 자기 엔드포인트의 candidate traceId만 가져가므로
+     * {@link #drainAllByTraceId} 같은 전역 clear 경합(서로의 레코드 소실)이 없다(REQ-P009 capturedEventEmits).
+     *
+     * @param traceIds   이 워커가 수거할 traceparent traceId 집합(보통 한 엔드포인트의 candidate들).
+     * @param settleMillis straggler를 위한 짧은 정착 대기.
+     */
+    public java.util.Map<String, java.util.List<CapturedRecord>> drainByTraceIds(
+            java.util.Set<String> traceIds, long settleMillis) {
+        if (traceIds == null || traceIds.isEmpty()) {
+            return java.util.Map.of();
+        }
+        try { Thread.sleep(settleMillis); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        java.util.Map<String, java.util.List<CapturedRecord>> byTrace = new java.util.LinkedHashMap<>();
+        synchronized (queue) {
+            java.util.Iterator<CapturedRecord> it = queue.iterator();
+            while (it.hasNext()) {
+                CapturedRecord rec = it.next();
+                String tid = getTraceIdFromHeaders(rec.headers());
+                if (tid != null && traceIds.contains(tid)) {
+                    byTrace.computeIfAbsent(tid, k -> new java.util.ArrayList<>()).add(rec);
+                    it.remove();
+                    queueSize--;
+                }
+            }
+        }
+        return byTrace;
+    }
+
+    /** 테스트 전용: Kafka 없이 큐에 레코드를 주입한다(드레인 격리 단위 검증용). */
+    void offerForTest(CapturedRecord record) {
+        addRecord(record);
     }
 
     @Override

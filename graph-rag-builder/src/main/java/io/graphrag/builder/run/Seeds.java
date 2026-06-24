@@ -16,7 +16,7 @@ final class Seeds {
     private Seeds() {
     }
 
-    /** 여러 endpoint가 같은 probe row를 공유할 수 있다 → 멱등 INSERT. */
+    /** probe row를 삽입한다. probe 값은 엔드포인트 스코프 키(P2-3, REQ-P007)이므로 endpoint 간 row 충돌 없음 → 멱등 INSERT. */
     static void insert(Connection connection, DbConfig.Type type,
                        SynthesizedInput.SeedRow seed) throws Exception {
         String sql = SqlDialect.idempotentInsert(type, seed.table(), seed.columns());

@@ -166,15 +166,17 @@ class BuilderIntegrationTest {
                 .filter(e -> e.wsEndpointId().equals("ws-orders-count")).toList();
         assertThat(wsExchanges).hasSize(2);
         var wsHappy = wsExchanges.get(0);
-        assertThat(wsHappy.payload().get("userId").asText()).isEqualTo("probe-userId");
-        assertThat(wsHappy.response().get("userId").asText()).isEqualTo("probe-userId");
+        // P2-3(REQ-P007): probe 키가 엔드포인트 스코프(probe-<endpointId>-<field>)로 바뀌어
+        // 워커 간 seed row 충돌을 막는다. 정확한 endpointId 숫자에 결합하지 않고 형식만 검증한다.
+        assertThat(wsHappy.payload().get("userId").asText()).matches("probe-.*-userId");
+        assertThat(wsHappy.response().get("userId").asText()).matches("probe-.*-userId");
         assertThat(wsHappy.response().has("count")).isTrue();
         // WS 핸들러의 파생 쿼리 SQL도 캡처된다
         assertThat(asset.sql().stream().filter(s -> s.pathId().equals(wsHappy.id())))
                 .anyMatch(s -> s.sqlKind().equals("SELECT") && s.tableName().equals("orders")
                         && s.bindings().stream().anyMatch(b ->
                                 b.origin() == BindingOrigin.API_PARAM
-                                        && b.value().equals("probe-userId")));
+                                        && b.value().matches("probe-.*-userId")));
 
         // read-path: GET /api/orders/{id} 가 탐색되어 2xx path + FK 부모 시드를 남긴다 (C#3)
         List<ExploredPath> getByIdPaths = pathsOf(asset, "get-api-orders-id");

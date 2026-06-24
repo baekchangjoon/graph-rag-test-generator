@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlLogParser;
-import io.graphrag.builder.coverage.CoverageClient;
+import io.graphrag.builder.coverage.CoverageProbe;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.index.BodyShape;
@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -46,10 +47,10 @@ public class WsCaptureRunner {
     private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
-    private final CoverageClient coverage;
+    private final CoverageProbe coverage;
 
     public WsCaptureRunner(SutHandle sut, Connection connection, DbConfig.Type dbType,
-                           CoverageClient coverage) {
+                           CoverageProbe coverage) {
         this.sut = sut;
         this.connection = connection;
         this.dbType = dbType;
@@ -58,7 +59,7 @@ public class WsCaptureRunner {
 
     public WsResult run(WsEndpoint endpoint, BodyShape shape, List<TableSchema> tables)
             throws Exception {
-        SynthesizedInput happy = new SampleInputSynthesizer().synthesize(shape, tables);
+        SynthesizedInput happy = new SampleInputSynthesizer(Map.of(), endpoint.id()).synthesize(shape, tables);
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
             Seeds.insert(connection, dbType, seed);
         }
@@ -80,7 +81,7 @@ public class WsCaptureRunner {
         List<WsExchange> exchanges = new ArrayList<>();
         List<CapturedSql> allSql = new ArrayList<>();
         ExecutionDataStore cumulativeExec = new ExecutionDataStore();
-        coverage.dump(true);   // baseline: boot/seed 구간 제거 후 교환별 핸들러 delta만 측정
+        coverage.baselineCut();   // baseline: boot/seed 구간 제거 (jacoco: reset, pjacoco: no-op)
         int sequence = 0;
         for (JsonNode payload : payloads) {
             sequence++;
@@ -96,7 +97,9 @@ public class WsCaptureRunner {
             }
             Thread.sleep(150);
             long logEnd = sut.logOffset();
-            coverage.dump(true).accept(cumulativeExec);   // 이 교환의 핸들러 실행 커버
+            // WS 교환은 traceparent를 주입하지 않으므로 pjacoco .exec 가 생성되지 않는다.
+            // requestDelta를 호출하면 30s 폴링 타임아웃이 발생하므로 noCoverageDelta()로 즉시 반환.
+            coverage.noCoverageDelta().accept(cumulativeExec);
             log.info("ws captured {} -> {}", exchangeId,
                     responseBody == null ? "(no message)" : "message");
 

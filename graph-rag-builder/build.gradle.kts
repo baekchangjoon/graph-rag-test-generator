@@ -5,10 +5,17 @@ plugins {
 
 application {
     mainClass = "io.graphrag.builder.cli.BuilderCli"
+    // attach 모드: 호스트의 OTLP/외부-HTTP capture 서버가 IPv4 0.0.0.0에 바인드되어야 컨테이너가
+    // host.docker.internal(Docker Desktop host-gateway = IPv4 192.168.65.254)로 도달한다.
+    // dual-stack JVM은 wildcard 바인드를 IPv6-only([::])로 열어 컨테이너의 IPv4 연결이 refused되므로
+    // 빌더 JVM을 IPv4 스택으로 고정한다. (SUT 컨테이너 측 -Djava.net.preferIPv4Stack 와 대칭.)
+    applicationDefaultJvmArgs = listOf("-Djava.net.preferIPv4Stack=true")
 }
 
 // OTEL javaagent jar를 리소스로 번들 (분석 환경에서 SUT에 부착, 런타임 다운로드 없음)
 val otelAgent: Configuration by configurations.creating
+// pjacoco agent jar를 리소스로 번들 (per-trace 커버리지 수집; io.pjacoco:pjacoco-agent mavenLocal)
+val pjacocoAgent: Configuration by configurations.creating
 
 dependencies {
     implementation(project(":shared-model"))
@@ -37,6 +44,7 @@ dependencies {
     implementation(libs.opentelemetry.proto)
     runtimeOnly(libs.slf4j.simple)
     otelAgent(libs.otel.javaagent)
+    pjacocoAgent(libs.pjacoco.agent)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj)
@@ -48,6 +56,17 @@ tasks.processResources {
     from(otelAgent) {
         rename { "otel-javaagent.jar" }
         into("agents")
+    }
+    from(pjacocoAgent) {
+        rename { "pjacoco-agent.jar" }
+        into("agents")
+    }
+}
+
+// graph-diff.sh가 사용하는 testRuntimeClasspath 출력 태스크 (P1-5 gate)
+tasks.register("printTestRuntimeClasspath") {
+    doLast {
+        print(configurations.testRuntimeClasspath.get().asPath)
     }
 }
 

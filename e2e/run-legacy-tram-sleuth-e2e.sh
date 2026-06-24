@@ -16,7 +16,7 @@ STACK="$ROOT/samples/legacy-tram"
 OUT="$(mktemp -d)"
 LOG="$OUT/builder.log"
 APP_PORT=58080
-JACOCO_PORT=56300
+COVERAGE_PORT=56300
 DB_PORT=53306
 KAFKA_PORT=59092
 
@@ -247,7 +247,7 @@ if [ -f "$HOST_JAR" ]; then
       --app-service order-web \
       --app-container-port 8080 \
       --app-port $APP_PORT \
-      --jacoco-port $JACOCO_PORT \
+      --coverage-port $COVERAGE_PORT \
       --jdbc-url jdbc:mysql://localhost:$DB_PORT/orderdb \
       --kafka-bootstrap localhost:$KAFKA_PORT \
       --db-service mysql \

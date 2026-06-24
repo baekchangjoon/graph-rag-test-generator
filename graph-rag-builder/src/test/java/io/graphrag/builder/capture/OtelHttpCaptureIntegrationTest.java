@@ -9,6 +9,7 @@ import io.graphrag.model.Json;
 import io.graphrag.model.Endpoint;
 import io.graphrag.builder.run.EndpointExplorationRunner;
 import io.graphrag.builder.explore.InvocationOutcome;
+import io.graphrag.builder.explore.RawHttpExchange;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -98,6 +99,44 @@ class OtelHttpCaptureIntegrationTest {
                 .anyMatch(p -> hasBinding(p, "99999"));
     }
 
+    /**
+     * P2-5 SQL timeout 재현: 빌더 병렬 경로(요청 직후 즉시 drain()을 4 워커가 동시 호출)를
+     * 충실히 모사한다. 단일 공유 OtelSpanCapture(parallelAware=true)로 N 요청을 4-thread pool에
+     * 태워 각 워커가 begin→request→drain()을 연속 수행. 정상이면 모든 요청이 자기 SQL을 환원해야 한다.
+     *
+     * <p>2-동시 테스트(join 후 순차 drain)와 달리 여기서는 drain이 요청 직후 동시에 일어나므로,
+     * 게이트(par4)에서 관측된 ~96% timeout이 재현되는지 직접 본다.
+     */
+    @Test
+    void parallelImmediateDrain_capturesSqlPerRequest() throws Exception {
+        int requests = 12;
+        int pool = 4;
+        OtelSpanCapture capture = new OtelSpanCapture(
+                env.otlpReceiver(), noopSut(), new TraceParent("acc-par-immediate"), true);
+        java.util.concurrent.ExecutorService ex =
+                java.util.concurrent.Executors.newFixedThreadPool(pool);
+        java.util.concurrent.CountDownLatch start = new CountDownLatch(1);
+        List<java.util.concurrent.Future<Integer>> futures = new java.util.ArrayList<>();
+        for (int i = 0; i < requests; i++) {
+            final String id = String.valueOf(70000 + i);
+            futures.add(ex.submit(() -> {
+                OtelSpanCapture.OtelScope sc = (OtelSpanCapture.OtelScope) capture.begin();
+                start.await();
+                getOrder(id, sc.requestHeaders().get("traceparent"));
+                List<ParsedSql> sql = sc.drain();   // 요청 직후 즉시 drain (빌더 병렬 경로와 동일)
+                return sql.stream().anyMatch(p -> hasBinding(p, id)) ? 1 : 0;
+            }));
+        }
+        start.countDown();
+        int captured = 0;
+        for (java.util.concurrent.Future<Integer> f : futures) captured += f.get();
+        ex.shutdown();
+        System.out.println("=== 병렬 즉시-drain: " + captured + "/" + requests + " 요청이 자기 SQL 환원 ===");
+        assertThat(captured)
+                .as("병렬 즉시-drain에서 모든 요청이 OTLP로 자기 SQL을 환원(게이트 par4 SQL timeout 재현 여부)")
+                .isEqualTo(requests);
+    }
+
     /** 수용-2: 서로 다른 traceparent의 두 요청을 동시 발행 → 각 drain이 자기 trace의 SQL만 (교차 오염 0). */
     @Test
     void concurrentRequests_attributeSqlPerTraceWithoutBleed() throws Exception {
@@ -128,6 +167,62 @@ class OtelHttpCaptureIntegrationTest {
         assertThat(sqlB).as("B는 자기 id 22222를 귀속").anyMatch(p -> hasBinding(p, "22222"));
         assertThat(sqlB).as("B에 A의 id 11111이 섞이지 않음")
                 .noneMatch(p -> hasBinding(p, "11111"));
+    }
+
+    /**
+     * P2-5 F2/httpCalls 한계 판단의 직접 근거: order-service에 OTel javaagent
+     * (OTEL_PROPAGATORS=tracecontext,baggage)가 부착된 상태에서, inbound 요청의
+     * {@code baggage: test.id=<id>}가 outbound HTTP(InventoryClient의 RestTemplate)로
+     * 전파되어 WireMock ServeEvent에 기록되는지 확인한다.
+     *
+     * <p>전파되면 {@link io.graphrag.builder.env.HttpCaptureServer#drainByTraceId(String)}가
+     * 그 교환을 traceId로 정확히 귀속할 수 있다 → 병렬 httpCalls 캡처는 SUT-dependent 한계가
+     * 아니라 빌더가 정상 동작하는 경로임을 증명한다.
+     *
+     * <p>inventory 호출은 {@code type == "EXPRESS"} 경로에서만 발생한다(OrderController.create).
+     */
+    @Test
+    void inboundBaggage_propagatesToOutboundInventoryCall() throws Exception {
+        // admin user 보장: EXPRESS 주문이 user 조회(404)를 통과해 inventory.check까지 도달해야 한다.
+        try (java.sql.Connection conn = env.openConnection();
+             java.sql.Statement st = conn.createStatement()) {
+            st.execute("INSERT INTO users(id, name) VALUES('admin','Administrator') ON CONFLICT DO NOTHING");
+        }
+        env.httpCapture().drainNewExchanges();   // 이전 테스트 잔여 WireMock 이벤트 비우기
+
+        String traceId = "abcdef0123456789abcdef0123456789";   // 32 hex
+        String traceparent = "00-" + traceId + "-0000000000000001-01";
+
+        HttpResponse<String> resp = http.send(
+                HttpRequest.newBuilder(URI.create(base + "/api/orders"))
+                        .header("Authorization", "Bearer " + token)
+                        .header("Content-Type", "application/json")
+                        .header("traceparent", traceparent)
+                        .header("baggage", "test.id=" + traceId)
+                        .POST(HttpRequest.BodyPublishers.ofString(
+                                "{\"userId\":\"admin\",\"amount\":10,\"type\":\"EXPRESS\"}"))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(resp.statusCode()).as("EXPRESS 주문 생성(201)").isEqualTo(201);
+
+        // 1) inventory 호출이 실제로 일어났는가 (baggage 무관, 전체 drain)
+        List<RawHttpExchange> all = env.httpCapture().drainNewExchanges();
+        System.out.println("=== baggage 전파 검증: exchanges=" + all.size()
+                + " paths=" + all.stream().map(RawHttpExchange::urlPath).toList()
+                + " baggagePresent=" + all.stream().map(RawHttpExchange::baggagePresent).toList());
+        assertThat(all).as("SUT가 inventory(WireMock)를 호출").anyMatch(e -> e.urlPath().contains("/inventory"));
+
+        // 2) 그 호출에 baggage test.id가 전파되었는가 (OTel agent의 baggage propagator)
+        RawHttpExchange inventory = all.stream()
+                .filter(e -> e.urlPath().contains("/inventory")).findFirst().orElseThrow();
+        assertThat(inventory.baggagePresent())
+                .as("OTel agent가 inbound baggage test.id를 outbound로 전파")
+                .isTrue();
+
+        // 3) 병렬 귀속 경로(drainByTraceId)가 그 교환을 traceId로 귀속할 수 있는가
+        assertThat(env.httpCapture().drainByTraceId(traceId))
+                .as("drainByTraceId가 baggage test.id로 inventory 교환을 귀속")
+                .anyMatch(e -> e.urlPath().contains("/inventory"));
     }
 
     private void awaitThenGet(CountDownLatch start, String id, String traceparent) {
@@ -240,14 +335,26 @@ class OtelHttpCaptureIntegrationTest {
                 receiver.start();
 
                 try (java.sql.Connection conn = kafkaEnv.openConnection()) {
-                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                            kafkaEnv.sut(), conn, kafkaEnv.dbType(),
-                            new io.graphrag.builder.coverage.CoverageClient("localhost", 0) {
+                    // 커버리지 수집은 이 통합 테스트의 관심사가 아니므로 no-op probe를 사용한다.
+                    // 단 traceparentFor는 pjacoco 백엔드처럼 non-null을 반환해야 한다 — 그래야 runner가
+                    // coverageTraceId를 OTel scope traceId로 도출하고 outcome.kafkaTraceId()가 채워진다
+                    // (실제 빌더 동작과 동일). null이면 kafkaTraceId가 null이 되어 end-correlation이 실패한다.
+                    io.graphrag.builder.coverage.CoverageProbe noopProbe =
+                            new io.graphrag.builder.coverage.CoverageProbe() {
                                 @Override
-                                public org.jacoco.core.data.ExecutionDataStore dump(boolean reset) {
+                                public void baselineCut() {}
+                                @Override
+                                public org.jacoco.core.data.ExecutionDataStore requestDelta(String traceId) {
                                     return new org.jacoco.core.data.ExecutionDataStore();
                                 }
-                            },
+                                @Override
+                                public String traceparentFor(String traceId) {
+                                    return "00-" + traceId + "-0000000000000001-01";
+                                }
+                            };
+                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                            kafkaEnv.sut(), conn, kafkaEnv.dbType(),
+                            noopProbe,
                             new io.graphrag.builder.coverage.BranchCoverageAnalyzer(sutJar),
                             1, kafkaEnv.httpCapture(), List.of(), List.of(),
                             new io.graphrag.builder.run.AuthTokenProvider(customBase, authConfig, io.graphrag.model.RequestHeaders.empty()),

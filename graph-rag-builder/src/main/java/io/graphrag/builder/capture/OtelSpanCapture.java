@@ -16,6 +16,15 @@ import java.util.TreeMap;
  * OTEL DB span을 trace-id로 요청에 귀속하는 1순위 backend.
  * begin()이 요청별 traceparent를 발급, drain()이 entry span 완료 await + quiescence 후
  * 그 trace의 DB span을 ParsedSql로 환원한다. 비면 logStart 기준 log-parser 폴백.
+ *
+ * <p>병렬 실행(parallelAware=true)에서는 log-parser 폴백을 비활성화한다. 폴백은
+ * timestamp-window 기반으로 동시 워커 로그가 섞이면 교차 오염이 발생하기 때문이다.
+ * OTLP span은 traceId로 정확하게 귀속되므로 병렬에서 otel 결과가 빈 경우 빈 결과를 반환한다.
+ *
+ * <p>await 타임아웃 기본값은 순차·병렬 공통 {@value #AWAIT_TIMEOUT_MILLIS}ms이다. (이전에는 병렬
+ * OTLP 지연을 의심해 병렬 기본값을 30s로 늘렸으나, 진짜 원인은 pjacoco includes 과대범위로 인한
+ * OTel export starve였고 그 근본수정 후 span이 ~100ms 내 도착하므로 8s로 되돌렸다 — 설계 §9-B.)
+ * 진짜 부하 spike가 있는 SUT는 {@code --sql-await-ms} CLI 플래그로 재정의한다.
  */
 public final class OtelSpanCapture implements SqlCaptureBackend {
 
@@ -27,6 +36,7 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
     private static final String PARAM_PREFIX = "db.query.parameter.";
     private static final java.util.regex.Pattern DIGITS = java.util.regex.Pattern.compile("\\d+");
 
+    /** 순차·병렬 공통 기본 await 타임아웃. 근본수정(§9-B) 후 span은 ~100ms 내 도착하므로 8s면 충분. */
     static final long AWAIT_TIMEOUT_MILLIS = 8_000;
     // drain은 "마지막 span 후 QUIESCENCE_MILLIS 동안 새 span 없음"으로 완료를 판정한다. 이 값은
     // 요청당 drain의 고정 floor(프로파일링: sqlDrain ≈ 마지막-span-시간 + QUIESCENCE, 균일 분포).
@@ -34,16 +44,62 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
     // 150 = 배치 간격(100ms)의 1.5×(jitter 마진). 250→150으로 요청당 ~100ms 단축(OTEL 풀빌드 가속).
     // 100은 BSP 경계라 부하 높은 CI에서 늦은 span 누락(flaky) 위험이 있어 채택하지 않음.
     static final long QUIESCENCE_MILLIS = 150;
+    // attach 모드: 컨테이너→호스트 OTLP가 Docker Desktop VM hop을 거쳐 BSP 배치 export 지연·jitter가 커진다.
+    // 빠른 요청의 db span이 기본 창을 넘겨 도착해 log-parser로 폴백되는 tail-latency race를 줄이려 창을 넓힌다.
+    // attach는 correctness e2e 경로라 요청당 수백 ms 여유는 허용된다. analysis(로컬 프로세스 SUT) 및 P2-5
+    // 병렬 게이트는 150ms 그대로 → timing-equivalence 무영향. (250ms로는 잔여 flake가 남아 500ms로 상향.)
+    public static final long ATTACH_QUIESCENCE_MILLIS = 500;
     private static final long POLL_MILLIS = 50;
 
     private final OtlpTraceReceiver receiver;
     private final SutHandle sut;
     private final TraceParent traceParent;
+    /**
+     * true이면 병렬 실행 경로: log-parser 폴백을 비활성화한다.
+     * 폴백은 timestamp-window 기반으로 동시 워커 로그가 섞이면 교차 오염이 발생한다.
+     */
+    private final boolean parallelAware;
+    /**
+     * drain()의 OTLP entry-span await 타임아웃 (ms). 0이면 기본값 {@value #AWAIT_TIMEOUT_MILLIS}ms 적용.
+     * {@code --sql-await-ms}(BuildConfig.sqlAwaitMs)로 양수 재정의 가능.
+     */
+    private final long awaitTimeoutMillis;
+    /** drain 완료 판정용 quiescence 창 (ms). 0이면 {@value #QUIESCENCE_MILLIS}ms. attach는 더 넓힌다. */
+    private final long quiescenceMillis;
 
+    /** 순차(parallelism=1) 호환 생성자 — log-parser 폴백 활성, 기본 타임아웃. */
     public OtelSpanCapture(OtlpTraceReceiver receiver, SutHandle sut, TraceParent traceParent) {
+        this(receiver, sut, traceParent, false, 0L);
+    }
+
+    /** parallelAware=true이면 병렬 경로: log-parser 폴백 비활성. 기본 타임아웃 사용. */
+    public OtelSpanCapture(OtlpTraceReceiver receiver, SutHandle sut, TraceParent traceParent,
+                           boolean parallelAware) {
+        this(receiver, sut, traceParent, parallelAware, 0L);
+    }
+
+    /**
+     * @param awaitTimeoutMillis 0이면 모드별 기본값(순차 8s/병렬 30s), 양수이면 그 값을 사용.
+     */
+    public OtelSpanCapture(OtlpTraceReceiver receiver, SutHandle sut, TraceParent traceParent,
+                           boolean parallelAware, long awaitTimeoutMillis) {
+        this(receiver, sut, traceParent, parallelAware, awaitTimeoutMillis, 0L);
+    }
+
+    /**
+     * 풀 생성자.
+     *
+     * @param awaitTimeoutMillis 0이면 모드별 기본값(순차 8s/병렬 30s), 양수이면 그 값을 사용.
+     * @param quiescenceMillis   0이면 기본 {@value #QUIESCENCE_MILLIS}ms, 양수이면 그 값(attach는 더 넓힘).
+     */
+    public OtelSpanCapture(OtlpTraceReceiver receiver, SutHandle sut, TraceParent traceParent,
+                           boolean parallelAware, long awaitTimeoutMillis, long quiescenceMillis) {
         this.receiver = receiver;
         this.sut = sut;
         this.traceParent = traceParent;
+        this.parallelAware = parallelAware;
+        this.awaitTimeoutMillis = awaitTimeoutMillis;
+        this.quiescenceMillis = quiescenceMillis > 0 ? quiescenceMillis : QUIESCENCE_MILLIS;
     }
 
     @Override
@@ -69,17 +125,34 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
             return Map.of("traceparent", ids.header());
         }
 
-        @Override public List<ParsedSql> drain() { return drain(AWAIT_TIMEOUT_MILLIS); }
+        @Override public List<ParsedSql> drain() {
+            long effectiveTimeout = awaitTimeoutMillis > 0 ? awaitTimeoutMillis : AWAIT_TIMEOUT_MILLIS;
+            return drain(effectiveTimeout);
+        }
 
         @Override public List<ParsedSql> drain(long timeoutMillis) {
             try {
                 boolean arrived = receiver.awaitEntrySpan(ids.traceId(), ids.spanId(), timeoutMillis);
                 if (arrived) {
-                    waitForQuiescence(ids.traceId());
+                    waitForQuiescence(ids.traceId(), timeoutMillis);
                     List<ParsedSql> sql = toParsedSql(receiver.spans(ids.traceId()));
                     if (!sql.isEmpty()) {
                         return sql;
                     }
+                }
+                // 병렬 경로에서는 log-parser 폴백을 비활성화한다.
+                // timestamp-window 폴백은 동시 워커 로그가 섞이면 교차 오염이 발생한다(P2-5 F1).
+                // OTLP span이 없으면(0 db spans 또는 timeout) 빈 결과를 반환한다 — 오염 SQL보다 낫다.
+                if (parallelAware) {
+                    if (!arrived) {
+                        log.warn("otel entry span timeout (trace={}) in parallel mode; "
+                                + "skipping log-parser fallback to avoid cross-worker contamination",
+                                ids.traceId());
+                    } else {
+                        log.debug("otel yielded 0 db spans (trace={}) in parallel mode; "
+                                + "returning empty (no log-parser fallback)", ids.traceId());
+                    }
+                    return List.of();
                 }
                 List<ParsedSql> fallback = SqlLogParser.parse(sut.readLogRange(logStart, sut.logOffset()));
                 if (!arrived) {
@@ -97,9 +170,9 @@ public final class OtelSpanCapture implements SqlCaptureBackend {
             }
         }
 
-        private void waitForQuiescence(String traceId) {
-            long deadline = System.nanoTime() + AWAIT_TIMEOUT_MILLIS * 1_000_000L;
-            while (System.nanoTime() < deadline && !receiver.isQuiescent(traceId, QUIESCENCE_MILLIS)) {
+        private void waitForQuiescence(String traceId, long budgetMillis) {
+            long deadline = System.nanoTime() + budgetMillis * 1_000_000L;
+            while (System.nanoTime() < deadline && !receiver.isQuiescent(traceId, quiescenceMillis)) {
                 sleep(POLL_MILLIS);
             }
         }

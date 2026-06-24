@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlCaptureBackend;
-import io.graphrag.builder.coverage.CoverageClient;
+import io.graphrag.builder.coverage.CoverageProbe;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.model.BindingOrigin;
@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 
@@ -53,17 +54,28 @@ public class KafkaCaptureRunner {
     private final Connection connection;
     private final DbConfig.Type dbType;
     private final String bootstrapServers;
-    private final CoverageClient coverage;
+    private final CoverageProbe coverage;
     private final SqlCaptureBackend sqlCapture;
+    // pjacoco per-trace: 전체 빌드 런 공유 생성기 — runner 간 traceId 충돌 없음 (Phase 2 동시 실행 안전).
+    private final io.graphrag.builder.capture.TraceParent traceParent;
 
     public KafkaCaptureRunner(Connection connection, DbConfig.Type dbType,
-                              String bootstrapServers, CoverageClient coverage,
+                              String bootstrapServers, CoverageProbe coverage,
                               SqlCaptureBackend sqlCapture) {
+        this(connection, dbType, bootstrapServers, coverage, sqlCapture, null);
+    }
+
+    public KafkaCaptureRunner(Connection connection, DbConfig.Type dbType,
+                              String bootstrapServers, CoverageProbe coverage,
+                              SqlCaptureBackend sqlCapture,
+                              io.graphrag.builder.capture.TraceParent traceParent) {
         this.connection = connection;
         this.dbType = dbType;
         this.bootstrapServers = bootstrapServers;
         this.coverage = coverage;
         this.sqlCapture = sqlCapture;
+        this.traceParent = traceParent != null ? traceParent
+                : new io.graphrag.builder.capture.TraceParent("kafka-" + System.nanoTime());
     }
 
     public KafkaResult run(KafkaConsumer consumer, BodyShape shape, List<TableSchema> tables)
@@ -74,7 +86,7 @@ public class KafkaCaptureRunner {
         }
         SynthesizedInput happy = shape == null
                 ? new SynthesizedInput(Json.mapper().createObjectNode(), List.of())
-                : new SampleInputSynthesizer().synthesize(shape, tables);
+                : new SampleInputSynthesizer(Map.of(), consumer.id()).synthesize(shape, tables);
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
             Seeds.insert(connection, dbType, seed);
         }
@@ -114,19 +126,36 @@ public class KafkaCaptureRunner {
             KafkaConsumer consumer, String exchangeId, JsonNode payload, String key, boolean variant,
             boolean awaitSql, List<KafkaExchange> exchanges, List<CapturedSql> allSql,
             ExecutionDataStore cumulativeExec) throws Exception {
-        coverage.dump(true);   // baseline: 직전 구간 컷, 이 발행의 delta만 측정
+        coverage.baselineCut();   // baseline: 직전 구간 컷 (pjacoco: no-op — traceId별 스토어가 비어 시작)
         SqlCaptureBackend.Scope scope = sqlCapture.begin();
         ProducerRecord<String, String> record = new ProducerRecord<>(consumer.topic(), key,
                 Json.mapper().writeValueAsString(payload));
         // 상관 헤더(OTEL: traceparent / log: 없음)를 레코드 헤더로 주입. add는 누적이라 remove 후 add.
-        scope.requestHeaders().forEach((k, v) -> {
+        Map<String, String> scopeHeaders = scope.requestHeaders();
+        scopeHeaders.forEach((k, v) -> {
             record.headers().remove(k);
             record.headers().add(k, v.getBytes(StandardCharsets.UTF_8));
         });
+        // pjacoco: scope가 traceparent를 제공하지 않으면 생성한 traceId를 레코드 헤더로 주입.
+        String probeTraceId = traceParent.next().traceId();
+        String probeTraceparent = coverage.traceparentFor(probeTraceId);   // null = traceparent 미주입 probe(WS·테스트 폴백)
+        if (probeTraceparent != null) {
+            boolean scopeHasTraceparent = scopeHeaders.keySet().stream()
+                    .anyMatch(k -> k.equalsIgnoreCase("traceparent"));
+            if (!scopeHasTraceparent) {
+                record.headers().remove("traceparent");
+                record.headers().add("traceparent", probeTraceparent.getBytes(StandardCharsets.UTF_8));
+            }
+        }
         producer.send(record).get();
         // happy: SQL/entry span 출현까지 await. variant: 단축 settle(early-return arm은 빈 SQL 기대).
         List<ParsedSql> parsed = awaitSql ? scope.drain(AWAIT_MILLIS) : scope.drain(VARIANT_SETTLE_MILLIS);
-        coverage.dump(true).accept(cumulativeExec);   // consumer 실행 커버 delta
+        // traceId 결정: scope(OTEL) 제공 traceparent 우선, 없으면 probe traceId 사용.
+        String traceId = extractTraceId(scopeHeaders);
+        if (traceId == null) {
+            traceId = probeTraceId;
+        }
+        coverage.requestDelta(traceId).accept(cumulativeExec);   // consumer 실행 커버 delta
         List<CapturedSql> sql = captureSql(exchangeId, payload, parsed);
         allSql.addAll(sql);
         exchanges.add(new KafkaExchange(exchangeId, consumer.id(), consumer.topic(), payload,
@@ -195,6 +224,22 @@ public class KafkaCaptureRunner {
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         return props;
+    }
+
+    /** scope requestHeaders에서 traceparent의 traceId(32-hex) 부분을 추출한다. 없으면 null. */
+    private static String extractTraceId(Map<String, String> headers) {
+        for (Map.Entry<String, String> h : headers.entrySet()) {
+            if (h.getKey().equalsIgnoreCase("traceparent")) {
+                String tp = h.getValue();
+                if (tp != null) {
+                    String[] parts = tp.split("-");
+                    if (parts.length >= 2 && parts[1].length() == 32) {
+                        return parts[1];
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private List<CapturedSql> captureSql(String exchangeId, JsonNode payload, List<ParsedSql> parsed) {

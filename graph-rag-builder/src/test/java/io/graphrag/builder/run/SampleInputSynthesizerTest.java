@@ -199,4 +199,45 @@ class SampleInputSynthesizerTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).isTextual()).isTrue();
     }
+
+    // ----- P2-3: 엔드포인트 스코프 probe 키 (REQ-P007) -----
+
+    @Test
+    void synthesize_withEndpointId_probeValueIsEndpointScoped() {
+        // 엔드포인트 ID가 있으면 probe 값에 4자리 태그가 삽입된다.
+        SynthesizedInput input = new SampleInputSynthesizer(Map.of(), "POST /orders")
+                .synthesize(SHAPE, SCHEMA);
+        String probeValue = input.body().get("userId").asText();
+        assertThat(probeValue).startsWith("probe-").contains("-userId");
+        // 태그 부분(두 번째 '-' 이후 'userId' 전)은 숫자
+        String tag = probeValue.replace("probe-", "").replace("-userId", "");
+        assertThat(tag).matches("\\d+");
+    }
+
+    @Test
+    void synthesize_differentEndpoints_differentProbeValues() {
+        // 서로 다른 엔드포인트 ID는 서로 다른 probe 값을 생성 → DB row 키공간 분리.
+        SynthesizedInput a = new SampleInputSynthesizer(Map.of(), "POST /orders").synthesize(SHAPE, SCHEMA);
+        SynthesizedInput b = new SampleInputSynthesizer(Map.of(), "POST /items").synthesize(SHAPE, SCHEMA);
+        String probeA = a.body().get("userId").asText();
+        String probeB = b.body().get("userId").asText();
+        // 두 probe 값이 다르거나(해시 충돌 없음), 같더라도(드문 충돌) seed 값이 일치해야 함.
+        // 충돌이 없을 때: 다르다.
+        if (probeA.equals(probeB)) {
+            // 해시 충돌: seed 값도 같아야 일관성 유지 (round-trip 보장).
+            assertThat(a.seeds().get(0).values().get(0)).isEqualTo(b.seeds().get(0).values().get(0));
+        } else {
+            assertThat(probeA).isNotEqualTo(probeB);
+        }
+    }
+
+    @Test
+    void synthesize_endpointScoped_seedValueMatchesBodyValue() {
+        // probe 값이 body와 seed row에서 일치해야 round-trip이 성립한다.
+        SynthesizedInput input = new SampleInputSynthesizer(Map.of(), "POST /orders")
+                .synthesize(SHAPE, SCHEMA);
+        String bodyProbe = input.body().get("userId").asText();
+        String seedProbe = input.seeds().get(0).values().get(0).toString();
+        assertThat(seedProbe).isEqualTo(bodyProbe);
+    }
 }

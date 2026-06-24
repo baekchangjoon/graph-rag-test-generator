@@ -18,17 +18,34 @@ import java.util.Map;
  * "<x>Id" 필드가 스키마 FK 컬럼과 매칭되면 부모 테이블에 probe row를 seed한다.
  * enum/날짜/이메일 필드는 유효 값으로 채워 SUT 역직렬화가 성공하게 한다 (Stage 0).
  * 시간/Random 사용 금지 — 동일 입력은 항상 동일 출력 (docs/04 결정성).
+ *
+ * probe 값은 엔드포인트 스코프 키("probe-{tag}-{field}")를 사용한다. tag는 endpointId의
+ * 결정적 단축 해시(4자리 숫자)로, 병렬 탐색 워커가 같은 FK 필드명을 가진 엔드포인트를
+ * 탐색할 때 동일 DB 행을 두고 충돌하지 않도록 한다 (P2-3, REQ-P007).
  */
 public class SampleInputSynthesizer {
 
     private final ShapeJsonSynthesizer shapes;
+    /** 엔드포인트별 결정적 probe 태그. "" 이면 레거시 FIELD-scoped("probe-{field}"). */
+    private final String probeTag;
 
     public SampleInputSynthesizer() {
         this(Map.of());
     }
 
     public SampleInputSynthesizer(Map<String, List<String>> enumConstants) {
+        this(enumConstants, "");
+    }
+
+    /**
+     * endpointId를 받아 probe 값을 엔드포인트 스코프로 만든다.
+     * probe 태그는 endpointId의 4자리 결정적 해시(0000–8999).
+     */
+    public SampleInputSynthesizer(Map<String, List<String>> enumConstants, String endpointId) {
         this.shapes = new ShapeJsonSynthesizer(enumConstants);
+        this.probeTag = endpointId == null || endpointId.isEmpty()
+                ? ""
+                : String.valueOf(Math.floorMod(endpointId.hashCode(), 9000));
     }
 
     public SynthesizedInput synthesize(BodyShape shape, List<TableSchema> tables) {
@@ -72,7 +89,9 @@ public class SampleInputSynthesizer {
                     ? findFkTarget(camelToSnake(field.name()), tables)
                     : null;
             if (fk != null) {
-                String probeValue = "probe-" + field.name();
+                String probeValue = probeTag.isEmpty()
+                        ? "probe-" + field.name()
+                        : "probe-" + probeTag + "-" + field.name();
                 body.put(field.name(), probeValue);
                 seeds.add(seedRow(fk, probeValue, tables));
             } else {
