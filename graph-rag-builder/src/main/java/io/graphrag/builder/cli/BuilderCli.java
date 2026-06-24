@@ -183,7 +183,8 @@ public final class BuilderCli {
                         options.containsKey("--llm-oracle"),
                         options.get("--llm-model"),
                         options.get("--llm-backend"),
-                        options.get("--llm-cli")));
+                        options.get("--llm-cli")),
+                null); // TODO Task 11: replace with explicit SourceRoots
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
