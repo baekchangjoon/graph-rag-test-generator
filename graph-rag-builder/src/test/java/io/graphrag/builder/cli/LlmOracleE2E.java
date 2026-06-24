@@ -42,7 +42,8 @@ class LlmOracleE2E {
                 Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
                 null, null, authConfig, false, true, null,
                 null, io.graphrag.model.RequestHeaders.empty(), List.of(), "none", null, false, true,
-                new io.graphrag.builder.oracle.LlmOptions(llmOracle, "claude-haiku-4-5-20251001", "api", "claude")));
+                new io.graphrag.builder.oracle.LlmOptions(llmOracle, "claude-haiku-4-5-20251001", "api", "claude"),
+                null)); // TODO Task 11: replace with explicit SourceRoots
     }
 
     private static List<ExploredPath> couponPaths(GraphAsset asset) {
