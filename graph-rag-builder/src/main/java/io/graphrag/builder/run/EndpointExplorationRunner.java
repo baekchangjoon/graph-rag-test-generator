@@ -1995,6 +1995,7 @@ public class EndpointExplorationRunner {
                     triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
                     "response-variant", List.of(), List.of(), List.of()));
 
+            // variantHttpCalls: SYNTHESIZED(responsevar) + CONTRACT(egressassert/egressenvelope) 혼재 — provenance로 구분
             // 각 보존 변형마다 egress-assertion 단언 path를 생성한다(REQ-F012-006, REQ-F012-007).
             // KeptVariant.branches는 cumBranches(변형 루프 누적)를 per-변형에 주입한다 —
             // per-variant delta가 정적 헬퍼에 노출되지 않으므로, analyzer가 있는 여기서 채운다.
@@ -2005,6 +2006,11 @@ public class EndpointExplorationRunner {
                     endpoint.id(), triggerInput, site.httpMethod(), site.pathLiteral(),
                     keptWithBranches, variantHttpCalls);
             variantPaths.addAll(assertionPaths);
+
+            // 에러 envelope 변형: errorContract가 있으면 envelope body CONTRACT call을 variantHttpCalls에 추가(REQ-F012-005).
+            buildEnvelopeVariantCall(endpoint.id(), site.httpMethod(), site.pathLiteral(),
+                    errorContract, new ErrorEnvelopeSynthesizer())
+                    .ifPresent(variantHttpCalls::add);
         }
     }
 
@@ -2050,6 +2056,35 @@ public class EndpointExplorationRunner {
                     "egress-assertion", List.of(), List.of(), List.of(), List.of(), Map.of()));
         }
         return result;
+    }
+
+    /**
+     * 에러 envelope 변형 CapturedHttpCall을 생성하는 순수 헬퍼(REQ-F012-005).
+     *
+     * <p>errorContract가 null이면 Optional.empty()를 반환한다(envelope SUT 아님).
+     * non-null인 경우 {@link ErrorEnvelopeSynthesizer#synthesize}로 body를 합성하고
+     * provenance=CONTRACT인 {@link io.graphrag.model.CapturedHttpCall}을 반환한다.
+     *
+     * @param endpointId   엔드포인트 식별자 (id 접두사)
+     * @param method       외부 callSite HTTP 메서드
+     * @param pathLiteral  외부 callSite 경로
+     * @param errorContract 에러 envelope 계약 기술자 (null = 비-envelope SUT)
+     * @param synth        {@link ErrorEnvelopeSynthesizer} 인스턴스
+     * @return CONTRACT CapturedHttpCall, 또는 errorContract == null이면 empty
+     */
+    public static Optional<io.graphrag.model.CapturedHttpCall> buildEnvelopeVariantCall(
+            String endpointId, String method, String pathLiteral,
+            ErrorContractDescriptor errorContract, ErrorEnvelopeSynthesizer synth) {
+        if (errorContract == null) {
+            return Optional.empty();
+        }
+        String sanitizedPath = pathLiteral.replaceAll("[^A-Za-z0-9]+", "-");
+        String callId = "http-" + endpointId + "-egressenvelope-" + sanitizedPath;
+        String body = synth.synthesize(errorContract).toString();
+        return Optional.of(new io.graphrag.model.CapturedHttpCall(
+                callId, endpointId + "-egressenvelope", method, pathLiteral,
+                Map.of(), null, 200, body, List.of(), false,
+                io.graphrag.model.CapturedHttpCall.Provenance.CONTRACT));
     }
 
     /**
