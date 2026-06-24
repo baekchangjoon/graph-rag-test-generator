@@ -40,7 +40,7 @@ class Stage2EnumResponseFuzzingE2E {
     private static final String INVENTORY_PATH = "/inventory/stock";
     private static final String ORDERS_ENDPOINT = "post-api-orders";
     private static final String SWITCH_CLASS = "io.graphrag.sample.orders.OrderController";
-    private static final int SWITCH_LINE = 55;   // switch (stock.mode()) — 3 arm
+    private static final int SWITCH_LINE = 58;   // switch (stock.mode()) — 3 arm
 
     @TempDir
     Path out;
