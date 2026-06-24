@@ -1,6 +1,5 @@
 package io.graphrag.builder.index;
 
-import spoon.Launcher;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.BinaryOperatorKind;
 import spoon.reflect.code.CtBinaryOperator;
@@ -130,6 +129,11 @@ public class ConstraintExtractor {
     private static final Map<String, String> FLIP = Map.of(
             ">", "<", ">=", "<=", "<", ">", "<=", ">=", "==", "==", "!=", "!=");
 
+    /** 모든 public 메서드가 공유하는 Spoon 모델 빌더 (SourceRoots 전 루트 파싱). */
+    private static CtModel buildModel(SourceRoots roots) {
+        return SharedSpoonModel.build(roots);
+    }
+
     /**
      * 핸들러 메서드 본문의 직접(1-hop) {@link CtInvocation} 집합과 핸들러 자신을 반환한다 (REQ-011, Phase 2).
      * 반환 집합의 각 Entry: key = 호출 대상 declaringType FQN (미해소이면 simpleName), value = 메서드 simpleName.
@@ -138,13 +142,8 @@ public class ConstraintExtractor {
      * 귀속 불가이므로 skip(보수적); non-null + FQN 빈 경우는 declaringType.getSimpleName()을 key로 사용.
      * 1-hop만: 호출된 메서드 내부의 추가 호출은 따라가지 않는다.
      */
-    public Set<Map.Entry<String, String>> reachableMethods(Path srcDir, String handlerClass, String handlerMethod) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public Set<Map.Entry<String, String>> reachableMethods(SourceRoots roots, String handlerClass, String handlerMethod) {
+        CtModel model = buildModel(roots);
 
         Set<Map.Entry<String, String>> result = new HashSet<>();
         // 핸들러 자신을 항상 포함
@@ -176,13 +175,13 @@ public class ConstraintExtractor {
         return result;
     }
 
-    public List<ConditionSpan> extract(Path srcDir, String classFqn, String methodName) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    /** Path 위임 — 단일 루트로 {@link #reachableMethods(SourceRoots, String, String)} 에 위임. */
+    public Set<Map.Entry<String, String>> reachableMethods(Path srcDir, String handlerClass, String handlerMethod) {
+        return reachableMethods(SourceRoots.single(srcDir), handlerClass, handlerMethod);
+    }
+
+    public List<ConditionSpan> extract(SourceRoots roots, String classFqn, String methodName) {
+        CtModel model = buildModel(roots);
 
         List<ConditionSpan> conditions = new ArrayList<>();
         for (CtType<?> type : model.getAllTypes()) {
@@ -211,18 +210,18 @@ public class ConstraintExtractor {
         conditions.add(new ConditionSpan(start, Math.max(start, end), text));
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extract(SourceRoots, String, String)} 에 위임. */
+    public List<ConditionSpan> extract(Path srcDir, String classFqn, String methodName) {
+        return extract(SourceRoots.single(srcDir), classFqn, methodName);
+    }
+
     /**
      * SUT 소스 모델 전체(컨트롤러/서비스/공통/도메인 등 모든 클래스·메서드)의 비교식을
      * AST에서 직접 추출한다(정규식 아님). field op literal / literal op field, 정수 리터럴만.
      * 각 비교는 발생 위치 (classFqn, method, line)로 태깅된다. 1회 빌드.
      */
-    public List<Comparison> extractComparisons(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<Comparison> extractComparisons(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<Comparison> comparisons = new ArrayList<>();
         for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
@@ -246,17 +245,17 @@ public class ConstraintExtractor {
         return comparisons;
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extractComparisons(SourceRoots)} 에 위임. */
+    public List<Comparison> extractComparisons(Path srcDir) {
+        return extractComparisons(SourceRoots.single(srcDir));
+    }
+
     /**
      * SUT 소스 전체에서 문자열 동치 {@code field.equals("LIT")} / {@code "LIT".equals(field)}를
      * AST로 추출한다(전 계층, 1회 빌드). 숫자 extractComparisons의 문자열 짝.
      */
-    public List<StringEquality> extractStringEqualities(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<StringEquality> extractStringEqualities(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<StringEquality> out = new ArrayList<>();
         for (CtInvocation<?> inv : model.getElements(new TypeFilter<>(CtInvocation.class))) {
@@ -295,19 +294,19 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extractStringEqualities(SourceRoots)} 에 위임. */
+    public List<StringEquality> extractStringEqualities(Path srcDir) {
+        return extractStringEqualities(SourceRoots.single(srcDir));
+    }
+
     /**
      * SUT 소스 전체에서 양변이 모두 필드 참조인 비교식을 추출한다 (REQ-006, REQ-008a).
      * NUMERIC: REL_OPS의 관계 연산자이고 양변이 fieldRef != null이며 리터럴이 없는 것.
      * STRING: {@code field.equals(field)} 형태이고 양변이 fieldRef != null이며 문자열 리터럴이 없는 것.
      * 1회 빌드. 정렬·dedupe는 기존 패턴과 동일.
      */
-    public List<JoinGuard> extractJoinGuards(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<JoinGuard> extractJoinGuards(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<JoinGuard> out = new ArrayList<>();
 
@@ -371,18 +370,18 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extractJoinGuards(SourceRoots)} 에 위임. */
+    public List<JoinGuard> extractJoinGuards(Path srcDir) {
+        return extractJoinGuards(SourceRoots.single(srcDir));
+    }
+
     /**
      * 메서드 내 {@code &&} 조건을 conjunction 단위로 추출(원자 동시성 보존). 전 계층 1회 빌드.
      * 조건 루트(CtIf/CtConditional의 getCondition)가 AND인 것만 대상 — getElements(CtBinaryOperator)로
      * 전역 AND를 훑으면 중첩 &&가 중복 수집되므로 쓰지 않는다. 서로 다른 fieldRef 2개+만 보존.
      */
-    public List<Conjunction> extractConjunctions(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<Conjunction> extractConjunctions(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<CtExpression<?>> conditions = new ArrayList<>();
         for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
@@ -422,6 +421,11 @@ public class ConstraintExtractor {
                 .thenComparing(Conjunction::method)
                 .thenComparingInt(Conjunction::line));
         return out;
+    }
+
+    /** Path 위임 — 단일 루트로 {@link #extractConjunctions(SourceRoots)} 에 위임. */
+    public List<Conjunction> extractConjunctions(Path srcDir) {
+        return extractConjunctions(SourceRoots.single(srcDir));
     }
 
     private static void flattenAnd(CtExpression<?> expr, List<CtExpression<?>> leaves) {
@@ -485,13 +489,8 @@ public class ConstraintExtractor {
      * 전 계층에서 수집. 휴리스틱(컬럼명 추측)이 아니라 가드가 직접 알려주는 유효 enum 값 →
      * 시드 행의 enum 컬럼을 유효값으로 채워 읽기 500을 방지(Bug 3). 1회 빌드.
      */
-    public Map<String, List<String>> extractEnumColumns(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public Map<String, List<String>> extractEnumColumns(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         java.util.TreeMap<String, java.util.TreeSet<String>> acc = new java.util.TreeMap<>();
         for (CtBinaryOperator<?> op : model.getElements(new TypeFilter<>(CtBinaryOperator.class))) {
@@ -518,18 +517,18 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extractEnumColumns(SourceRoots)} 에 위임. */
+    public Map<String, List<String>> extractEnumColumns(Path srcDir) {
+        return extractEnumColumns(SourceRoots.single(srcDir));
+    }
+
     /**
      * 상태 의존 가드(저장 행 상태로 분기)를 전 계층에서 추출 (Stage 4). 보수적 — 인식 못하면 emit 안 함
      * (false negative만). TEMPORAL: {@code getter().isBefore/isAfter(LocalDate(Time).now())}.
      * ENUM: {@code getter() != A && != B} (NE만; == 가드는 반대-arm 의미가 달라 v1 제외). 1회 빌드.
      */
-    public List<StateGuard> extractStateGuards(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<StateGuard> extractStateGuards(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<StateGuard> out = new ArrayList<>();
 
@@ -700,19 +699,19 @@ public class ConstraintExtractor {
         return out;
     }
 
+    /** Path 위임 — 단일 루트로 {@link #extractStateGuards(SourceRoots)} 에 위임. */
+    public List<StateGuard> extractStateGuards(Path srcDir) {
+        return extractStateGuards(SourceRoots.single(srcDir));
+    }
+
     /**
      * CtIf/CtConditional의 top-level {@code &&} 조건에서 저장 행 상태 leaf 2~3개가 완전 분류된
      * conjunction만 emit한다(TEMPORAL→BOOLEAN→NULLITY→ENUM→NUMERIC-상수→NUMERIC-param 순서).
      * NUMERIC-param / 미인식 leaf가 하나라도 있으면 해당 조건 통째 skip.
      * 1회 빌드. 기존 extractStateGuards 불변(독립 메서드).
      */
-    public List<StateGuardConjunction> extractStateGuardConjunctions(Path srcDir) {
-        Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setCommentEnabled(false);
-        launcher.getEnvironment().setComplianceLevel(17);
-        CtModel model = launcher.buildModel();
+    public List<StateGuardConjunction> extractStateGuardConjunctions(SourceRoots roots) {
+        CtModel model = buildModel(roots);
 
         List<CtExpression<?>> conditions = new ArrayList<>();
         for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
@@ -772,6 +771,11 @@ public class ConstraintExtractor {
                 .thenComparing(StateGuardConjunction::method)
                 .thenComparingInt(StateGuardConjunction::line));
         return out;
+    }
+
+    /** Path 위임 — 단일 루트로 {@link #extractStateGuardConjunctions(SourceRoots)} 에 위임. */
+    public List<StateGuardConjunction> extractStateGuardConjunctions(Path srcDir) {
+        return extractStateGuardConjunctions(SourceRoots.single(srcDir));
     }
 
     /**

@@ -24,9 +24,9 @@ public final class StaticLiteralOracle implements InputOracle {
     public InputCandidates analyze(SutCode sut) {
         ConstraintExtractor extractor = new ConstraintExtractor();
         Map<String, Set<Long>> numeric =
-                new ConditionBoundarySolver().solve(extractor.extractComparisons(sut.srcDir()));
+                new ConditionBoundarySolver().solve(extractor.extractComparisons(sut.roots()));
         Map<String, Set<String>> strings = new TreeMap<>();
-        for (StringEquality se : extractor.extractStringEqualities(sut.srcDir())) {
+        for (StringEquality se : extractor.extractStringEqualities(sut.roots())) {
             strings.computeIfAbsent(se.fieldRef(), k -> new TreeSet<>()).add(se.value());
         }
         return new InputCandidates(numeric, strings);

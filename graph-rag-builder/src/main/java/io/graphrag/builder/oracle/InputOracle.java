@@ -1,5 +1,7 @@
 package io.graphrag.builder.oracle;
 
+import io.graphrag.builder.index.SourceRoots;
+
 import java.nio.file.Path;
 
 /**
@@ -13,8 +15,20 @@ public interface InputOracle {
 
     String name();
 
-    /** srcDir(소스 분석용)와 bootJar(바이트코드 분석용)를 담은 SUT 핸들. */
-    record SutCode(Path srcDir, Path bootJar) {
+    /**
+     * roots(전 소스 루트 파싱용)와 bootJar(바이트코드 분석용)를 담은 SUT 핸들.
+     * srcDir() 접근자는 roots.primary()를 반환해 기존 소비처(ConcolicOracle 등) 호환을 유지한다.
+     */
+    record SutCode(SourceRoots roots, Path bootJar) {
+        /** 후방호환 Path 접근자 — roots.primary() 반환. */
+        public Path srcDir() {
+            return roots.primary();
+        }
+
+        /** 보조 생성자 — 단일 루트 Path를 SourceRoots.single 으로 래핑한다. */
+        public SutCode(Path srcDir, Path bootJar) {
+            this(SourceRoots.single(srcDir), bootJar);
+        }
     }
 
     InputCandidates analyze(SutCode sut);
