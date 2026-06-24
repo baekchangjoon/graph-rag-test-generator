@@ -1579,6 +1579,13 @@ public class EndpointExplorationRunner {
 
         /** 변형 body로 endpoint를 1회 invoke하고 그 요청의 per-request 커버리지 delta를 반환한다. */
         ExecutionDataStore invoke(JsonNode variantBody) throws Exception;
+
+        /**
+         * nextTraceId()가 열었으나 invoke()가 소비하지 못한 scope를 정리한다(registerVariant/invoke가
+         * 던진 변형). 루프가 변형마다 finally로 호출 → OTLP 리시버 span 버퍼 누수 방지. invoke가 이미
+         * scope를 소비했으면 no-op. 격리 불필요한 fake invoker는 기본 no-op.
+         */
+        default void closePending() {}
     }
 
     /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수 + 보존 변형(label,body). */
@@ -1615,8 +1622,9 @@ public class EndpointExplorationRunner {
         for (EnumResponseVariantGenerator.ResponseVariant variant : plan.kept()) {
             JsonNode body = applyEnumOverrides(baselineBody, variant.enumOverrides());
             String traceId = isolated ? invoker.nextTraceId() : null;
-            java.util.UUID variantId = synthesizer.registerVariant(method, pathLiteral, body, traceId);
+            java.util.UUID variantId = null;
             try {
+                variantId = synthesizer.registerVariant(method, pathLiteral, body, traceId);
                 ExecutionDataStore delta = invoker.invoke(body);
                 attempted++;
                 boolean newArm = mergeAndDetectNewArm(cumulative, delta, appClasses);
@@ -1629,8 +1637,10 @@ public class EndpointExplorationRunner {
                         method, pathLiteral, variant.label(), e.getMessage());
                 attempted++;
             } finally {
+                // nextTraceId가 열었으나 invoke가 소비 못한 scope를 drain(registerVariant/invoke throw).
+                invoker.closePending();
                 // none(격리 불가): 다음 변형을 위해 순차 제거(전역 stub 보존). 격리 모드는 공존 유지.
-                if (!isolated) {
+                if (!isolated && variantId != null) {
                     synthesizer.removeVariant(variantId);
                 }
             }
@@ -1794,6 +1804,17 @@ public class EndpointExplorationRunner {
                 pendingScope = null;
                 return sendVariantAndDumpDelta(http, endpoint, baseInput, authHeader, scope);
             }
+
+            @Override
+            public void closePending() {
+                // nextTraceId가 연 scope를 invoke가 소비 못한 채 남겼으면(registerVariant/invoke throw)
+                // drain해 리시버 버퍼를 정리한다. OtelScope.drain()의 finally가 receiver.remove를 보장.
+                if (pendingScope != null) {
+                    SqlCaptureBackend.Scope leftover = pendingScope;
+                    pendingScope = null;
+                    leftover.drain();
+                }
+            }
         };
     }
 
@@ -1828,8 +1849,11 @@ public class EndpointExplorationRunner {
             builder.method(method, HttpRequest.BodyPublishers.ofString(
                     Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
         }
-        http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-        sqlScope.drain();   // scope 닫기(SQL은 변형 루프에서 사용 안 함)
+        try {
+            http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        } finally {
+            sqlScope.drain();   // scope 닫기(send 실패해도 리시버 버퍼 정리; SQL은 변형 루프 미사용)
+        }
         return coverage.dump(true);   // 이 invoke의 delta
     }
 
