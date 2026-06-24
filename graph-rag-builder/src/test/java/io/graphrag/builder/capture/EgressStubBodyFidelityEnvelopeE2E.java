@@ -158,5 +158,11 @@ class EgressStubBodyFidelityEnvelopeE2E {
         assertThat(allSource)
                 .as("생성 소스에 SUT 관측 상태(envelope 분기 HTTP 200) 단언이 존재해야 한다")
                 .contains("200");
+
+        // 생성 소스에 envelope CONTRACT body 값(errorCode=ERROR)이 stub으로 포함돼야 한다.
+        // 이것이 envelope 분기 실제 구동 증거 — 200만으로는 happy/envelope 둘 다 반환하므로 약함.
+        assertThat(allSource)
+                .as("생성 소스에 envelope CONTRACT body 값(errorCode=ERROR)이 stub으로 포함돼야 한다")
+                .contains("ERROR");
     }
 }
