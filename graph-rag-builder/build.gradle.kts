@@ -50,6 +50,7 @@ dependencies {
     testImplementation(libs.assertj)
     testImplementation(libs.testcontainers.junit)   // @Testcontainers/@Container 확장
     testImplementation(libs.h2)                     // in-memory JDBC for unit tests
+    testImplementation(project(":test-generator"))  // EgressStubBodyFidelity* E2E: Generator 실행
 }
 
 tasks.processResources {

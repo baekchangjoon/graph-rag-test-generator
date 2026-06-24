@@ -17,10 +17,15 @@ public record CapturedHttpCall(
         boolean baggagePropagated,
         Provenance responseProvenance) {
 
-    /** 응답 본문의 출처: 실제 SUT 외부 호출 캡처(CAPTURED) vs 형상에서 합성한 stub(SYNTHESIZED). */
+    /**
+     * 응답 본문의 출처: 실측(CAPTURED) / 형상-시드(SYNTHESIZED) / 기대값·계약 합성(CONTRACT).
+     * CONTRACT = 소비 코드 equals-family 리터럴·enum 기반으로 합성한 값-충실 body.
+     * 레거시 JSON 누락 → CAPTURED (compact constructor null-guard).
+     */
     public enum Provenance {
         CAPTURED,
-        SYNTHESIZED
+        SYNTHESIZED,
+        CONTRACT
     }
 
     public CapturedHttpCall {
