@@ -113,6 +113,23 @@ CtModel sharedModel = SharedSpoonModel.build(config.sourceRoots());
 `analyze(SutCode)` 시그니처(SPI)는 불변 — 모델은 구현 필드로 흐르고 `SutCode.roots()`는 그대로 ConcolicOracle이
 사용한다. 결과 동등: `sut.roots()`와 `sharedModel`은 동일 `config.sourceRoots()`에서 나오므로 추출 facts 불변.
 
+### 3.4a 병렬 fan-out 상호작용 — `ThreadLocal<CtModel>` (rebase 중 발견, 2026-06-24)
+
+리베이스 시점에 origin/main이 `explore()`를 **병렬 fan-out**(ExecutorService, `--parallelism`>1이면 워커가
+엔드포인트를 병렬 탐색)으로 재구조화했다. **Spoon `CtModel`은 noClasspath lazy 참조 해소가 read 중 상태를
+변형할 수 있어 스레드 안전하지 않다** — 단일 모델을 병렬 워커가 동시 traverse하면 데이터 레이스다. 따라서
+§3.2의 "단일 모델"을 다음으로 정정한다.
+
+해결: `explore()`가 단일 모델 대신 **`ThreadLocal<CtModel>`**(스레드당 1회 `SharedSpoonModel.build`)을 둔다.
+- **순차(P=1, 기본·e2e):** 메인 스레드 1개 모델 → whole-app + 오라클 + 전 엔드포인트 워커가 모두 재사용 = **O(1)**.
+- **병렬(P>1):** 워커 스레드별 독립 모델(서로 격리) → 동시성 안전. 스레드당 1회 빌드 = **O(P)≪O(E)**.
+- whole-app·오라클 블록은 fan-out 이전 메인 스레드에서 실행되므로 `sharedModel.get()`이 그 1개 모델을 반환.
+- 워커는 `CtModel workerSpoon = sharedModel.get()`로 자기 스레드 모델을 얻어 per-endpoint
+  extract/literal/validation/reachable에 재사용. `reachableCache`(ConcurrentHashMap) computeIfAbsent는 키별 1회만
+  실행 스레드의 `workerSpoon`으로 traverse.
+
+facts 동등성은 스레드별 모델이 동일 소스에서 독립 파싱되므로 보존. 추출기 CtModel 오버로드는 모두 read-only.
+
 ### 3.4 `reachableCache` 처리(프롬프트 질의)
 
 `reachableCache`(핸들러키→reachable 결과 Map)는 **현재 두 역할**을 한다: ① Spoon 재빌드 회피, ② 동일 핸들러
