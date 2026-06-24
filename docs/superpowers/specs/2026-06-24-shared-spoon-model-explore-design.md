@@ -201,3 +201,13 @@ Claude Sonnet `design-doc-reviewer` + Gemini 3.5 Flash(High) + Cursor(auto). 핵
   자족성(InputOracle 계약: SUT만 받아 스스로 추출) 보존 위해 보류. 빌드 중복은 제거하되 traversal 중복은 저렴해
   방치(§2 비목표 명시). Cursor I3의 일부(LlmOracle validation을 explore `fieldConstraints`와 동일 소스로 공유) —
   동일 사유로 모델 주입까지만(facts 재사용은 결합 증가) 채택.
+
+## 8. 코드 리뷰 triage (2026-06-24, PR 전)
+spec-compliance(general-purpose, 설계 대조) + code-quality(`pr-review-toolkit:code-reviewer`) 2종 실행.
+- **spec-compliance: COMPLIANT** — 9 메서드 오버로드·explore 배선·오라클 주입·하위호환·범위 무확장 모두 일치, 편차 0.
+- **code-quality: high-confidence 이슈 0**(공유 모델 변형 위험은 가드 테스트로 충분). 마이너 2건 triage:
+  - buildCount delta 로그가 프로세스 전역 카운터 기반(~40, INFO 전용) → **기각**. explore는 단일 스레드·로그는
+    비계약이며, 실제 O(1)은 단위 테스트(`resetBuildCount` 격리)로 강제. 오히려 루프 내 빌드 재도입 시 delta>1로
+    드러나는 회귀 카나리아라 유지가 이득.
+  - 오라클 null-fallback 경로 미테스트(~35) → **수용**. LlmOracle null 경로는 기존 `LlmOracleTest`(7-arg 생성자)가
+    이미 커버. StaticLiteralOracle 무인자 경로는 `staticLiteralOracleNoArgFallbackEquivalentToInjected` 추가로 닫음.

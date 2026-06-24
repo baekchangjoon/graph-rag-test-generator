@@ -196,4 +196,17 @@ class SharedModelReuseTest {
                 .as("StaticLiteralOracle은 주입된 공유 모델을 재사용 — 추가 빌드 0")
                 .isEqualTo(1);
     }
+
+    @Test
+    void staticLiteralOracleNoArgFallbackEquivalentToInjected(@TempDir Path tmp) throws Exception {
+        // 하위호환: 무인자 생성자(모델 null → sut.roots()로 빌드) 경로가 주입 경로와 동일 후보를 낸다.
+        SourceRoots roots = SourceRoots.single(fixture(tmp));
+        InputOracle.SutCode sut = new InputOracle.SutCode(roots, tmp.resolve("unused.jar"));
+
+        var injected = new StaticLiteralOracle(SharedSpoonModel.build(roots)).analyze(sut);
+        var fallback = new StaticLiteralOracle().analyze(sut);
+
+        assertThat(fallback.numeric()).isEqualTo(injected.numeric());
+        assertThat(fallback.strings()).isEqualTo(injected.strings());
+    }
 }
