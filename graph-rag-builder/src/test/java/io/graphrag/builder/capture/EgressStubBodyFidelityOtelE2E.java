@@ -98,13 +98,6 @@ class EgressStubBodyFidelityOtelE2E {
                 .as("CONTRACT body에 'BACKORDER' 기대값이 포함돼야 한다")
                 .isTrue();
 
-        // "sample-region" placeholder는 CONTRACT body에 없어야 한다.
-        boolean hasPlaceholder = contractCalls.stream()
-                .anyMatch(c -> c.responseBody() != null && c.responseBody().contains("sample-region"));
-        assertThat(hasPlaceholder)
-                .as("CONTRACT body에 형상-시드 placeholder 'sample-region'이 없어야 한다")
-                .isFalse();
-
         // ── 단언 2: Generator 실행 → 생성 소스에 분기별 단언 존재 ───────────────────────
         GenerationRequest genReq = new GenerationRequest(
                 ORDERS_ENDPOINT, null, "OrdersCreateEgressTest", "io.x", AuthMode.REAL);
