@@ -228,3 +228,11 @@ spec-compliance(general-purpose, 설계 대조) + code-quality(`pr-review-toolki
     드러나는 회귀 카나리아라 유지가 이득.
   - 오라클 null-fallback 경로 미테스트(~35) → **수용**. LlmOracle null 경로는 기존 `LlmOracleTest`(7-arg 생성자)가
     이미 커버. StaticLiteralOracle 무인자 경로는 `staticLiteralOracleNoArgFallbackEquivalentToInjected` 추가로 닫음.
+
+### 8a. ThreadLocal 적응 후 동시성 재리뷰 (2026-06-24, rebase 후)
+`pr-review-toolkit:code-reviewer` 동시성 집중 리뷰 — **정확성 확인, high-confidence 버그 0**:
+- ThreadLocal 스레드별 격리 정확(두 스레드가 한 모델 공유하는 경로 없음), 람다 capture(effectively final) 정상,
+  `computeIfAbsent` 키별 1회 실행 스레드의 `workerSpoon` 사용(교차 스레드 모델 접근 없음), seq/par4 set-동등으로 실증.
+- 마이너 2건 **기각**: (A) 메인 스레드 ThreadLocal 미정리 — 일회성 CLI라 무해. (B) `computeIfAbsent` 매핑 함수가
+  CHM bin 락 보유 중 traversal — origin/main 선재 패턴이며, 내 변경은 그 락 구간의 **모델 빌드를 제거**해 오히려 개선.
+- 선재 데드코드 `reachableCache`(HashMap, origin/main 유래): 내 변경 아님 → 정책상 언급만, 미삭제.
