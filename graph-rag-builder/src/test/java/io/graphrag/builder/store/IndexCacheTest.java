@@ -56,6 +56,16 @@ class IndexCacheTest {
     }
 
     @Test
+    void legacySchemaVersion2InvalidatedByVersion3() throws Exception {  // REQ-010: stringLiteralsByDto 추가 후 캐시 무효화
+        Path cache = Files.createTempDirectory("cache-v2");
+        IndexManifest legacyV2 = new IndexManifest(2, "", Map.of());
+        IndexCache.save(cache, legacyV2, empty());
+        // SCHEMA_VERSION이 3으로 올라갔으므로 버전 2 캐시는 무효화돼야 한다
+        assertThat(IndexCache.load(cache, new IndexManifest(IndexCache.SCHEMA_VERSION, "", Map.of())))
+                .isEmpty();
+    }
+
+    @Test
     void corruptManifestFallsBackToRebuild() throws Exception {   // REQ-010
         Path cache = Files.createTempDirectory("cache4");
         Files.createDirectories(cache);
