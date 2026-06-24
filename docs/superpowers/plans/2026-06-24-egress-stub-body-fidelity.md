@@ -494,6 +494,40 @@ void egressAssertionPath_isGenerated_responseVariantStillExcluded() {
 
 ---
 
+## Addendum — envelope 티어 실증 (REQ-F012-018, 사용자 지시 역전파)
+
+초기 plan은 envelope을 synthetic-only로 한정했으나, 사용자 지시로 **실 SUT E2E**로 격상한다.
+dangling envelope call(Task 5b 초안)은 제거하고 envelope을 driven 변형 후보로 소비한다.
+
+### Task 9: error-envelope-service에 egress+envelope 분기 엔드포인트 추가 (REQ-F012-018 SUT)
+**REQ-IDs:** REQ-F012-018
+- `samples/error-envelope-service`에 외부 HTTP 클라이언트(`@Value("${external.pricing.url:}")` RestTemplate),
+  외부 응답 DTO(`record PricingResponse(String errorCode, String errorDetail, Integer amount)`),
+  엔드포인트 `GET /items/{id}/price`: 외부 GET 호출 후 `if (resp.errorCode() != null) throw new
+  BizException(resp.errorCode(), resp.errorDetail())` 아니면 amount 반환. (envelope 검사 분기.)
+- TDD: SUT 단위 테스트(외부 stub으로 errorCode 유무 두 분기 검증) → 구현. build.gradle은 starter-web
+  이미 포함(RestTemplate 가용). 커밋.
+
+### Task 5b-rework: envelope을 driven 변형 후보로 소비 (REQ-F012-005 소비)
+**REQ-IDs:** REQ-F012-005
+- Task 5b 초안의 dangling `buildEnvelopeVariantCall`+variantHttpCalls.add 제거.
+- `buildVariantCandidates`(또는 runResponseVariantLoops 후보 조립)에서 errorContract != null이면
+  `ErrorEnvelopeSynthesizer.synthesize(errorContract)` JSON의 각 필드를 responseShape에 존재하는 한도에서
+  변형 후보(field→[value])로 추가. 이후 기존 exploreResponseVariants→buildEgressAssertionPaths가 driven
+  CONTRACT egress-assertion path를 생성(참조됨).
+- 단위 테스트: errorContract 주입 시 envelope 필드가 후보 맵에 포함됨을 검증(pure). 통합: 기존
+  EgressErrorContractWiringTest 유지.
+
+### Task 10: envelope E2E (REQ-F012-018)
+**REQ-IDs:** REQ-F012-018
+- `EgressStubBodyFidelityEnvelopeE2E`: error-envelope-service를 egress 엔드포인트 +
+  `--error-when-present errorCode --error-detail-field errorDetail` + recorder redirect로 build →
+  Generator. envelope 값 변형이 SUT envelope 분기를 구동해 관측 status로 단언하는 egress-assertion 생성
+  테스트 방출 + 그 외부 stub provenance==CONTRACT + dead(미참조) CONTRACT call 0 검증. sut.jar/sut.src 게이트,
+  자기 PID teardown.
+
+---
+
 ## Execution Handoff
 
 Plan complete and saved to `docs/superpowers/plans/2026-06-24-egress-stub-body-fidelity.md`.

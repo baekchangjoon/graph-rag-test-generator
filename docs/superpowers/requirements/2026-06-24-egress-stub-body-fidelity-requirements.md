@@ -68,8 +68,11 @@
 ### REQ-F012-005 — 에러 디스크립터 runner 주입 배선 (errorWhenPresent 게이트)
 - 유형: Functional / 우선순위: Must
 - 설명: `ErrorContractDescriptor`를 `ClassifierConfig`에서 파생해 `EndpointExplorationRunner`
-  canonical 생성자에 신규 파라미터로 주입하고, `captureHttpCalls`/변형 경로가 `EgressStubComposer`/
-  envelope 합성기로 전달한다. **null 결정 게이트**: descriptor는 `ClassifierConfig.errorWhenPresent()`가
+  canonical 생성자에 신규 파라미터로 주입한다. **소비**: errorContract가 non-null이면 envelope 합성값
+  (`ErrorEnvelopeSynthesizer`)의 필드를 `runResponseVariantLoops`의 `buildVariantCandidates`에 driven
+  변형 후보로 주입해 기존 변형 파이프라인(exploreResponseVariants→buildEgressAssertionPaths)이 SUT를
+  구동·관측하고 `egress-assertion` CONTRACT path를 생성하게 한다(dead/dangling call 금지; 실증은
+  REQ-F012-018). **null 결정 게이트**: descriptor는 `ClassifierConfig.errorWhenPresent()`가
   **비어있지 않을 때만 non-null**이다 — `ClassifierConfig.from(...)`가 `semanticStatusField` 기본값
   (`"errorCode"`)을 항상 세팅하므로, `semanticStatusField` 설정 여부가 아니라 `errorWhenPresent`
   비어있음이 게이트다(status-only SUT에 거짓 envelope 방지). `BuilderCli`는 `toClassifier()`와 동일
@@ -208,6 +211,22 @@
     무차별 정리(`pkill` 광범위/`docker system prune`) 미사용.
 - 검증 레벨: process
 
+### REQ-F012-018 — 에러 envelope 티어 실증 (egress+envelope SUT E2E)
+- 유형: Functional / 우선순위: Must
+- 설명: REQ-F012-003/005의 envelope 합성을 **실제 SUT로 end-to-end 구동·검증**한다. `samples/error-envelope-service`에
+  외부 HTTP egress 호출 + 외부 응답 envelope 검사 분기를 추가한다(외부 응답 DTO에 `errorCode`/`errorDetail`
+  필드; SUT가 `resp.errorCode() != null`이면 `BizException` → GlobalExceptionHandler가 HTTP 200 +
+  ErrorEnvelope 방출). 빌더가 `--error-when-present errorCode --error-detail-field errorDetail
+  [--error-detail-contains ...]`로 이 SUT를 인덱싱하면 errorContract가 설정되고, envelope 합성값이
+  `buildVariantCandidates`에 driven 변형으로 주입돼 SUT의 envelope-검사 분기를 구동, `egress-assertion`
+  CONTRACT path가 envelope CONTRACT `CapturedHttpCall`을 **참조**(dangling 금지)한다.
+- 수용기준:
+  - Given error-envelope-service를 외부 egress 엔드포인트 + `--error-when-present errorCode`로 build(recorder
+    redirect), When 탐색·생성, Then envelope 값(`errorCode` 채워짐)을 가진 변형이 SUT의 envelope 분기를
+    구동해 관측된 status로 단언하는 `egress-assertion` 생성 테스트가 방출되고, 그 외부 stub의
+    `responseProvenance == CONTRACT`이며 어떤 ExploredPath도 참조하지 않는 dead CONTRACT call이 없다.
+- 검증 레벨: E2E (process)
+
 ### REQ-F012-017 — (deferred) matched-Void callSite의 quiet abstain
 - 유형: Functional / 우선순위: Should / 상태: 🔵 deferred (분모 제외)
 - 설명: 매칭된 callSite의 응답 타입이 Void/no-content임을 식별해, 해소 불가(`unwired-external-dep`)
@@ -240,9 +259,10 @@
 | REQ-F012-014 | span-only body 충실도 층 | `EgressStubBodyFidelitySpanOnlyE2E` | E2E | 🔴 planned |
 | REQ-F012-015 | sleuth abstain 층 | `EgressStubBodyFidelitySleuthAbstainE2E` | E2E | 🔴 planned |
 | REQ-F012-016 | 자원 정리/누수 게이트 | E2E 하니스(고유 project/PID teardown 검증) | process | 🔴 planned |
+| REQ-F012-018 | envelope 티어 실증(egress+envelope SUT) | `EgressStubBodyFidelityEnvelopeE2E` | E2E | 🔴 planned |
 | REQ-F012-017 | (연기) Void quiet abstain | — | unit | 🔵 deferred |
 
-Coverage: 0/16 green (0%) — target 100% (대상: Must 16개; REQ-F012-001~016). 연기(🔵): 1(REQ-F012-017).
+Coverage: 0/17 green (0%) — target 100% (대상: Must 17개; REQ-F012-001~016, 018). 연기(🔵): 1(REQ-F012-017).
 폐기 없음.
 
 ---

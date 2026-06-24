@@ -153,12 +153,17 @@ stub은 소비 코드가 기대하는 값이 아닌 placeholder를 반환한다.
 - span-only 발견 호출(§4.1)은 CONTRACT 값-충실 happy body를 갖되, 구동·관측 불가하므로 분기 단언
   테스트는 만들지 않는다(제약 b). 생성 테스트엔 그 호출의 단일 stub(값-충실 body)만 등록된다.
 
-### 4.5 에러 envelope 합성기
-- `ErrorContractDescriptor`(비-null) → 에러 envelope JSON 합성. 형태:
-  `{ "<semanticStatusField>": "<error code>", "<errorDetailField>": "<errorDetailContains>" }`
-  (필드가 일부만 있으면 있는 것만). 외부 stub status는 envelope 의미(semantic 실패는 HTTP 200 body
-  내 표현이 일반적) 기준 **200 + envelope body**를 기본으로 한다. 디스크립터 없으면 envelope 변형
-  생략(loud 없음 — 정상 부재).
+### 4.5 에러 envelope 합성기 + driven 변형 소비
+- `ErrorContractDescriptor`(비-null) → 에러 envelope JSON 합성(`ErrorEnvelopeSynthesizer`). 형태:
+  `{ "<errorWhenPresent[i]>": "ERROR", "<semanticStatusField>": "ERROR", "<errorDetailField>":
+  "<errorDetailContains|"">" }` (있는 필드만). 외부 stub status는 200 + envelope body 기본.
+- **소비(dangling 금지)**: errorContract가 non-null이면 `runResponseVariantLoops`의
+  `buildVariantCandidates`가 envelope 합성값의 필드를 driven 변형 후보로 주입한다 → 기존 변형
+  파이프라인(`exploreResponseVariants`→`buildEgressAssertionPaths`)이 SUT를 구동·관측하고
+  `egress-assertion` CONTRACT path가 그 envelope CONTRACT `CapturedHttpCall`을 **참조**한다.
+  디스크립터 null이면 후보 미주입(loud 없음 — 정상 부재).
+- **실증(REQ-F012-018)**: `samples/error-envelope-service`에 외부 egress 호출 + 외부 응답 envelope
+  검사 분기를 추가하고 `--error-when-present errorCode`로 인덱싱해 envelope 티어를 실 SUT E2E로 검증.
 
 ### 4.6 생성 테스트 다중 stub 충돌 회피 (`HttpMockComposer`)
 - 동일 (method, path)에 happy·에러 변형 stub을 **같은 scope 블록에 동시 등록하면 WireMock에서 서로
@@ -231,6 +236,11 @@ graph 환류 → HttpMockComposer.compose
   모드-독립(builder 합성)이라 otel 층이 1차 검증, sleuth 층은 교차-모드·abstain을 검증한다.
   - (대안: legacy-tram에 응답 DTO를 갖는 외부 호출이 있으면 sleuth CONTRACT body도 직접 검증 —
     요구사항명세 단계에서 샘플 재확인 후 확정.)
+- **envelope(에러 계약 층, REQ-F012-018)**: `samples/error-envelope-service`에 외부 egress 호출 +
+  외부 응답 envelope(`errorCode`) 검사 분기를 추가하고 `--error-when-present errorCode`로 build(recorder
+  redirect). envelope 값 변형이 SUT의 envelope 분기를 구동해 관측 status로 단언하는 `egress-assertion`
+  생성 테스트가 방출되고, 그 외부 stub `responseProvenance == CONTRACT`이며 dead(미참조) CONTRACT call이
+  없음을 검증한다. (envelope 티어를 synthetic이 아닌 실 SUT로 실증.)
 - 모든 E2E는 자기 스코프(고유 project/label/PID)만 teardown, 잔존 0 검증(전역 규칙).
 
 ---
