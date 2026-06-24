@@ -1,6 +1,5 @@
 package io.graphrag.builder.capture;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.graphrag.builder.cli.BuildConfig;
 import io.graphrag.builder.cli.BuilderCli;
 import io.graphrag.builder.env.DbConfig;
@@ -11,7 +10,6 @@ import io.graphrag.model.CapturedHttpCall;
 import io.graphrag.model.GenerationRequest;
 import io.graphrag.model.GenerationResult;
 import io.graphrag.model.GraphAsset;
-import io.graphrag.model.Json;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
