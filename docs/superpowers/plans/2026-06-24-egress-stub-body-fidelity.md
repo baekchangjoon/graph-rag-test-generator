@@ -442,15 +442,22 @@ void emitsContractBodyVerbatim_notPlaceholder() {
 - [ ] **Step 2: Generator egress-assertion 실패 테스트** — `GeneratorEgressAssertionTest`(`GeneratorVariantExclusionTest` 픽스처 패턴, `result.files()` 검사):
 
 ```java
+// 패턴: GeneratorVariantExclusionTest — in-memory GraphRagClient client(List<ExploredPath>),
+//   GenerationRequest(endpointId, pathId(null), testClass, pkg, AuthMode), generate(req).
 @Test
 void egressAssertionPath_isGenerated_responseVariantStillExcluded() {
-    // graph: 한 endpoint에 discoveredBy="egress-assertion" path 1개 + "response-variant" path 1개
-    GenerationResult result = generator.generate(graphDir, outDir);
+    // client: 한 endpoint에 discoveredBy="egress-assertion" path 1개 + "response-variant" path 1개
+    GenerationRequest req = new GenerationRequest(
+            "get-inventory-stock", null, "InventoryEgressTest", "io.x", AuthMode.REAL);
+    GenerationResult result =
+            new Generator(client(List.of(egressAssertionPath(), responseVariantPath()))).generate(req);
     String allSource = result.files().stream()
+            .filter(f -> f.relativePath().endsWith(".java"))
             .map(GeneratedFile::content).collect(Collectors.joining("\n"));
     assertThat(result.files()).isNotEmpty();
     assertThat(allSource).contains("EMBARGOED");                 // egress-assertion 변형이 생성됨
-    // response-variant는 여전히 제외 — 그 변형 전용 메서드/마커는 소스에 없음
+    // response-variant 전용 메서드("responsevar_...")는 소스에 없음(여전히 제외)
+    assertThat(allSource).doesNotContain("responsevar");
 }
 ```
 
