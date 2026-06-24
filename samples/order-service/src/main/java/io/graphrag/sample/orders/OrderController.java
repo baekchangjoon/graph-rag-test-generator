@@ -51,14 +51,15 @@ public class OrderController {
         User user = users.findById(request.userId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
         if ("EXPRESS".equals(request.type())) {
-            boolean express = "EXPRESS".equals(request.type());
             InventoryClient.InventoryResponse stock = inventory.check(request.type());
             switch (stock.mode()) {
                 case BACKORDER ->
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "backordered");
                 case EXPRESS_ONLY -> {
-                    if (!express) {
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "express only");
+                    // express-only 재고는 express 주문(이 블록은 항상 type=EXPRESS)에서만 허용된다.
+                    // 단, 재고가 소진(available <= 0)이면 거절한다(STANDARD의 amount 비교와 구별되는 arm).
+                    if (stock.available() <= 0) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "express only stock depleted");
                     }
                 }
                 case STANDARD -> {
