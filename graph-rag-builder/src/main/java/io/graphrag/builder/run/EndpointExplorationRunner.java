@@ -2006,6 +2006,12 @@ public class EndpointExplorationRunner {
             // baseline(선언순 첫 상수 / scalarValue 기본값)을 제외한다.
             Map<String, List<String>> candidates =
                     buildVariantCandidates(responseShape, effectiveEnumConstants, stringLiteralsByDto, shapes);
+            // REQ-F012-005: errorContract가 있으면 envelope 필드를 후보 맵에 병합해 기존 변형 파이프라인으로 소비한다.
+            // 이를 통해 dangling CONTRACT call 없이 egress-assertion ExploredPath로 올바르게 참조된다.
+            if (errorContract != null) {
+                candidates = mergeEnvelopeCandidates(candidates, responseShape, errorContract,
+                        new ErrorEnvelopeSynthesizer());
+            }
             ResponseFieldVariantGenerator.VariantPlan plan =
                     generator.generate(candidates, RESPONSE_VARIANT_BUDGET);
             if (plan.kept().isEmpty()) {
@@ -2065,10 +2071,6 @@ public class EndpointExplorationRunner {
                     keptWithBranches, variantHttpCalls);
             variantPaths.addAll(assertionPaths);
 
-            // 에러 envelope 변형: errorContract가 있으면 envelope body CONTRACT call을 variantHttpCalls에 추가(REQ-F012-005).
-            buildEnvelopeVariantCall(endpoint.id(), site.httpMethod(), site.pathLiteral(),
-                    errorContract, new ErrorEnvelopeSynthesizer())
-                    .ifPresent(variantHttpCalls::add);
         }
         // ---- egress-branch-undriven loud-fail (REQ-F012-010) ----
         // 변형 후보가 있지만 recorder가 한 번도 서빙하지 않은(span-only) site를 가시화한다.
@@ -2127,32 +2129,45 @@ public class EndpointExplorationRunner {
     }
 
     /**
-     * 에러 envelope 변형 CapturedHttpCall을 생성하는 순수 헬퍼(REQ-F012-005).
+     * errorContract에서 합성한 envelope 필드를 후보 맵에 병합하는 순수 헬퍼(REQ-F012-005).
      *
-     * <p>errorContract가 null이면 Optional.empty()를 반환한다(envelope SUT 아님).
-     * non-null인 경우 {@link ErrorEnvelopeSynthesizer#synthesize}로 body를 합성하고
-     * provenance=CONTRACT인 {@link io.graphrag.model.CapturedHttpCall}을 반환한다.
+     * <p>envelope의 각 필드가 responseShape에 존재하면(name 매칭) 그 문자열 값을
+     * 해당 필드의 후보 목록에 추가(중복 제거)한다. responseShape에 없는 envelope 필드는 무시한다.
+     * baseline-exclusion은 적용하지 않는다(envelope 센티넬은 강제 주입 대상).
+     * 반환 값은 입력 candidates와 독립된 변경 가능한 맵이다.
      *
-     * @param endpointId   엔드포인트 식별자 (id 접두사)
-     * @param method       외부 callSite HTTP 메서드
-     * @param pathLiteral  외부 callSite 경로
-     * @param errorContract 에러 envelope 계약 기술자 (null = 비-envelope SUT)
-     * @param synth        {@link ErrorEnvelopeSynthesizer} 인스턴스
-     * @return CONTRACT CapturedHttpCall, 또는 errorContract == null이면 empty
+     * @param candidates    기존 변형 후보 맵(buildVariantCandidates 결과)
+     * @param responseShape 외부 callSite 응답 형상(필드 목록)
+     * @param errorContract 에러 envelope 계약 기술자
+     * @param synth         {@link ErrorEnvelopeSynthesizer} 인스턴스
+     * @return candidates에 envelope 필드가 병합된 새 맵
      */
-    public static Optional<io.graphrag.model.CapturedHttpCall> buildEnvelopeVariantCall(
-            String endpointId, String method, String pathLiteral,
-            ErrorContractDescriptor errorContract, ErrorEnvelopeSynthesizer synth) {
-        if (errorContract == null) {
-            return Optional.empty();
-        }
-        String sanitizedPath = pathLiteral.replaceAll("[^A-Za-z0-9]+", "-");
-        String callId = "http-" + endpointId + "-egressenvelope-" + sanitizedPath;
-        String body = synth.synthesize(errorContract).toString();
-        return Optional.of(new io.graphrag.model.CapturedHttpCall(
-                callId, endpointId + "-egressenvelope", method, pathLiteral,
-                Map.of(), null, 200, body, List.of(), false,
-                io.graphrag.model.CapturedHttpCall.Provenance.CONTRACT));
+    static Map<String, List<String>> mergeEnvelopeCandidates(
+            Map<String, List<String>> candidates,
+            BodyShape responseShape,
+            ErrorContractDescriptor errorContract,
+            ErrorEnvelopeSynthesizer synth) {
+        Map<String, List<String>> merged = new java.util.LinkedHashMap<>(candidates);
+        JsonNode env = synth.synthesize(errorContract);
+        Set<String> shapeFieldNames = responseShape.fields().stream()
+                .map(BodyShape.BodyField::name)
+                .collect(Collectors.toSet());
+        env.fields().forEachRemaining(entry -> {
+            String fieldName = entry.getKey();
+            if (!shapeFieldNames.contains(fieldName)) {
+                return;
+            }
+            String value = entry.getValue().asText();
+            List<String> existing = merged.get(fieldName);
+            if (existing == null) {
+                merged.put(fieldName, new ArrayList<>(List.of(value)));
+            } else if (!existing.contains(value)) {
+                List<String> updated = new ArrayList<>(existing);
+                updated.add(value);
+                merged.put(fieldName, updated);
+            }
+        });
+        return merged;
     }
 
     /**
