@@ -118,6 +118,48 @@ class BuilderCliAttributionTest {
         assertThat(result).isTrue();
     }
 
+    // --- REQ-006: conjunction(StateGuardConjunction) cross-class 귀속 ---
+
+    private static ConstraintExtractor.StateGuardConjunction conjunction(String classFqn, String method) {
+        return new ConstraintExtractor.StateGuardConjunction(
+                classFqn, method, 10,
+                java.util.List.of(stateGuard(classFqn, method)));
+    }
+
+    /**
+     * REQ-006: conjunction이 서비스 메서드에 있고 핸들러가 1-hop 호출 → 그 엔드포인트에 귀속됨.
+     * (StateGuard·JoinGuard와 동일하게 classFqn/method 기반 isReachable 필터를 재사용.)
+     */
+    @Test
+    void conjunctionReachable() {
+        Set<Map.Entry<String, String>> reachable = Set.of(
+                entry("com.example.BookingController", "premiumEligible"),
+                entry("com.example.BookingService", "isPremiumEligible")
+        );
+        ConstraintExtractor.StateGuardConjunction conj =
+                conjunction("com.example.BookingService", "isPremiumEligible");
+
+        boolean result = BuilderCli.isReachable(reachable, conj.classFqn(), conj.method());
+
+        assertThat(result).isTrue();
+    }
+
+    /**
+     * REQ-006: conjunction이 reachable에 없는 클래스면 귀속 안 됨.
+     */
+    @Test
+    void conjunctionUnreachableExcluded() {
+        Set<Map.Entry<String, String>> reachable = Set.of(
+                entry("com.example.BookingController", "premiumEligible")
+        );
+        ConstraintExtractor.StateGuardConjunction conj =
+                conjunction("com.example.OtherService", "isPremiumEligible");
+
+        boolean result = BuilderCli.isReachable(reachable, conj.classFqn(), conj.method());
+
+        assertThat(result).isFalse();
+    }
+
     /**
      * REQ-012: JoinGuard가 reachable에 없으면 귀속 안 됨.
      */
