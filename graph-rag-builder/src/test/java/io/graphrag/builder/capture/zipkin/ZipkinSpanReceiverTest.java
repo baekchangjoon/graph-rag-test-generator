@@ -25,4 +25,17 @@ class ZipkinSpanReceiverTest {
     @Test @DisplayName("REQ-006: reject non-32hex traceId")
     void reject() throws Exception { post("[{\"traceId\":\"XYZ\",\"id\":\"2\",\"kind\":\"CLIENT\",\"tags\":{\"http.method\":\"GET\",\"http.path\":\"/x\"}}]");
         assertThat(r.spans("XYZ")).isEmpty(); }
+    @Test @DisplayName("REQ-006: ingest gzip-compressed body")
+    void ingestGzip() throws Exception {
+        String tid="4".repeat(32);
+        String json="[{\"traceId\":\""+tid+"\",\"id\":\"2222222222222222\",\"kind\":\"CLIENT\",\"name\":\"get\",\"timestamp\":1700000000000000,\"tags\":{\"http.method\":\"GET\",\"http.path\":\"/x\"}}]";
+        java.io.ByteArrayOutputStream baos=new java.io.ByteArrayOutputStream();
+        try (var gz=new java.util.zip.GZIPOutputStream(baos)){ gz.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
+        var resp=http.send(HttpRequest.newBuilder(URI.create(r.endpoint()+"/api/v2/spans"))
+            .header("Content-Type","application/json").header("Content-Encoding","gzip")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(baos.toByteArray())).build(),
+            HttpResponse.BodyHandlers.ofString());
+        assertThat(resp.statusCode()).isEqualTo(202);
+        assertThat(r.spans(tid)).hasSize(1);
+    }
 }

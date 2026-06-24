@@ -10,6 +10,7 @@ public final class ZipkinSpanReceiver implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(ZipkinSpanReceiver.class);
     private static final int MAX_BODY = 5*1024*1024;
     private HttpServer server;
+    private java.util.concurrent.ExecutorService executor;
     private final Map<String,List<SpanRecord>> byTrace = new ConcurrentHashMap<>();
     private final Map<String,Long> lastArrival = new ConcurrentHashMap<>();
     public void start(){ start(null); }
@@ -17,7 +18,7 @@ public final class ZipkinSpanReceiver implements AutoCloseable {
         InetAddress addr=(bindHost==null||bindHost.isBlank())?InetAddress.getLoopbackAddress():resolve(bindHost);
         try {
             server=HttpServer.create(new InetSocketAddress(addr,0),0);
-            server.setExecutor(Executors.newCachedThreadPool());
+            executor=Executors.newCachedThreadPool(); server.setExecutor(executor);
             server.createContext("/api/v2/spans", ex -> {
                 try { ingest(readBody(ex)); ex.sendResponseHeaders(202,-1); }
                 catch (Exception e){ log.warn("zipkin ingest failed",e); try { ex.sendResponseHeaders(500,-1);} catch(IOException ignore){} }
@@ -44,20 +45,22 @@ public final class ZipkinSpanReceiver implements AutoCloseable {
     }
     private void record(SpanRecord s){
         if (!TraceReceiverLimits.HEX_32.matcher(s.traceId()).matches()) return;
-        if (!byTrace.containsKey(s.traceId())) evictIfFull();   // evict는 computeIfAbsent 밖
         List<SpanRecord> spans=byTrace.computeIfAbsent(s.traceId(), k->new CopyOnWriteArrayList<>());
         if (spans.size()>=TraceReceiverLimits.MAX_SPANS_PER_TRACE) return;
-        spans.add(s); lastArrival.put(s.traceId(),System.nanoTime());
+        spans.add(s);
+        lastArrival.put(s.traceId(),System.nanoTime());
+        if (byTrace.size()>TraceReceiverLimits.MAX_TRACES) evictOldest();
     }
-    private void evictIfFull(){ if (byTrace.size()<TraceReceiverLimits.MAX_TRACES) return;
-        lastArrival.entrySet().stream().min(Map.Entry.comparingByValue()).ifPresent(e->remove(e.getKey())); }
+    private void evictOldest(){
+        lastArrival.entrySet().stream().min(Map.Entry.comparingByValue()).ifPresent(e->remove(e.getKey()));
+    }
     public List<SpanRecord> spans(String t){ return List.copyOf(byTrace.getOrDefault(t,List.of())); }
     public boolean isQuiescent(String t,long ms){ Long l=lastArrival.get(t); return l!=null&&(System.nanoTime()-l)>=ms*1_000_000L; }
     public void remove(String t){ byTrace.remove(t); lastArrival.remove(t); }
     public String endpoint(){ return "http://127.0.0.1:"+port(); }
     public String hostEndpoint(){ return "http://host.docker.internal:"+port(); }
     public int port(){ return server.getAddress().getPort(); }
-    public void stop(){ if (server!=null) server.stop(0); }
+    public void stop(){ if (server!=null) server.stop(0); if (executor!=null) executor.shutdownNow(); }
     @Override public void close(){ stop(); }
     private static InetAddress resolve(String h){ try { return InetAddress.getByName(h);} catch(IOException e){ throw new UncheckedIOException(e);} }
 }
