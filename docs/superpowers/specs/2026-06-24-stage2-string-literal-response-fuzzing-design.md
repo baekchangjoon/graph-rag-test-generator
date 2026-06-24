@@ -95,8 +95,9 @@ enum과 달리 String은 상수 집합이 정적으로 완전하지 않다. 그�
 
 `stringLiteralsByDto`를 enumConstants와 **동일 패턴**으로 정적 인덱스에 싣는다:
 - `BuilderCli.indexStatically`에서 `ResponseStringLiteralExtractor().extract(model)` 호출.
-- `StaticIndexBundle`/`StaticIndex` record에 `stringLiteralsByDto` 필드 추가, `IndexCache` 직렬화(+ `StaticIndexSerdeTest` 갱신).
+- `StaticIndex` record에 `stringLiteralsByDto` 필드 추가(compact 생성자 `null→Map.of()` 가드), `IndexCache` 직렬화(+ 기존 `StaticIndexSerdeTest`·`IndexCacheTest` 갱신). 스키마 변경이므로 `IndexCache.SCHEMA_VERSION` 2→3 bump(레거시 캐시 무효화).
 - `BuilderCli.build`→explore 배선, `EndpointExplorationRunner` 신규 필드(또는 explore 인자)로 전달(생성자 enumConstants와 같은 자리).
+- 마커 rename(`enumvar`→`responsevar`, `enum-response-variant`→`response-variant`)은 생성 제외 필터 `test-generator` `Generator.java`도 함께 갱신한다(현재 `enum-response-variant` 하드코딩). enum 산출물 byte-동일 대상은 **생성기 label·순서로 한정**하며 마커/id rename은 그 대상이 아니다(enum E2E는 status·branch 기준이라 무관).
 
 ### 데이터 흐름 (단계2 대비 delta만)
 
@@ -120,10 +121,12 @@ enum과 달리 String은 상수 집합이 정적으로 완전하지 않다. 그�
   }
   ```
 - **기존 테스트/stub 동반 갱신(중요)**: `region` 추가로 기존 inventory stub body가 `{"available":N,"mode":"...","region":"..."}`가 되어야 한다. 갱신 대상:
+  - `e2e/external-stubs/inventory-stock.json` jsonBody에 `region` 추가.
   - `Stage1ExternalStubSynthesisE2E`(수동 stub 비교 경로) — green 재확인.
   - `OrderExpressApiTest`(`/inventory/stock` stub) — green 재확인.
+  - `BuilderIntegrationTest`의 `consumedFields` 단언(현 `available`,`mode`)을 region 소비 반영해 갱신.
   - **`Stage2EnumResponseFuzzingE2E`** — region 분기를 switch 앞에 넣으면 라인이 밀려 **`SWITCH_LINE`(현 55) 단언이 깨진다**. 상수 재측정·갱신 필수. enum 3-arm 단언은 mode 기준이라 region 추가 자체엔 무관하나 라인 시프트는 영향. (Sonnet I9·Cursor I9 반영.)
-- **단위 테스트 픽스처**: graph-rag-builder 단위 테스트의 `src/test/resources/sample-src` `OrderController`/`InventoryClient`에도 region/equals 분기 최소 픽스처 추가(`ResponseStringLiteralExtractor` 단위 테스트용). (Cursor I8 반영.)
+- **단위 테스트 픽스처**: graph-rag-builder 단위 테스트의 `src/test/resources/sample-src`에는 현재 `OrderController.java`만 있고 `InventoryClient.java`가 없다. `sample-src/io/graphrag/sample/orders/InventoryClient.java`를 **신규 생성**(nested `InventoryResponse` record, `region` 포함)하고 `OrderController`에 equals 분기를 추가해 `ResponseStringLiteralExtractor` 단위 테스트 픽스처로 쓴다. (Cursor I2/I8 반영.)
 
 이로써: 단계1·2는 `region` 기본값으로 EMBARGOED arm **미도달**, 단계2-A는 "EMBARGOED" 리터럴 변형으로 **도달**.
 
