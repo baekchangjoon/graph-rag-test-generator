@@ -196,6 +196,18 @@ legacy-tram order-web(Boot 2.7.18 / Sleuth 3.1.9·Brave / Java 8) + zipkin 리�
   - `ZipkinSpanReceiver`: gzip/plain 파싱, kind 필터, HEX_32 키 거부, per-trace 버퍼/evict, bind/endpoint.
   - `EgressCall`→`CapturedHttpCall` 매핑(기본값/ null-safety), `consumedFields` blank-safe.
 
+### 7.1 테스트 자원 정리 / 누수 검증 게이트 (전역 규칙 — 모든 E2E·통합 적용)
+E2E-1/E2E-2는 docker compose·SUT 프로세스를 띄우므로 다음을 acceptance의 일부로 강제한다.
+- **모든 종료 경로에서 teardown 보장:** 성공·실패·예외·타임아웃·시그널 모두. JUnit `@AfterAll`
+  (Testcontainers/Ryuk) 또는 compose 기동 시 `try/finally`로 `docker compose -p <uniq> down -v
+  --remove-orphans`. 백그라운드 프로세스는 PID 캡처 후 그 PID만 종료.
+- **자기 스코프만 정리(무차별 금지):** 고유 project name/label로 자기 것만. `docker system prune`·
+  `docker rm $(docker ps -aq)`·광범위 `pkill -f` 금지. 공유·장수명 인프라 불가침.
+- **누수 검증 게이트:** 스위트 종료 후 자기 컨테이너/프로세스/네트워크/볼륨 잔존 0을 확인
+  (`label=com.docker.compose.project=<uniq>` 필터). 잔존 시 green/완료 주장 금지(PR 전 green
+  게이트의 일부). PoC 하니스가 이 규약을 예시한다(`-p egress-poc` + `down -v` + PID 한정 종료 +
+  잔존 0 검증).
+
 ## 8. 미해결 / 후속 (REQ 후보)
 - **R-주입성:** sleuth 리포터 미보유 SUT의 런타임 리포터 주입(classpath/loader.path) vs 전제조건.
 - **R-host매핑:** 다운스트림 host 식별 — SUT config(`*.url`) → target 매핑 규칙.
