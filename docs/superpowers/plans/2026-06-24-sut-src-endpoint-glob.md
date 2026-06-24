@@ -28,7 +28,7 @@
 - `graph-rag-builder/src/main/java/io/graphrag/builder/cli/GlobMatcher.java` — 문자열 glob→regex 매처 (REQ-009, endpoint).
 - `graph-rag-builder/src/main/java/io/graphrag/builder/index/SourceRoots.java` — parseRoots + primary 값 타입.
 - `graph-rag-builder/src/main/java/io/graphrag/builder/cli/SutSrcResolver.java` — `--sut-src` 패턴 리스트 → `SourceRoots` (REQ-001/003/004/009/017) + resources 루트 해석(REQ-011/019).
-- 테스트: 각 신규 클래스의 `*Test.java`, `MultiRootStaticE2E.java`, `EndpointGlobE2E.java`, 픽스처 소스 트리, e2e 스크립트.
+- 테스트: 각 신규 클래스의 `*Test.java`, `MultiRootStaticE2E.java`(정적 레벨 JUnit), `e2e/run-endpoint-glob-e2e.sh`(REQ-005 풀 빌드 — 탐색 vs 정적 비교는 실제 build 필요), 픽스처 소스 트리, e2e 스크립트.
 
 수정 파일:
 - `SharedSpoonModel.java` — `build(SourceRoots)` 추가.
@@ -496,11 +496,29 @@ class SutSrcResolverTest {
     }
 
     @Test
+    void malformedGlobWrapped(@TempDir Path tmp) throws Exception {
+        mkdirs(tmp, "a");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> SutSrcResolver.resolve(tmp + "/a/[", null));   // 불균형 bracket
+        assertTrue(ex.getMessage().contains("malformed") || ex.getMessage().contains("["));
+    }
+
+    @Test
     void resourceDirsFallbackPerRoot(@TempDir Path tmp) throws Exception {
         Path featureSrc = mkdirs(tmp, "feature/src/main/java");
         Path featureRes = mkdirs(tmp, "feature/src/main/resources");
         SourceRoots r = SourceRoots.single(featureSrc);
         assertEquals(List.of(featureRes), SutSrcResolver.resourceDirs(r, null));
+    }
+
+    @Test
+    void resourceDirsScansAllRootsWhenNotExplicit(@TempDir Path tmp) throws Exception {
+        Path fSrc = mkdirs(tmp, "feature/src/main/java");
+        Path fRes = mkdirs(tmp, "feature/src/main/resources");
+        Path cSrc = mkdirs(tmp, "common/src/main/java");
+        Path cRes = mkdirs(tmp, "common/src/main/resources");
+        SourceRoots r = SourceRoots.of(List.of(fSrc, cSrc), fSrc);
+        assertEquals(List.of(fRes, cRes), SutSrcResolver.resourceDirs(r, null));  // REQ-019
     }
 }
 ```
@@ -551,9 +569,9 @@ public final class SutSrcResolver {
         }
         List<Path> sorted = new ArrayList<>(roots);
         sorted.sort(Comparator.naturalOrder());   // canonical 경로 안정 정렬(REQ-017)
-        Path primary = resourcesArg != null && resourcesArg.getParent() != null
-                ? resourcesArg.getParent() : sorted.get(0);
-        return SourceRoots.of(sorted, primary);
+        // primary 는 항상 첫 parse root(정렬 후) — 경로 파생/로그/단일 루트 sutSrc 환원용.
+        // resourcesArg.getParent()를 쓰면 src/main 등 java 루트가 아닌 곳을 가리켜 위험(Gemini I3).
+        return SourceRoots.of(sorted, sorted.get(0));
     }
 
     /** 패턴 1개 → 매칭 디렉터리(canonical). glob 메타 없으면 그 경로 자체(존재·디렉터리일 때). */
@@ -562,20 +580,24 @@ public final class SutSrcResolver {
             Path p = Path.of(pattern);
             return Files.isDirectory(p) ? List.of(canonical(p)) : List.of();
         }
-        Path base = globBase(pattern);
+        // 절대·forward-slash 패턴으로 정규화 — NIO glob 은 항상 '/' 구분자를 쓰고,
+        // Path.of(pattern).toString()은 Windows에서 '\'로 바꿔 glob을 깨뜨린다(Gemini I4).
+        String absPattern = toAbsoluteGlob(pattern);
+        Path base = globBase(absPattern);
         if (!Files.isDirectory(base)) {
             return List.of();
         }
         PathMatcher matcher;
         try {
-            matcher = FileSystems.getDefault().getPathMatcher("glob:" + Path.of(pattern).toString());
+            matcher = FileSystems.getDefault().getPathMatcher("glob:" + absPattern);
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("--sut-src malformed glob '" + pattern + "': " + e.getMessage(), e);
         }
         List<Path> out = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(base)) {
             walk.filter(Files::isDirectory)
-                .filter(matcher::matches)
+                // 매칭은 절대경로 문자열(forward-slash)로 — walk 결과를 절대화해 './x' 불일치 방지(Gemini I5)
+                .filter(p -> matcher.matches(Path.of(p.toAbsolutePath().normalize().toString())))
                 .forEach(p -> out.add(canonical(p)));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -583,16 +605,26 @@ public final class SutSrcResolver {
         return out;
     }
 
-    /** 첫 glob 메타문자 이전의 최장 비-glob 접두 디렉터리. */
-    private static Path globBase(String pattern) {
-        int meta = pattern.length();
-        for (int i = 0; i < pattern.length(); i++) {
-            char c = pattern.charAt(i);
+    /** 상대 패턴을 CWD 기준 절대 forward-slash glob 으로. 이미 절대면 그대로. */
+    private static String toAbsoluteGlob(String pattern) {
+        String fwd = pattern.replace('\\', '/');
+        if (fwd.startsWith("/")) {
+            return fwd;
+        }
+        String cwd = Path.of("").toAbsolutePath().toString().replace('\\', '/');
+        return cwd + "/" + fwd;
+    }
+
+    /** 첫 glob 메타문자 이전의 최장 비-glob 접두 디렉터리(절대 패턴 기준). */
+    private static Path globBase(String absPattern) {
+        int meta = absPattern.length();
+        for (int i = 0; i < absPattern.length(); i++) {
+            char c = absPattern.charAt(i);
             if (c == '*' || c == '?' || c == '{' || c == '[') { meta = i; break; }
         }
-        int slash = pattern.lastIndexOf('/', meta);
-        String basePart = slash >= 0 ? pattern.substring(0, slash) : ".";
-        return Path.of(basePart.isEmpty() ? "/" : basePart);
+        int slash = absPattern.lastIndexOf('/', meta);
+        String basePart = slash > 0 ? absPattern.substring(0, slash) : "/";
+        return Path.of(basePart);
     }
 
     private static Path canonical(Path p) {
@@ -741,8 +773,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class EndpointSelectorGlobTest {
 
+    // 실제 io.graphrag.model.Endpoint record 시그니처에 맞춤:
+    // (id, httpMethod, path, handlerClass, handlerMethod, params, authRequired). 구현 시 소스로 최종 확인.
     private Endpoint ep(String id, String method, String path) {
-        return new Endpoint(id, method, path, "C", "m", false, List.of(), null, null);
+        return new Endpoint(id, method, path, "C", "m", List.of(), false);
     }
 
     private final List<Endpoint> eps = List.of(
@@ -811,10 +845,13 @@ Expected: FAIL.
     private static List<String> matchGlob(String spec, List<Endpoint> endpoints,
             List<WsEndpoint> wsEndpoints, List<KafkaConsumer> kafkaConsumers) {
         List<String> hits = new ArrayList<>();
+        // method 토큰만 대문자화(httpMethod는 EndpointIndexer가 대문자로 저장). path 는 case 보존
+        // — spec 전체를 toUpperCase 하면 "/API/ORDERS"가 되어 소문자 path와 영구 미스(critical).
+        String specMethodUpper = upperFirstToken(spec);
         for (Endpoint e : endpoints) {
             String methodPath = e.httpMethod().toUpperCase() + " " + e.path();
             if (GlobMatcher.matches(spec, e.id())
-                    || GlobMatcher.matches(spec.toUpperCase(), methodPath)) {
+                    || GlobMatcher.matches(specMethodUpper, methodPath)) {
                 hits.add(e.id());
             }
         }
@@ -825,6 +862,13 @@ Expected: FAIL.
             if (GlobMatcher.matches(spec, k.id())) { hits.add(k.id()); }
         }
         return hits;
+    }
+
+    /** spec 의 첫 공백 이전(=HTTP method 토큰)만 대문자화. 공백 없으면(=id glob) 원본 그대로. */
+    private static String upperFirstToken(String spec) {
+        int sp = spec.indexOf(' ');
+        if (sp <= 0) { return spec; }
+        return spec.substring(0, sp).toUpperCase() + spec.substring(sp);
     }
 ```
 
@@ -855,7 +899,7 @@ git commit -m "feat(builder): --endpoint glob 매칭(id+METHOD path), 정확/혼
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/cli/BuildConfigSourceRootsTest.java`
 
 **Interfaces:**
-- `sourceRoots`를 canonical record의 **마지막 컴포넌트**로 추가하고, compact 생성자에서 `null → SourceRoots.single(sutSrc)` 정규화. 기존 편의 생성자들은 `this(...)` 끝에 `null`을 추가(정규화에 위임) → **외부 호출 시그니처 불변**(REQ-015).
+- `sourceRoots`를 canonical record의 **마지막(26번째) 컴포넌트**로 추가(현 canonical은 25-arg → 26-arg). compact 생성자에서 `null → SourceRoots.single(sutSrc)` 정규화. 기존 편의 생성자 **5개**는 `this(...)` 끝에 `null`을 추가(정규화에 위임) → **외부 호출 시그니처 불변**(REQ-015).
 
 > 설계 §6.4는 "2번째 위치"를 제안했으나, 마지막 위치 + compact 정규화가 위치 기반 호출부에 영향이 없어 더 안전하다. 이 편차는 design spec과 동기화한다(Task 17에서 한 줄 반영).
 
@@ -887,19 +931,19 @@ Expected: FAIL (`sourceRoots()` 미존재).
 
 - [ ] **Step 3: 구현**
   1. import 추가: `import io.graphrag.builder.index.SourceRoots;`
-  2. canonical record 헤더 끝에 컴포넌트 추가: `LlmOptions llm,` 다음에 `SourceRoots sourceRoots` (마지막).
+  2. canonical record 헤더 끝에 컴포넌트 추가: `LlmOptions llm` 다음에 `, SourceRoots sourceRoots` (26번째, 마지막).
   3. compact 생성자에 정규화 한 줄 추가:
      ```java
          sourceRoots = sourceRoots == null ? SourceRoots.single(sutSrc) : sourceRoots;
      ```
-  4. **6개 편의 생성자 각각**의 `this(...)` 호출 끝(현재 마지막 인자 `LlmOptions.disabled()` 또는 `llm` 뒤)에 `, null`을 추가한다. 위치 목록:
-     - 50–63행(23-arg): `...noIncremental, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
-     - 65–79행(24-arg): `...reflectInstantiate, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
-     - 81–90행(11-arg 풀빌드): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
-     - 92–102행(17-arg): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
-     - 104–116행(21-arg): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
+  4. **편의 생성자 5개 각각**의 `this(...)` 호출 끝(현재 마지막 인자 `LlmOptions.disabled()` 뒤)에 `, null`을 추가한다. 생성자는 arg-수로 식별(라인 번호는 컴포넌트 추가 후 이동하므로 사용 금지):
+     - 23-arg 편의(reflectInstantiate·llm 생략): `...noIncremental, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
+     - 24-arg 편의(llm 생략): `...reflectInstantiate, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
+     - 11-arg 풀빌드(증분 없음): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
+     - 17-arg 편의(attach/requestHeaders 생략): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
+     - 21-arg 편의(classifierConfig/noIncremental 생략): `...false, true, LlmOptions.disabled())` → `..., LlmOptions.disabled(), null)`
 
-> 모든 편의 생성자는 canonical로 위임하며 `sourceRoots`에 `null`을 넘기고, compact 생성자가 `SourceRoots.single(sutSrc)`로 정규화한다.
+> 모든 편의 생성자는 canonical로 위임하며 `sourceRoots`에 `null`을 넘기고, compact 생성자가 `SourceRoots.single(sutSrc)`로 정규화한다. canonical 26-arg를 직접 호출하는 곳은 `BuilderCli.main()`뿐이며 Task 11에서 `sourceRoots`를 명시 전달한다.
 
 - [ ] **Step 4: 통과 확인 + 전체 컴파일**
 
@@ -954,7 +998,22 @@ class IndexCacheMultiRootTest {
         Files.writeString(nonPrimary.resolve("C.java"), "package c; class C { int x; }");
         IndexManifest m2 = IndexCache.scan(roots, List.of(), null);
 
-        assertFalse(IndexCache.isFresh(m1, m2));   // 비-primary 변경 → stale 아님(miss)
+        assertFalse(IndexCache.isFresh(m1, m2));   // 비-primary .java 변경 → 캐시 miss (isFresh=false)
+    }
+
+    @Test
+    void nonPrimaryMapperXmlChangeChangesManifest(@TempDir Path tmp) throws Exception {
+        Path primary = Files.createDirectories(tmp.resolve("feature/java"));
+        Path npRes = Files.createDirectories(tmp.resolve("common/resources"));
+        Files.writeString(primary.resolve("F.java"), "package f; class F {}");
+        Files.writeString(npRes.resolve("CommonMapper.xml"), "<mapper><select id=\"a\"/></mapper>");
+        SourceRoots roots = SourceRoots.of(List.of(primary), primary);
+
+        IndexManifest m1 = IndexCache.scan(roots, List.of(npRes), null);
+        Files.writeString(npRes.resolve("CommonMapper.xml"), "<mapper><select id=\"a\"/><select id=\"b\"/></mapper>");
+        IndexManifest m2 = IndexCache.scan(roots, List.of(npRes), null);
+
+        assertFalse(IndexCache.isFresh(m1, m2));   // 비-primary mapper XML 변경 → 캐시 miss (REQ-013)
     }
 }
 ```
@@ -1054,6 +1113,21 @@ class MultiRootStaticIndexTest {
         assertTrue(paths.contains("/api/common"));
         assertFalse(paths.contains("/api/other"));   // 제외 형제 부재(REQ-001)
     }
+
+    @Test
+    void nonPrimaryMapperIncluded(@TempDir Path tmp) throws Exception {
+        Path feature = tmp.resolve("feature/java");
+        ctrl(feature, "f", "FeatureController", "POST", "/api/feature");
+        Path commonRes = Files.createDirectories(tmp.resolve("common/resources"));
+        // 실제 MapperXmlIndexer 가 인식하는 mapper XML 형식으로 작성(구현 시 기존 샘플 mapper로 형식 확인).
+        Files.writeString(commonRes.resolve("CommonMapper.xml"),
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            + "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" \"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">\n"
+            + "<mapper namespace=\"c.CommonMapper\"><select id=\"find\" resultType=\"int\">select 1</select></mapper>");
+        SourceRoots roots = SourceRoots.of(List.of(feature), feature);
+        var bundle = BuilderCli.indexStatically(roots, List.of(commonRes), null);
+        assertFalse(bundle.mappers().isEmpty(), "비-primary resources mapper XML 포함(REQ-019)");
+    }
 }
 ```
 
@@ -1106,10 +1180,9 @@ Expected: FAIL (`indexStatically(SourceRoots,…)` 미존재).
     static StaticIndex staticIndexWithCache(BuildConfig config) {
         Path cacheDir = config.out().resolve("index-cache");
         SourceRoots roots = config.sourceRoots();
-        Path resourcesArg = config.sourceRoots().isMulti() ? null : config.sutResources();
-        List<Path> resourceDirs = SutSrcResolver.resourceDirs(roots,
-                config.sutResources() != null && Files.isDirectory(config.sutResources())
-                        ? config.sutResources() : (roots.isMulti() ? null : config.sutResources()));
+        // resources 결정 한 곳에 위임(REQ-011): config.sutResources()는 --sut-resources 명시 시 그 값,
+        // 미지정 시 null(Task 11). null → resourceDirs 가 전 parseRoots sibling resources 순회.
+        List<Path> resourceDirs = SutSrcResolver.resourceDirs(roots, config.sutResources());
         IndexManifest current = IndexCache.scan(roots, resourceDirs, config.authConfig());
         if (!config.noIncremental()) {
             Optional<StaticIndex> hit = IndexCache.load(cacheDir, current);
@@ -1152,8 +1225,10 @@ git commit -m "feat(builder): 정적 인덱싱 멀티 루트(공유 모델 + 멀
 
 **Files:**
 - Modify: `ConstraintExtractor.java`, `LiteralCandidateExtractor.java`, `ValidationConstraintExtractor.java`, `HandlerSourceExtractor.java`, `InputOracle.java` (`SutCode`)
-- Modify: `BuilderCli.java` explore() 호출부(583–618, 731–750 영역)
+- Modify: `oracle/StaticLiteralOracle.java`, `oracle/LlmOracle.java` (— `SutCode.srcDir()` 소비처: 소스 파싱 호출을 `roots()`로 전환)
+- Modify: `BuilderCli.java` explore() 호출부(`extractComparisons` 등 + `SutCode`/`HandlerSourceExtractor` 생성)
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/index/MultiRootConstraintTest.java`
+- 회귀 대상: `LlmOracleTest`(SutCode 보조 생성자로 컴파일 유지 확인)
 
 **Interfaces:**
 - 각 추출기: 내부 `SharedSpoonModel.build` 또는 `new Launcher().addInputResource(...)` 사용처를 `SourceRoots`를 받는 오버로드로 추가하고, 기존 `Path` 오버로드는 `SourceRoots.single`로 위임.
@@ -1219,8 +1294,12 @@ Expected: FAIL (`extractComparisons(SourceRoots)` 미존재).
      - 주의: 일부 메서드가 자체 `Launcher` 설정(noClasspath 등)을 했다면 `SharedSpoonModel.build`와 동일 설정이므로 그대로 대체 가능.
   2. `LiteralCandidateExtractor.extract(SourceRoots, String)` / `ValidationConstraintExtractor.extract(SourceRoots, String)`: 같은 방식으로 `SourceRoots` 오버로드 + `Path` 위임.
   3. `HandlerSourceExtractor`: 필드 `Path srcDir`를 `SourceRoots roots`로 바꾸고 `HandlerSourceExtractor(Path)` 생성자는 `this(SourceRoots.single(srcDir))`로 위임. 내부 모델 빌드를 `SharedSpoonModel.build(roots)`로.
-  4. `InputOracle.SutCode`: `record SutCode(SourceRoots roots, Path bootJar)`로 바꾸고, `SutCode(Path srcDir, Path bootJar)` 보조 생성자 추가(`this(SourceRoots.single(srcDir), bootJar)`). `StaticLiteralOracle`/`ConcolicOracle`이 `sutCode.roots()`로 모델 빌드하도록 수정(소스 스캔 부분).
-  5. `BuilderCli.explore()`: 583–618, 731–750의 `config.sutSrc()` 인자를 `config.sourceRoots()`로 교체:
+  4. `InputOracle.SutCode`: `record SutCode(SourceRoots roots, Path bootJar)`로 바꾸되 **`srcDir()` 접근자를 유지**(`roots.primary()` 반환)해 기존 소비처 컴파일을 깨지 않는다. 보조 생성자 `SutCode(Path srcDir, Path bootJar)` 추가(`this(SourceRoots.single(srcDir), bootJar)`).
+     - `oracle/StaticLiteralOracle.java`: `extractComparisons(sut.srcDir())`·`extractStringEqualities(sut.srcDir())` 등 **소스 파싱 호출을 `sut.roots()`로 교체**(전 루트 리터럴/비교 포함, REQ-014). primary-only로 남기면 비-primary 루트 리터럴 누락.
+     - `oracle/LlmOracle.java`: 내부에서 `ValidationConstraintExtractor.extract(sut.srcDir(), …)` 또는 `HandlerSourceExtractor`를 `sut.srcDir()`로 쓰는 곳을 `sut.roots()`로 교체(grep `srcDir()` 로 소비처 확인).
+     - `oracle/ConcolicOracle.java`: `sut.bootJar()`만 사용 → **변경 불요**.
+     - `LlmOracleTest` 등 `new SutCode(path, jar)` 호출은 보조 생성자로 그대로 컴파일.
+  5. `BuilderCli.explore()`: `config.sutSrc()` 인자를 `config.sourceRoots()`로 교체:
      - `extractComparisons(config.sourceRoots())`, `extractConjunctions(...)`, `extractJoinGuards(...)`, `extractEnumColumns(...)`, `extractStateGuards(...)`
      - `new InputOracle.SutCode(config.sourceRoots(), config.sutJar())`
      - `new HandlerSourceExtractor(config.sourceRoots())`
@@ -1335,13 +1414,14 @@ Expected: FAIL (`buildSourceRoots` 미존재).
          }
      }
      ```
-  4. config 생성(154–186): canonical 생성자 호출로 바꾸고 마지막 인자에 `sourceRoots` 추가. `--sut-resources` 기본값은 단일 루트일 때만 `sutSrc.resolveSibling("resources")` 유지(멀티는 `SutSrcResolver.resourceDirs`가 처리하므로 `sutResources`는 명시값 또는 첫 루트 sibling):
+  4. config 생성: canonical 26-arg 생성자 호출로 바꾸고 마지막 인자에 `sourceRoots` 추가(llm 뒤). `--sut-resources`는 **명시 시 그 값, 미지정 시 `null`** 로 둔다(단일/멀티 공통). null이면 `staticIndexWithCache`의 `SutSrcResolver.resourceDirs(roots, null)`가 전 루트 sibling resources를 스캔하므로, 단일 루트의 기존 동작(그 루트 sibling)도 그대로 재현된다:
      ```java
      Path sutResources = options.containsKey("--sut-resources")
              ? Path.of(options.get("--sut-resources"))
-             : sutSrc.resolveSibling("resources");
+             : null;   // null → resourceDirs 가 루트별 sibling 자동 해석(단일/멀티 공통, REQ-011/015)
      ```
-     그리고 `new BuildConfig(...)` 마지막에 `, sourceRoots` 추가(llm 인자 뒤). canonical 27-arg 생성자를 직접 호출.
+     주의: `config.sutResources()`가 null 가능해지므로, 이 값을 직접 `Files.isDirectory(...)`에 쓰는 다른 소비처가 있으면 null-가드를 추가한다(grep `sutResources()` 로 확인). `staticIndexWithCache`/`IndexCache.scan`/`indexStatically(SourceRoots,…)`는 이미 null-안전(`resourceDirs`가 빈 리스트/존재분만 반환).
+     그리고 `new BuildConfig(...)` 마지막에 `, sourceRoots` 추가. canonical 26-arg 생성자를 직접 호출.
 
 - [ ] **Step 4: 통과 확인 + 컴파일**
 
@@ -1434,6 +1514,13 @@ class MultiRootStaticE2E {
     void braceEqualsCommaList() {
         assertEquals(pathsOf(BASE + "/{feature,common}"),
                      pathsOf(BASE + "/feature, " + BASE + "/common"));   // REQ-002
+    }
+
+    @Test
+    void braceEqualsUnionOfSeparateBuilds() {
+        Set<String> union = new java.util.HashSet<>(pathsOf(BASE + "/feature"));
+        union.addAll(pathsOf(BASE + "/common"));
+        assertEquals(union, pathsOf(BASE + "/{feature,common}"));   // REQ-002 (단독 빌드 합집합)
     }
 
     @Test
@@ -1617,7 +1704,7 @@ Expected: FAIL.
                                         예: post-api-orders, GET /api/users/**, post-api-orders-*
      ```
   2. `docs/03-graph-rag-builder.md`의 "엔드포인트 선택(`--endpoint`)" 절(100–106행)에 glob·혼용 추가, 신규 "소스 루트 선택(`--sut-src` 멀티 루트)" 절 추가(혼용 예시·partial graph·R2/R6/N2 한계). (설계 §11 참조.)
-  3. design spec §6.4에 "구현은 `sourceRoots`를 record 마지막 컴포넌트로 두고 compact 생성자에서 정규화(2번째 위치 대신)"임을 1줄 반영(spec↔plan 동기화).
+  3. design spec §6.4 동기화(spec↔plan 편차 명시): (a) `sourceRoots`는 record **마지막** 컴포넌트 + compact 정규화(2번째 위치 대신), (b) `IndexCache.scan`/`indexStatically`는 `Path sutResources` 대신 **`List<Path> resourceDirs`**(멀티 resources)를 받음, (c) `config.sutResources()`는 **명시 시에만 non-null**(미지정 시 null → 루트별 sibling 자동 해석).
 
 - [ ] **Step 4: 통과 확인**
 
