@@ -114,6 +114,14 @@ public class ConstraintExtractor {
         }
     }
 
+    /**
+     * 저장 행 복합 AND 조건(AND leaf 2~3개, 완전분류 시만)에서 동시 만족 시드 합성 근거.
+     * leaves: 각 leaf가 기존 StateGuard(column/kind/op/comparand 보유).
+     * TEMPORAL leaf는 op에 "isBefore"/"isAfter" 보존.
+     */
+    public record StateGuardConjunction(String classFqn, String method, int line, List<StateGuard> leaves) {
+    }
+
     private static final Map<BinaryOperatorKind, String> REL_OPS = Map.of(
             BinaryOperatorKind.GT, ">", BinaryOperatorKind.GE, ">=",
             BinaryOperatorKind.LT, "<", BinaryOperatorKind.LE, "<=",
@@ -690,6 +698,178 @@ public class ConstraintExtractor {
         out.sort(Comparator.comparing(StateGuard::classFqn).thenComparing(StateGuard::method)
                 .thenComparingInt(StateGuard::line));
         return out;
+    }
+
+    /**
+     * CtIf/CtConditional의 top-level {@code &&} 조건에서 저장 행 상태 leaf 2~3개가 완전 분류된
+     * conjunction만 emit한다(TEMPORAL→BOOLEAN→NULLITY→ENUM→NUMERIC-상수→NUMERIC-param 순서).
+     * NUMERIC-param / 미인식 leaf가 하나라도 있으면 해당 조건 통째 skip.
+     * 1회 빌드. 기존 extractStateGuards 불변(독립 메서드).
+     */
+    public List<StateGuardConjunction> extractStateGuardConjunctions(Path srcDir) {
+        Launcher launcher = new Launcher();
+        launcher.addInputResource(srcDir.toString());
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setCommentEnabled(false);
+        launcher.getEnvironment().setComplianceLevel(17);
+        CtModel model = launcher.buildModel();
+
+        List<CtExpression<?>> conditions = new ArrayList<>();
+        for (CtIf ctIf : model.getElements(new TypeFilter<>(CtIf.class))) {
+            conditions.add(ctIf.getCondition());
+        }
+        for (CtConditional<?> tern : model.getElements(new TypeFilter<>(CtConditional.class))) {
+            conditions.add(tern.getCondition());
+        }
+
+        List<StateGuardConjunction> out = new ArrayList<>();
+        for (CtExpression<?> cond : conditions) {
+            if (!(cond instanceof CtBinaryOperator<?> bin)
+                    || bin.getKind() != BinaryOperatorKind.AND) {
+                continue;
+            }
+            List<CtExpression<?>> leaves = new ArrayList<>();
+            flattenAnd(bin, leaves);
+
+            // 각 leaf를 순서대로 분류: TEMPORAL→BOOLEAN→NULLITY→ENUM→NUMERIC-상수→NUMERIC-param
+            List<StateGuard> classified = new ArrayList<>();
+            boolean hasUnrecognized = false;
+            for (CtExpression<?> leaf : leaves) {
+                StateGuard sg = classifyLeaf(leaf);
+                if (sg == null) {
+                    hasUnrecognized = true;
+                    break;
+                }
+                // NUMERIC-param leaf가 하나라도 있으면 skip
+                if (sg.comparandKind() == ComparandKind.PARAM) {
+                    hasUnrecognized = true;
+                    break;
+                }
+                classified.add(sg);
+            }
+            if (hasUnrecognized) {
+                continue;
+            }
+
+            // emit 조건: leaf 수 == 분류 성공 수 AND 2~3개
+            int leafCount = leaves.size();
+            if (classified.size() != leafCount || leafCount < 2 || leafCount > 3) {
+                continue;
+            }
+
+            CtMethod<?> method = bin.getParent(CtMethod.class);
+            CtType<?> type = bin.getParent(CtType.class);
+            if (method == null || type == null) {
+                continue;
+            }
+            out.add(new StateGuardConjunction(
+                    type.getQualifiedName().replace('$', '.'),
+                    method.getSimpleName(),
+                    bin.getPosition().getLine(),
+                    List.copyOf(classified)));
+        }
+        out.sort(Comparator.comparing(StateGuardConjunction::classFqn)
+                .thenComparing(StateGuardConjunction::method)
+                .thenComparingInt(StateGuardConjunction::line));
+        return out;
+    }
+
+    /**
+     * 단일 leaf를 TEMPORAL→BOOLEAN→NULLITY→ENUM→NUMERIC-상수→NUMERIC-param 순서로 분류.
+     * 인식 가능하면 StateGuard(임시, classFqn/method/line=null/null/0), 아니면 null.
+     * TEMPORAL을 BOOLEAN보다 먼저 시도 — isBefore/isAfter가 is-getter로 보여 BOOLEAN 오분류 방지.
+     */
+    private static StateGuard classifyLeaf(CtExpression<?> leaf) {
+        // 1. TEMPORAL: getter().isBefore/isAfter(LocalDate.now())
+        if (leaf instanceof CtInvocation<?> inv) {
+            String name = inv.getExecutable().getSimpleName();
+            if ((name.equals("isBefore") || name.equals("isAfter"))
+                    && inv.getArguments().size() == 1
+                    && isNowCall(inv.getArguments().get(0))) {
+                String ref = getterRef(inv.getTarget());
+                if (ref != null) {
+                    return new StateGuard(null, null, 0, snake(ref), GuardKind.TEMPORAL, null,
+                            List.of(), List.of(), name, ComparandKind.LITERAL, null);
+                }
+            }
+        }
+
+        // 2. BOOLEAN: booleanGuardFromCondition
+        {
+            StateGuard bg = booleanGuardFromCondition(leaf);
+            if (bg != null) {
+                return bg;
+            }
+        }
+
+        // 3. NULLITY: nullityGuardFromCondition
+        {
+            StateGuard ng = nullityGuardFromCondition(leaf);
+            if (ng != null) {
+                return ng;
+            }
+        }
+
+        // 4. ENUM: getter() ==|!= EnumConst (per-leaf)
+        if (leaf instanceof CtBinaryOperator<?> bin) {
+            boolean isEq = bin.getKind() == BinaryOperatorKind.EQ;
+            boolean isNe = bin.getKind() == BinaryOperatorKind.NE;
+            if (isEq || isNe) {
+                CtExpression<?> left = bin.getLeftHandOperand();
+                CtExpression<?> right = bin.getRightHandOperand();
+                String constName = enumConstant(right);
+                String enumType = enumTypeAccess(right);
+                String field = constName != null ? getterRef(left) : null;
+                if (field == null) {
+                    constName = enumConstant(left);
+                    enumType = enumTypeAccess(left);
+                    field = constName != null ? getterRef(right) : null;
+                }
+                if (field != null && constName != null) {
+                    List<String> pos = isEq ? List.of(constName) : List.of();
+                    List<String> neg = isNe ? List.of(constName) : List.of();
+                    return new StateGuard(null, null, 0, snake(field), GuardKind.ENUM, enumType,
+                            neg, pos, isEq ? "==" : "!=", ComparandKind.LITERAL, constName);
+                }
+            }
+        }
+
+        // 5. NUMERIC-상수: getter() op literalLongWithNeg
+        if (leaf instanceof CtBinaryOperator<?> bin) {
+            String opStr = REL_OPS.get(bin.getKind());
+            if (opStr != null) {
+                CtExpression<?> left = bin.getLeftHandOperand();
+                CtExpression<?> right = bin.getRightHandOperand();
+                String getterField = getterRef(left);
+                OptionalLong rightLit = literalLongWithNeg(right);
+                if (getterField != null && rightLit.isPresent()) {
+                    return new StateGuard(null, null, 0, snake(getterField), GuardKind.NUMERIC, null,
+                            List.of(), List.of(), opStr, ComparandKind.LITERAL,
+                            String.valueOf(rightLit.getAsLong()));
+                }
+                String getterFieldR = getterRef(right);
+                OptionalLong leftLit = literalLongWithNeg(left);
+                if (getterFieldR != null && leftLit.isPresent()) {
+                    return new StateGuard(null, null, 0, snake(getterFieldR), GuardKind.NUMERIC, null,
+                            List.of(), List.of(), FLIP.get(opStr), ComparandKind.LITERAL,
+                            String.valueOf(leftLit.getAsLong()));
+                }
+
+                // 6. NUMERIC-param: getter() op directParamName → PARAM (호출부에서 skip)
+                String paramName = directParamName(right);
+                if (getterField != null && paramName != null) {
+                    return new StateGuard(null, null, 0, snake(getterField), GuardKind.NUMERIC, null,
+                            List.of(), List.of(), opStr, ComparandKind.PARAM, paramName);
+                }
+                String paramNameL = directParamName(left);
+                if (getterFieldR != null && paramNameL != null) {
+                    return new StateGuard(null, null, 0, snake(getterFieldR), GuardKind.NUMERIC, null,
+                            List.of(), List.of(), FLIP.get(opStr), ComparandKind.PARAM, paramNameL);
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

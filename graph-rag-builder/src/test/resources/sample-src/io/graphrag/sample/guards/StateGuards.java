@@ -10,11 +10,14 @@ public class StateGuards {
 
     public enum BookingStatus { PENDING, CONFIRMED, CANCELLED }
 
+    public enum BookingTier { BASIC, VIP }
+
     /** JPA 엔티티 형태(getter) — fieldRef가 getCheckInDate→checkInDate, getStatus→status로 정규화. */
     static class Booking {
         private Long id;
         private LocalDate checkInDate;
         private BookingStatus status;
+        private BookingTier tier;
         private boolean active;
         private String note;
         private int count;
@@ -25,6 +28,7 @@ public class StateGuards {
         Long getId() { return id; }
         LocalDate getCheckInDate() { return checkInDate; }
         BookingStatus getStatus() { return status; }
+        BookingTier getTier() { return tier; }
         boolean getActive() { return active; }
         boolean isActive() { return active; }
         String getNote() { return note; }
@@ -161,5 +165,56 @@ public class StateGuards {
             return "ok";
         }
         return "below";
+    }
+
+    // ── 복합 AND conjunction 픽스처 (StateGuardConjunction 검출 대상) ──
+
+    /** 2-leaf ENUM+ENUM conjunction: status==CONFIRMED && tier==VIP → StateGuardConjunction. */
+    String byStatusTier(Booking b) {
+        if (b.getStatus() == BookingStatus.CONFIRMED && b.getTier() == BookingTier.VIP) {
+            return "ok";
+        }
+        return "no";
+    }
+
+    /** TEMPORAL+BOOLEAN conjunction: isBefore(now()) && getActive() → TEMPORAL leaf 먼저 분류. */
+    String byTemporalActive(Booking b) {
+        if (b.getCheckInDate().isBefore(LocalDate.now()) && b.getActive()) {
+            return "ok";
+        }
+        return "no";
+    }
+
+    /** numeric-param leaf 혼입 → conjunction skip (getActive는 BOOLEAN이지만 getNights()>=min는 PARAM leaf). */
+    String byNumParam(Booking b, int min) {
+        if (b.getNights() >= min && b.getActive()) {
+            return "ok";
+        }
+        return "no";
+    }
+
+    /** OR 혼입 → conjunction skip (순수 AND 아님). */
+    String byOr(Booking b) {
+        if (b.getActive() && (b.getCount() > 0 || b.getNights() > 0)) {
+            return "ok";
+        }
+        return "no";
+    }
+
+    /** 3-leaf conjunction: ENUM+BOOLEAN+NUMERIC → StateGuardConjunction(3 leaves). */
+    String byThree(Booking b) {
+        if (b.getStatus() == BookingStatus.CONFIRMED && b.getActive() && b.getCount() > 0) {
+            return "ok";
+        }
+        return "no";
+    }
+
+    /** 4-leaf conjunction → skip (leaf 2~3개만 emit). */
+    String byFour(Booking b) {
+        if (b.getStatus() == BookingStatus.CONFIRMED && b.getTier() == BookingTier.VIP
+                && b.getActive() && b.getCount() > 0) {
+            return "ok";
+        }
+        return "no";
     }
 }
