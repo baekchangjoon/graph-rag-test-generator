@@ -32,9 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 결정한다(line {@value #EMBARGOED_LINE}).
  *
  * <p>단계1·단계2(enum)는 기본값 region에서만 탐색해 EMBARGOED arm(422)을 열지 못한다. 단계2-A String
- * 리터럴 변형 루프가 "EMBARGOED" stub을 trace-id 격리로 등록·재invoke해 그 arm을 결정적으로 연다.
- *
- * <p><b>String 변형 루프(Task 5·6·7) 미구현 상태에서는 RED</b>(EMBARGOED arm 미도달). Task 8까지 약화 금지.
+ * 리터럴 변형 루프가 "EMBARGOED" stub을 변형 stub으로 등록·재invoke해 그 arm을 결정적으로 연다.
+ * (이 E2E는 {@code --trace-mode none}으로 빌드하므로 변형 stub은 trace-id 격리가 아니라 순차 교체로
+ * 등록·제거된다 — 격리/순차 모두 같은 변형 루프를 탄다.)
  */
 @Tag("integration")
 @EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
