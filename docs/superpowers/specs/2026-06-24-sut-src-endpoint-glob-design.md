@@ -368,8 +368,13 @@ io/graphrag/sample/multiroot/other/OtherController.java       // @GetMapping("/a
 
 ## 11. 문서 동기화 대상
 
-- `docs/03-graph-rag-builder.md`: "엔드포인트 선택(`--endpoint`)" 절에 glob 지원
-  추가, 신규 "소스 루트 선택(`--sut-src` 멀티 루트)" 절 추가, 한계에 R2/R6/N2 반영.
-- 빌더 CLI 도움말(`BuilderCli` usage 문자열).
+- **빌더 CLI 도움말(`BuilderCli` usage 문자열) — 필수**: `--sut-src`·`--endpoint`
+  각각에 대해 (1) 정확 나열, (2) glob 패턴, (3) **정확+glob 혼용**을 **구체 예시와
+  함께** 사용법에 포함한다(예: `--endpoint 'post-api-orders, GET /api/users/**'`,
+  `--sut-src 'a/b/c/orders, a/b/c/common/**'`). glob 문법(`*`=세그먼트 내, `**`=재귀,
+  `{a,b}`=택일)도 도움말에 명시. **이는 완료 정의의 일부**(사용자 요구).
+- `docs/03-graph-rag-builder.md`: "엔드포인트 선택(`--endpoint`)" 절에 glob·혼용
+  추가, 신규 "소스 루트 선택(`--sut-src` 멀티 루트)" 절(혼용 예시 포함) 추가, 한계에
+  R2/R6/N2 반영.
 - 필요 시 `docs/26-attach-mode.md`(attach는 이번 범위 외지만 `--sut-src` 공통이므로
   멀티 루트 동작 한 줄 교차참조).
