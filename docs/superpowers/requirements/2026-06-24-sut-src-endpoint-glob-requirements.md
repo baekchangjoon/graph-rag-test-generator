@@ -120,7 +120,7 @@
 - 유형: Functional
 - 우선순위: Must
 - 수용기준:
-  - Given `--sut-src '…/{feature,common}'` + `--endpoint 'GET *'`, When 빌드, Then
+  - Given `--sut-src '…/{feature,common}'` + `--endpoint 'GET **'`, When 빌드, Then
     `feature`·`common` 중 GET 단위(= `get-api-common`)만 탐색 대상.
 - 검증 레벨: E2E
 

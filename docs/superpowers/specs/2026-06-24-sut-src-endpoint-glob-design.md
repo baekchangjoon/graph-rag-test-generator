@@ -343,7 +343,7 @@ io/graphrag/sample/multiroot/other/OtherController.java       // @GetMapping("/a
   miss**(재인덱싱)됨을 확인. primary만 스캔하던 결함의 회귀 가드(§6.4). 단위/통합
   레벨로도 가능.
 - **E2E-7 (멀티 루트 + `--endpoint` glob 교집합)**: `--sut-src
-  '…/{feature,common}'` + `--endpoint 'GET *'` → `feature`·`common` 중 GET만(=
+  '…/{feature,common}'` + `--endpoint 'GET **'` → `feature`·`common` 중 GET만(=
   `get-api-common`) 탐색 대상이 됨(§5.2 교집합 확인).
 
 정의된 완료 = E2E-1..7 전부 green + 단위/통합 테스트 green.
