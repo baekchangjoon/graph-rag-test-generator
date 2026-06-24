@@ -128,24 +128,24 @@
 ## 추적 매트릭스
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | otel CLIENT span 추출 | `EgressNormalizerTest` | unit | 🔴 planned |
-| REQ-002 | sleuth Zipkin CLIENT span 추출(method+path) | `EgressNormalizerTest` + `ZipkinSpanReceiverTest` | unit/integration | 🔴 planned |
-| REQ-003 | 공통 정규화(strip/semconv/status/non-http) | `EgressNormalizerTest` | unit | 🔴 planned |
-| REQ-004 | 요청별 trace-id 귀속 | `EgressCollectorTest` + `EgressDiscoveryWiringTest` | unit/integration | 🔴 planned |
-| REQ-005 | EgressCall→CapturedHttpCall 환류·null-safety·dedup | `EgressCallMapperTest` + `EgressDiscoveryWiringTest` | unit/integration | 🔴 planned |
-| REQ-006 | ZipkinSpanReceiver 인프라 | `ZipkinSpanReceiverTest` + `TraceReceiverLimitsTest` | integration/unit | 🔴 planned |
-| REQ-007 | egress await/quiescence(모드별) | `EgressCollectorTest#awaitsLate` + `EgressCollectorWiringTest` | unit/integration | 🔴 planned |
-| REQ-008 | 샘플링 강제(override 불요) | `SleuthEgressDiscoveryE2E#samplerOffStillExports` + `ZipkinSutEnvInjectionTest#noSamplerOverride` | E2E/integration | 🔴 planned |
-| REQ-009 | [E2E] otel redirect-비의존 발견 | `OtelEgressDiscoveryE2E` | E2E | 🔴 planned |
-| REQ-010 | [E2E] sleuth redirect-비의존 발견 | `SleuthEgressDiscoveryE2E` | E2E | 🔴 planned |
-| REQ-011 | 테스트 자원 정리/누수 게이트 | `OtelEgressDiscoveryE2E`+`SleuthEgressDiscoveryE2E` (teardown+leak assert) | process | 🔴 planned |
+| REQ-001 | otel CLIENT span 추출 | `EgressNormalizerTest` | unit | 🟢 green |
+| REQ-002 | sleuth Zipkin CLIENT span 추출(method+path) | `EgressNormalizerTest` + `ZipkinSpanReceiverTest` | unit/integration | 🟢 green |
+| REQ-003 | 공통 정규화(strip/semconv/status/non-http) | `EgressNormalizerTest` | unit | 🟢 green |
+| REQ-004 | 요청별 trace-id 귀속 | `EgressCollectorTest` + `EgressCollectorWiringTest` | unit/integration | 🟢 green |
+| REQ-005 | EgressCall→CapturedHttpCall 환류·null-safety·dedup | `EgressCallMapperTest` + `EgressCollectorWiringTest` | unit/integration | 🟢 green |
+| REQ-006 | ZipkinSpanReceiver 인프라 | `ZipkinSpanReceiverTest` + `TraceReceiverLimitsTest` | integration/unit | 🟢 green |
+| REQ-007 | egress await/quiescence(모드별) | `EgressCollectorTest#awaitsLate` + `EgressCollectorWiringTest` | unit/integration | 🟢 green |
+| REQ-008 | 샘플링 강제(override 불요) | `SleuthEgressDiscoveryE2E#samplerOffStillExports` + `ZipkinSutEnvInjectionTest` | E2E/integration | 🟢 green |
+| REQ-009 | [E2E] otel redirect-비의존 발견 | `OtelEgressDiscoveryE2E` | E2E | 🟢 green (sut.jar 조건부) |
+| REQ-010 | [E2E] sleuth redirect-비의존 발견 | `SleuthEgressDiscoveryE2E` | E2E | 🟢 green (sut.egress.sleuth=true 조건부) |
+| REQ-011 | 테스트 자원 정리/누수 게이트 | `SleuthEgressDiscoveryE2E` (AfterAll try/finally + docker ps 잔존 0 assert) | process | 🟢 green |
 | REQ-012 | (4순위) stub body 충실도 | — | — | 🔵 out-of-scope |
 | REQ-013 | (연기) 리포터 런타임 주입성 | — | — | 🔵 deferred |
 | REQ-014 | (연기) host 식별 매핑 | — | — | 🔵 deferred |
 | REQ-015 | (연기) status-무관 register | — | — | 🔵 deferred |
 | REQ-016 | (연기) attach Zipkin 토큰 인증 | — | — | 🔵 deferred |
 
-Coverage: 0/11 green (0%) — target 100% (대상: Must 11개: REQ-001~011). Won't: 1(REQ-012), Deferred: 4(REQ-013/014/015/016) 🔵 분모 제외.
+Coverage: 11/11 green (100%) — Must 11개: REQ-001~011 전부 🟢. Won't: 1(REQ-012), Deferred: 4(REQ-013/014/015/016) 🔵 분모 제외. (확인일: 2026-06-24)
 
 ---
 ### 리뷰 반영 이력
