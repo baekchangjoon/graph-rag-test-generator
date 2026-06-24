@@ -193,6 +193,7 @@ public class EndpointExplorationRunner {
     private final ResponseClassifier classifier;   // 성공/실패 판정(기본 StatusOnlyClassifier)
     private final List<io.graphrag.builder.index.ExternalCallSite> callSites;  // 외부 호출 site (B2 재탐색)
     private final ExternalStubSynthesizer stubSynthesizer;   // 형상→stub 런타임 등록 (httpCapture null이면 null)
+    private final io.graphrag.builder.capture.egress.EgressCollector egressCollector;  // nullable — Task 8에서 실제 주입
     // 요청별 dump(reset)을 누적 병합 → arm-level 정확 커버리지. 분기 양쪽(true/false)이
     // 서로 다른 요청에서 찍혀도 probe OR로 합산된다 (count-union 모델의 arm-blind 한계 보완).
     private ExecutionDataStore cumulativeCoverage = new ExecutionDataStore();
@@ -244,7 +245,7 @@ public class EndpointExplorationRunner {
                 classifier, List.of());
     }
 
-    /** callSites(외부 호출 site)를 받는 canonical 생성자. B2 재탐색 루프에서 합성 stub을 등록한다. */
+    /** callSites(외부 호출 site)를 받는 기존 생성자 — egressCollector null로 체인. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageClient coverage, BranchCoverageAnalyzer analyzer,
@@ -261,6 +262,30 @@ public class EndpointExplorationRunner {
                                      KafkaCaptureReceiver kafkaCapture,
                                      ResponseClassifier classifier,
                                      List<io.graphrag.builder.index.ExternalCallSite> callSites) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                classifier, callSites, null);
+    }
+
+    /** canonical 생성자 — egressCollector(nullable) 포함. Task 8에서 실제 주입; null이면 비활성. */
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier,
+                                     List<io.graphrag.builder.index.ExternalCallSite> callSites,
+                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -282,6 +307,7 @@ public class EndpointExplorationRunner {
         this.kafkaCapture = kafkaCapture;
         this.classifier = classifier == null ? new StatusOnlyClassifier() : classifier;
         this.callSites = callSites == null ? List.of() : callSites;
+        this.egressCollector = egressCollector;
         this.stubSynthesizer = httpCapture == null ? null
                 : new ExternalStubSynthesizer(httpCapture,
                         new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),
@@ -1943,7 +1969,14 @@ public class EndpointExplorationRunner {
                     exchange.baggagePresent(),
                     provenanceOf(exchange)));
         }
-        return calls;
+        // egress 병합 + (method, urlPath) dedup — redirect(existing) 우선(REQ-005).
+        List<io.graphrag.model.CapturedHttpCall> egress = new ArrayList<>();
+        int egressSeq = 0;
+        for (io.graphrag.builder.capture.egress.EgressCall e : candidate.egressCalls()) {
+            egress.add(io.graphrag.builder.capture.egress.EgressCallMapper.toCapturedHttpCall(
+                    e, candidate.pathId(), ++egressSeq));
+        }
+        return io.graphrag.builder.capture.egress.EgressCallMapper.mergeDedup(calls, egress);
     }
 
     /**
@@ -2069,6 +2102,13 @@ public class EndpointExplorationRunner {
         }
         HttpResponse<String> response = http.send(builder.build(),
                 HttpResponse.BodyHandlers.ofString());
+        // egress 수집은 drain 이전 — otel 모드에서 drain()이 finally로 receiver.remove(traceId)를
+        // 호출해 버퍼를 비우므로, drain 후에 수집하면 egress가 항상 0건이 된다(REQ-004).
+        String egressTraceId = httpCapture != null
+                ? httpCapture.traceKey().readTraceId(sqlScope.requestHeaders()).orElse(null)
+                : null;
+        java.util.List<io.graphrag.builder.capture.egress.EgressCall> egressCalls =
+                egressCollector != null ? egressCollector.collect(egressTraceId) : List.of();
         List<ParsedSql> drained = sqlScope.drain();   // flush 여유는 backend.drain() 내부로 이동
 
         String traceId = traceparentTraceId(sqlScope.requestHeaders());
@@ -2085,7 +2125,8 @@ public class EndpointExplorationRunner {
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
                 httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
-                coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders);
+                coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders,
+                egressCalls);
     }
 
     /**
