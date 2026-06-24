@@ -94,7 +94,8 @@ public final class BuilderCli {
             return;
         }
         Map<String, String> options = parseArgs(args);
-        Path sutSrc = Path.of(required(options, "--sut-src"));
+        SourceRoots sourceRoots = buildSourceRoots(options);
+        Path sutSrc = sourceRoots.primary();
         String manualPaths = options.get("--manual-paths");
         String externalStubs = options.get("--external-stubs");
         String incrementalBase = options.get("--incremental-base");
@@ -143,8 +144,7 @@ public final class BuilderCli {
 
         List<String> endpointSelectors = List.of();
         if (options.containsKey("--endpoint")) {
-            endpointSelectors = java.util.Arrays.stream(options.get("--endpoint").split(","))
-                    .map(String::strip).filter(s -> !s.isEmpty()).toList();
+            endpointSelectors = GlobToken.split(options.get("--endpoint"));
             if (endpointSelectors.isEmpty()) {
                 throw new IllegalArgumentException("--endpoint given but no non-blank spec(s) provided");
             }
@@ -152,10 +152,12 @@ public final class BuilderCli {
 
         ClassifierConfig classifierConfig = ClassifierConfig.from(options);
 
+        Path sutResources = options.containsKey("--sut-resources")
+                ? Path.of(options.get("--sut-resources"))
+                : null;   // null → resourceDirs が per-root sibling resources를 자동 해석 (REQ-011/015)
         BuildConfig config = new BuildConfig(
                 sutSrc,
-                Path.of(options.getOrDefault("--sut-resources",
-                        sutSrc.resolveSibling("resources").toString())),
+                sutResources,
                 Path.of(required(options, "--sut-jar")),
                 Path.of(required(options, "--out")),
                 options.getOrDefault("--sut-id", "sut"),
@@ -185,7 +187,7 @@ public final class BuilderCli {
                         options.get("--llm-model"),
                         options.get("--llm-backend"),
                         options.get("--llm-cli")),
-                null); // TODO Task 11: replace with explicit SourceRoots
+                sourceRoots);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -920,6 +922,22 @@ public final class BuilderCli {
                 System.out.printf("  MISSED %s : %d branch(es) at lines %s%n", cm, miss, lines.keySet());
             });
         }
+    }
+
+    /** --sut-src + (optional) --sut-resources → SourceRoots. 멀티 루트 + --incremental-base 조합은 거부. */
+    static SourceRoots buildSourceRoots(Map<String, String> options) {
+        String sutSrcArg = required(options, "--sut-src");
+        Path resourcesArg = options.containsKey("--sut-resources")
+                ? Path.of(options.get("--sut-resources")) : null;
+        SourceRoots roots = SutSrcResolver.resolve(sutSrcArg, resourcesArg);
+        if (roots.isMulti() && options.get("--incremental-base") != null) {
+            throw new IllegalArgumentException(
+                    "--sut-src multi-root is not supported with --incremental-base (v1)");
+        }
+        if (roots.isMulti() && resourcesArg == null) {
+            log.info("--sut-resources not given; falling back to each source root's sibling 'resources'");
+        }
+        return roots;
     }
 
     static Map<String, String> parseArgs(String[] args) {
