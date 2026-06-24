@@ -74,6 +74,7 @@ tasks.register("printTestRuntimeClasspath") {
 // 통합 테스트는 샘플 SUT jar + 외부 스텁이 필요하다
 tasks.test {
     dependsOn(":samples:order-service:bootJar")
+    dependsOn(":samples:error-envelope-service:bootJar")
     systemProperty("sut.jar",
         project(":samples:order-service").layout.buildDirectory
             .file("libs/order-service.jar").get().asFile.absolutePath)
