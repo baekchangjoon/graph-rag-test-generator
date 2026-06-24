@@ -81,10 +81,10 @@ class Stage2AStringLiteralFuzzingE2E {
                 .as("response-variant discoveredBy path가 하나 이상 존재해야 한다(String 변형 루프 실행 증거)")
                 .isTrue();
 
-        // String 변형 추가로 외부-의존 분기집합 다양성이 1 이상이어야 한다(EMBARGOED arm 포함).
+        // String 변형 추가로 외부-의존 분기집합 다양성이 2 이상이어야 한다(baseline + EMBARGOED 변형 최소 2개).
         assertThat(externalBranchSetCount(asset))
-                .as("String 변형 arm 포함 외부-의존 분기집합 다양성 ≥ 1")
-                .isGreaterThanOrEqualTo(1L);
+                .as("String 변형 arm 포함 외부-의존 분기집합 다양성 ≥ 2 (baseline + EMBARGOED 변형 최소 2개)")
+                .isGreaterThanOrEqualTo(2L);
     }
 
     /**
