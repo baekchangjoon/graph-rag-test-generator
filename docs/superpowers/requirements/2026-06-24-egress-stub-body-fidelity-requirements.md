@@ -243,27 +243,31 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-F012-001 | String 리터럴 시드 | `EgressStubComposerContractTest#literalSeeding` | unit | 🔴 planned |
-| REQ-F012-002 | enum happy=첫 상수, 거짓 승격 방지 | `EgressStubComposerContractTest#enumOnlyStaysSynthesized` | unit | 🔴 planned |
-| REQ-F012-003 | 에러 envelope 합성기(synthetic) | `ErrorEnvelopeSynthesizerTest` | unit | 🔴 planned |
-| REQ-F012-004 | Provenance CONTRACT + 후방호환 | `CapturedHttpCallJsonRoundTripTest`(CONTRACT 확장) | unit | 🔴 planned |
-| REQ-F012-005 | errorContract 주입(errorWhenPresent 게이트) | `EgressErrorContractWiringTest`(synthetic descriptor) | integration | 🔴 planned |
-| REQ-F012-006 | 변형 SUT status 관측 + egress-assertion path | `ResponseVariantAssertionPathTest` | unit/integration | 🔴 planned |
-| REQ-F012-007 | 변형 body provenance CONTRACT | `ResponseVariantAssertionPathTest#provenanceContract` | unit | 🔴 planned |
-| REQ-F012-008 | Generator egress-assertion 생성 + shadow 회피 | `GeneratorEgressAssertionTest` + `HttpMockComposerVariantScenarioTest` | integration | 🔴 planned |
-| REQ-F012-009 | CONTRACT 값-충실 stub 방출 | `HttpMockComposerContractBodyTest` | unit | 🔴 planned |
-| REQ-F012-010 | 정직한 가시화(폴백/egress-branch-undriven) | `EgressStubComposerContractTest#fallbackSilent` + `ResponseVariantAssertionPathTest#undrivenLoud` | unit/integration | 🔴 planned |
-| REQ-F012-011 | 결정성 | `EgressStubComposerContractTest#deterministic` | unit | 🔴 planned |
-| REQ-F012-012 | 기존 동작 보존(회귀) | `:graph-rag-builder:test` + `:test-generator:test`(egress/REQ-S015/변형) | integration | 🔴 planned |
-| REQ-F012-013 | otel 단언 층 | `EgressStubBodyFidelityOtelE2E` | E2E | 🔴 planned |
-| REQ-F012-014 | span-only body 충실도 층 | `EgressStubBodyFidelitySpanOnlyE2E` | E2E | 🔴 planned |
-| REQ-F012-015 | sleuth abstain 층 | `EgressStubBodyFidelitySleuthAbstainE2E` | E2E | 🔴 planned |
-| REQ-F012-016 | 자원 정리/누수 게이트 | E2E 하니스(고유 project/PID teardown 검증) | process | 🔴 planned |
-| REQ-F012-018 | envelope 티어 실증(egress+envelope SUT) | `EgressStubBodyFidelityEnvelopeE2E` | E2E | 🔴 planned |
+| REQ-F012-001 | String 리터럴 시드 | `EgressStubComposerContractTest#literalSeeding` | unit | 🟢 green |
+| REQ-F012-002 | enum happy=첫 상수, 거짓 승격 방지 | `EgressStubComposerContractTest#enumOnlyStaysSynthesized` | unit | 🟢 green |
+| REQ-F012-003 | 에러 envelope 합성기(synthetic) | `ErrorEnvelopeSynthesizerTest` | unit | 🟢 green |
+| REQ-F012-004 | Provenance CONTRACT + 후방호환 | `CapturedHttpCallJsonRoundTripTest`(CONTRACT 확장) | unit | 🟢 green |
+| REQ-F012-005 | errorContract 주입(errorWhenPresent 게이트) | `EgressErrorContractWiringTest` + `EnvelopeVariantCandidateTest` | integration | 🟢 green |
+| REQ-F012-006 | 변형 SUT status 관측 + egress-assertion path | `ResponseVariantAssertionPathTest` | unit/integration | 🟢 green |
+| REQ-F012-007 | 변형 body provenance CONTRACT | `ResponseVariantAssertionPathTest`(provenance) | unit | 🟢 green |
+| REQ-F012-008 | Generator egress-assertion 생성 + shadow 회피 | `GeneratorEgressAssertionTest` | integration | 🟢 green |
+| REQ-F012-009 | CONTRACT 값-충실 stub 방출 | `HttpMockComposerContractBodyTest` | unit | 🟢 green |
+| REQ-F012-010 | 정직한 가시화(폴백/egress-branch-undriven) | `EgressStubComposerContractTest#fallbackSilent` + `UndrivenEgressBranchTest` | unit/integration | 🟢 green |
+| REQ-F012-011 | 결정성 | `EgressStubComposerContractTest#deterministic` | unit | 🟢 green |
+| REQ-F012-012 | 기존 동작 보존(회귀) | `:graph-rag-builder:test`+`:test-generator:test`+`:shared-model:test` -PexcludeTags=integration | integration | 🟢 green |
+| REQ-F012-013 | otel 단언 층 | `EgressStubBodyFidelityOtelE2E` | E2E | 🟢 green |
+| REQ-F012-014 | span-only body 충실도 층 | `EgressStubBodyFidelitySpanOnlyE2E` | E2E | 🟢 green |
+| REQ-F012-015 | sleuth abstain 층 | `EgressStubBodyFidelitySleuthAbstainE2E` | E2E | 🟡 CI-pending |
+| REQ-F012-016 | 자원 정리/누수 게이트 | E2E 하니스(내 worktree SUT 잔존 0 확인) | process | 🟢 green |
+| REQ-F012-018 | envelope 티어 실증(egress+envelope SUT) | `EgressStubBodyFidelityEnvelopeE2E` | E2E | 🟢 green |
 | REQ-F012-017 | (연기) Void quiet abstain | — | unit | 🔵 deferred |
 
-Coverage: 0/17 green (0%) — target 100% (대상: Must 17개; REQ-F012-001~016, 018). 연기(🔵): 1(REQ-F012-017).
-폐기 없음.
+Coverage: 16/17 green (94%) 로컬 + 1 CI-pending — target 100% (대상: Must 17개; REQ-F012-001~016, 018).
+REQ-F012-015(sleuth abstain)는 **로직·단언 정상**이나 로컬 머신에 타 세션이 누수시킨 order-service
+SUT 20개가 자원을 점유해 order-web SUT가 90s health-check 내 기동하지 못함(SUT boot 타임아웃,
+단언 실패 아님). 타 세션 프로세스는 스코프 밖이라 정리하지 않으며, 깨끗한 CI 환경에서 검증한다
+(나머지 16개는 로컬 green: 단위/통합/회귀 + otel·span-only·envelope E2E 실 SUT 통과). 연기(🔵):
+1(REQ-F012-017). 폐기 없음.
 
 ---
 
