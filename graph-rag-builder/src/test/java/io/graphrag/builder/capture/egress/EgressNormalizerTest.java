@@ -10,10 +10,14 @@ class EgressNormalizerTest {
     void otelNew(){ var e=EgressNormalizer.fromSpan(span("SPAN_KIND_CLIENT",
         Map.of("http.request.method","GET","url.path","/inventory/stock","url.query","type=X"))).orElseThrow();
         assertThat(e.method()).isEqualTo("GET"); assertThat(e.path()).isEqualTo("/inventory/stock"); assertThat(e.statusOrNull()).isNull(); }
-    @Test @DisplayName("REQ-003: otel old semconv url.full fallback + status")
-    void otelOld(){ var e=EgressNormalizer.fromSpan(span("SPAN_KIND_CLIENT",
-        Map.of("http.method","GET","http.url","http://inventory/stock?type=X","http.status_code","200"))).orElseThrow();
+    @Test @DisplayName("REQ-003: otel old semconv http.url fallback + status")
+    void otelOldHttpUrl(){ var e=EgressNormalizer.fromSpan(span("SPAN_KIND_CLIENT",
+        Map.of("http.method","GET","http.url","http://inventory-svc:8089/inventory/stock?type=X","http.status_code","200"))).orElseThrow();
         assertThat(e.path()).isEqualTo("/inventory/stock"); assertThat(e.statusOrNull()).isEqualTo(200); }
+    @Test @DisplayName("REQ-003: otel new semconv url.full fallback")
+    void otelUrlFull(){ var e=EgressNormalizer.fromSpan(span("SPAN_KIND_CLIENT",
+        Map.of("http.request.method","GET","url.full","http://inv:8080/inventory/stock?type=X"))).orElseThrow();
+        assertThat(e.path()).isEqualTo("/inventory/stock"); }
     @Test @DisplayName("REQ-002: zipkin CLIENT path-only")
     void zipkin(){ var e=EgressNormalizer.fromSpan(span("CLIENT",
         Map.of("http.method","POST","http.path","/reservations"))).orElseThrow();
