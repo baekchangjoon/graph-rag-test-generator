@@ -252,28 +252,28 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 (예정 이름) | Level | Status |
 |--------|----------|--------------------------|-------|--------|
-| REQ-001 | 멀티 루트 부분 그래프(형제 제외) | `MultiRootStaticE2E#selectedRootsOnly` | E2E | 🔴 planned |
-| REQ-002 | brace=콤마=단독 동치 | `MultiRootStaticE2E#braceEqualsCommaList`,`#braceEqualsUnionOfSeparateBuilds` | E2E | 🔴 planned |
-| REQ-003 | sut-src 리터럴+glob 혼용 | `MultiRootStaticE2E#mixLiteralAndGlob` | E2E | 🔴 planned |
-| REQ-004 | sut-src 0매칭 fail-fast(혼합 포함) | `SutSrcResolverTest#zeroMatchFailsFastNamingPattern`,`#malformedGlobWrapped` | integration | 🔴 planned |
-| REQ-005 | endpoint glob, 정적 풀 유지 | `e2e/run-endpoint-glob-e2e.sh` (CLI 게이트 — JUnit 아님) | E2E | 🔴 planned |
-| REQ-006 | endpoint 정확+glob 혼용(3단계) | `EndpointSelectorGlobTest#mixExactAndGlob` | integration | 🔴 planned |
-| REQ-007 | endpoint 정확 매칭 하위호환 | `EndpointSelectorGlobTest#exactBackwardCompat` | integration | 🔴 planned |
-| REQ-008 | endpoint glob 0매칭/형식오류 실패 | `EndpointSelectorGlobTest#globZeroMatchFails`; `GlobMatcherTest#malformedGlobWrapped` | integration | 🔴 planned |
-| REQ-009 | 표준 glob 문법(endpoint+sut-src) | `GlobMatcherTest#starVsDoubleStar`,`#pathStringPortableNoPathOf`; `SutSrcResolverTest#starDoesNotRecurseDoubleStarDoes` | integration | 🔴 planned |
-| REQ-010 | 두 플래그 교집합 | `MultiRootStaticE2E#sutSrcIntersectEndpoint` | E2E | 🔴 planned |
-| REQ-011 | sut-resources 우선/폴백 | `SutSrcResolverTest#resourceDirsFallbackPerRoot`,`#resourceDirsScansAllRootsWhenNotExplicit` | integration | 🔴 planned |
-| REQ-012 | 멀티 루트 + incremental-base 거부 | `BuilderCliArgsTest#multiRootRejectsIncremental` | integration | 🔴 planned |
-| REQ-013 | IndexCache 멀티 루트 freshness(소스+resources) | `IndexCacheMultiRootTest#nonPrimaryJavaChangeChangesManifest`,`#nonPrimaryMapperXmlChangeChangesManifest` | integration | 🔴 planned |
-| REQ-014 | 비-primary 핸들러 제약/리터럴 추출 | `MultiRootConstraintTest#nonPrimaryHandlerConstraintsEquivalent` | integration | 🔴 planned |
-| REQ-015 | 하위호환 회귀(run-e2e.sh, 셀렉터 없음) | `e2e/run-e2e.sh` (CLI 게이트 — JUnit 아님) | E2E | 🔴 planned |
-| REQ-016 | CLI 사용법/문서 혼용 명시 | `BuilderCliUsageTest#documentsListGlobMix` + docs/03 갱신 | doc | 🔴 planned |
-| REQ-017 | sut-src dedup + 결정적 정렬 | `SutSrcResolverTest#dedupAndStableOrder` | integration | 🔴 planned |
-| REQ-018 | brace-aware 토큰화(양 플래그) | `GlobTokenTest#bracePreservedCommaSplit`,`#mixedBraceAndList` | integration | 🔴 planned |
-| REQ-019 | MapperXml 멀티 루트 resources 스캔 | `MultiRootStaticIndexTest#nonPrimaryMapperIncluded` | integration | 🔴 planned |
-| REQ-020 | E2E 자원 teardown + 누수 0 게이트 | `e2e/check-no-leak.sh` (스위트 후 게이트) | integration | 🔴 planned |
+| REQ-001 | 멀티 루트 부분 그래프(형제 제외) | `MultiRootStaticE2E#selectedRootsOnly` | E2E | 🟢 green |
+| REQ-002 | brace=콤마=단독 동치 | `MultiRootStaticE2E#braceEqualsCommaList`,`#braceEqualsUnionOfSeparateBuilds` | E2E | 🟢 green |
+| REQ-003 | sut-src 리터럴+glob 혼용 | `MultiRootStaticE2E#mixLiteralAndGlob` | E2E | 🟢 green |
+| REQ-004 | sut-src 0매칭 fail-fast(혼합 포함) | `SutSrcResolverTest#zeroMatchFailsFastNamingPattern`,`#malformedGlobWrapped` | integration | 🟢 green |
+| REQ-005 | endpoint glob, 정적 풀 유지 | `e2e/run-endpoint-glob-e2e.sh` (CLI 게이트 — JUnit 아님) | E2E | 🟢 green |
+| REQ-006 | endpoint 정확+glob 혼용(3단계) | `EndpointSelectorGlobTest#mixExactAndGlob` | integration | 🟢 green |
+| REQ-007 | endpoint 정확 매칭 하위호환 | `EndpointSelectorGlobTest#exactBackwardCompat` | integration | 🟢 green |
+| REQ-008 | endpoint glob 0매칭/형식오류 실패 | `EndpointSelectorGlobTest#globZeroMatchFails`; `GlobMatcherTest#malformedGlobWrapped` | integration | 🟢 green |
+| REQ-009 | 표준 glob 문법(endpoint+sut-src) | `GlobMatcherTest#starVsDoubleStar`,`#pathStringPortableNoPathOf`; `SutSrcResolverTest#starDoesNotRecurseDoubleStarDoes` | integration | 🟢 green |
+| REQ-010 | 두 플래그 교집합 | `MultiRootStaticE2E#sutSrcIntersectEndpoint` | E2E | 🟢 green |
+| REQ-011 | sut-resources 우선/폴백 | `SutSrcResolverTest#resourceDirsFallbackPerRoot`,`#resourceDirsScansAllRootsWhenNotExplicit` | integration | 🟢 green |
+| REQ-012 | 멀티 루트 + incremental-base 거부 | `BuilderCliArgsTest#multiRootRejectsIncremental` | integration | 🟢 green |
+| REQ-013 | IndexCache 멀티 루트 freshness(소스+resources) | `IndexCacheMultiRootTest#nonPrimaryJavaChangeChangesManifest`,`#nonPrimaryMapperXmlChangeChangesManifest` | integration | 🟢 green |
+| REQ-014 | 비-primary 핸들러 제약/리터럴 추출 | `MultiRootConstraintTest#nonPrimaryHandlerConstraintsEquivalent` | integration | 🟢 green |
+| REQ-015 | 하위호환 회귀(run-e2e.sh, 셀렉터 없음) | `e2e/run-e2e.sh` (CLI 게이트 — JUnit 아님) | E2E | 🟢 green |
+| REQ-016 | CLI 사용법/문서 혼용 명시 | `BuilderCliUsageTest#documentsListGlobMix` + docs/03 갱신 | doc | 🟢 green |
+| REQ-017 | sut-src dedup + 결정적 정렬 | `SutSrcResolverTest#dedupAndStableOrder` | integration | 🟢 green |
+| REQ-018 | brace-aware 토큰화(양 플래그) | `GlobTokenTest#bracePreservedCommaSplit`,`#mixedBraceAndList` | integration | 🟢 green |
+| REQ-019 | MapperXml 멀티 루트 resources 스캔 | `MultiRootStaticIndexTest#nonPrimaryMapperIncluded` | integration | 🟢 green |
+| REQ-020 | E2E 자원 teardown + 누수 0 게이트 | `e2e/check-no-leak.sh` (스위트 후 게이트) | integration | 🟢 green |
 
-Coverage: 0/20 green (0%) — target 100% (대상: Must 20개. 미연기 Should 없음.)
+Coverage: 20/20 green (100%) — 달성 (대상: Must 20개. 미연기 Should 없음.)
 
 ### 제외(분모 외 — 🔵)
 - N1 진짜 다중 애플리케이션(마이크로서비스) 통합 그래프 — 🔵 out-of-scope
