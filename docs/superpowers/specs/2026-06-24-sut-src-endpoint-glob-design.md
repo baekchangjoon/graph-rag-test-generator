@@ -98,8 +98,10 @@ graph-rag-builder는 한 번에 **SUT 하나**만 분석한다. `BuildConfig`는
 
 - 기존에 이미 존재하는 별도 플래그. 멀티 루트일 때 **명시 `--sut-resources`가
   최우선**. 미지정 시 **첫 매칭 루트**의 `resolveSibling("resources")`로 폴백한다.
-- primary 경로(아래 경로 파생 용도)는 `--sut-resources`가 있으면 그 부모, 없으면 첫
-  매칭 루트로 정한다.
+- primary 경로(경로 파생·로그 용도)는 **정렬된 첫 매칭 루트**로 항상 정한다.
+  `--sut-resources`는 resources 스캔에만 쓰고 primary 결정에는 쓰지 않는다(부모를
+  primary로 잡으면 `src/main` 등 java 루트가 아닌 곳을 가리켜 단일-루트 환원 시
+  Spoon이 resources를 java로 파싱할 위험 — 구현/리뷰 합의).
 
 ### 4.3 `--endpoint` (glob)
 

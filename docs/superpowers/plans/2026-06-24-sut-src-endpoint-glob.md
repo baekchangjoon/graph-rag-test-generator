@@ -427,7 +427,7 @@ git commit -m "feat(builder): SourceRoots 값 타입 (parseRoots + primary)"
 **Interfaces:**
 - Consumes: `GlobToken.split`(Task 1), `SourceRoots`(Task 3).
 - Produces:
-  - `static SourceRoots resolve(String sutSrcArg, Path resourcesArg)` — brace-aware 토큰화 → 패턴별 glob 확장(디렉터리만) → dedup(canonical)+정렬 → `SourceRoots`. 어느 패턴이든 0매칭이면 그 패턴 지목 `IllegalArgumentException`. primary = `resourcesArg` 부모(있으면) 또는 첫 루트.
+  - `static SourceRoots resolve(String sutSrcArg, Path resourcesArg)` — brace-aware 토큰화 → 패턴별 glob 확장(디렉터리만) → dedup(canonical)+정렬 → `SourceRoots`. 어느 패턴이든 0매칭이면 그 패턴 지목 `IllegalArgumentException`. primary = **정렬된 첫 루트(항상)** — `resourcesArg`는 primary에 영향 없음(resources 스캔 전용).
   - `static List<Path> resourceDirs(SourceRoots roots, Path resourcesArg)` — `resourcesArg`(있으면 그 1개) 또는 전 parseRoots의 `resolveSibling("resources")` 중 존재하는 디렉터리. REQ-011/019.
 
 - [ ] **Step 1: 실패 테스트 작성** (`@TempDir` 사용)
