@@ -53,6 +53,7 @@ class BuilderIntegrationTest {
         assertThat(asset.endpoints()).extracting(e -> e.id())
                 .containsExactly("delete-api-bookings-id", "get-api-bookings-id",
                         "get-api-bookings-id-eligibility",
+                        "get-api-bookings-id-premium-eligible",
                         "get-api-orders", "get-api-orders-id",
                         "get-api-profiles-by-name-name",
                         "post-api-auth-login", "post-api-bookings",
@@ -447,6 +448,78 @@ class BuilderIntegrationTest {
         assertThat(arm200.requiredSeedIds())
                 .as("두 arm의 시드 ID는 격리된 별개 PK여야 한다 (동일 행 공유 금지)")
                 .doesNotContainAnyElementsOf(arm404.requiredSeedIds());
+    }
+
+    /**
+     * REQ-010: StateGuard conjunction — 복합 AND 동시만족 E2E (red).
+     *
+     * <p>GET /api/bookings/{id}/premium-eligible 핸들러는 저장된 행의 status==CONFIRMED && tier==VIP
+     * 두 조건이 동시에 참일 때만 200을 반환한다. 빌더가 이 conjunction 가드를 검출하면:
+     * <ul>
+     *   <li>discoveredBy="state-guard-conjunction"인 expectedStatus=200 path가 존재해야 한다.</li>
+     *   <li>그 path의 시드 행은 status=CONFIRMED && tier=VIP 를 동시에 만족해야 한다.</li>
+     *   <li>requiredSeedIds가 비어 있지 않아야 한다(conjunction 시드 행 참조).</li>
+     * </ul>
+     *
+     * <p>conjunction 검출·합성 미구현 단계에서 반드시 FAIL해야 한다(red). 약화/스텁/주석 금지.
+     */
+    @Test
+    @org.junit.jupiter.api.DisplayName("REQ-010: StateGuard conjunction — CONFIRMED+VIP 동시만족 200 arm")
+    void premiumEligibleConjunction() throws Exception {
+        Path sutSrc = Path.of(System.getProperty("sut.src"));
+        Path sutJar = Path.of(System.getProperty("sut.jar"));
+        Path sutResources = sutSrc.resolveSibling("resources");
+
+        AuthConfig authConfig = new AuthConfig(
+                "/api/auth/login", "admin", "password",
+                "token", "Authorization", "Bearer", java.util.List.of());
+
+        GraphAsset asset = BuilderCli.build(new BuildConfig(
+                sutSrc, sutResources, sutJar, out,
+                "order-service", "test",
+                new DbConfig(DbConfig.Type.POSTGRES, "postgres:15", "app", "app", "app"),
+                60, null,
+                Path.of(System.getProperty("external.stubs")),
+                java.util.Map.of("EXTERNAL_INVENTORY_URL", "{{wiremock}}"),
+                null, null, authConfig, false, true, null,
+                null, io.graphrag.model.RequestHeaders.empty(), java.util.List.of(), "none", null, false));
+
+        // premium-eligible 엔드포인트가 인덱싱됐는지 확인 (REQ-009 inventory 연계)
+        assertThat(asset.endpoints()).extracting(e -> e.id())
+                .contains("get-api-bookings-id-premium-eligible");
+
+        // conjunction 검출 경로: discoveredBy="state-guard-conjunction" + expectedStatus=200 path가 존재해야 한다.
+        List<ExploredPath> premiumPaths = pathsOf(asset, "get-api-bookings-id-premium-eligible");
+        ExploredPath conjunctionPath = premiumPaths.stream()
+                .filter(p -> "state-guard-conjunction".equals(p.discoveredBy()))
+                .filter(p -> p.expectedStatus() == 200)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "discoveredBy=\"state-guard-conjunction\" + expectedStatus=200 path 없음 — conjunction 미검출"));
+
+        // conjunction path의 requiredSeedIds는 비어 있지 않아야 한다(CONFIRMED+VIP 시드 행 참조).
+        assertThat(conjunctionPath.requiredSeedIds())
+                .as("conjunction path는 CONFIRMED+VIP 시드 행을 참조하는 requiredSeedIds가 있어야 한다")
+                .isNotEmpty();
+
+        // 그 시드 행이 status=CONFIRMED && tier=VIP 를 동시에 만족해야 한다.
+        List<io.graphrag.model.RequiredSeed> conjunctionSeeds = asset.seeds().stream()
+                .filter(s -> conjunctionPath.requiredSeedIds().contains(s.id()))
+                .filter(s -> s.table().equals("bookings"))
+                .toList();
+        assertThat(conjunctionSeeds)
+                .as("conjunction 시드 행은 bookings 테이블에 존재해야 한다")
+                .isNotEmpty();
+        assertThat(conjunctionSeeds)
+                .as("conjunction 시드 행은 status=CONFIRMED 를 포함해야 한다")
+                .anyMatch(s -> s.values().contains("CONFIRMED"));
+        assertThat(conjunctionSeeds)
+                .as("conjunction 시드 행은 tier=VIP 를 포함해야 한다")
+                .anyMatch(s -> s.values().contains("VIP"));
+        // 단일 행이 CONFIRMED와 VIP를 동시에 만족해야 한다(각각 별개 행이면 안 됨).
+        assertThat(conjunctionSeeds)
+                .as("conjunction 시드 단일 행이 CONFIRMED와 VIP를 동시에 포함해야 한다")
+                .anyMatch(s -> s.values().contains("CONFIRMED") && s.values().contains("VIP"));
     }
 
     private static List<ExploredPath> pathsOf(GraphAsset asset, String endpointId) {
