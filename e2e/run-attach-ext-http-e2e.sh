@@ -5,7 +5,7 @@
 #
 # 주의: 이 스크립트는 run-attach-e2e.sh / run-attach-otel-e2e.sh 와 동일한
 # e2e/docker-compose.yml 의 고정 호스트 포트(postgres 56432, kafka 59092 등)를 공유하므로
-# 이들과 동시 실행하면 안 된다 — 반드시 순차(SEQUENTIAL) 실행. (app-port/jacoco-port/PROJECT/
+# 이들과 동시 실행하면 안 된다 — 반드시 순차(SEQUENTIAL) 실행. (app-port/coverage-port/PROJECT/
 # OUT 는 충돌 회피를 위해 다른 attach 스크립트와 다른 값을 쓴다.)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +27,7 @@ echo "=== [2/4] 빌더 attach 실행 (--external-stubs + --sut-env EXTERNAL_INVE
   --sut-jar $ROOT/samples/order-service/build/libs/order-service.jar \
   --sut-compose $ROOT/e2e/docker-compose.yml \
   --out $OUT --sut-id order-exthttp \
-  --attach --app-service app --app-port 58081 --jacoco-port 16301 \
+  --attach --app-service app --app-port 58081 --coverage-port 16301 \
   --jdbc-url jdbc:postgresql://localhost:56432/app \
   --db-service postgres \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass password \

@@ -41,6 +41,14 @@ public class FormBodySynthesizer {
                                        List<FormFieldBinding> bindings, Map<String, String> refValues,
                                        List<TableSchema> tables,
                                        Map<String, List<FieldConstraint>> fieldConstraints) {
+        return synthesize(commandShape, shapesByType, bindings, refValues, tables, fieldConstraints, "");
+    }
+
+    public SynthesizedInput synthesize(BodyShape commandShape, Map<String, BodyShape> shapesByType,
+                                       List<FormFieldBinding> bindings, Map<String, String> refValues,
+                                       List<TableSchema> tables,
+                                       Map<String, List<FieldConstraint>> fieldConstraints,
+                                       String endpointId) {
         Map<String, Kind> kindByField = bindings.stream()
                 .collect(Collectors.toMap(FormFieldBinding::field, FormFieldBinding::kind, (a, b) -> a));
 
@@ -55,7 +63,7 @@ public class FormBodySynthesizer {
             }
         }
 
-        SynthesizedInput base = new SampleInputSynthesizer(enumConstants)
+        SynthesizedInput base = new SampleInputSynthesizer(enumConstants, endpointId)
                 .synthesize(new BodyShape(commandShape.javaType(), flatFields), tables, fieldConstraints);
         ObjectNode body = (ObjectNode) base.body();
 

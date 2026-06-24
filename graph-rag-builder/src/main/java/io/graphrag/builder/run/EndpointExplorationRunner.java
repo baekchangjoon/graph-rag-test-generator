@@ -7,8 +7,8 @@ import io.graphrag.builder.capture.ParsedSql;
 import io.graphrag.builder.capture.SqlCaptureBackend;
 import io.graphrag.builder.coverage.BranchCoverage;
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
-import io.graphrag.builder.coverage.CoverageClient;
 import io.graphrag.builder.coverage.CoverageFingerprint;
+import io.graphrag.builder.coverage.CoverageProbe;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.explore.CoverageGuidedFuzzer;
@@ -177,7 +177,7 @@ public class EndpointExplorationRunner {
     private final SutHandle sut;
     private final Connection connection;
     private final DbConfig.Type dbType;
-    private final CoverageClient coverage;
+    private final CoverageProbe coverage;
     private final BranchCoverageAnalyzer analyzer;
     private final int budgetRequests;
     private final io.graphrag.builder.env.HttpCaptureServer httpCapture;
@@ -203,11 +203,13 @@ public class EndpointExplorationRunner {
     // 단계2 enum 변형이 새 arm을 연 path/합성 http call (현 endpoint). 최종 결과에 병합.
     private final List<ExploredPath> variantPaths = new ArrayList<>();
     private final List<io.graphrag.model.CapturedHttpCall> variantHttpCalls = new ArrayList<>();
+    // pjacoco per-trace: 전체 빌드 런 공유 생성기 — runner 간 traceId 충돌 없음 (Phase 2 동시 실행 안전).
+    private final io.graphrag.builder.capture.TraceParent traceParent;
 
     /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
-                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
@@ -222,12 +224,13 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                new StatusOnlyClassifier());
+                null, null);
     }
 
+    /** classifier 명시 호환 생성자 (traceParent는 null → 로컬 생성기 사용). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
-                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
@@ -243,13 +246,13 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, List.of());
+                classifier, List.of(), null, Map.of(), null);
     }
 
-    /** callSites(외부 호출 site)를 받는 레거시 호환 생성자 — egressCollector null + stringLiteralsByDto 빈 맵으로 체인. */
+    /** callSites(외부 호출 site)를 받는 레거시 호환 생성자 — egressCollector null + stringLiteralsByDto 빈 맵 + traceParent null로 체인. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
-                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
@@ -266,13 +269,13 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, callSites, null, Map.of());
+                classifier, callSites, null, Map.of(), null);
     }
 
-    /** callSites + egressCollector를 받는 호환 생성자 — stringLiteralsByDto 빈 맵으로 canonical 체인(egress 배선 테스트용). */
+    /** callSites + egressCollector를 받는 호환 생성자 — stringLiteralsByDto 빈 맵 + traceParent null로 canonical 체인. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
-                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
@@ -290,13 +293,13 @@ public class EndpointExplorationRunner {
         this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
                 responseDtoFieldSets, literalCandidates, authProvider, authConfig,
                 enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
-                classifier, callSites, egressCollector, Map.of());
+                classifier, callSites, egressCollector, Map.of(), null);
     }
 
-    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto 포함. egress 수집 + 단계2-A string-literal fuzzing 배선. */
+    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) 포함. */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
-                                     CoverageClient coverage, BranchCoverageAnalyzer analyzer,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
                                      int budgetRequests,
                                      io.graphrag.builder.env.HttpCaptureServer httpCapture,
                                      List<Set<String>> responseDtoFieldSets,
@@ -311,7 +314,8 @@ public class EndpointExplorationRunner {
                                      ResponseClassifier classifier,
                                      List<io.graphrag.builder.index.ExternalCallSite> callSites,
                                      io.graphrag.builder.capture.egress.EgressCollector egressCollector,
-                                     Map<String, Map<String, List<String>>> stringLiteralsByDto) {
+                                     Map<String, Map<String, List<String>>> stringLiteralsByDto,
+                                     io.graphrag.builder.capture.TraceParent traceParent) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -339,6 +343,9 @@ public class EndpointExplorationRunner {
                 : new ExternalStubSynthesizer(httpCapture,
                         new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),
                         httpCapture.traceKey());
+        // traceParent가 null이면 이 인스턴스 전용 로컬 생성기를 만든다 (테스트 호환 및 traceparent 미주입(WS 등) 폴백).
+        this.traceParent = traceParent != null ? traceParent
+                : new io.graphrag.builder.capture.TraceParent("local-" + System.nanoTime());
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -375,7 +382,7 @@ public class EndpointExplorationRunner {
 
         List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
 
-        coverage.dump(true);   // 부팅/seed 구간을 잘라내고 baseline 확보
+        coverage.baselineCut();   // 부팅/seed 구간을 잘라내고 baseline 확보 (pjacoco: no-op — traceId별 스토어가 비어 시작)
 
         JsonNode baseInput = happy.body();
         boolean formBody = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
@@ -432,7 +439,7 @@ public class EndpointExplorationRunner {
                 if (synth.newlyRegistered() == 0) {
                     break;   // 수렴: 새로 합성할 stub 없음
                 }
-                coverage.dump(true);                          // baseline: 직전 구간 컷(stub 적용 후 delta만)
+                coverage.baselineCut();                       // baseline: 직전 구간 컷(pjacoco no-op; stub 적용 후 delta만)
                 cumulativeCoverage = new ExecutionDataStore(); // 리포트를 재invoke run만 반영
                 outcome = orchestrator.explore(target);
                 round++;
@@ -485,7 +492,7 @@ public class EndpointExplorationRunner {
                                 enumConstants, enumColumns, happyConstraints, attemptHint,
                                 shapesByType, formBindings, nameRefValues);
                         requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
-                        coverage.dump(true);                          // baseline: 부팅+이전 구간 컷
+                        coverage.baselineCut();                       // baseline: 부팅+이전 구간 컷 (pjacoco: no-op — traceId별 스토어가 비어 시작)
                         cumulativeCoverage = new ExecutionDataStore(); // 리포트를 마지막 pass-2 run만 반영
                         EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
                         EndpointTarget target2 = new EndpointTarget(endpoint, happy2.body(), mutableFields,
@@ -1234,9 +1241,9 @@ public class EndpointExplorationRunner {
             return bundle;
         }
 
-        // 2차 drain: 2차 invoke가 발행한 records를 수집
+        // 2차 drain: 2차 invoke가 발행한 records를 수집 (REQ-P009: 자기 traceId만 — 병렬 워커 emit 비소실)
         java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> secondByTrace =
-                kafkaCapture.drainAllByTraceId(300);
+                kafkaCapture.drainByTraceIds(java.util.Set.of(secondTraceId), 300);
         java.util.List<KafkaCaptureReceiver.CapturedRecord> secondRecords =
                 secondByTrace.getOrDefault(secondTraceId, java.util.List.of());
 
@@ -1414,8 +1421,14 @@ public class EndpointExplorationRunner {
         // End-of-endpoint batch drain: Kafka records are buffered continuously by the background
         // consumer; by the time all requests for this endpoint have completed, all emitted records
         // are already buffered. A short settle handles stragglers (records in flight).
+        // REQ-P009: 이 엔드포인트 candidate의 traceId만 drain한다(drainByTraceIds) — 전역 clear는
+        // 병렬 워커가 서로의 emit을 소실시킨다(capturedEventEmits par4=0 원인).
+        java.util.Set<String> endpointTraceIds = outcome.paths().stream()
+                .map(PathCandidate::kafkaTraceId)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
         java.util.Map<String, java.util.List<KafkaCaptureReceiver.CapturedRecord>> kafkaByTrace =
-                kafkaCapture != null ? kafkaCapture.drainAllByTraceId(300) : java.util.Map.of();
+                kafkaCapture != null ? kafkaCapture.drainByTraceIds(endpointTraceIds, 300) : java.util.Map.of();
 
         for (PathCandidate candidate : outcome.paths()) {
             List<CapturedSql> sql = captureSql(candidate);
@@ -2023,20 +2036,39 @@ public class EndpointExplorationRunner {
      */
     private ExecutionDataStore sendVariantAndDumpDelta(HttpClient http, Endpoint endpoint,
             JsonNode input, String authHeaderValue, SqlCaptureBackend.Scope sqlScope) throws Exception {
-        coverage.dump(true);   // baseline: 직전 구간 컷 → 이 변형 invoke delta만 측정
+        coverage.baselineCut();   // baseline: pjacoco no-op(traceId별 스토어 빈 시작) — 이 변형 invoke delta만 측정
+        // pjacoco: 변형 invoke도 요청별 고유 traceId로 격리 (doSendWithScope와 동일 패턴)
+        String probeTraceId = traceParent.next().traceId();
+        String probeTraceparent = coverage.traceparentFor(probeTraceId);
         String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
         boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json")
-                .header("baggage", "test-id=explore");
+                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json");
         if (authHeaderValue != null) {
             builder.header(authConfig.headerName(), authHeaderValue);
         }
         Map<String, String> userHeaders = extraHeaders.resolved(Instant.now());
+        Map<String, String> scopeHeaders = sqlScope.requestHeaders();
         for (Map.Entry<String, String> h
-                : applyCorrelationPriority(userHeaders, sqlScope.requestHeaders()).entrySet()) {
+                : applyCorrelationPriority(userHeaders, scopeHeaders).entrySet()) {
             builder.header(h.getKey(), h.getValue());
+        }
+        // pjacoco traceparent/baggage 주입: scope(OTel)가 traceparent 제공 시 그 traceId, 아니면 probe traceId.
+        String coverageTraceId = probeTraceId;
+        if (probeTraceparent != null) {
+            String scopeTraceparent = scopeHeaders.entrySet().stream()
+                    .filter(e -> e.getKey().equalsIgnoreCase("traceparent"))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
+            if (scopeTraceparent != null) {
+                String[] parts = scopeTraceparent.split("-");
+                if (parts.length >= 2 && parts[1].length() == 32) {
+                    coverageTraceId = parts[1];
+                }
+            } else {
+                builder.header("traceparent", probeTraceparent);
+            }
+            builder.header("baggage", "test.id=" + coverageTraceId);
         }
         String method = endpoint.httpMethod();
         if (method.equals("GET") || method.equals("DELETE")) {
@@ -2052,7 +2084,7 @@ public class EndpointExplorationRunner {
         } finally {
             sqlScope.drain();   // scope 닫기(send 실패해도 리시버 버퍼 정리; SQL은 변형 루프 미사용)
         }
-        return coverage.dump(true);   // 이 invoke의 delta
+        return coverage.requestDelta(coverageTraceId);   // 이 invoke의 delta (pjacoco per-trace)
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -2158,8 +2190,12 @@ public class EndpointExplorationRunner {
     }
 
     /**
-     * HTTP 요청 1회 전송 + 요청 단위 커버리지 dump. authHeaderValue!=null이면 그 값을 auth 헤더로 설정,
-     * null이면 미설정. 부정-인증 패스(무효 토큰)도 이 코어를 재사용한다(per-request dump가 거부 arm을 크레딧).
+     * HTTP 요청 1회 전송 + 요청 단위 커버리지 수집. authHeaderValue!=null이면 그 값을 auth 헤더로 설정,
+     * null이면 미설정. 부정-인증 패스(무효 토큰)도 이 코어를 재사용한다(per-request probe가 거부 arm을 크레딧).
+     *
+     * <p>pjacoco 백엔드: 요청마다 고유한 traceId를 생성하고 W3C traceparent 헤더로 주입한다.
+     * 응답 수신 후 flush(traceId) → awaitExec(traceId)로 delta를 획득한다.
+     * traceparent 미주입 probe(WS·테스트 폴백, {@code traceparentFor==null})에선 traceparent 없이 동작한다.
      */
     private InvocationOutcome doSend(HttpClient http, Endpoint endpoint, JsonNode input,
                                     String authHeaderValue) throws Exception {
@@ -2172,20 +2208,25 @@ public class EndpointExplorationRunner {
      */
     private InvocationOutcome doSendWithScope(HttpClient http, Endpoint endpoint, JsonNode input,
                                     String authHeaderValue, SqlCaptureBackend.Scope sqlScope) throws Exception {
+        // pjacoco: 요청별 고유 traceId 생성 (runId-seed + 전역 단조 카운터 → runner 간 충돌 없음)
+        String probeTraceId = traceParent.next().traceId();
+        String probeTraceparent = coverage.traceparentFor(probeTraceId);   // null = traceparent 미주입 probe(WS·테스트 폴백)
+
         long logStart = sut.logOffset();
         String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
         // @Controller 폼 핸들러는 application/x-www-form-urlencoded, 그 외는 JSON.
         boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(30))
-                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json")
-                // propagation 실측용 (docs/06): outbound로 복사되는지 관찰
-                .header("baggage", "test-id=explore");
+                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json");
         if (authHeaderValue != null) {
             builder.header(authConfig.headerName(), authHeaderValue);
         }
-        // 상관 헤더는 활성 trace-mode가 결정(otel: traceparent, sleuth: B3, none: 없음).
-        // 사용자 제공 상관 헤더는 제거하고 backend 것만 주입(중복·비결정 전파 방지).
+        // pjacoco: traceparent를 먼저 주입해 scope 상관 헤더보다 높은 우선순위를 가진다.
+        // traceparent 가 이미 있으면 scope 헤더와 병합 시 CORRELATION_HEADERS 규칙으로 제거·덮어쓰기되므로
+        // probeTraceparent를 직접 주입한 후 correlation-priority merge는 건너뛰지 않는다(scope가 이겨야 함).
+        // 단, scope(OTEL agent)가 traceparent를 이미 제공하는 경우(non-sleuth)엔 scope 것을 우선시한다.
+        // → scope가 비면(sleuth/none) probeTraceparent를 쓰고, scope에 traceparent가 있으면 scope 것을 사용.
         Map<String, String> userHeaders = extraHeaders.resolved(Instant.now());
         Map<String, String> scopeHeaders = sqlScope.requestHeaders();
         for (String name : userHeaders.keySet()) {
@@ -2196,6 +2237,33 @@ public class EndpointExplorationRunner {
         }
         for (Map.Entry<String, String> h : applyCorrelationPriority(userHeaders, scopeHeaders).entrySet()) {
             builder.header(h.getKey(), h.getValue());
+        }
+        // pjacoco traceparent 주입: scope(OTel)가 traceparent를 제공하면 그것을 사용, 없으면 probe traceId 주입.
+        // P1-5 수정: scope에 traceparent가 있으면 OTel traceId를 coverageTraceId로 사용 (probe traceId는 무시).
+        //   scope 없으면 probe traceId를 traceparent로 주입 → pjacoco가 probe traceId로 exec를 기록.
+        String coverageTraceId = probeTraceId;   // traceparent 미주입 probe(probeTraceparent=null)에선 무사용
+        if (probeTraceparent != null) {
+            String scopeTraceparent = scopeHeaders.entrySet().stream()
+                    .filter(e -> e.getKey().equalsIgnoreCase("traceparent"))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(null);
+            if (scopeTraceparent != null) {
+                // OTel이 traceparent를 주입했다 → pjacoco는 OTel traceId로 exec를 기록한다.
+                // coverage flush/await도 같은 traceId여야 한다.
+                String[] parts = scopeTraceparent.split("-");
+                if (parts.length >= 2 && parts[1].length() == 32) {
+                    coverageTraceId = parts[1];
+                }
+                // probe traceparent 미주입 (scope가 이미 traceparent를 가짐)
+            } else {
+                // OTel traceparent 없음 → probe traceId로 주입 (pjacoco가 probe traceId로 exec를 기록)
+                builder.header("traceparent", probeTraceparent);
+                // coverageTraceId = probeTraceId (기본값 유지)
+            }
+            // pjacoco baggage: OTel scope weave가 비활성화되더라도 ServletAdvice.activate() 폴백 경로로
+            // coverageTraceId 기반 store를 생성할 수 있게 test.id를 baggage 헤더에 직접 주입한다.
+            builder.header("baggage", "test.id=" + coverageTraceId);
         }
         String method = endpoint.httpMethod();
         if (method.equals("GET") || method.equals("DELETE")) {
@@ -2217,9 +2285,12 @@ public class EndpointExplorationRunner {
                 egressCollector != null ? egressCollector.collect(egressTraceId) : List.of();
         List<ParsedSql> drained = sqlScope.drain();   // flush 여유는 backend.drain() 내부로 이동
 
-        String traceId = traceparentTraceId(sqlScope.requestHeaders());
+        // traceId 추출: coverage 상관용 (SQL captureBackend의 traceparent와 coverageTraceId를 일치시킴).
+        // OTel scope traceparent가 있으면 coverageTraceId = OTel traceId, 없으면 probeTraceId.
+        String traceId = probeTraceparent != null ? coverageTraceId : null;
 
-        ExecutionDataStore delta = coverage.dump(true);
+        // 커버리지 delta: pjacoco → flush(coverageTraceId) + awaitExec (traceId별 .exec 로드)
+        ExecutionDataStore delta = coverage.requestDelta(coverageTraceId);
         String coverageKey = CoverageFingerprint.of(delta, appClasses);
         for (ExecutionData ed : delta.getContents()) {
             cumulativeCoverage.put(ed);   // probe OR 병합 (arm-level 누적)
@@ -2230,7 +2301,13 @@ public class EndpointExplorationRunner {
         return new InvocationOutcome(response.statusCode(),
                 parseJsonOrNull(response.body()),
                 requestCoverage.covered(), logStart, logEnd,
-                httpCapture == null ? List.of() : httpCapture.drainNewExchanges(),
+                // F2(REQ-P009): coverageTraceId per-traceId drain (병렬 워커 간 교환 도용 race 제거).
+                // SUT가 baggage: test.id=<coverageTraceId>를 outbound 전파 → WireMock 이벤트 필터.
+                // coverageTraceId가 null이면(traceparent 미주입 순차 폴백) 기존 drainNewExchanges.
+                httpCapture == null ? List.of()
+                        : coverageTraceId != null
+                                ? httpCapture.drainByTraceId(coverageTraceId)
+                                : httpCapture.drainNewExchanges(),
                 coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders,
                 egressCalls);
     }
@@ -2320,8 +2397,8 @@ public class EndpointExplorationRunner {
             }
             SynthesizedInput bodyPart = form
                     ? new FormBodySynthesizer(enumConstants)
-                            .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints)
-                    : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables, fieldConstraints);
+                            .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints, endpoint.id())
+                    : new SampleInputSynthesizer(enumConstants, endpoint.id()).synthesize(shape, tables, fieldConstraints);
             JsonNode bn = bodyPart.body();
             if (!(bn instanceof ObjectNode bo)) {
                 // 컬렉션 body(array)는 path/query와 병합 불가 — body를 그대로 둔다(by-id+컬렉션 body는
@@ -2346,8 +2423,8 @@ public class EndpointExplorationRunner {
         }
         return form
                 ? new FormBodySynthesizer(enumConstants)
-                        .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints)
-                : new SampleInputSynthesizer(enumConstants).synthesize(shape, tables, fieldConstraints);
+                        .synthesize(shape, shapesByType, formBindings, refValues, tables, fieldConstraints, endpoint.id())
+                : new SampleInputSynthesizer(enumConstants, endpoint.id()).synthesize(shape, tables, fieldConstraints);
     }
 
     /** 시드 행들을 fresh 상태로 복원: reverse-order DELETE(child→parent) 후 정순 INSERT(parent→child).

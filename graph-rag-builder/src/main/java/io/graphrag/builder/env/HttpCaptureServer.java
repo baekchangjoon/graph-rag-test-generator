@@ -161,8 +161,63 @@ public class HttpCaptureServer implements AutoCloseable {
                     event.getRequest().getBodyAsString(),
                     event.getResponse().getStatus(),
                     event.getResponse().getBodyAsString(),
-                    baggage != null && baggage.contains("test-id="),
+                    baggage != null
+                            && (baggage.contains("test-id=") || baggage.contains("test.id=")),
                     traceId));
+        }
+        return exchanges;
+    }
+
+    /**
+     * 병렬 실행 경로용: 지정한 traceId에 귀속된 외부 HTTP 교환만 반환한다.
+     *
+     * <p>SUT가 outbound 호출 시 {@code baggage: test.id=<traceId>} 헤더를 전파하고,
+     * WireMock ServeEvent에 그 헤더가 기록된다. 이 메서드는 전체 이벤트 목록에서
+     * {@code test.id=<traceId>} baggage를 가진 이벤트만 필터해 반환한다.
+     *
+     * <p>공유 drain 카운터({@code drainedCount})를 건드리지 않는다 — 순차 경로
+     * {@code drainNewExchanges()}와 혼용 안전(단, 두 경로를 같은 서버에서 혼용하면 중복 집계 위험).
+     *
+     * @param traceId 요청의 coverage traceId (baggage의 test.id 값과 일치)
+     * @return 발생 순서로 정렬된 교환 목록
+     */
+    public List<RawHttpExchange> drainByTraceId(String traceId) {
+        if (traceId == null) {
+            return List.of();
+        }
+        String testIdToken = "test.id=" + traceId;
+        List<ServeEvent> all = server.getAllServeEvents();   // 최신순
+        List<RawHttpExchange> exchanges = new ArrayList<>();
+        // 발생 순서(오래된 것 먼저)로 처리: getAllServeEvents()는 최신순이므로 역순 순회
+        for (int i = all.size() - 1; i >= 0; i--) {
+            ServeEvent event = all.get(i);
+            String baggage = event.getRequest().getHeader("baggage");
+            if (baggage == null || !baggage.contains(testIdToken)) {
+                continue;
+            }
+            String path = event.getRequest().getUrl().split("\\?")[0];
+            if (authToken != null) {
+                if (event.getResponse() != null
+                        && event.getResponse().getHeaders() != null
+                        && event.getResponse().getHeaders().getHeader(TokenPrefixFilter.UNAUTH_HEADER).isPresent()) {
+                    continue;
+                }
+                String prefix = "/" + authToken;
+                if (path.equals(prefix) || path.startsWith(prefix + "/")) {
+                    path = path.equals(prefix) ? "/" : path.substring(prefix.length());
+                }
+            }
+            Map<String, String> query = new LinkedHashMap<>();
+            event.getRequest().getQueryParams().forEach((name, value) ->
+                    query.put(name, value.firstValue()));
+            exchanges.add(new RawHttpExchange(
+                    event.getRequest().getMethod().getName(),
+                    path,
+                    query,
+                    event.getRequest().getBodyAsString(),
+                    event.getResponse().getStatus(),
+                    event.getResponse().getBodyAsString(),
+                    true, traceId));   // baggagePresent=true, outboundTraceId=traceId(필터 키)
         }
         return exchanges;
     }

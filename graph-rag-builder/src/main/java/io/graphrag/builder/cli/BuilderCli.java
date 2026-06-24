@@ -1,9 +1,11 @@
 package io.graphrag.builder.cli;
 
 import io.graphrag.builder.coverage.BranchCoverageAnalyzer;
-import io.graphrag.builder.coverage.CoverageClient;
-import io.graphrag.builder.coverage.JacocoAgent;
+import io.graphrag.builder.coverage.CoverageProbe;
 import io.graphrag.builder.coverage.OtelAgent;
+import io.graphrag.builder.coverage.PjacocoAgent;
+import io.graphrag.builder.coverage.PjacocoCoverageBackend;
+import io.graphrag.builder.coverage.PjacocoCoverageProbe;
 import io.graphrag.builder.env.AnalysisEnvironment;
 import io.graphrag.builder.env.AttachedComposeEnvironment;
 import io.graphrag.builder.env.ComposeInspector;
@@ -31,6 +33,7 @@ import io.graphrag.builder.index.ValidationConstraintExtractor;
 import io.graphrag.builder.index.WsEndpointIndexer;
 import io.graphrag.builder.index.WsIndexResult;
 import io.graphrag.builder.oracle.ClassifierConfig;
+import io.graphrag.builder.capture.TraceParent;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
@@ -62,6 +65,9 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Stream;
 import java.util.AbstractMap;
 
@@ -119,7 +125,7 @@ public final class BuilderCli {
                         required(options, "--app-service"),
                         Integer.parseInt(options.getOrDefault("--app-container-port", "8080")),
                         Integer.parseInt(required(options, "--app-port")),
-                        Integer.parseInt(required(options, "--jacoco-port")),
+                        Integer.parseInt(coveragePortOption(options)),
                         required(options, "--jdbc-url"),
                         options.get("--kafka-bootstrap"),
                         options.getOrDefault("--health-path", "/actuator/health"),
@@ -188,7 +194,16 @@ public final class BuilderCli {
                         options.get("--llm-model"),
                         options.get("--llm-backend"),
                         options.get("--llm-cli")),
-                sourceRoots);
+                sourceRoots,
+                Integer.parseInt(options.getOrDefault("--parallelism", "1")),
+                "pjacoco",   // P1-6: JaCoCo 백엔드 제거 — 항상 pjacoco (--coverage-backend 플래그 폐기)
+                options.get("--sut-pkg"),
+                // P2-4: flush 스레드 수 (per-worker-sync 모델에서는 미사용; 플래그 수락만)
+                Integer.parseInt(options.getOrDefault("--flush-threads", "0")),
+                // P2-4: .exec await 타임아웃 ms (0 = PjacocoCoverageBackend 기본 30_000ms)
+                Long.parseLong(options.getOrDefault("--exec-await-ms", "0")),
+                // F1b: OTLP entry-span await 타임아웃 ms (0 = 모드별 기본: 순차 8_000ms, 병렬 30_000ms)
+                Long.parseLong(options.getOrDefault("--sql-await-ms", "0")));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -257,22 +272,28 @@ public final class BuilderCli {
                 coveredAppBranches, runWideExec, capturedEventEmits, unsupportedShapes);
 
         Path workDir = Files.createDirectories(config.out().resolve("work"));
-        JacocoAgent jacoco = JacocoAgent.prepare(workDir);
         OtelAgent otel = OtelAgent.prepare(workDir);
+        PjacocoAgent pjacoco = PjacocoAgent.prepare(workDir);
 
         ExplorationResult result;
         if (config.attach() != null) {
-            result = runAttached(config, jacoco, otel, workDir, mybatisLogLevels,
+            result = runAttached(config, pjacoco, otel, workDir, mybatisLogLevels,
                     index, wsIndex, kafkaIndex, mappers, responseDtoFieldSets, plan, enumConstants,
                     callSites, stringLiteralsByDto, acc);
         } else {
+            // OTel → pjacoco (per-trace 커버리지; P1-6에서 jacoco tcpserver 백엔드 제거)
+            int coverageControlPort = freePort();
+            Path pjacocoExecDir = Files.createDirectories(workDir.resolve("pjacoco-exec"));
+            // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) — pjacoco만. 그 외: otel agent 포함.
             boolean analysisSleuthMode = "sleuth".equals(config.traceMode());
-            // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) — jacoco만. 그 외: 기존대로 otel agent 포함.
-            String analysisJto = analysisSleuthMode
-                    ? jacoco.javaToolOptions()
-                    : jacoco.javaToolOptions() + " " + otel.javaToolOptions();
+            String pjacocoJto = pjacoco.javaToolOptions(
+                    pjacocoExecDir, coverageControlPort, config.sutPkg(), config.sutSrc(), true);
+            String javaToolOptions = analysisSleuthMode
+                    ? pjacocoJto
+                    : otel.javaToolOptions() + " " + pjacocoJto;
+            log.info("coverage backend: pjacoco (control port {})", coverageControlPort);
             SutOptions sutOptions = new SutOptions(
-                    analysisJto,
+                    javaToolOptions,
                     mybatisLogLevels,
                     otel.env(config.sutId()),
                     config.sutJavaHome());
@@ -283,9 +304,23 @@ public final class BuilderCli {
                 env.start(config.sutJar(), workDir, sutOptions,
                         config.externalStubsDir(), config.sutEnv(),
                         otelSqlCapture ? otel : null, config.sutId());
-                env.coverageEndpoint("localhost", jacoco.tcpPort());
-                result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc);
+                env.coverageEndpoint("localhost", coverageControlPort);
+                // P1-3: CoverageProbe 생성 — pjacoco per-trace 백엔드 (P1-6에서 jacoco 제거)
+                // P2-4: execAwaitMs=0이면 기본 30_000ms, 양수이면 CLI --exec-await-ms 값 사용
+                long execAwaitMs = config.execAwaitMs() > 0 ? config.execAwaitMs() : 30_000L;
+                if (config.flushThreads() > 0) {
+                    log.info("P2-4: --flush-threads={} accepted (per-worker-sync 모델 — flush 풀 불필요; 향후 전략 변경 대비 수락)",
+                            config.flushThreads());
+                }
+                log.info("P2-4: pjacoco exec-await timeout={}ms", execAwaitMs);
+                CoverageProbe probe = new PjacocoCoverageProbe(new PjacocoCoverageBackend(
+                        "localhost", coverageControlPort, pjacocoExecDir, execAwaitMs));
+                try {
+                    result = explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                            responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc, probe);
+                } finally {
+                    probe.shutdown();
+                }
             }
         }
         int totalAppBranches = result.totalAppBranches();
@@ -419,7 +454,8 @@ public final class BuilderCli {
     }
 
     /** attach 모드: 사용자 compose + 생성 override 로 SUT를 띄우고 동일한 explore()를 돌린다. */
-    private static ExplorationResult runAttached(BuildConfig config, JacocoAgent jacoco, OtelAgent otel, Path workDir,
+    private static ExplorationResult runAttached(BuildConfig config, PjacocoAgent pjacoco,
+            OtelAgent otel, Path workDir,
             Map<String, String> mybatisLogLevels, IndexResult index,
             io.graphrag.builder.index.WsIndexResult wsIndex,
             io.graphrag.builder.index.KafkaIndexResult kafkaIndex, List<MapperStatement> mappers,
@@ -430,22 +466,33 @@ public final class BuilderCli {
             ExplorationAccumulators acc) throws Exception {
         AttachConfig at = config.attach();
         Path agentsDir = Files.createDirectories(workDir.resolve("agents"));
-        // jacoco/otel jar 를 컨테이너로 mount 할 호스트 디렉터리로 모은다
-        Files.copy(jacoco.agentJar(), agentsDir.resolve("jacocoagent.jar"),
-                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+        // otel jar는 항상 필요 (otel-javaagent.jar mount)
         Files.copy(otel.agentJar(), agentsDir.resolve("otel-javaagent.jar"),
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
-        int jacocoContainerPort = 6300;
+        int coverageContainerPort = 6300;   // 컨테이너 내부 pjacoco control 포트
         String mode = config.traceMode();
         boolean otelSqlCapture = "otel".equals(mode);
         boolean sleuthMode = "sleuth".equals(mode);
 
-        // sleuth: OTEL javaagent 미부착(레거시 brave.Tracing 빈 충돌 회피) + 인코딩 병합. 그 외: 기존대로 otel agent.
-        String jacocoJto = JacocoAgent.containerJavaToolOptions("/grb-agents/jacocoagent.jar", jacocoContainerPort);
+        // OTel → pjacoco 순서. (P1-6에서 jacoco tcpserver 백엔드 제거 — pjacoco per-trace 단일 경로.)
+        Files.copy(pjacoco.agentJar(), agentsDir.resolve("pjacoco-agent.jar"),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        Files.createDirectories(workDir.resolve("pjacoco-exec"));
+        // 컨테이너 내부 pjacoco-exec는 workDir 볼륨 마운트로 호스트에 쓴다 → destfile=호스트 경로 그대로 사용
+        String pjacocoJto = pjacoco.containerJavaToolOptions(
+                "/grb-agents/pjacoco-agent.jar",
+                Path.of("/grb-pjacoco-exec"),
+                coverageContainerPort, config.sutPkg(), config.sutSrc(), true);
+        // 컨테이너 SUT의 OTEL exporter / 외부 HTTP가 host.docker.internal(IPv4+IPv6 둘 다 등록)로 호스트에
+        // 도달해야 한다. host-gateway의 IPv6 항목으로는 호스트의 IPv4 리시버에 닿지 못하므로(IPv6=000),
+        // SUT JVM을 IPv4 스택으로 고정해 host.docker.internal을 IPv4로 해소시킨다(컨테이너→호스트 OTLP/HTTP 안정).
+        String netJto = "-Djava.net.preferIPv4Stack=true";
         String jto = sleuthMode
-                ? jacocoJto + " " + OverrideComposeGenerator.ENCODING_JTO
-                : jacocoJto + " -javaagent:/grb-agents/otel-javaagent.jar";
+                ? netJto + " -javaagent:/grb-agents/otel-javaagent.jar " + pjacocoJto + " " + OverrideComposeGenerator.ENCODING_JTO
+                : netJto + " -javaagent:/grb-agents/otel-javaagent.jar " + pjacocoJto;
+        log.info("coverage backend: pjacoco (attach, container control port {})", coverageContainerPort);
 
         // host-gateway 는 외부 HTTP 캡처(모든 attach 모드)와 OTLP receiver 도달에 모두 필요 — 항상 1회 점검.
         warnIfHostGatewayUnsupported();
@@ -486,11 +533,13 @@ public final class BuilderCli {
 
             // host-gateway 는 외부 HTTP 캡처 때문에 항상 주입(true). sleuth 모드는 보조 capture-service에
             // 로깅/인코딩을 주입하도록 effectiveCaptureServices(at)를 extraLogServices로 전달(app 노드는 generator가 skip).
+            List<String> extraVolumes =
+                    List.of(workDir.resolve("pjacoco-exec").toAbsolutePath() + ":/grb-pjacoco-exec");
             String overrideYaml = new OverrideComposeGenerator().generate(
                     new OverrideComposeGenerator.Spec(at.appService(), agentsDir.toAbsolutePath().toString(),
-                            at.appContainerPort(), at.appHostPort(), jacocoContainerPort, at.jacocoHostPort(),
+                            at.appContainerPort(), at.appHostPort(), coverageContainerPort, at.coverageHostPort(),
                             jto, mybatisLogLevels, mergedEnv, true, otelSqlCapture,
-                            effectiveCaptureServices(at)));
+                            effectiveCaptureServices(at), extraVolumes));
             Path overridePath = workDir.resolve("attach-override.yml");
             Files.writeString(overridePath, overrideYaml);
 
@@ -498,7 +547,7 @@ public final class BuilderCli {
                     at.appService(), "grb-attach-" + config.sutId(),
                     "http://localhost:" + at.appHostPort(),
                     at.jdbcUrl(), config.dbConfig().user(), config.dbConfig().password(),
-                    "localhost", at.jacocoHostPort(), at.kafkaBootstrap(),
+                    "localhost", at.coverageHostPort(), at.kafkaBootstrap(),
                     at.healthPath(), at.readyTimeoutSeconds(),
                     effectiveCaptureServices(at));   // app 포함 목록(Config도 빈 목록은 [app]로 정규화)
 
@@ -507,8 +556,17 @@ public final class BuilderCli {
             handedOff = true;
             try (env) {
                 env.start(workDir);
-                return explore(env, config, index, wsIndex, kafkaIndex, mappers,
-                        responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc);
+                // P2-4: attach 경로에도 execAwaitMs 적용
+                long attachExecAwaitMs = config.execAwaitMs() > 0 ? config.execAwaitMs() : 30_000L;
+                CoverageProbe attachProbe = new PjacocoCoverageProbe(new PjacocoCoverageBackend(
+                        "localhost", at.coverageHostPort(),
+                        workDir.resolve("pjacoco-exec"), attachExecAwaitMs));
+                try {
+                    return explore(env, config, index, wsIndex, kafkaIndex, mappers,
+                            responseDtoFieldSets, plan, enumConstants, callSites, stringLiteralsByDto, acc, attachProbe);
+                } finally {
+                    attachProbe.shutdown();
+                }
             }
         } finally {
             if (!handedOff) {
@@ -531,6 +589,15 @@ public final class BuilderCli {
         out.add(at.appService());
         out.addAll(req);
         return out;
+    }
+
+    /** OS가 임시 할당한 사용 가능한 포트를 반환한다 (ServerSocket(0) 패턴). */
+    private static int freePort() {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            return s.getLocalPort();
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("failed to allocate free port", e);
+        }
     }
 
     /** attach OTLP 리시버용 per-run 256-bit shared secret (hex). */
@@ -568,6 +635,12 @@ public final class BuilderCli {
 
     private record ExplorationResult(int totalAppBranches, java.util.List<io.graphrag.model.TableSchema> tables) {}
 
+    /**
+     * Phase 0.5 spike: 락 제거 버전 — unlocked speedup 측정.
+     * dump(reset=true) 동시 호출 시 IOException 발생 가능 → catch-and-return-empty로 무시.
+     * 커버리지 수치는 완전히 무효(벽시계만 측정).
+     */
+
     /** SUT 환경(env) 위에서 Kafka/HTTP/WS 탐색을 돌리고 acc를 채운다. analysis/attach 공통. */
     private static ExplorationResult explore(ExplorationEnvironment env, BuildConfig config,
                                              IndexResult index,
@@ -579,7 +652,8 @@ public final class BuilderCli {
                                              Map<String, List<String>> enumConstants,
                                              List<io.graphrag.builder.index.ExternalCallSite> callSites,
                                              Map<String, Map<String, List<String>>> stringLiteralsByDto,
-                                             ExplorationAccumulators acc) throws Exception {
+                                             ExplorationAccumulators acc,
+                                             CoverageProbe coverageProbe) throws Exception {
         List<ExploredPath> paths = acc.paths();
         List<CapturedSql> sql = acc.sql();
         List<CapturedHttpCall> httpCalls = acc.httpCalls();
@@ -601,7 +675,7 @@ public final class BuilderCli {
             tables = new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
             log.info("extracted schema: {} table(s)", tables.size());
 
-            CoverageClient coverageClient = new CoverageClient(env.coverageHost(), env.coveragePort());
+            CoverageProbe coverageClient = coverageProbe;
             BranchCoverageAnalyzer analyzer = new BranchCoverageAnalyzer(config.sutJar());
             // BOOT-INF/classes 전체 분기 = app 커버리지 분모 (1회 산출)
             totalAppBranches = analyzer.analyze(
@@ -672,11 +746,25 @@ public final class BuilderCli {
             // 결정적 시드: 같은 commit 재분석은 동일 trace 시퀀스(재현성), 다른 SUT/commit은 충돌 없음.
             String traceRunId = config.commitSha() == null
                     ? config.sutId() : config.sutId() + ":" + config.commitSha();
+            // 전체 빌드 런에서 유일한 traceId 생성기: 동시 runner들이 같은 인스턴스를 공유해
+            // Phase 2 병렬 실행에서도 traceId 충돌이 없다 (runId-seed + AtomicLong 카운터).
+            TraceParent sharedTraceParent = new TraceParent(traceRunId);
             String mode = config.traceMode();
+            // F1(REQ-P009): parallelism>1이면 OtelSpanCapture를 parallelAware 모드로 생성.
+            // 이 모드에서는 log-parser 폴백이 비활성화된다 — 폴백은 timestamp-window 기반으로
+            // 동시 워커 로그가 섞이면 SQL 교차 오염이 발생하기 때문이다 (P2-5 F1).
+            // F1b(REQ-P009): 병렬 모드에서 OTLP BSP export 지연 증가 → awaitTimeout 상향.
+            // sqlAwaitMs=0이면 모드별 기본값(순차 8_000ms, 병렬 30_000ms) 적용.
+            boolean parallelAware = config.parallelism() > 1;
             io.graphrag.builder.capture.SqlCaptureBackend sqlCapture;
             if ("otel".equals(mode) && env.otlpReceiver() != null) {
+                // attach: 컨테이너→호스트 OTLP가 Docker Desktop VM hop을 거쳐 span 도착 jitter가 크므로
+                // quiescence 창을 넓힌다(빠른 요청의 db span 누락→log-parser 폴백 race 완화). analysis는 기본.
+                long quiescenceMs = config.attach() != null
+                        ? io.graphrag.builder.capture.OtelSpanCapture.ATTACH_QUIESCENCE_MILLIS : 0L;
                 sqlCapture = new io.graphrag.builder.capture.OtelSpanCapture(env.otlpReceiver(), env.sut(),
-                        new io.graphrag.builder.capture.TraceParent(traceRunId));
+                        new io.graphrag.builder.capture.TraceParent(traceRunId), parallelAware,
+                        config.sqlAwaitMs(), quiescenceMs);
             } else if ("sleuth".equals(mode)) {
                 // per-run nonce(R5): 동일 commit 동시 실행 시 trace 시퀀스 충돌 방지(SecureRandom, 비결정적 OK).
                 sqlCapture = new io.graphrag.builder.capture.SleuthLogCapture(env.sut(),
@@ -697,7 +785,8 @@ public final class BuilderCli {
             if (kafkaBootstrap != null && !kafkaIndex.consumers().isEmpty()) {
                 io.graphrag.builder.run.KafkaCaptureRunner kafkaRunner =
                         new io.graphrag.builder.run.KafkaCaptureRunner(
-                                connection, env.dbType(), kafkaBootstrap, coverageClient, sqlCapture);
+                                connection, env.dbType(), kafkaBootstrap, coverageClient, sqlCapture,
+                                sharedTraceParent);
                 for (io.graphrag.model.KafkaConsumer kafkaConsumer : kafkaIndex.consumers()) {
                     if (!plan.shouldExplore(kafkaConsumer.id())) {
                         continue;
@@ -722,6 +811,15 @@ public final class BuilderCli {
             Map<String, Set<Map.Entry<String, String>>> reachableCache = new HashMap<>();
 
             try (io.graphrag.builder.run.KafkaCaptureReceiver receiverToClose = kafkaCapture) {
+                // Phase 2: parallelism=1이면 순차 경로, N>1이면 ExecutorService fan-out.
+                // 각 워커는 자기 Connection(workerConn) + 로컬 누적기를 가지고 EndpointResult를 반환.
+                // 전 워커 완료 후 단일 스레드에서 merge (REQ-P005, REQ-P006).
+                int parallelism = config.parallelism();
+                log.info("HTTP endpoint loop parallelism={}", parallelism);
+
+                // 탐색 대상 엔드포인트만 사전 필터(순차와 동일한 skip 로직)
+                List<Endpoint> toExplore = new ArrayList<>();
+                List<ExplorationReport.UnsupportedShape> preFilterShapes = new ArrayList<>();
                 for (Endpoint endpoint : index.endpoints()) {
                     if (!plan.shouldExplore(endpoint.id())) {
                         log.info("skip {} (partition clean; carrying over)", endpoint.id());
@@ -730,7 +828,6 @@ public final class BuilderCli {
                     BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
                     boolean hasPathParam = endpoint.params().stream()
                             .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
-                    // Spoon이 해석하지 못한 body param → Instancio reflective fallback 시도
                     String bodyFqn = endpoint.params().stream()
                             .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
                                     || p.kind() == io.graphrag.model.ParamKind.FORM)
@@ -738,72 +835,149 @@ public final class BuilderCli {
                             .findFirst().orElse(null);
                     if (shape == null && bodyFqn != null) {
                         if (config.reflectInstantiate()) {
-                            // Fix 5: pass config.reflectInstantiate() — no hardcoded literal
                             var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
                                     .resolve(bodyFqn, config.sutJar());
                             if (reflected.isPresent()) {
                                 log.info("reflect-instantiate fallback: {} → {} field(s)",
                                         bodyFqn, reflected.get().shape().fields().size());
-                                shape = reflected.get().shape();
                             } else {
-                                // Fix 3: record UnsupportedShape when reflect fallback returns empty (REQ-006/REQ-008)
-                                unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                                preFilterShapes.add(new ExplorationReport.UnsupportedShape(
                                         endpoint.id(), bodyFqn, "reflect-instantiate failed"));
                             }
                         } else {
-                            // Fix 3: record UnsupportedShape when reflect-instantiate is disabled (REQ-006/REQ-008)
-                            unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                            preFilterShapes.add(new ExplorationReport.UnsupportedShape(
                                     endpoint.id(), bodyFqn, "reflect-instantiate disabled"));
                         }
                     }
-                    // body 없는 비-GET이라도 PATH param이 있으면 by-id 경로(DELETE /{id} 등)로 탐색
-                    // (happyInput이 path-id + 리소스 시드 합성). body도 path도 없을 때만 skip.
-                    if (shape == null && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+                    if (bodyShapeFor(endpoint, index.bodyShapes()) == null
+                            && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
                         log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
                         continue;
                     }
-                    var conditions = constraintExtractor.extract(
-                            config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod());
-                    var literals = literalExtractor.extract(config.sourceRoots(), endpoint.handlerClass());
-                    Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
-                            shape == null ? Map.of()
-                                    : new ValidationConstraintExtractor()
-                                            .extract(config.sourceRoots(), shape.javaType());
-                    EndpointExplorationRunner runner = new EndpointExplorationRunner(
-                            env.sut(), connection, env.dbType(),
-                            coverageClient, analyzer,
-                            config.budgetRequests(), env.httpCapture(),
-                            responseDtoFieldSets, literals,
-                            authProvider, config.authConfig(), enumConstants, enumColumns,
-                            config.requestHeaders(), sqlCapture, receiverToClose,
-                            config.classifierConfig().toClassifier(), callSites,
-                            io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto);
-                    // REQ-012: 고유 핸들러당 Spoon 1회(computeIfAbsent 캐시) — cross-class 귀속.
-                    String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
-                    Set<Map.Entry<String, String>> reachable = reachableCache.computeIfAbsent(
-                            handlerKey,
-                            k -> constraintExtractor.reachableMethods(
-                                    config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod()));
-                    // 이 엔드포인트 reachable에 귀속된 상태가드만 전달(cross-class 포함).
-                    List<ConstraintExtractor.StateGuard> endpointStateGuards = allStateGuards.stream()
-                            .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
-                            .toList();
-                    // 이 엔드포인트 reachable에 귀속된 joinGuard만 전달(cross-class 포함).
-                    List<ConstraintExtractor.JoinGuard> endpointJoinGuards = allJoinGuards.stream()
-                            .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
-                            .toList();
-                    // 이 엔드포인트 reachable에 귀속된 conjunction만 전달(cross-class 포함, REQ-006).
-                    List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions =
-                            allStateGuardConjunctions.stream()
-                                    .filter(c -> isReachable(reachable, c.classFqn(), c.method()))
-                                    .toList();
-                    EndpointExplorationRunner.EndpointResult result =
-                            runner.run(endpoint, shape, tables, conditions,
-                                    allComparisons, inputCandidates, fieldConstraints, allConjunctions,
-                                    endpointJoinGuards, endpointStateGuards, endpointStateGuardConjunctions,
-                                    index.validBodyEndpointIds().contains(endpoint.id()),
-                                    index.bodyShapes(),
-                                    index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
+                    toExplore.add(endpoint);
+                }
+                unsupportedShapes.addAll(preFilterShapes);
+                log.info("endpoints to explore: {} (parallelism={})", toExplore.size(), parallelism);
+
+                // 실제 탐색 실행 — 순차(P=1) 또는 병렬(P>1)
+                // captureCtx: 워커 내부에서 shape 재도출 필요 → index/config를 클로저로 캡처
+                final List<ConstraintExtractor.Comparison> sharedAllComparisons = allComparisons;
+                final List<ConstraintExtractor.Conjunction> sharedAllConjunctions = allConjunctions;
+                final List<ConstraintExtractor.JoinGuard> sharedAllJoinGuards = allJoinGuards;
+                final List<ConstraintExtractor.StateGuard> sharedAllStateGuards = allStateGuards;
+                final io.graphrag.builder.oracle.InputCandidates sharedInputCandidates = inputCandidates;
+                final Map<String, List<String>> sharedEnumColumns = enumColumns;
+                final ConstraintExtractor sharedConstraintExtractor = constraintExtractor;
+                final LiteralCandidateExtractor sharedLiteralExtractor = literalExtractor;
+                final AuthTokenProvider sharedAuthProvider = authProvider;
+                final io.graphrag.builder.capture.SqlCaptureBackend sharedSqlCapture = sqlCapture;
+                final TraceParent sharedTraceParentRef = sharedTraceParent;
+                final List<Set<String>> sharedResponseDtoFieldSets = responseDtoFieldSets;
+                final BranchCoverageAnalyzer sharedAnalyzer = analyzer;
+                final CoverageProbe sharedCoverageClient = coverageProbe;
+                final List<ConstraintExtractor.StateGuardConjunction> sharedAllStateGuardConjunctions = allStateGuardConjunctions;
+                // REQ-012: handler→reachable 캐시. 병렬 워커가 computeIfAbsent로 공유 → ConcurrentHashMap.
+                final Map<String, Set<Map.Entry<String, String>>> sharedReachableCache =
+                        new java.util.concurrent.ConcurrentHashMap<>();
+
+                // workerTask: 엔드포인트 1개를 자기 Connection으로 탐색해 EndpointResult 반환
+                java.util.function.Function<Endpoint, EndpointExplorationRunner.EndpointResult> workerTask =
+                        endpoint -> {
+                    try (Connection workerConn = env.openConnection()) {
+                        BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
+                        String bodyFqn2 = endpoint.params().stream()
+                                .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
+                                        || p.kind() == io.graphrag.model.ParamKind.FORM)
+                                .map(io.graphrag.model.EndpointParam::javaType)
+                                .findFirst().orElse(null);
+                        if (shape == null && bodyFqn2 != null && config.reflectInstantiate()) {
+                            var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
+                                    .resolve(bodyFqn2, config.sutJar());
+                            if (reflected.isPresent()) {
+                                shape = reflected.get().shape();
+                            }
+                        }
+
+                        var conditions = sharedConstraintExtractor.extract(
+                                config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod());
+                        var literals = sharedLiteralExtractor.extract(config.sourceRoots(), endpoint.handlerClass());
+                        Map<String, List<ValidationConstraintExtractor.FieldConstraint>> fieldConstraints =
+                                shape == null ? Map.of()
+                                        : new ValidationConstraintExtractor()
+                                                .extract(config.sourceRoots(), shape.javaType());
+
+                        // 공유 CoverageProbe를 직접 사용한다 — pjacoco는 traceId별 격리로 concurrent-safe.
+                        EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                                env.sut(), workerConn, env.dbType(),
+                                sharedCoverageClient, sharedAnalyzer,
+                                config.budgetRequests(), env.httpCapture(),
+                                sharedResponseDtoFieldSets, literals,
+                                sharedAuthProvider, config.authConfig(), enumConstants, sharedEnumColumns,
+                                config.requestHeaders(), sharedSqlCapture, receiverToClose,
+                                config.classifierConfig().toClassifier(), callSites,
+                                io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto,
+                                sharedTraceParentRef);
+
+                        // REQ-012: handler당 reachable 집합(cross-class 귀속). 병렬 워커 공유 → ConcurrentHashMap.
+                        String handlerKey = endpoint.handlerClass() + "#" + endpoint.handlerMethod();
+                        Set<Map.Entry<String, String>> reachable = sharedReachableCache.computeIfAbsent(
+                                handlerKey,
+                                k -> sharedConstraintExtractor.reachableMethods(
+                                        config.sourceRoots(), endpoint.handlerClass(), endpoint.handlerMethod()));
+                        List<ConstraintExtractor.StateGuard> endpointStateGuards = sharedAllStateGuards.stream()
+                                .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
+                                .toList();
+                        List<ConstraintExtractor.JoinGuard> endpointJoinGuards = sharedAllJoinGuards.stream()
+                                .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
+                                .toList();
+                        // REQ-006: 이 엔드포인트 reachable에 귀속된 conjunction만 전달(cross-class 포함).
+                        List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions =
+                                sharedAllStateGuardConjunctions.stream()
+                                        .filter(c -> isReachable(reachable, c.classFqn(), c.method()))
+                                        .toList();
+
+                        return runner.run(endpoint, shape, tables, conditions,
+                                sharedAllComparisons, sharedInputCandidates, fieldConstraints,
+                                sharedAllConjunctions, endpointJoinGuards, endpointStateGuards,
+                                endpointStateGuardConjunctions,
+                                index.validBodyEndpointIds().contains(endpoint.id()),
+                                index.bodyShapes(),
+                                index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
+                    } catch (Exception e) {
+                        throw new RuntimeException("endpoint exploration failed for " + endpoint.id(), e);
+                    }
+                };
+
+                // 탐색 실행 및 결과 수집
+                List<EndpointExplorationRunner.EndpointResult> endpointResults;
+                if (parallelism == 1) {
+                    // 순차 경로: 기존 동작과 동일
+                    endpointResults = new ArrayList<>();
+                    for (Endpoint endpoint : toExplore) {
+                        endpointResults.add(workerTask.apply(endpoint));
+                    }
+                } else {
+                    // 병렬 경로: ExecutorService fan-out
+                    ExecutorService pool = Executors.newFixedThreadPool(
+                            Math.min(parallelism, toExplore.size() == 0 ? 1 : toExplore.size()));
+                    try {
+                        List<Future<EndpointExplorationRunner.EndpointResult>> futures = new ArrayList<>();
+                        for (Endpoint endpoint : toExplore) {
+                            futures.add(pool.submit(() -> workerTask.apply(endpoint)));
+                        }
+                        endpointResults = new ArrayList<>(futures.size());
+                        for (Future<EndpointExplorationRunner.EndpointResult> f : futures) {
+                            endpointResults.add(f.get());   // 예외 전파: 워커 실패 시 빌드 실패
+                        }
+                    } finally {
+                        pool.shutdown();
+                    }
+                }
+
+                // 단일 스레드 merge: 순서·동시성 race 없음. toExplore와 결과는 동일 순서(병렬도 future 순서 보존).
+                for (int ri = 0; ri < endpointResults.size(); ri++) {
+                    Endpoint endpoint = toExplore.get(ri);
+                    EndpointExplorationRunner.EndpointResult result = endpointResults.get(ri);
                     paths.addAll(result.paths());
                     sql.addAll(result.sql());
                     httpCalls.addAll(result.httpCalls());
@@ -853,7 +1027,7 @@ public final class BuilderCli {
 
     /** attach 모드 CLI 설정 (사용자 compose + 생성 override). */
     public record AttachConfig(Path userCompose, String appService,
-                               int appContainerPort, int appHostPort, int jacocoHostPort,
+                               int appContainerPort, int appHostPort, int coverageHostPort,
                                String jdbcUrl, String kafkaBootstrap,
                                String healthPath, int readyTimeoutSeconds,
                                java.util.List<String> captureServices) {}
@@ -1019,6 +1193,24 @@ public final class BuilderCli {
 
                   [주요 옵션 생략 — BuilderCli 소스 및 docs/03-graph-rag-builder.md 참조]
                 """;
+    }
+
+    /**
+     * coverage(=pjacoco control) 호스트 포트 옵션. 비파괴 alias:
+     * {@code --coverage-port}를 우선하고, 없으면 deprecated {@code --jacoco-port}를 1회 경고와 함께 수락한다.
+     * (이 포트는 jacoco 전용이 아니라 pjacoco control port로 공유되는 plumbing이다 — REQ-P010.)
+     */
+    static String coveragePortOption(Map<String, String> options) {
+        String coverage = options.get("--coverage-port");
+        if (coverage != null && !coverage.isEmpty()) {
+            return coverage;
+        }
+        String legacy = options.get("--jacoco-port");   // deprecated alias
+        if (legacy != null && !legacy.isEmpty()) {
+            log.warn("--jacoco-port is a deprecated alias; use --coverage-port (pjacoco control port)");
+            return legacy;
+        }
+        throw new IllegalArgumentException("missing required option: --coverage-port");
     }
 
     /** --trace-mode otel|sleuth|none (미지정 시 기본 otel). 그 외 값은 거부. */

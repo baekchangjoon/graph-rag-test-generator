@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * attach 모드 환경 (decision A): 사용자 compose + 생성된 override 를 빌더가 up/down 한다.
  * SQL 캡처는 app 서비스 컨테이너 로그를 파일로 흘려 ContainerSut가 byte 슬라이스로 읽는다.
- * 커버리지는 published jacoco 포트로 CoverageClient가 회수한다.
+ * 커버리지는 published pjacoco control 포트로 PjacocoCoverageBackend가 회수한다(P1-6에서 jacoco 제거).
  */
 public final class AttachedComposeEnvironment implements ExplorationEnvironment {
 
@@ -25,8 +25,8 @@ public final class AttachedComposeEnvironment implements ExplorationEnvironment 
     /**
      * @param appBaseUri    호스트에서 본 app URL (예: http://localhost:58080)
      * @param jdbcUrl       호스트에서 본 DB JDBC URL (published DB 포트)
-     * @param coverageHost  jacoco dump host (보통 localhost)
-     * @param coveragePort  jacoco published 포트
+     * @param coverageHost  pjacoco control dump host (보통 localhost)
+     * @param coveragePort  pjacoco control published 포트
      * @param kafkaBootstrap nullable — --kafka-bootstrap 미지정 시 null
      */
     public record Config(Path userCompose, Path overrideCompose, String appService, String projectName,

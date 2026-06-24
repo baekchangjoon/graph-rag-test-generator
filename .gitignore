@@ -36,6 +36,9 @@ e2e/agents/
 e2e/.attach*-out/
 e2e/.gateway-e2e-out/
 e2e/.error-envelope-out/
+# 병렬 빌더 게이트/벤치 scratch (대용량 JAR·graph 출력 — 커밋 부적합)
+e2e/gate-*/
+e2e/bench-out-*/
 
 # subagent-driven-development scratch
 /.superpowers/

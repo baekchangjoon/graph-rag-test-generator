@@ -25,7 +25,7 @@ echo "=== [2/4] 빌더 attach 실행 (--trace-mode otel) ==="
   --sut-jar $ROOT/samples/order-service/build/libs/order-service.jar \
   --sut-compose $ROOT/e2e/docker-compose.yml \
   --out $OUT --sut-id order-otel \
-  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
+  --attach --app-service app --app-port 58080 --coverage-port 16300 \
   --jdbc-url jdbc:postgresql://localhost:56432/app \
   --db-service postgres \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
