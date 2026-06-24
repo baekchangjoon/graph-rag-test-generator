@@ -145,7 +145,7 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 분석 시점에 도구가 직접 띄우는 환경:
 
 - DB: Testcontainers (운영 동일 DBMS/버전). 인메모리 DB는 보조.
-- HTTP downstream: 임베디드 WireMock + recorder
+- HTTP downstream: 임베디드 WireMock + recorder (base URL 리다이렉트 기반). 추가로 **트레이싱 기반 egress 발견**(리다이렉트 비의존) — SUT에 이미 붙은 트레이싱(OTEL javaagent의 OTLP CLIENT span / Sleuth·Brave의 Zipkin CLIENT span)에서 외부 호출(method+path)을 요청 trace-id로 귀속해 발견한다. 리다이렉트가 불가능한 SUT(독자 HTTP 클라이언트·placeholder URL 등)에서도 외부 호출을 잡는다. 설계: [docs/superpowers/specs/2026-06-24-egress-span-capture-design.md]. (발견까지가 범위 — 실측 body 충실도는 별도 작업.)
 - Socket downstream: 임베디드 자체 Netty mock + byte recorder
 - Spring TestContext로 SUT 부팅 (실제 빈 와이어링)
 - JaCoCo 에이전트로 arm-level coverage 측정 (엔드포인트별 누적 exec data를 probe OR 병합 + 요청마다 probe 지문으로 distinct path 식별 — `BranchCoverageAnalyzer`, `CoverageFingerprint`, `EndpointExplorationRunner.cumulativeCoverage`)
