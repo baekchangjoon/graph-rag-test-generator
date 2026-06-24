@@ -423,7 +423,7 @@ public class EndpointExplorationRunner {
             // 재invoke해 그 enum으로 갈리는 SUT 분기의 모든 arm을 결정적으로 연다. GRB_RESPONSE_VARIANTS=off면 skip.
             if (baseInput != null
                     && !"off".equalsIgnoreCase(System.getenv("GRB_RESPONSE_VARIANTS"))) {
-                runEnumResponseVariantLoops(endpoint, baseInput, outcome);
+                runResponseVariantLoops(endpoint, baseInput, outcome);
             }
         }
 
@@ -1706,7 +1706,7 @@ public class EndpointExplorationRunner {
      * 각 변형 delta는 {@code cumulative}에 OR-병합(리셋 금지)한다. 병합 전 cumulative에 없던 probe를
      * 켠 변형(=새 arm)은 보존 목록에 담는다. budget(plan.kept().size())까지 진행한다.
      */
-    static VariantExploreResult exploreEnumResponseVariants(
+    static VariantExploreResult exploreResponseVariants(
             ResponseFieldVariantGenerator.VariantPlan plan, JsonNode baselineBody,
             String method, String pathLiteral, ExternalStubSynthesizer synthesizer,
             boolean isolated, VariantInvoker invoker,
@@ -1715,7 +1715,7 @@ public class EndpointExplorationRunner {
         List<KeptVariant> keptVariants = new ArrayList<>();
         int attempted = 0;
         for (ResponseFieldVariantGenerator.ResponseVariant variant : plan.kept()) {
-            JsonNode body = applyEnumOverrides(baselineBody, variant.overrides());
+            JsonNode body = applyFieldOverrides(baselineBody, variant.overrides());
             String traceId = isolated ? invoker.nextTraceId() : null;
             java.util.UUID variantId = null;
             try {
@@ -1728,7 +1728,7 @@ public class EndpointExplorationRunner {
                     keptVariants.add(new KeptVariant(variant.label(), body));
                 }
             } catch (Exception e) {   // best-effort: 변형 실패는 회귀 아님(나머지 변형 계속)
-                log.warn("enum-variant invoke failed for {} {} ({}): {}",
+                log.warn("response-variant invoke failed for {} {} ({}): {}",
                         method, pathLiteral, variant.label(), e.getMessage());
                 attempted++;
             } finally {
@@ -1770,8 +1770,8 @@ public class EndpointExplorationRunner {
         return newArm;
     }
 
-    /** baseline JSON object를 deepCopy해 enum override 필드만 텍스트로 덮어쓴다(비-enum 필드 보존). */
-    private static JsonNode applyEnumOverrides(JsonNode baselineBody, Map<String, String> enumOverrides) {
+    /** baseline JSON object를 deepCopy해 override 필드만 텍스트로 덮어쓴다(비-override 필드 보존). */
+    private static JsonNode applyFieldOverrides(JsonNode baselineBody, Map<String, String> enumOverrides) {
         JsonNode copy = baselineBody.deepCopy();
         if (copy instanceof ObjectNode obj) {
             enumOverrides.forEach(obj::put);
@@ -1818,12 +1818,19 @@ public class EndpointExplorationRunner {
     }
 
     /**
-     * 등록된 외부 응답 stub 중 enum 필드를 가진 callSite마다 변형 탐색 루프를 돈다(REQ-009, REQ-010).
+     * 등록된 외부 응답 stub 중 enum/String 필드를 가진 callSite마다 변형 탐색 루프를 돈다(REQ-009, REQ-010).
      * 각 변형 stub은 trace-id로 격리(otel/sleuth) 또는 순차 교체(none)되고, endpoint를 happy 입력으로
      * 재invoke해 SUT의 외부-응답-의존 분기 arm을 cumulativeCoverage에 OR-병합한다.
+     *
+     * <p>후보맵 조립 규칙:
+     * <ul>
+     *   <li>enum 필드: 선언순 첫 상수(baseline) 제외, skip(1) 나머지.</li>
+     *   <li>String 필드: stringLiteralsByDto에서 추출 리터럴 획득 후 stage-1 기본값(scalarValue)과
+     *       다른 것만 포함. 리터럴 0건이면 후보 없음(skip).</li>
+     * </ul>
      */
-    private void runEnumResponseVariantLoops(Endpoint endpoint, JsonNode baseInput,
-                                             ExplorationOutcome outcome) {
+    private void runResponseVariantLoops(Endpoint endpoint, JsonNode baseInput,
+                                         ExplorationOutcome outcome) {
         boolean isolated = !(httpCapture.traceKey() instanceof io.graphrag.builder.env.NoTraceKey);
         ResponseFieldVariantGenerator generator = new ResponseFieldVariantGenerator();
         ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(
@@ -1840,19 +1847,38 @@ public class EndpointExplorationRunner {
             if (!stubSynthesizer.isRegistered(site.httpMethod(), site.pathLiteral())) {
                 continue;   // B2가 stub을 등록하지 못한 site는 변형 대상 아님(loud-fail은 이미 기록)
             }
-            // enum-only 후보 맵: 각 응답 필드에 대해 enum 상수를 해석하고 baseline(선언순 첫 상수) 제외.
-            Map<String, List<String>> enumCandidates = new java.util.TreeMap<>();
+            // enum∪String 후보 맵: 각 응답 필드에 대해 enum 상수 또는 String 리터럴을 해석,
+            // baseline(선언순 첫 상수 / scalarValue 기본값)을 제외한다.
+            Map<String, List<String>> candidates = new java.util.TreeMap<>();
             for (BodyShape.BodyField field : responseShape.fields()) {
+                // enum 후보: 상수 − 선언순 첫 상수(baseline)
                 List<String> consts = resolveEnumConstants(field.javaType(), effectiveEnumConstants);
-                if (consts != null && consts.size() > 1) {
-                    // baseline = 선언순 첫 상수 → skip(1)로 non-baseline만 넘긴다.
-                    enumCandidates.put(field.name(), consts.stream().skip(1).toList());
+                if (consts != null && !consts.isEmpty()) {
+                    List<String> nonBaseline = consts.stream().skip(1).toList();
+                    if (!nonBaseline.isEmpty()) {
+                        candidates.put(field.name(), nonBaseline);
+                    }
+                    continue;
+                }
+                // String 후보: 추출 리터럴 − 단계1 기본값(scalarValue)
+                if ("java.lang.String".equals(field.javaType())) {
+                    List<String> lits = stringLiteralsByDto
+                            .getOrDefault(responseShape.javaType(), Map.of())
+                            .getOrDefault(field.name(), List.of());
+                    if (lits.isEmpty()) {
+                        continue;
+                    }
+                    String baseline = shapes.scalarValue(field.javaType(), List.of(), field.name()).asText();
+                    List<String> nonBaseline = lits.stream().filter(s -> !s.equals(baseline)).toList();
+                    if (!nonBaseline.isEmpty()) {
+                        candidates.put(field.name(), nonBaseline);
+                    }
                 }
             }
             ResponseFieldVariantGenerator.VariantPlan plan =
-                    generator.generate(enumCandidates, RESPONSE_VARIANT_BUDGET);
+                    generator.generate(candidates, RESPONSE_VARIANT_BUDGET);
             if (plan.kept().isEmpty()) {
-                continue;   // enum 필드 없음 → 변형 0(정상, 단계1 단일 stub만)
+                continue;   // enum/String 후보 없음 → 변형 0(정상, 단계1 단일 stub만)
             }
             JsonNode baselineResponse;
             try {
@@ -1865,10 +1891,10 @@ public class EndpointExplorationRunner {
             // arm을 열 수 없다. site를 호출한 path candidate의 body를 쓴다(없으면 baseInput 폴백).
             JsonNode triggerInput = inputReachingCallSite(outcome, site, baseInput);
             VariantInvoker invoker = realVariantInvoker(endpoint, triggerInput, authHeader, http);
-            VariantExploreResult vr = exploreEnumResponseVariants(plan, baselineResponse,
+            VariantExploreResult vr = exploreResponseVariants(plan, baselineResponse,
                     site.httpMethod(), site.pathLiteral(), stubSynthesizer,
                     isolated, invoker, cumulativeCoverage, appClasses);
-            log.info("enum-variant loop {} for {} {}: attempted={} kept={}",
+            log.info("response-variant loop {} for {} {}: attempted={} kept={}",
                     endpoint.id(), site.httpMethod(), site.pathLiteral(), vr.attempted(), vr.keptVariantLabels());
 
             if (vr.kept().isEmpty()) {
@@ -1881,18 +1907,18 @@ public class EndpointExplorationRunner {
             // 모든 arm 분기를 실어 외부-의존 path로 집계되게 한다(REQ-001). 생성 제외 마커.
             List<String> variantHttpIds = new ArrayList<>();
             for (KeptVariant kv : vr.kept()) {
-                String httpId = "http-" + endpoint.id() + "-enumvar-" + sanitizeLabel(kv.label());
+                String httpId = "http-" + endpoint.id() + "-responsevar-" + sanitizeLabel(kv.label());
                 variantHttpCalls.add(new io.graphrag.model.CapturedHttpCall(
-                        httpId, endpoint.id() + "-enumvar", site.httpMethod(), site.pathLiteral(),
+                        httpId, endpoint.id() + "-responsevar", site.httpMethod(), site.pathLiteral(),
                         Map.of(), null, 200, kv.variantBody().toString(),
                         consumedFields(kv.variantBody().toString()), false,
                         io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED));
                 variantHttpIds.add(httpId);
             }
             List<BranchRef> cumBranches = List.copyOf(analyzer.analyze(cumulativeCoverage).covered());
-            variantPaths.add(new ExploredPath(endpoint.id() + "-enumvar", endpoint.id(),
+            variantPaths.add(new ExploredPath(endpoint.id() + "-responsevar", endpoint.id(),
                     triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
-                    "enum-response-variant", List.of(), List.of(), List.of()));
+                    "response-variant", List.of(), List.of(), List.of()));
         }
     }
 
@@ -1905,7 +1931,7 @@ public class EndpointExplorationRunner {
      * 실 endpoint 재invoke용 VariantInvoker. nextTraceId()가 scope를 열어 그 요청의 trace-id를 노출하고
      * (변형 stub 등록 매칭에 사용), invoke()는 동일 scope로 happy 입력을 전송해 변형 stub이 가로채는
      * 외부 응답으로 분기를 연다. invoke()는 그 요청의 per-request 커버리지 delta를 반환하고, OR-병합·
-     * 새-arm 판정·cumulativeCoverage 누적은 호출자(exploreEnumResponseVariants)가 수행한다.
+     * 새-arm 판정·cumulativeCoverage 누적은 호출자(exploreResponseVariants)가 수행한다.
      */
     private VariantInvoker realVariantInvoker(Endpoint endpoint, JsonNode baseInput,
                                               String authHeader, HttpClient http) {

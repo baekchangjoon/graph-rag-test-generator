@@ -78,7 +78,7 @@ public class Generator {
             for (ExploredPath p : client.pathsForEndpoint(request.endpointId())) {
                 if ("negative-auth".equals(p.discoveredBy())
                         || "negative-validation".equals(p.discoveredBy())
-                        || "enum-response-variant".equals(p.discoveredBy())) {
+                        || "response-variant".equals(p.discoveredBy())) {
                     continue;
                 }
                 paths.add(p);
