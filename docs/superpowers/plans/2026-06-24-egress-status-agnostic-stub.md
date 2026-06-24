@@ -6,7 +6,7 @@
 
 **Architecture:** 빌더-측 enrichment(접근 A). 신규 순수 컴포넌트 `EgressStubComposer`가 `EgressCall`을 `CallSiteMatcher`로 매칭하고 `ShapeJsonSynthesizer`로 body를 합성하면, `EndpointExplorationRunner.captureHttpCalls`가 그 결과로 `CapturedHttpCall`을 조립한다. generator/testlib는 무변경(기존 `HttpMockComposer`가 비어있지 않은 body를 그대로 방출).
 
-**Tech Stack:** Java 23, Gradle, JUnit 5, AssertJ, Jackson. 모듈: `graph-rag-builder`(빌더), `test-generator`(생성기), `shared-model`(`CapturedHttpCall`).
+**Tech Stack:** Java 17 (repo toolchain, `build.gradle.kts:53` `JavaLanguageVersion.of(17)`), Gradle, JUnit 5, AssertJ, Jackson. 모듈: `graph-rag-builder`(빌더), `test-generator`(생성기), `shared-model`(`CapturedHttpCall`).
 
 ## Global Constraints
 
@@ -222,7 +222,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class EgressStubComposerTest {
 
-    private static final ShapeJsonSynthesizer SHAPES = new ShapeJsonSynthesizer(java.util.Map.of());
+    private static final ShapeJsonSynthesizer SHAPES =
+            new ShapeJsonSynthesizer(java.util.Map.<String, java.util.List<String>>of());
 
     private static ExternalCallSite site(String method, String path, BodyShape shape) {
         return new ExternalCallSite(method, path, Optional.ofNullable(shape));
@@ -381,12 +382,24 @@ Claude-Session: https://claude.ai/code/session_01RZgVNMM7hvq6sAvEQhPXoM"
     private final ShapeJsonSynthesizer egressShapes;   // egress enrich용 (httpCapture==null에도 보유)
 ```
 
-- [ ] **Step 2: canonical 생성자에서 초기화**
+- [ ] **Step 2: canonical 생성자에서 초기화 + stubSynthesizer와 공유**
 
-canonical 생성자(L338 `this.stubSynthesizer = ...` 직전)에 추가:
+canonical 생성자에서 `this.egressShapes`를 먼저 만들고, `this.stubSynthesizer` 생성 시 **동일 인스턴스를
+재사용**한다(설계 §4.2(a) "egress/404 양쪽이 공유"). 기존:
 
 ```java
-        this.egressShapes = new ShapeJsonSynthesizer(enumConstants == null ? java.util.Map.of() : enumConstants);
+        this.stubSynthesizer = httpCapture == null ? null
+                : new ExternalStubSynthesizer(httpCapture,
+                        new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants),
+                        httpCapture.traceKey());
+```
+
+교체:
+
+```java
+        this.egressShapes = new ShapeJsonSynthesizer(enumConstants == null ? Map.of() : enumConstants);
+        this.stubSynthesizer = httpCapture == null ? null
+                : new ExternalStubSynthesizer(httpCapture, egressShapes, httpCapture.traceKey());
 ```
 
 - [ ] **Step 3: `captureHttpCalls`의 egress 루프 교체**
@@ -468,6 +481,41 @@ canonical 생성자(L338 `this.stubSynthesizer = ...` 직전)에 추가:
         assertThat(loudFails(runner)).hasSize(1);
     }
 
+    @Test
+    @DisplayName("REQ-S015-002: collection(array) 형상 → consumedFields 빈, body는 비어있지 않은 array")
+    void collectionShapeYieldsArrayBodyEmptyConsumed() throws Exception {
+        BodyShape arrayShape = new BodyShape("io.example.Resp",
+                List.of(new BodyShape.BodyField("type", "java.lang.String")), true);
+        EndpointExplorationRunner runner = runner(
+                List.of(new ExternalCallSite("GET", "/inventory/list", Optional.of(arrayShape))),
+                List.of(Set.of("type")));
+        List<CapturedHttpCall> out = capture(runner,
+                candidate(List.of(new EgressCall("GET", "/inventory/list", 200, "t", 1L))));
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).responseProvenance()).isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
+        assertThat(out.get(0).responseBody()).startsWith("[").isNotBlank();   // array JSON
+        assertThat(out.get(0).consumedFields()).isEmpty();                    // array root → 투영 비활성
+    }
+
+    @Test
+    @DisplayName("REQ-S015-005: redirect-exchange가 enriched egress보다 우선(dedup)")
+    void redirectWinsOverEnrichedEgress() throws Exception {
+        EndpointExplorationRunner runner = runner(
+                List.of(siteWithStringField("GET", "/inventory/stock", "type")), List.of(Set.of("type")));
+        // redirect exchange(CAPTURED) + 동일 (GET,/inventory/stock) egress
+        io.graphrag.builder.explore.RawHttpExchange redirect =
+                new io.graphrag.builder.explore.RawHttpExchange(
+                        "GET", "/inventory/stock", Map.of(), null, 200, "{\"redirected\":true}", false, "");
+        PathCandidate pc = new PathCandidate("p1", IntNode.valueOf(0), 200, IntNode.valueOf(0),
+                List.of(), "heuristic", 0, 0,
+                List.of(redirect), List.of(), List.of(), null, Map.of(),
+                List.of(new EgressCall("GET", "/inventory/stock", 200, "t", 1L)));
+        List<CapturedHttpCall> out = capture(runner, pc);
+        // 같은 (method,urlPath) 1건만 — redirect(existing) 우선
+        assertThat(out).filteredOn(c -> c.urlPath().equals("/inventory/stock")).hasSize(1);
+        assertThat(out.get(0).responseBody()).contains("redirected");
+    }
+
     @SuppressWarnings("unchecked")
     private static List<?> loudFails(EndpointExplorationRunner runner) throws Exception {
         java.lang.reflect.Field f = EndpointExplorationRunner.class.getDeclaredField("externalLoudFails");
@@ -475,6 +523,10 @@ canonical 생성자(L338 `this.stubSynthesizer = ...` 직전)에 추가:
         return (List<?>) f.get(runner);
     }
 ```
+
+> `RawHttpExchange` 생성자 인자 순서는 기존 `EgressDiscoveryWiringTest`의 헬퍼와 동일하다
+> (method, urlPath, query, requestBody, status, responseBody, baggagePresent, traceId 마지막 ""):
+> 그 파일을 참조해 정확한 arity를 맞춘다.
 
 - [ ] **Step 5: 통합 테스트 전체 통과 확인**
 
@@ -511,13 +563,52 @@ Claude-Session: https://claude.ai/code/session_01RZgVNMM7hvq6sAvEQhPXoM"
 
 - [ ] **Step 1: 기존 E2E 게이팅·기동 패턴 확인**
 
-Read: `graph-rag-builder/src/test/java/io/graphrag/builder/capture/OtelEgressDiscoveryE2E.java`(otel 기동·`@EnabledIfSystemProperty`/sut.jar 게이트), `SleuthEgressDiscoveryE2E.java`(`sut.egress.sleuth`·`order.web.src`), `Stage1ExternalStubSynthesisE2E.java`(full build + graph 로드). 이들의 teardown(AfterAll try/finally, 고유 project/PID, 잔존 0 검증)을 그대로 따른다.
+두 패턴을 결합한다(이 작업의 핵심 — 단일 기존 클래스로는 안 됨):
+- **직접-URL 기동(redirect 없음)**: `OtelEgressDiscoveryE2E`는 `com.sun.net.httpserver.HttpServer`로
+  호스트 stub을 띄우고 `EXTERNAL_INVENTORY_URL`을 그 직접 URL로 준다(`externalStubsDir=null`, WireMock
+  치환 미사용). `@Tag("integration")` + `@EnabledIfSystemProperty(named="sut.jar", matches=".+")` +
+  `@TestInstance(PER_CLASS)` + `@BeforeAll`/`@AfterAll` teardown.
+- **graph까지 빌드**: `Stage1ExternalStubSynthesisE2E`는 `GraphAsset asset = BuilderCli.build(new
+  BuildConfig(...))` 후 `asset.httpCalls()`에서 `CapturedHttpCall`을 꺼내 `responseProvenance`/
+  `responseBody`를 단언한다.
+  ⚠️ 단 Stage1은 `externalStubsDir`(WireMock)로 redirect를 쓴다 — 본 E2E는 **direct URL +
+  `externalStubsDir=null`**로 둬야 한다(redirect 없이 egress span 경로만).
 
-- [ ] **Step 2: 신규 E2E 작성 (otel)**
+> `OtelEgressDiscoveryE2E`는 `EgressCollector.collect` 레벨까지만 검증하고 graph를 거치지 않는다.
+> 본 E2E는 그 기동(direct URL) + Stage1의 `BuilderCli.build→GraphAsset.httpCalls()` 단언을 결합한다.
 
-기동: order-service를 otel egress 모드로, 외부 의존 URL을 **실제/호스트 stub 직접 URL**(WireMock 치환·`--external-stubs` 미사용)로 설정. `POST /api/orders`(type=EXPRESS) 탐색 → `BuilderCli.build` → graph 로드 → 해당 path의 `CapturedHttpCall` 중 `(GET, /inventory/stock)`가 `responseProvenance==SYNTHESIZED` + `responseBody` 비어있지 않음을 단언. (선택) generator 실행 시 생성 테스트 소스에 `respondJson(...)` 비어있지 않은 body 포함 단언.
+- [ ] **Step 2: 신규 E2E 작성 (otel) — 골격**
 
-> 게이트: 기존 egress E2E와 동일하게 `@EnabledIfSystemProperty`(sut.jar 존재)로 조건부. 환경 미충족 시 skip되며, 그 경우 REQ-S015-006의 1차 outer loop는 Task 1·3의 in-process integration이 담당한다(이 사실을 PR 본문에 명시).
+```java
+@Tag("integration")
+@EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class EgressStatusAgnosticStubE2E {
+    private HttpServer inventoryStub;     // OtelEgressDiscoveryE2E와 동일하게 127.0.0.1 호스트 stub
+
+    @BeforeAll void up() throws Exception { /* inventoryStub 기동: GET /inventory/stock → 200 + JSON */ }
+
+    @Test
+    @DisplayName("REQ-S015-006: otel redirect 없이 발견된 GET /inventory/stock이 SYNTHESIZED 형상 body로 graph 기록")
+    void otelEgressBecomesSynthesizedStub() throws Exception {
+        // BuildConfig: trace mode otel, externalStubsDir=null, sutEnvTemplate에 EXTERNAL_INVENTORY_URL=직접 URL.
+        //   인자 형태는 Stage1ExternalStubSynthesisE2E#build(Path)의 BuildConfig(...) 호출을 참조해 맞춘다.
+        GraphAsset asset = BuilderCli.build(/* BuildConfig: otel, externalStubsDir=null, direct URL */);
+        CapturedHttpCall inv = asset.httpCalls().stream()
+                .filter(c -> c.urlPath().endsWith("/inventory/stock"))
+                .findFirst().orElseThrow();
+        assertThat(inv.responseProvenance()).isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
+        assertThat(inv.responseBody()).isNotBlank();
+    }
+
+    @AfterAll void down() { if (inventoryStub != null) inventoryStub.stop(0); /* + SUT/도커 teardown */ }
+}
+```
+
+> `BuildConfig`의 정확한 인자는 `Stage1ExternalStubSynthesisE2E#build(Path)`(L143 `BuilderCli.build(new
+> BuildConfig(... 60, null, externalStubsDir, ...))`)를 그대로 참조해 채운다 — 단 trace mode otel,
+> `externalStubsDir=null`, 외부 URL은 호스트 stub 직접 URL. 환경 미충족(sut.jar 없음) 시 skip되며,
+> **그 경우 REQ-S015-006의 1차 outer loop는 Task 1·3의 in-process integration이 담당**한다(PR 본문에 명시).
 
 - [ ] **Step 3: 신규 E2E 작성 (sleuth)**
 
