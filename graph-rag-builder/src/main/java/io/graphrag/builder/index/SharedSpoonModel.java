@@ -15,8 +15,14 @@ public final class SharedSpoonModel {
     }
 
     public static CtModel build(Path srcDir) {
+        return build(SourceRoots.single(srcDir));
+    }
+
+    public static CtModel build(SourceRoots roots) {
         Launcher launcher = new Launcher();
-        launcher.addInputResource(srcDir.toString());
+        for (Path root : roots.parseRoots()) {
+            launcher.addInputResource(root.toString());
+        }
         launcher.getEnvironment().setNoClasspath(true);
         launcher.getEnvironment().setCommentEnabled(false);
         launcher.getEnvironment().setComplianceLevel(17);
