@@ -6,6 +6,6 @@
   "response": {
     "status": 200,
     "headers": { "Content-Type": "application/json" },
-    "jsonBody": { "available": 50, "mode": "STANDARD" }
+    "jsonBody": { "available": 50, "mode": "STANDARD", "region": "DOMESTIC" }
   }
 }

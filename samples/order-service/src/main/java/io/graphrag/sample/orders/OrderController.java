@@ -52,6 +52,9 @@ public class OrderController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "user not found"));
         if ("EXPRESS".equals(request.type())) {
             InventoryClient.InventoryResponse stock = inventory.check(request.type());
+            if ("EMBARGOED".equals(stock.region())) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "region embargoed");
+            }
             switch (stock.mode()) {
                 case BACKORDER ->
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "backordered");

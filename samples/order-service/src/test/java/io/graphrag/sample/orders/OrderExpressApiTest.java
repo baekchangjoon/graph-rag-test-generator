@@ -40,11 +40,14 @@ class OrderExpressApiTest {
     /** 재고 stub 응답 available. EXPRESS_ONLY arm의 소진(<=0) 분기 단언용. */
     static volatile int stubAvailable = 50;
 
+    /** 재고 stub 응답 region. EMBARGOED 동치 분기 단언용. */
+    static volatile String stubRegion = "DOMESTIC";
+
     @BeforeAll
     static void startInventoryStub() throws IOException {
         inventoryStub = HttpServer.create(new InetSocketAddress(0), 0);
         inventoryStub.createContext("/inventory/stock", exchange -> {
-            byte[] body = ("{\"available\":" + stubAvailable + ",\"mode\":\"" + stubMode + "\"}").getBytes();
+            byte[] body = ("{\"available\":" + stubAvailable + ",\"mode\":\"" + stubMode + "\",\"region\":\"" + stubRegion + "\"}").getBytes();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
@@ -78,6 +81,7 @@ class OrderExpressApiTest {
         users.save(new User("u-express", "Express"));
         stubMode = "STANDARD";
         stubAvailable = 50;
+        stubRegion = "DOMESTIC";
     }
 
     private ResponseEntity<String> post(String json) {
