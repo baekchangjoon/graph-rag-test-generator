@@ -45,8 +45,9 @@ if (b.getStatus() == CONFIRMED && b.getTier() == VIP) { ... }  // 동시 만족 
 
 1. **TEMPORAL** — leaf가 `getter().isBefore/isAfter(now())` invocation: `isBefore`/`isAfter` +
    `isNowCall(arg)` + `getterRef(target)`. 방향(`isBefore`|`isAfter`)을 leaf StateGuard의 `op`에
-   보존(만족값 방향 결정용 — §3.3). **TEMPORAL을 BOOLEAN보다 먼저** 시도(그렇지 않으면 `isBefore`가
-   is-getter로 보여 BOOLEAN "before"로 오분류됨 — Sonnet I3).
+   보존(만족값 방향 결정용 — §3.3; **기존 `extractStateGuards` 단일 TEMPORAL emit은 op=null 불변** —
+   conjunction leaf만 op 채움). **TEMPORAL을 BOOLEAN보다 먼저** 시도(그렇지 않으면 `isBefore`가
+   is-getter로 보여 BOOLEAN "before"로 오분류됨).
 2. **BOOLEAN** — `booleanGuardFromCondition`(기존 per-leaf 헬퍼).
 3. **NULLITY** — `nullityGuardFromCondition`(기존).
 4. **ENUM** — leaf가 `getter() ==|!= EnumConst`: `getterRef` + `enumConstant`(EQ→positive, NE→negated).
@@ -81,17 +82,39 @@ record SeedVariant(SynthesizedInput input, StateGuard guard, StateGuardConjuncti
 `EndpointExplorationRunner.exploreStateGuardVariants`(현재 `variant.guard().kind()`/`.column()`을
 무조건 호출 — null이면 **NPE가 best-effort try-catch에 silently 잡혀 conjunction path가 안 열림**,
 3-벤더 합의 critical)를 분기:
-- `variant.conjunction() != null`이면: boolean QUERY param gate **미적용**(BOOLEAN/NULLITY/NUMERIC과
-  동일), `discoveredBy="state-guard-conjunction"`, tag = `state-guard-conjunction:col1+col2(+col3)`.
+- `variant.conjunction() != null`이면: boolean QUERY param gate **미적용**(leaf에 TEMPORAL/ENUM이
+  있어도 미적용 — conjunction은 시드 동시 만족이 목적이라 무관 param 덮어쓰기는 방해), `discoveredBy=
+  "state-guard-conjunction"`, tag/branchesTaken = `state-guard-conjunction:col1+col2(+col3)`.
 - 그 외 기존 단일 가드 경로(`variant.guard()` 참조)는 불변.
+
+**배선·NPE 회피 (3-벤더 2R critical/important):**
+- **catch 블록도 null-safe**: 현 `exploreStateGuardVariants` catch가 `variant.guard().column()`을
+  로깅 → conjunction(guard=null)에서 catch NPE로 **루프 전체 abort**. catch는
+  `variant.guard()!=null ? guard().column() : "conjunction:"+conjunction().leaves...` 식별자 사용.
+- **run() 시그니처·호출 게이트**: `EndpointExplorationRunner.run(...)`에 `List<StateGuardConjunction>
+  stateGuardConjunctions` 인자 추가. 현 호출 게이트 `if (seedResource && !stateGuards.isEmpty())`를
+  `if (seedResource && (!stateGuards.isEmpty() || !stateGuardConjunctions.isEmpty()))`로 — **단일
+  가드 없고 conjunction만 있는 엔드포인트도 변종 pass 실행**(conjunction-only가 skip되지 않게).
+- **단일 호출로 variantIdx 연속**: `exploreStateGuardVariants(endpoint, tables, stateGuards,
+  stateGuardConjunctions)` → `synthesizeVariants(..., guards, conjunctions)` **한 번** 호출(단일 가드
+  변종 루프 후 conjunction 루프가 같은 `variantIdx`를 이어받아 offsetPk 충돌 0).
 
 ### 3.3 합성 — ReadInputSynthesizer (동시 만족 변종)
 
-`synthesizeVariants`에 conjunction 목록 인자를 추가한다. **단일 가드 변종 루프 이후**,
+`synthesizeVariants`에 conjunction 목록 인자를 추가한다. **early return 조건 수정**(현
+`guards.isEmpty() || base.seeds().isEmpty()`): `(guards.isEmpty() && conjunctions.isEmpty()) ||
+base.seeds().isEmpty()`일 때만 base 반환 — conjunction만 있어도 진행. **단일 가드 변종 루프 이후**,
 conjunction마다 **변종 1개**를 이어 생성하며 `variantIdx`를 **연속**으로 증가시킨다(0 재시작 금지 —
-offsetPk 충돌 회피, Sonnet I2):
-- base target 시드 행 복제 → 각 leaf 컬럼을 `satisfyingValue(leaf, col)`로 **동시 설정**.
+offsetPk 충돌 회피):
+- **복제 소스 = 단일 가드 루프 종료 후의 보정된 base** = `out.get(0).input()`의 targetIdx 행
+  (NUMERIC-param base 보정이 반영된 행 — 보정 전 원본을 쓰면 leaf 만족값과 base happy arm이 어긋남).
+- **같은 컬럼 다중 leaf 병합**: 한 conjunction에 같은 컬럼 leaf가 여럿(예: `status!=PENDING &&
+  status!=CANCELLED`)이면 그 컬럼의 제약을 병합해 **모두 만족하는 단일 값**을 산출(ENUM NE는
+  negated 합집합 밖 첫 상수). 병합 불가(모순, 예 `status==X && status==Y`)면 conjunction skip.
+  서로 다른 컬럼 leaf는 각자 `satisfyingValue`로 동시 설정.
 - 변종 PK = `offsetPk(basePk, variantIdx)`(단일 가드 변종 다음 인덱스부터). FK 부모 공유(기존).
+  (offsetPk는 BIGINT/INT/String PK 지원; UUID PK는 미지원 — order-service는 BIGINT라 무관, UUID는
+  비목표·후속.)
 
 **`satisfyingValue(StateGuard leaf, ColumnSchema col)` [신규 헬퍼]** — `flipValues`(불만족 arm)와
 **별개**, if-true 만족값 산출(Sonnet I4/I6, Cursor I1/I5):
@@ -101,9 +124,15 @@ offsetPk 충돌 회피, Sonnet I2):
 | ENUM EQ | `positiveConstants` 첫째(정렬) |
 | ENUM NE | enum 상수(enumColumns/enumConstants)에서 `negatedConstants`에 없는 첫째; 없으면 leaf 인식불가→conjunction skip |
 | NUMERIC-상수 `op C` | `numericParamBaseCol(op, C)`(만족 경계: >=→C, >→C+1, <=→C, <→C-1, ==→C, !=→C+1) 재사용 |
-| BOOLEAN | `comparand`(트리거값) |
+| BOOLEAN | `Boolean.valueOf(comparand)` (Boolean — "true"/"false" String 아님) |
 | NULLITY | `==null`→null, `!=null`→`defaultFor(col)`; NOT NULL 컬럼인데 null 필요 시 conjunction skip |
-| TEMPORAL | `op=isBefore`→과거(1900-01-01), `op=isAfter`→미래(2037-01-01) |
+| TEMPORAL | op별 날짜 + 컬럼 JDBC 타입 변환(아래) |
+
+**타입 변환·폴백**(Gemini I4/I5, Sonnet I2/I4): `satisfyingValue`는 컬럼 JDBC 타입에 맞는 값을
+반환한다(기존 `flipValues`/`coerceForColumn`과 동일 규칙). TEMPORAL — `op=isBefore`→과거(1900),
+`op=isAfter`→미래(2037)이되 컬럼이 TIMESTAMP/DATETIME이면 `LocalDateTime`, DATE면 `LocalDate`;
+`op==null`(기존 단일 TEMPORAL emit이 혼입될 경우 안전망)이면 `isBefore`로 폴백. NUMERIC-상수는
+`numericParamBaseCol(op, C)` 재사용(이름의 `Param`은 파라미터 전용 의미가 아니라 동일 경계 계산 공유).
 
 **skip 조건**: 같은 컬럼에 상충 만족값(모순) / NOT NULL 컬럼 null 필요 / 타깃 테이블에 없는 컬럼 /
 ENUM NE 만족값 없음 → 그 conjunction 변종 미생성. 변종 best-effort(실패=회귀 아님).
@@ -153,8 +182,10 @@ exploreStateGuardVariants → synthesizeVariants(+ conjunctions)
   `GET /api/bookings/{id}/premium-eligible`(endpointId=`get-api-bookings-id-premium-eligible`):
   `if (b.getStatus()==CONFIRMED && b.getTier()==VIP) return 200; else throw 404`.
   `BuilderIntegrationTest`(기존 state-guard 단언 형식, `pathsOf(asset,"get-api-bookings-id-premium-eligible")`)에서:
-  conjunction 검출 → **동시 만족 시드 1행**(status=CONFIRMED & tier=VIP, 고유 PK)으로 expectedStatus=200
-  arm path가 생성됨을 단언(단일 컬럼 변종만으로는 200 arm 안 열림 — 대조).
+  conjunction 검출 → **동시 만족 시드 1행**으로 expectedStatus=200 arm path 생성을 단언(기존
+  eligibility 테스트와 동일 필터 스타일): `discoveredBy="state-guard-conjunction"` path가 존재하고,
+  그 시드 행이 `status=CONFIRMED` & `tier=VIP`(동시), `requiredSeedIds` 비공백(고유 PK 격리).
+  (단일 컬럼 변종만으로는 두 조건 동시 만족 행이 없어 200 arm 안 열림 — 대조.)
 - **단위/통합**: `ConstraintExtractor` conjunction 검출(2 leaf 완전분류 / NUMERIC-param·OR·부분 skip /
   TEMPORAL 방향 op 보존), `ReadInputSynthesizer` satisfyingValue + 동시 만족 변종(모순/NOT NULL skip,
   연속 offsetPk), BuilderCli reachable 귀속(서비스 계층 conjunction).
