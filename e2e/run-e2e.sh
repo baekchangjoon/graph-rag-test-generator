@@ -8,6 +8,11 @@ E2E="$ROOT/e2e"
 OUT="$E2E/out"
 GW="$ROOT/gradlew"
 
+# 고유 compose project name — 병렬 실행·잔류 충돌 방지. EXIT/INT/TERM 시 이 project만 정리.
+PROJ="grb-e2e-$$"
+export COMPOSE_PROJECT_NAME="$PROJ"
+trap 'docker compose -p "$PROJ" -f "$E2E/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT INT TERM
+
 # 선택 인자: --request-headers-file <path>
 #  (a) 빌더 탐색(:graph-rag-builder:run --args)에 --request-headers-file 전달
 #  (b) 생성 테스트 실행용 REQUEST_HEADERS export (미설정 시 파일 내용으로 채움)
