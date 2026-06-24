@@ -1,5 +1,6 @@
 package io.graphrag.builder.env;
 
+import io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver;
 import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
 import java.util.List;
@@ -53,5 +54,19 @@ class AttachedComposeEnvironmentTest {
         assertEquals(List.of("docker","compose","-p","grb-attach",
                 "-f","/p/docker-compose.yml","-f","/p/.grb/override.yml",
                 "up","-d","--wait","a","b","c"), cmd);
+    }
+
+    @Test void zipkinReceiverNullByDefault() {
+        var env = new AttachedComposeEnvironment(cfg(), DbConfig.Type.POSTGRES);
+        assertNull(env.zipkinReceiver());
+    }
+
+    @Test void zipkinReceiverReturnsInjectedInstance() {
+        // sleuth attach: runAttached가 ZipkinSpanReceiver를 주입하면 환경이 그대로 노출한다
+        // (EgressCollector.forMode(env)가 이를 집어 otel과 동일한 egress 파이프라인을 탄다).
+        var receiver = new ZipkinSpanReceiver();   // start() 불필요 — 동일성만 검증, close() 미호출(docker down 회피)
+        var env = new AttachedComposeEnvironment(cfg(), DbConfig.Type.POSTGRES, null, null, receiver);
+        assertSame(receiver, env.zipkinReceiver());
+        assertNull(env.otlpReceiver());
     }
 }

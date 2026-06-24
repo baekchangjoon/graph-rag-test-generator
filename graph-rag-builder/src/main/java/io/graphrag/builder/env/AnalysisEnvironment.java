@@ -167,8 +167,17 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
      */
     public static Map<String, String> sleuthZipkinEnv(
             io.graphrag.builder.capture.zipkin.ZipkinSpanReceiver receiver) {
+        // analysis: SUT는 호스트 자식 프로세스이므로 127.0.0.1 endpoint로 export.
+        return sleuthZipkinEnv(receiver.endpoint());
+    }
+
+    /**
+     * 주어진 Zipkin baseUrl로 export하는 sleuth env. attach 모드는 컨테이너 SUT가
+     * host.docker.internal로 호스트 리시버에 도달해야 하므로 {@code receiver.hostEndpoint()}를 넘긴다.
+     */
+    public static Map<String, String> sleuthZipkinEnv(String zipkinBaseUrl) {
         Map<String, String> env = new HashMap<>();
-        env.put("SPRING_ZIPKIN_BASEURL", receiver.endpoint());
+        env.put("SPRING_ZIPKIN_BASEURL", zipkinBaseUrl);
         env.put("SPRING_ZIPKIN_SENDER_TYPE", "web");
         return Map.copyOf(env);
     }

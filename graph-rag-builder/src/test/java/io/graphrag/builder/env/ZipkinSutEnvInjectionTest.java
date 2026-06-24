@@ -24,4 +24,14 @@ class ZipkinSutEnvInjectionTest {
             r.close();
         }
     }
+
+    @Test
+    @DisplayName("attach: sleuth env uses given baseUrl (container reaches host via host.docker.internal)")
+    void envFromBaseUrl() {
+        Map<String, String> env =
+                AnalysisEnvironment.sleuthZipkinEnv("http://host.docker.internal:19411");
+        assertThat(env).containsEntry("SPRING_ZIPKIN_SENDER_TYPE", "web");
+        assertThat(env).containsEntry("SPRING_ZIPKIN_BASEURL", "http://host.docker.internal:19411");
+        assertThat(env).doesNotContainKey("SPRING_SLEUTH_SAMPLER_PROBABILITY");
+    }
 }
