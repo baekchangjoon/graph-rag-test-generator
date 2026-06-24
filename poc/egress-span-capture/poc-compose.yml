@@ -1,0 +1,38 @@
+# Trimmed boot for the Brave/Zipkin egress-span capture PoC.
+# Only mysql + order-web — the order-web -> reservation outbound CLIENT span is the
+# signal under test. reservation/kafka/cdc/ledger are replaced by a host-side stub
+# (receiver.py on host.docker.internal) returning 202, which also sinks Zipkin spans.
+services:
+  mysql:
+    image: mysql:8.0
+    command: ["--server-id=1", "--log-bin=mysql-bin", "--binlog-format=ROW"]
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: orderdb
+      MYSQL_USER: app
+      MYSQL_PASSWORD: apppw
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-prootpw"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  order-web:
+    build: ../../samples/legacy-tram/order-web
+    depends_on:
+      mysql: { condition: service_healthy }
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/orderdb
+      SPRING_DATASOURCE_USERNAME: app
+      SPRING_DATASOURCE_PASSWORD: apppw
+      # Outbound HTTP target -> host stub (returns 202), so Brave records a CLIENT span.
+      RESERVATION_URL: http://host.docker.internal:18099
+      # Brave finished-span export -> host Zipkin sink (POST {base}/api/v2/spans).
+      SPRING_ZIPKIN_BASEURL: http://host.docker.internal:18099
+      SPRING_ZIPKIN_SENDER_TYPE: web
+      # Force full sampling so every request's spans export (default is 0.1).
+      SPRING_SLEUTH_SAMPLER_PROBABILITY: "0.0"
+    ports:
+      - "18080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
