@@ -183,10 +183,11 @@ class StringLiteralVariantReExploreTest {
             }
 
             @Override
-            public ExecutionDataStore invoke(JsonNode body) {
+            public EndpointExplorationRunner.VariantOutcome invoke(JsonNode body) {
                 registeredBodies.add(body);
                 String region = body.get("region").asText();
-                return "us-east".equals(region) ? deltaWithArm(4) : deltaWithArm(5);
+                return new EndpointExplorationRunner.VariantOutcome(
+                        "us-east".equals(region) ? deltaWithArm(4) : deltaWithArm(5), 200);
             }
         };
 
