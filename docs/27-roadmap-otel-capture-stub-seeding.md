@@ -120,6 +120,13 @@ interface SqlCaptureBackend {
 > 합성해 외부-의존 경로(예: order-service `GET /inventory/stock` → 외부 직후 409 분기)를 통과시킨다.
 > 따라서 본 §2의 나머지 — **OpenAPI 기반 합성**은 **단계3**, **커버리지 유도형 응답 값 fuzzing**(enum/상태코드
 > 전환 등 외부-응답-의존 분기 전체 열기)은 **단계2**로 이연한다. 수동 `--external-stubs`는 escape hatch로 유지.
+>
+> **상태(2026-06-24): 단계2 = enum 응답 변형 완료(PR #92).** enum 타입 응답 필드의 정적-완전 상수 집합을
+> 변형 stub으로 갈아끼워 모든 arm을 결정적으로 연다([설계](superpowers/specs/2026-06-24-stage2-enum-response-fuzzing-design.md),
+> REQ-001~011 green). **단계2-A = status-style String 리터럴 변형**은 그 변형 루프 위에 후보 출처만 교체해
+> (소비 코드 equals-family 분기 리터럴 추출) String 응답 분기의 arm을 연다
+> ([설계](superpowers/specs/2026-06-24-stage2-string-literal-response-fuzzing-design.md), REQ-001~012 green).
+> 남은 후속: **concolic 숫자 경계(단계2-B)**, **OpenAPI/LLM(단계3)**.
 
 ### 문제
 
