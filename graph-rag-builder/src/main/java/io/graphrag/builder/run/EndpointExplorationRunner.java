@@ -1771,10 +1771,10 @@ public class EndpointExplorationRunner {
     }
 
     /** baseline JSON object를 deepCopy해 override 필드만 텍스트로 덮어쓴다(비-override 필드 보존). */
-    private static JsonNode applyFieldOverrides(JsonNode baselineBody, Map<String, String> enumOverrides) {
+    private static JsonNode applyFieldOverrides(JsonNode baselineBody, Map<String, String> overrides) {
         JsonNode copy = baselineBody.deepCopy();
         if (copy instanceof ObjectNode obj) {
-            enumOverrides.forEach(obj::put);
+            overrides.forEach(obj::put);
         }
         return copy;
     }
@@ -1783,8 +1783,8 @@ public class EndpointExplorationRunner {
      * enum 상수 해석: FQN 직접 매칭, 없으면 simple-name 폴백.
      * (ShapeJsonSynthesizer 및 구 EnumResponseVariantGenerator와 동일 규칙.)
      */
-    private static List<String> resolveEnumConstants(String javaType,
-                                                     Map<String, List<String>> enumConstants) {
+    static List<String> resolveEnumConstants(String javaType,
+                                             Map<String, List<String>> enumConstants) {
         List<String> direct = enumConstants.get(javaType);
         if (direct != null) {
             return direct;
@@ -1793,6 +1793,58 @@ public class EndpointExplorationRunner {
         return enumConstants.entrySet().stream()
                 .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
                 .map(Map.Entry::getValue).findFirst().orElse(null);
+    }
+
+    /**
+     * 응답 형상의 각 필드에 대해 enum∪String 변형 후보 맵을 조립한다(REQ-009, REQ-010).
+     *
+     * <p>조립 규칙:
+     * <ul>
+     *   <li>enum 필드: {@code enumConstants}에서 상수 목록을 해석 후 선언순 첫 상수(baseline)를
+     *       {@code skip(1)}로 제외한 나머지. 후보가 없으면 필드 제외.</li>
+     *   <li>String 필드: {@code stringLiteralsByDto}에서 추출 리터럴을 가져와 stage-1 기본값
+     *       ({@code shapes.scalarValue(...)})과 다른 것만 포함. 리터럴 0건이면 필드 제외.</li>
+     * </ul>
+     * 결과 맵은 {@link java.util.TreeMap}(결정적 순서)이다.
+     *
+     * @param responseShape       응답 형상(필드 목록)
+     * @param enumConstants       FQN→상수 목록
+     * @param stringLiteralsByDto dtoFqn→field→리터럴 목록
+     * @param shapes              stage-1 기본값 계산용 합성기
+     * @return 필드명→비-baseline 후보 목록 (빈 맵 가능)
+     */
+    static Map<String, List<String>> buildVariantCandidates(
+            BodyShape responseShape,
+            Map<String, List<String>> enumConstants,
+            Map<String, Map<String, List<String>>> stringLiteralsByDto,
+            ShapeJsonSynthesizer shapes) {
+        Map<String, List<String>> candidates = new java.util.TreeMap<>();
+        for (BodyShape.BodyField field : responseShape.fields()) {
+            // enum 후보: 상수 − 선언순 첫 상수(baseline)
+            List<String> consts = resolveEnumConstants(field.javaType(), enumConstants);
+            if (consts != null && !consts.isEmpty()) {
+                List<String> nonBaseline = consts.stream().skip(1).toList();
+                if (!nonBaseline.isEmpty()) {
+                    candidates.put(field.name(), nonBaseline);
+                }
+                continue;
+            }
+            // String 후보: 추출 리터럴 − 단계1 기본값(scalarValue)
+            if ("java.lang.String".equals(field.javaType())) {
+                List<String> lits = stringLiteralsByDto
+                        .getOrDefault(responseShape.javaType(), Map.of())
+                        .getOrDefault(field.name(), List.of());
+                if (lits.isEmpty()) {
+                    continue;
+                }
+                String baseline = shapes.scalarValue(field.javaType(), List.of(), field.name()).asText();
+                List<String> nonBaseline = lits.stream().filter(s -> !s.equals(baseline)).toList();
+                if (!nonBaseline.isEmpty()) {
+                    candidates.put(field.name(), nonBaseline);
+                }
+            }
+        }
+        return candidates;
     }
 
     /** enum 응답 변형 budget(엔드포인트당 변형 stub 시도 상한). generator budget과 동일. */
@@ -1849,32 +1901,8 @@ public class EndpointExplorationRunner {
             }
             // enum∪String 후보 맵: 각 응답 필드에 대해 enum 상수 또는 String 리터럴을 해석,
             // baseline(선언순 첫 상수 / scalarValue 기본값)을 제외한다.
-            Map<String, List<String>> candidates = new java.util.TreeMap<>();
-            for (BodyShape.BodyField field : responseShape.fields()) {
-                // enum 후보: 상수 − 선언순 첫 상수(baseline)
-                List<String> consts = resolveEnumConstants(field.javaType(), effectiveEnumConstants);
-                if (consts != null && !consts.isEmpty()) {
-                    List<String> nonBaseline = consts.stream().skip(1).toList();
-                    if (!nonBaseline.isEmpty()) {
-                        candidates.put(field.name(), nonBaseline);
-                    }
-                    continue;
-                }
-                // String 후보: 추출 리터럴 − 단계1 기본값(scalarValue)
-                if ("java.lang.String".equals(field.javaType())) {
-                    List<String> lits = stringLiteralsByDto
-                            .getOrDefault(responseShape.javaType(), Map.of())
-                            .getOrDefault(field.name(), List.of());
-                    if (lits.isEmpty()) {
-                        continue;
-                    }
-                    String baseline = shapes.scalarValue(field.javaType(), List.of(), field.name()).asText();
-                    List<String> nonBaseline = lits.stream().filter(s -> !s.equals(baseline)).toList();
-                    if (!nonBaseline.isEmpty()) {
-                        candidates.put(field.name(), nonBaseline);
-                    }
-                }
-            }
+            Map<String, List<String>> candidates =
+                    buildVariantCandidates(responseShape, effectiveEnumConstants, stringLiteralsByDto, shapes);
             ResponseFieldVariantGenerator.VariantPlan plan =
                     generator.generate(candidates, RESPONSE_VARIANT_BUDGET);
             if (plan.kept().isEmpty()) {

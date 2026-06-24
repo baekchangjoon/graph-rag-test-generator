@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * REQ-009, REQ-001: String 리터럴 응답 변형 탐색 통합 테스트.
  *
- * <p>실제 생산 후보맵 조립(runResponseVariantLoops 내부) 경로를 커버한다:
+ * <p>실제 생산 후보맵 조립 경로({@link EndpointExplorationRunner#buildVariantCandidates})를 커버한다:
  * <ul>
  *   <li>enum 필드: 선언순 첫 상수(baseline) 제외, 나머지는 변형 후보.</li>
  *   <li>String 필드: 추출 리터럴 중 stage-1 기본값(sample-&lt;fieldName&gt;)과 다른 것만 후보.</li>
@@ -31,7 +31,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  *
  * <p>{@link EnumVariantReExploreTest}의 구조를 따르며, 실제 {@link EndpointExplorationRunner#exploreResponseVariants}
- * 정적 헬퍼를 직접 호출한다. 후보맵은 생산 조립 로직을 직접 재현해 구성하여 단위 검증한다.
+ * 정적 헬퍼를 직접 호출한다. 후보맵은 생산 조립 메서드 {@link EndpointExplorationRunner#buildVariantCandidates}를
+ * 통해 구성하므로 production assembly path가 테스트로 커버된다.
  */
 class StringLiteralVariantReExploreTest {
 
@@ -108,54 +109,13 @@ class StringLiteralVariantReExploreTest {
         return new boolean[0];
     }
 
-    /**
-     * 생산 후보맵 조립 로직 재현:
-     * - enum 필드 "mode": skip(1) → {EXPRESS_ONLY, BACKORDER}
-     * - String 필드 "region": 리터럴에서 baseline("sample-region") 제거 → {us-east, eu-west}
-     * - String 필드 "note": 리터럴 없음 → 후보 없음
-     */
+    /** production 후보맵 조립: EndpointExplorationRunner.buildVariantCandidates를 직접 호출. */
     private static VariantPlan buildProductionPlan(int budget) {
         ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(ENUMS);
-        Map<String, List<String>> candidates = new TreeMap<>();
-
-        for (BodyShape.BodyField field : RESPONSE_SHAPE.fields()) {
-            // enum 후보
-            List<String> consts = resolveEnumConstants(field.javaType(), ENUMS);
-            if (consts != null && !consts.isEmpty()) {
-                List<String> nonBaseline = consts.stream().skip(1).toList();
-                if (!nonBaseline.isEmpty()) {
-                    candidates.put(field.name(), nonBaseline);
-                }
-                continue;
-            }
-            // String 후보
-            if ("java.lang.String".equals(field.javaType())) {
-                List<String> lits = STRING_LITERALS_BY_DTO
-                        .getOrDefault(RESPONSE_SHAPE.javaType(), Map.of())
-                        .getOrDefault(field.name(), List.of());
-                if (lits.isEmpty()) {
-                    continue;
-                }
-                String stageOneBaseline = shapes.scalarValue(field.javaType(), List.of(), field.name()).asText();
-                List<String> nonBaseline = lits.stream().filter(s -> !s.equals(stageOneBaseline)).toList();
-                if (!nonBaseline.isEmpty()) {
-                    candidates.put(field.name(), nonBaseline);
-                }
-            }
-        }
+        Map<String, List<String>> candidates =
+                EndpointExplorationRunner.buildVariantCandidates(
+                        RESPONSE_SHAPE, ENUMS, STRING_LITERALS_BY_DTO, shapes);
         return new ResponseFieldVariantGenerator().generate(candidates, budget);
-    }
-
-    /** enum FQN/simple-name 폴백 해석 헬퍼(EndpointExplorationRunner.resolveEnumConstants 재현). */
-    private static List<String> resolveEnumConstants(String javaType, Map<String, List<String>> enumConstants) {
-        List<String> direct = enumConstants.get(javaType);
-        if (direct != null) {
-            return direct;
-        }
-        String simple = javaType.substring(javaType.lastIndexOf('.') + 1);
-        return enumConstants.entrySet().stream()
-                .filter(e -> e.getKey().substring(e.getKey().lastIndexOf('.') + 1).equals(simple))
-                .map(Map.Entry::getValue).findFirst().orElse(null);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -196,12 +156,15 @@ class StringLiteralVariantReExploreTest {
         cumulative.put(new ExecutionData(123L, CLASS, armBits(1)));
 
         // region만 포함된 미니 후보맵으로 String 변형만 격리 테스트
+        // production buildVariantCandidates로 전체 후보를 먼저 조립한 뒤 region만 분리한다.
         ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(ENUMS);
         String stageOneBaseline = shapes.scalarValue("java.lang.String", List.of(), "region").asText();
         assertThat(stageOneBaseline).as("stage-1 기본값 확인").isEqualTo("sample-region");
 
-        List<String> regionLits = List.of("us-east", "eu-west", "sample-region");
-        List<String> nonBaseline = regionLits.stream().filter(s -> !s.equals(stageOneBaseline)).toList();
+        Map<String, List<String>> allCandidates =
+                EndpointExplorationRunner.buildVariantCandidates(
+                        RESPONSE_SHAPE, ENUMS, STRING_LITERALS_BY_DTO, shapes);
+        List<String> nonBaseline = allCandidates.get("region");
 
         assertThat(nonBaseline).as("baseline 제외 후 us-east, eu-west 남아야 함")
                 .containsExactlyInAnyOrder("us-east", "eu-west");
@@ -259,11 +222,17 @@ class StringLiteralVariantReExploreTest {
 
         assertThat(noteLits).as("note 필드 리터럴 0건 확인").isEmpty();
 
-        // note-only 후보맵: 빈 결과 → plan.kept() 비어야 함
-        Map<String, List<String>> emptyCandidates = new TreeMap<>();
-        // note 리터럴 없으므로 후보 추가 없음
-        VariantPlan plan = new ResponseFieldVariantGenerator().generate(emptyCandidates, 32);
+        // production buildVariantCandidates로 note-only shape 변종을 만들어 검증
+        BodyShape noteOnlyShape = new BodyShape("com.example.InventoryResponse", List.of(
+                new BodyShape.BodyField("note", "java.lang.String")), false);
+        ShapeJsonSynthesizer shapes = new ShapeJsonSynthesizer(ENUMS);
+        Map<String, List<String>> candidates =
+                EndpointExplorationRunner.buildVariantCandidates(
+                        noteOnlyShape, ENUMS, STRING_LITERALS_BY_DTO, shapes);
 
+        assertThat(candidates).as("note 리터럴 0건 → 후보맵 비어야 함").isEmpty();
+
+        VariantPlan plan = new ResponseFieldVariantGenerator().generate(candidates, 32);
         assertThat(plan.kept()).as("리터럴 0건 필드는 변형 0개").isEmpty();
     }
 }
