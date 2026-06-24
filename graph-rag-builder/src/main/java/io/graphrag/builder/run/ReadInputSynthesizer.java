@@ -135,6 +135,14 @@ public class ReadInputSynthesizer {
      */
     public record SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard,
                               ConstraintExtractor.StateGuardConjunction conjunction) {
+        /** XOR 불변식: guard와 conjunction은 동시에 non-null일 수 없다. */
+        public SeedVariant {
+            if (guard != null && conjunction != null) {
+                throw new IllegalArgumentException(
+                        "SeedVariant: guard and conjunction are mutually exclusive");
+            }
+        }
+
         /** 기존 2-arg 호출부 후방호환 오버로드 (conjunction=null 위임). */
         public SeedVariant(SynthesizedInput input, ConstraintExtractor.StateGuard guard) {
             this(input, guard, null);

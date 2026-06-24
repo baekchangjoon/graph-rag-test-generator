@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * REQ-003/REQ-007: exploreStateGuardVariants의 conjunction NPE 회피 + kind별 gate 결정.
@@ -121,6 +122,17 @@ class EndpointExplorationRunnerStateGuardTest {
         assertThat(EndpointExplorationRunner.variantLabel(conjunctionVariant))
                 .isNotNull()
                 .isNotEmpty();
+    }
+
+    @Test
+    void seedVariantXor_guardAndConjunctionBothNonNull_throwsIllegalArgument() {
+        // guard와 conjunction이 동시에 non-null이면 SeedVariant가 IllegalArgumentException을 던져야 한다.
+        SynthesizedInput input = new SynthesizedInput(
+                com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode(),
+                List.of());
+        assertThatThrownBy(() -> new SeedVariant(input, LEAF_STATUS, CONJUNCTION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mutually exclusive");
     }
 
     @Test
