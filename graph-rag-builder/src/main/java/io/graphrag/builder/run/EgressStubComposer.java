@@ -65,7 +65,7 @@ final class EgressStubComposer {
         boolean applied = false;
         for (var entry : byField.entrySet()) {
             List<String> lits = entry.getValue();
-            if (lits != null && !lits.isEmpty() && obj.has(entry.getKey())) {
+            if (lits != null && !lits.isEmpty() && obj.has(entry.getKey()) && obj.get(entry.getKey()).isTextual()) {
                 obj.put(entry.getKey(), lits.get(0));   // 결정적: 첫 리터럴
                 applied = true;
             }
