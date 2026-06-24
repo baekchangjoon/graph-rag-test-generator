@@ -98,12 +98,36 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 탐색 사실은 이전 그래프에서 이월. 정적 인덱싱은 항상 풀로 수행.
 
 - **엔드포인트 선택 (`--endpoint <spec[,spec]>`)**: 선택한 단위만 탐색한다.
-  스펙은 단위 id(`post-api-orders`) 또는 `METHOD /path`(`POST /api/orders`)이며
-  HTTP 엔드포인트·WS 엔드포인트·Kafka consumer 에 적용된다(WS/Kafka 는 id 만).
+  스펙은 정확 단위 id(`post-api-orders`), 정확 `METHOD /path`(`POST /api/orders`),
+  또는 **glob 패턴**이며 HTTP 엔드포인트·WS 엔드포인트·Kafka consumer 에 적용된다
+  (WS/Kafka 는 id 만; glob 문법: `*`=세그먼트 내, `**`=재귀, `{a,b}`=택일).
+
+  - 예(정확): `--endpoint post-api-orders`
+  - 예(glob 재귀): `--endpoint 'GET /api/users/**'`
+  - 예(glob prefix): `--endpoint 'post-api-orders-*'`
+  - 예(정확+glob 혼용): `--endpoint 'post-api-orders, GET /api/users/**, post-api-orders-*'`
+
+  glob 메타문자(`*` `**` `{` `[`)가 없는 셀렉터는 기존 정확 매칭 그대로(하위호환).
+  정적 엔드포인트 목록(`endpoints()` 등)은 `--endpoint`로 필터링하지 않고 풀로 유지한다.
   `--incremental-base` 동반 시 나머지 단위의 탐색 사실(path/sql/httpCall/wsExchange/
   kafkaExchange/seed)은 base 에서 그대로 이월하고, base 없으면 선택 단위만 담은
-  **부분 그래프**가 된다. 어느 경우든 정적 엔드포인트 목록(`endpoints()` 등)은
-  필터링하지 않고 풀로 유지한다. `--changed-files` 와 함께 주면 `--endpoint` 가 우선.
+  **부분 그래프**가 된다. `--changed-files` 와 함께 주면 `--endpoint` 가 우선.
+
+- **소스 루트 선택 (`--sut-src <pattern[,pattern...]>` 멀티 루트)**: 분석 영역 자체를
+  여러 소스 루트로 좁힌다. 값은 콤마로 구분된 glob 패턴 리스트이며, 각 패턴은 파일시스템
+  경로에 매칭된다(glob 문법: `*`=세그먼트 내, `**`=재귀, `{a,b}`=택일).
+
+  - 예(단일 리터럴): `--sut-src src/main/java`
+  - 예(브레이스): `--sut-src 'src/main/java/com/app/{feature,common}'`
+  - 예(콤마+재귀 혼용): `--sut-src 'src/main/java/com/app/orders, src/main/java/com/app/common/**'`
+
+  매칭된 루트 **합집합만** Spoon이 파싱하므로 정적 엔드포인트 목록 자체가 선택 루트의
+  단위만 담게 된다(부분 그래프). `--endpoint`가 탐색만 좁히는 것과 다르게, `--sut-src`
+  멀티 루트는 **분석 영역 전체**를 좁힌다.
+
+  - 한계: `--incremental-base`와 멀티 루트 동시 사용 불가(v1, N2).
+  - 한계: 선택 루트 밖 타입은 `noClasspath` 미해석으로 일부 정적 신호 약화 가능(R2/R6).
+  - `--sut-resources` 미지정 시 첫 루트의 sibling `resources` 자동 폴백(멀티 루트일 때 INFO 고지).
 
 - **성공 오라클 — 에러 엔벨로프 SUT**: 아래 4개 플래그는 HTTP 200에 비즈니스 오류를 실어 반환하는 SUT를 위한 것이다. 미설정 시 기존 동작(HTTP 상태 코드만으로 성공/실패 판단)이 유지된다.
 

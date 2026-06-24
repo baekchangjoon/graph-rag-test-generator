@@ -966,6 +966,48 @@ public final class BuilderCli {
         return value;
     }
 
+    /**
+     * CLI 사용법 문자열. 주요 옵션·glob 문법·혼용 예시를 포함한다.
+     *
+     * <p>glob 문법 (NIO glob: 의미):
+     * <ul>
+     *   <li>{@code *}  — 한 경로 세그먼트 내 임의 문자열 ({@code /} 미포함)</li>
+     *   <li>{@code **} — {@code /}를 횡단하는 임의 문자열 (재귀)</li>
+     *   <li>{@code {a,b}} — 택일 (브레이스 확장)</li>
+     * </ul>
+     */
+    public static String usage() {
+        return """
+                Usage: graph-rag-builder build --sut-src <pattern[,pattern...]>
+                         --sut-jar <bootjar> --out <graph-dir> --sut-compose <compose.yml>
+                         [OPTIONS]
+
+                  --sut-src <pattern[,pattern...]>
+                        소스 루트(들). 리터럴 경로 / glob 패턴 / 혼용을 콤마로 구분.
+                        glob: * = 세그먼트 내, ** = 재귀, {a,b} = 택일
+
+                        예) 단일 리터럴:  src/main/java
+                            브레이스:     src/main/java/com/app/{feature,common}
+                            콤마 혼용:    src/main/java/com/app/orders, src/main/java/com/app/common/**
+                        ※ * 는 / 를 넘지 않음. 재귀 검색은 ** 사용.
+                        ※ --incremental-base 와 멀티 루트 동시 사용 불가 (v1 제한).
+
+                  --endpoint <spec[,spec...]>
+                        탐색할 단위. 정확 id, "METHOD /path", glob 패턴을 혼용 가능.
+                        glob: * = 세그먼트 내, ** = 재귀, {a,b} = 택일
+
+                        예) 정확 id:     post-api-orders
+                            METHOD/path: GET /api/users/123
+                            glob(재귀):  GET /api/users/**
+                            glob(prefix):post-api-orders-*
+                            혼용:        post-api-orders, GET /api/users/**, post-api-orders-*
+                        ※ 정확 매칭이 우선. glob 메타문자(* ** { [)가 없으면 정확 매칭만.
+                        ※ --incremental-base 동반 시 비선택 단위는 base에서 이월.
+
+                  [주요 옵션 생략 — BuilderCli 소스 및 docs/03-graph-rag-builder.md 참조]
+                """;
+    }
+
     /** --trace-mode otel|sleuth|none (미지정 시 기본 otel). 그 외 값은 거부. */
     static String traceMode(String value) {
         if (value == null) {
