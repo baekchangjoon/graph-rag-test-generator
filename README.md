@@ -146,11 +146,22 @@ git diff --name-only main > changed.txt
   --error-detail-field errorDetail \
   --error-detail-contains BizException"
 
-# 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개)
-#   스펙은 id(post-api-orders) 또는 "METHOD /path"; --incremental-base 동반 시 나머지는
-#   base에서 이월, 없으면 선택 단위만 담은 부분 그래프(정적 엔드포인트 목록은 풀 유지)
+# 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개 + glob, 정확/glob 혼용)
+#   각 셀렉터: 정확 id(post-api-orders) → 정확 "METHOD /path" → glob 순으로 해석.
+#   glob 문법: *=세그먼트 내(/ 미횡단), **=재귀, {a,b}=택일, ?, [abc]. 상세 docs/03.
+#   --incremental-base 동반 시 나머지는 base에서 이월, 없으면 선택 단위만 담은 부분
+#   그래프(정적 엔드포인트 목록은 풀 유지)
 ./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
-  --endpoint 'POST /api/orders'"
+  --endpoint 'POST /api/orders/**, post-api-orders-*, GET /api/users/**'"
+
+# 도구 1 — 거대 SUT를 소스 루트로 좁혀 분석 (--sut-src 멀티 루트, 리터럴/glob/혼용)
+#   여러 명시적 소스 루트의 합집합만 정확히 파싱(공통 조상으로 끌어올리지 않음) → 피처
+#   패키지 + 공통 단위만 인덱싱·탐색하는 부분 그래프. 형제 패키지(d/f)는 제외. 상세 docs/03.
+#   콤마는 brace 깊이 0에서만 구분자({e,common}의 콤마는 보존). --sut-resources 미지정 시
+#   각 루트의 sibling resources를 스캔. (멀티 루트 + --incremental-base 조합은 v1 미지원)
+./gradlew :graph-rag-builder:run --args="build \
+  --sut-src 'src/main/java/com/app/{feature,common}' --sut-jar <jar> --out <dir> \
+  --sut-compose <path/to/docker-compose.yml>"
 
 # 도구 2 단독
 ./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
