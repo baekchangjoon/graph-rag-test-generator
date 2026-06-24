@@ -34,6 +34,10 @@ publish를 app 서비스에 주입한 뒤 `docker compose up` 으로 스택을 �
 `--sut-jar` 은 인덱싱·분기 분석·커버리지 지문(`CoverageFingerprint`)에 쓰여 attach 모드에서도 반드시
 필요하다(없으면 모든 요청이 동일 지문으로 collapse되어 탐색이 무의미해진다).
 
+`--sut-src` 의 멀티 루트(brace/콤마/glob, [docs/03](03-graph-rag-builder.md))는 분석/attach 공통
+경로(`SutSrcResolver`)라 attach 모드에서도 그대로 동작한다 — 선택한 소스 루트의 엔드포인트만 담은
+부분 그래프가 산출된다(전체 앱은 `--sut-jar` 로 부팅하되 정적 인덱싱만 좁힌다). 검증: `e2e/run-attach-multiroot-e2e.sh`.
+
 | 플래그 | 필수 | 의미 |
 |---|---|---|
 | `--attach` | 필수 | attach 모드 활성화(값 없는 플래그) |
