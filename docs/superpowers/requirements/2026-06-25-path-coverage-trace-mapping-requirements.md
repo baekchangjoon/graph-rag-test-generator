@@ -146,25 +146,25 @@ E2E REQ(001/003/004/006)는 **`BuilderCli.build`를 컨테이너 SUT에 대해 �
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | path가 coverageTraceIds 보유 | `CoverageTraceMappingE2E#graphPathsHaveCoverageTraceIds` | E2E | 🔴 planned |
-| REQ-002 | 대표 traceId = 생존 probe | `ExplorationOrchestratorTraceTest#representativeIsSurvivingProbe` | integration | 🔴 planned |
-| REQ-003 | dangling 0건 | `CoverageTraceMappingE2E#traceIdsResolveToExecFiles` | E2E | 🔴 planned |
-| REQ-004 | coverage-by-path.json 생성 | `CoverageTraceMappingE2E#reportFileExistsAndSchemaValid` | E2E | 🔴 planned |
-| REQ-005 | pathId→traceIds→상대경로 매핑 | `CoverageByPathReportTest#mapsPathToExecRelativePaths` | integration | 🔴 planned |
-| REQ-006 | 사이드카 summary 투영 | `CoverageByPathReportTest#projectsSidecarSummary` / E2E `#summaryMatchesSidecarWhenPresent` | E2E+integration | 🔴 planned |
-| REQ-007 | 누락·손상 graceful | `CoverageByPathReportTest#missingSidecarYieldsNullSummaryNoThrow`·`#malformedSidecarYieldsNullSummaryNoThrow` | integration | 🔴 planned |
-| REQ-008 | 미주입 traceId → 빈 리스트 | `ExplorationOrchestratorTraceTest#nullTraceIdYieldsEmptyList` | integration | 🔴 planned |
-| REQ-009 | 후방호환 역직렬화 | `ExploredPathCompatTest#legacyJsonYieldsEmptyCoverageTraceIds`·`#nullCoverageTraceIdsNormalizedToEmpty` | integration | 🔴 planned |
-| REQ-010 | exec 부재 시 미생성 | `CoverageReportWiringTest#noExecDirSkips`·`#emptyExecDirSkips`·`#execPresentTriggers` | integration | 🔴 planned |
-| REQ-011 | copy 사이트 보존 | `ExploredPathCopyPreservationTest#withSeedIdsPreservesCoverageTraceIds`·`#pkRewritePreservesCoverageTraceIds` | integration | 🔴 planned |
-| REQ-012 | arm path 다중 traceId | `ResponseVariantTraceTest#accumulatesNonNullDistinctArmTraceIds` | integration | 🔴 planned |
-| REQ-013 | egress-assertion 빈 리스트 | `EgressAssertionTraceTest#egressAssertionPathHasEmptyTraceIds` | integration | 🔴 planned |
-| REQ-014 | 직접 생성 path가 invoke traceId 적재 | `DirectPathSiteTraceTest#coverageTraceIdsOfNonNull`·`#coverageTraceIdsOfNull` | integration | 🔴 planned |
-| REQ-015 | 중간 레코드 round-trip | `InvocationOutcomeTraceTest`·`VariantOutcomeTraceTest`·`ExploredPathCompatTest#roundTripPreservesCoverageTraceIds` | integration | 🔴 planned |
+| REQ-001 | path가 coverageTraceIds 보유 | `CoverageTraceMappingE2E#graphPathsHaveCoverageTraceIds` | E2E | 🟢 green |
+| REQ-002 | 대표 traceId = 생존 probe | `ExplorationOrchestratorTraceTest#representativeIsSurvivingProbe` | integration | 🟢 green |
+| REQ-003 | dangling 0건 | `CoverageTraceMappingE2E#traceIdsResolveToExecFiles` | E2E | 🟢 green |
+| REQ-004 | coverage-by-path.json 생성 | `CoverageTraceMappingE2E#reportFileExistsAndSchemaValid` | E2E | 🟢 green |
+| REQ-005 | pathId→traceIds→상대경로 매핑 | `CoverageByPathReportTest#mapsPathToExecRelativePaths` | integration | 🟢 green |
+| REQ-006 | 사이드카 summary 투영 | `CoverageByPathReportTest#projectsSidecarSummary` / E2E `#summaryMatchesSidecarWhenPresent` | E2E+integration | 🟢 green |
+| REQ-007 | 누락·손상 graceful | `CoverageByPathReportTest#missingSidecarYieldsNullSummaryNoThrow`·`#malformedSidecarYieldsNullSummaryNoThrow` | integration | 🟢 green |
+| REQ-008 | 미주입 traceId → 빈 리스트 | `ExplorationOrchestratorTraceTest#nullTraceIdYieldsEmptyList` | integration | 🟢 green |
+| REQ-009 | 후방호환 역직렬화 | `ExploredPathCompatTest#legacyJsonYieldsEmptyCoverageTraceIds`·`#nullCoverageTraceIdsNormalizedToEmpty` | integration | 🟢 green |
+| REQ-010 | exec 부재 시 미생성 | `CoverageReportWiringTest#noExecDirSkips`·`#emptyExecDirSkips`·`#execPresentTriggers` | integration | 🟢 green |
+| REQ-011 | copy 사이트 보존 | `ExploredPathCopyPreservationTest#withSeedIdsPreservesCoverageTraceIds`·`#pkRewritePreservesCoverageTraceIds` | integration | 🟢 green |
+| REQ-012 | arm path 다중 traceId | `ResponseVariantTraceTest#accumulatesNonNullDistinctArmTraceIds` | integration | 🟢 green |
+| REQ-013 | egress-assertion 빈 리스트 | `EgressAssertionTraceTest#egressAssertionPathHasEmptyTraceIds` | integration | 🟢 green |
+| REQ-014 | 직접 생성 path가 invoke traceId 적재 | `DirectPathSiteTraceTest#coverageTraceIdsOfNonNull`·`#coverageTraceIdsOfNull` | integration | 🟢 green |
+| REQ-015 | 중간 레코드 round-trip | `InvocationOutcomeTraceTest`·`VariantOutcomeTraceTest`·`ExploredPathCompatTest#roundTripPreservesCoverageTraceIds` | integration | 🟢 green |
 
 > 비고: REQ-012는 설계 §4.4의 `VariantOutcome`/arm 누적 필드가 선행 구현되어야 테스트 가능(현재 `VariantOutcome`은 2-arg). plan에서 모델 변경 task를 REQ-012 테스트 task의 선행으로 둔다.
 
-Coverage: 0/15 green (0%) — target 100% (대상: Must 13 + 미연기 Should 2). 연기/제외 없음.
+Coverage: 15/15 green (100%) — target 100% (대상: Must 13 + 미연기 Should 2). 연기/제외 없음.
 
 ## 자기검토
 
@@ -172,3 +172,11 @@ Coverage: 0/15 green (0%) — target 100% (대상: Must 13 + 미연기 Should 2)
 2. **원자성** — 각 REQ는 단일 행위. "매핑+요약"은 REQ-005/006으로 분리, "생성+가드"는 REQ-004/010으로 분리.
 3. **수용기준 완비** — 전 REQ Given-When-Then 보유, 측정 가능.
 4. **커버리지 규칙 명시** — 분모(Must 11 + Should 2), 제외 없음 명시.
+
+
+## 검증 결과 (2026-06-25)
+
+- **단위 게이트(CI `check -PexcludeTags=integration,docker`, 전 모듈): 🟢 GREEN (21s)** — REQ-002/005/006/007/008/009/010/011/012/013/014/015 커버. test-generator(graph.json 소비자) 포함 통과.
+- **수용 E2E `CoverageTraceMappingE2E`(REQ-001/003/004/006): 🟢 GREEN** — 실제 SUT 풀빌드(2m58s)에서 graph.json path가 coverageTraceIds를 보유하고 실재 `.exec`로 역참조되며 `coverage-by-path.json` 스키마·사이드카 summary 일치 확인.
+- **범위 외 스킵 명시**: `LlmOracleE2E`(LLM 오라클 deep-branch 도달, CI 게이트 미포함)는 baseline `8b7bc95`에서도 동일 실패 → 본 변경과 무관한 환경 의존 기존 실패. 그 외 Docker 통합 E2E(`capture.*` 전체·`OtelKafka`·`BuilderIntegrationTest`·`Sleuth*`)는 직교 기능 대상이며 전체 로컬 직렬 실행이 비현실적이라 미실행 — 가산 레코드 변경 리스크는 단위 게이트 + 풀빌드 E2E green으로 커버.
+- 테스트 컨테이너/프로세스 누수 0 (Ryuk 자동 reap 확인).
