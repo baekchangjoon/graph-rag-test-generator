@@ -12,15 +12,25 @@ public final class EgressCollector {
     static final long ZIPKIN_AWAIT_MILLIS = 3000;
 
     /**
+     * OTLP quiescence 창. SUT BSP는 {@code OTEL_BSP_SCHEDULE_DELAY=100ms}로 export하므로
+     * (OtelAgent.otlpEnv), egress CLIENT span은 entry/DB span과 다른 배치(≥1 BSP 주기 뒤)로 도착할 수
+     * 있다. quiescence가 한 배치 간격(100ms)보다 충분히 커야 늦게 오는 CLIENT span 직전에 조기 완료되지
+     * 않는다(이전 150ms는 1.5×에 불과해 CI 부하 시 egress span을 간헐적으로 놓쳐 httpCalls=[] flaky 유발).
+     * 5×BSP=500ms는 "한 배치도 더 안 옴"을 견고히 판정한다. await(8s)는 그대로 충분.
+     */
+    static final long OTLP_QUIESCENCE_MILLIS = 500;
+    static final long OTLP_AWAIT_MILLIS = 8000;
+
+    /**
      * 모드에 맞는 EgressCollector를 생성한다.
-     * - otlpReceiver가 non-null이면 OTLP 기반 collector(quiescence=150ms, await=8000ms).
+     * - otlpReceiver가 non-null이면 OTLP 기반 collector(quiescence=500ms, await=8000ms).
      * - zipkinReceiver가 non-null이면 Zipkin 기반 collector(quiescence=1200ms, await=3000ms).
      * - 둘 다 null이면 egress 비활성(null 반환).
      */
     public static EgressCollector forMode(ExplorationEnvironment env) {
         if (env.otlpReceiver() != null) {
             var r = env.otlpReceiver();
-            return new EgressCollector(r::spans, r::isQuiescent, 150, 8000);
+            return new EgressCollector(r::spans, r::isQuiescent, OTLP_QUIESCENCE_MILLIS, OTLP_AWAIT_MILLIS);
         }
         if (env.zipkinReceiver() != null) {
             var r = env.zipkinReceiver();
