@@ -22,7 +22,7 @@ graph-rag-builder는 SUT를 탐색하며 엔드포인트별로 여러 probe 요�
 1. **dedup 드롭.** `ExplorationOrchestrator`(`explore/ExplorationOrchestrator.java:80`)는 `candidates.putIfAbsent(key, ...)`로 같은 `(kind:status:coverageKey)` 지문의 probe 중 **첫 번째 1개만 대표로 남기고 나머지를 버린다.**
 2. **비-path probe.** seed/검증/negative 등 다수 probe는 어떤 path로도 retained되지 않는다.
 
-따라서 본 설계는 **대표 traceId(접근 A)** 만 기록한다. 버려진 중복 지문 probe를 되살리지 않는다. 단 응답 변종 arm(`-responsevar`, `EndpointExplorationRunner.java:2077`)처럼 여러 invoke의 커버리지를 OR-병합해 1 path를 만드는 경우는 진짜 N:1이므로, 그 사이트에서는 기여 arm들의 traceId가 자연스럽게 여러 개 담긴다. 그래서 데이터 타입은 단수가 아니라 `List<String>`이다.
+따라서 본 설계는 **대표 traceId(접근 A)** 만 기록한다. 버려진 중복 지문 probe를 되살리지 않는다. **단 tie-break:** 대표(생존자)의 traceId가 null(traceparent 미주입)이고 같은 지문의 후속 probe가 non-null traceId를 가지면, 매핑 손실을 막기 위해 non-null을 대표로 채택한다(같은 coverageKey의 더 나은 라벨일 뿐, 다른 커버리지를 되살리는 게 아니므로 접근 A와 일관). 실무상 HTTP pjacoco 빌드는 모든 probe에 traceparent를 주입하므로 이 분기는 거의 발생하지 않으나, runner 변경에 견고하도록 둔다. 단 응답 변종 arm(`-responsevar`, `EndpointExplorationRunner.java:2077`)처럼 여러 invoke의 커버리지를 OR-병합해 1 path를 만드는 경우는 진짜 N:1이므로, 그 사이트에서는 기여 arm들의 traceId가 자연스럽게 여러 개 담긴다. 그래서 데이터 타입은 단수가 아니라 `List<String>`이다.
 
 ## 2. 목표 / 비목표
 
@@ -163,7 +163,7 @@ exec 파일은 이미 `<out>/work/pjacoco-exec/<traceId>.exec`(+ `<traceId>.json
 
 ### E2E / 수용 (바깥 루프 — 최고 가능 수준)
 
-실재하는 full-build E2E를 확장한다 — `graph-rag-builder/src/test/java/io/graphrag/builder/capture/SleuthEgressDiscoveryE2E.java`(또는 `OtelKafkaBuildIntegrationTest`). 둘 다 `BuilderCli.build`를 컨테이너 SUT에 대해 전 구간 실행하고 pjacoco exec를 생성한다. (앞 초안이 언급한 fanout PoC 클래스는 이 worktree에 없으므로 대상에서 제외.) 빌드 1회 후:
+**`BuilderCli.build`를 컨테이너 SUT에 대해 전 구간 실행해 `<out>/work/pjacoco-exec/*.exec`를 생성하는** full-build 하네스를 대상으로 한다 — `OtelKafkaBuildIntegrationTest` 또는 `EgressStubBodyFidelity*E2E` 계열. **`SleuthEgressDiscoveryE2E`는 부적합**(traceId를 수동 주입해 egress 발견만 검증, `build` 미실행 → graph.json·pjacoco-exec 미생성). 따라서 신규 클래스 `CoverageTraceMappingE2E`를 두되 기존 full-build E2E의 SUT 기동/티어다운 하네스(compose + pjacoco 에이전트 주입)를 재사용한다. (앞 초안이 언급한 fanout PoC 클래스는 이 worktree에 없으므로 제외.) 빌드 1회 후:
 
 - **REQ-E1:** `<out>/coverage-by-path.json`이 존재한다.
 - **REQ-E2:** 모든 path의 `coverageTraceIds`가 디스크에 실재하는 `.exec` 파일을 가리킨다(dangling 0건). traceId는 effective id(OTel override 반영, §4.1) 기준.
