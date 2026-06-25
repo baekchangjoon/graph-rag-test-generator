@@ -817,6 +817,11 @@ public class ReadInputSynthesizer {
             if (upper.contains("BIGINT")) return Long.parseLong(value);
             if (upper.contains("INT")) return Integer.parseInt(value);
             if (upper.contains("BOOL")) return Boolean.parseBoolean(value);
+            // 십진/부동소수 키 컬럼: 숫자 타입으로 강제(varchar 바인딩 시 INSERT 깨짐 방지).
+            if (upper.contains("DECIMAL") || upper.contains("NUMERIC")) return new java.math.BigDecimal(value);
+            if (upper.contains("DOUBLE") || upper.contains("FLOAT") || upper.contains("REAL")) {
+                return Double.parseDouble(value);
+            }
         } catch (NumberFormatException e) {
             return value;
         }
@@ -833,6 +838,9 @@ public class ReadInputSynthesizer {
         switch (t) {
             case "java.lang.Integer", "int", "java.lang.Long", "long",
                  "java.lang.Short", "short" -> { return String.valueOf(probeId); }
+            // 십진/부동소수 키 파라미터: 숫자 문자열 URL 값 → coerceForColumn이 BigDecimal/Double로 강제.
+            case "java.math.BigDecimal", "java.math.BigInteger",
+                 "double", "java.lang.Double", "float", "java.lang.Float" -> { return String.valueOf(probeId); }
             case "boolean", "java.lang.Boolean" -> { return "true"; }   // Bug 2: 유효 boolean 바인딩
             case "java.time.LocalDate" -> { return "2037-01-01"; }
             case "java.time.LocalDateTime" -> { return "2037-01-01T00:00:00"; }
@@ -887,6 +895,10 @@ public class ReadInputSynthesizer {
         if (type.contains("BIGINT")) return (long) probeId;
         if (type.contains("INT")) return probeId;
         if (type.contains("BOOL")) return true;
+        // 십진/부동소수 키: 숫자 probe를 낸다(문자열 fallback 전에 차단). DECIMAL/NUMERIC은 정밀도
+        // 보존상 BigDecimal, DOUBLE/FLOAT/REAL은 Double. FK 부모/자식에 동일 값을 써 무결성 유지.
+        if (type.contains("DECIMAL") || type.contains("NUMERIC")) return new java.math.BigDecimal(probeId);
+        if (type.contains("DOUBLE") || type.contains("FLOAT") || type.contains("REAL")) return (double) probeId;
         return "probe-" + keyColumn.name() + "-" + probeId;
     }
 
