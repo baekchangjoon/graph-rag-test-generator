@@ -23,13 +23,25 @@ public record PathCandidate(
         List<CapturedEventEmit> capturedEventEmits,
         String kafkaTraceId,
         Map<String, String> responseHeaders,
-        List<EgressCall> egressCalls) {
+        List<EgressCall> egressCalls,
+        String coverageTraceId) {
 
     public PathCandidate {
         capturedSql = capturedSql == null ? List.of() : capturedSql;
         capturedEventEmits = capturedEventEmits == null ? List.of() : capturedEventEmits;
         responseHeaders = responseHeaders == null ? Map.of() : responseHeaders;
         egressCalls = egressCalls == null ? List.of() : egressCalls;
+        // coverageTraceId는 nullable 그대로 유지(미주입 probe = null)
+    }
+
+    /** 기존 14-arg(egressCalls 포함) 생성자 → canonical에 coverageTraceId=null 위임. */
+    public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
+                         List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
+                         List<RawHttpExchange> httpExchanges, List<io.graphrag.builder.capture.ParsedSql> capturedSql,
+                         List<CapturedEventEmit> capturedEventEmits, String kafkaTraceId,
+                         Map<String, String> responseHeaders, List<EgressCall> egressCalls) {
+        this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
+                capturedSql, capturedEventEmits, kafkaTraceId, responseHeaders, egressCalls, null);
     }
 
     /** egressCalls 생략 호환 생성자 — 기본 빈 리스트. */
@@ -39,7 +51,7 @@ public record PathCandidate(
                          List<CapturedEventEmit> capturedEventEmits, String kafkaTraceId,
                          Map<String, String> responseHeaders) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                capturedSql, capturedEventEmits, kafkaTraceId, responseHeaders, List.of());
+                capturedSql, capturedEventEmits, kafkaTraceId, responseHeaders, List.of(), null);
     }
 
     public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
@@ -47,20 +59,20 @@ public record PathCandidate(
                          List<RawHttpExchange> httpExchanges, List<io.graphrag.builder.capture.ParsedSql> capturedSql,
                          List<CapturedEventEmit> capturedEventEmits, String kafkaTraceId) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                capturedSql, capturedEventEmits, kafkaTraceId, Map.of(), List.of());
+                capturedSql, capturedEventEmits, kafkaTraceId, Map.of(), List.of(), null);
     }
 
     public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
                          List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
                          List<RawHttpExchange> httpExchanges, List<io.graphrag.builder.capture.ParsedSql> capturedSql) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                capturedSql, List.of(), null, Map.of(), List.of());
+                capturedSql, List.of(), null, Map.of(), List.of(), null);
     }
 
     public PathCandidate(String pathId, JsonNode body, int status, JsonNode response,
                          List<BranchRef> branches, String discoveredBy, long logStart, long logEnd,
                          List<RawHttpExchange> httpExchanges) {
         this(pathId, body, status, response, branches, discoveredBy, logStart, logEnd, httpExchanges,
-                List.of(), List.of(), null, Map.of(), List.of());
+                List.of(), List.of(), null, Map.of(), List.of(), null);
     }
 }
