@@ -56,7 +56,7 @@ graph-rag-builder는 SUT를 탐색하며 엔드포인트별로 여러 probe 요�
 | 레코드 | 추가 필드 | 채우는 지점 |
 | --- | --- | --- |
 | `explore/InvocationOutcome` | `String coverageTraceId` | `EndpointExplorationRunner.doSendWithScope`의 effective traceId(아래 4.1) → 반환 시 적재 |
-| `EndpointExplorationRunner.VariantOutcome` | `String coverageTraceId` | `sendVariantAndDumpDelta` 반환(~2292)의 `coverageTraceId` 지역 변수 |
+| `EndpointExplorationRunner.VariantOutcome` | `String coverageTraceId` | `sendVariantAndDumpDelta` 반환(~2292): effective traceId(`probeTraceparent != null ? coverageTraceId : null`, §4.1 규칙). raw `coverageTraceId`가 아님 |
 | `explore/PathCandidate` | `String coverageTraceId`(대표 1개) | `ExplorationOrchestrator.toOutcome`에서 생존 `Proto`의 `outcome().coverageTraceId()` |
 | `model/ExploredPath` | `List<String> coverageTraceIds` | PathCandidate→ExploredPath 변환 시 `tid != null ? List.of(tid) : List.of()`; OR-병합 arm 사이트는 기여 arm traceId들을 모아 적재 |
 

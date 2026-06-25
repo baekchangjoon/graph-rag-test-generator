@@ -149,18 +149,18 @@ E2E REQ(001/003/004/006)는 **`BuilderCli.build`를 컨테이너 SUT에 대해 �
 | REQ-001 | path가 coverageTraceIds 보유 | `CoverageTraceMappingE2E#graphPathsHaveCoverageTraceIds` | E2E | 🔴 planned |
 | REQ-002 | 대표 traceId = 생존 probe | `ExplorationOrchestratorTraceTest#representativeIsSurvivingProbe` | integration | 🔴 planned |
 | REQ-003 | dangling 0건 | `CoverageTraceMappingE2E#traceIdsResolveToExecFiles` | E2E | 🔴 planned |
-| REQ-004 | coverage-by-path.json 생성 | `CoverageTraceMappingE2E#reportFileExists` | E2E | 🔴 planned |
+| REQ-004 | coverage-by-path.json 생성 | `CoverageTraceMappingE2E#reportFileExistsAndSchemaValid` | E2E | 🔴 planned |
 | REQ-005 | pathId→traceIds→상대경로 매핑 | `CoverageByPathReportTest#mapsPathToExecRelativePaths` | integration | 🔴 planned |
-| REQ-006 | 사이드카 summary 투영 | `CoverageByPathReportTest#projectsSidecarSummary` / E2E `#summaryMatchesSidecar` | E2E+integration | 🔴 planned |
-| REQ-007 | 누락 graceful | `CoverageByPathReportTest#missingSidecarYieldsNullSummaryNoThrow` | integration | 🔴 planned |
+| REQ-006 | 사이드카 summary 투영 | `CoverageByPathReportTest#projectsSidecarSummary` / E2E `#summaryMatchesSidecarWhenPresent` | E2E+integration | 🔴 planned |
+| REQ-007 | 누락·손상 graceful | `CoverageByPathReportTest#missingSidecarYieldsNullSummaryNoThrow`·`#malformedSidecarYieldsNullSummaryNoThrow` | integration | 🔴 planned |
 | REQ-008 | 미주입 traceId → 빈 리스트 | `ExplorationOrchestratorTraceTest#nullTraceIdYieldsEmptyList` | integration | 🔴 planned |
-| REQ-009 | 후방호환 역직렬화 | `ExploredPathCompatTest#legacyJsonYieldsEmptyCoverageTraceIds` | integration | 🔴 planned |
-| REQ-010 | exec 부재 시 미생성 | `CoverageByPathReportTest#noExecDirSkipsReport` | integration | 🔴 planned |
-| REQ-011 | copy 사이트 보존 | `ExploredPathCopyPreservationTest#withSeedIdsPreservesTraceIds` | integration | 🔴 planned |
-| REQ-012 | arm path 다중 traceId | `ResponseVariantTraceTest#armPathCarriesAllArmTraceIds` | integration | 🔴 planned |
+| REQ-009 | 후방호환 역직렬화 | `ExploredPathCompatTest#legacyJsonYieldsEmptyCoverageTraceIds`·`#nullCoverageTraceIdsNormalizedToEmpty` | integration | 🔴 planned |
+| REQ-010 | exec 부재 시 미생성 | `CoverageReportWiringTest#noExecDirSkips`·`#emptyExecDirSkips`·`#execPresentTriggers` | integration | 🔴 planned |
+| REQ-011 | copy 사이트 보존 | `ExploredPathCopyPreservationTest#withSeedIdsPreservesCoverageTraceIds`·`#pkRewritePreservesCoverageTraceIds` | integration | 🔴 planned |
+| REQ-012 | arm path 다중 traceId | `ResponseVariantTraceTest#accumulatesNonNullDistinctArmTraceIds` | integration | 🔴 planned |
 | REQ-013 | egress-assertion 빈 리스트 | `EgressAssertionTraceTest#egressAssertionPathHasEmptyTraceIds` | integration | 🔴 planned |
-| REQ-014 | 직접 생성 path가 invoke traceId 적재 | `DirectPathSiteTraceTest#nonOrchestratorPathsCarryInvokeTraceId` | integration | 🔴 planned |
-| REQ-015 | 중간 레코드 round-trip | `CoverageTraceIdRoundTripTest#recordsPreserveCoverageTraceId` | integration | 🔴 planned |
+| REQ-014 | 직접 생성 path가 invoke traceId 적재 | `DirectPathSiteTraceTest#coverageTraceIdsOfNonNull`·`#coverageTraceIdsOfNull` | integration | 🔴 planned |
+| REQ-015 | 중간 레코드 round-trip | `InvocationOutcomeTraceTest`·`VariantOutcomeTraceTest`·`ExploredPathCompatTest#roundTripPreservesCoverageTraceIds` | integration | 🔴 planned |
 
 > 비고: REQ-012는 설계 §4.4의 `VariantOutcome`/arm 누적 필드가 선행 구현되어야 테스트 가능(현재 `VariantOutcome`은 2-arg). plan에서 모델 변경 task를 REQ-012 테스트 task의 선행으로 둔다.
 

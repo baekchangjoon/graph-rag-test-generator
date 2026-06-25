@@ -32,14 +32,14 @@
 - Create: `graph-rag-builder/src/test/java/io/graphrag/builder/coverage/CoverageTraceMappingE2E.java`
 
 **Interfaces:**
-- Consumes: 기존 full-build E2E 하네스(`OtelKafkaBuildIntegrationTest` 또는 `EgressStubBodyFidelity*E2E`의 compose SUT 기동 + `BuilderCli.build(config)` 패턴). 그 하네스를 복제해 SUT를 띄우고 `<out>`에 빌드 산출물을 만든다.
+- Consumes: 기존 full-build E2E 하네스. **참조 대상은 `EgressStubBodyFidelitySpanOnlyE2E`**(compose mock + SUT를 `@BeforeAll`로 기동하고 `BuilderCli.build(config)`를 실행해 `<out>/work/pjacoco-exec`를 만든다). `OtelKafkaBuildIntegrationTest`는 SUT를 테스트 메서드 내부에서 구성하므로 `@BeforeAll` 패턴 참조용으로는 부적합 — 빌드를 돌리는 사실만 참고.
 - Produces: 없음(검증 전용).
 
-이 테스트는 기능 구현 전까지 **red** 다(double-loop 바깥 루프). 약화·skip 처리 금지(Docker 미가용 시에만 `Assumptions`로 skip).
+이 테스트는 기능 구현 전까지 **red** 다(double-loop 바깥 루프). 약화·skip 처리 금지(Docker 미가용 시에만 skip).
 
 - [ ] **Step 1: E2E 테스트 작성**
 
-기존 full-build E2E(예: `OtelKafkaBuildIntegrationTest`)의 SUT 기동/`BuildConfig`/티어다운 패턴을 그대로 따른다. 빌드 1회 후 `<out>` 산출물을 검증한다:
+`EgressStubBodyFidelitySpanOnlyE2E`의 `@BeforeAll`(compose 기동 + `BuilderCli.build(config)` → `outDir` 채움)/`@AfterAll`(티어다운, 누수 검증) 하네스를 복제한다. `@BeforeAll`에서 `outDir`/`execDir = outDir.resolve("work/pjacoco-exec")`를 세팅하고, Docker 미가용이면 그 클래스가 쓰는 enable 조건(`@EnabledIfSystemProperty` 또는 Docker 가용성 가정)을 동일하게 적용한다. 빌드 1회 후 `<out>` 산출물을 검증한다(아래 메서드는 검증부만; 하네스 setup/teardown은 참조 테스트에서 가져온다):
 
 ```java
 package io.graphrag.builder.coverage;
@@ -177,7 +177,7 @@ Expected: 컴파일 FAIL(13번째 인자 없음, `coverageTraceId()` 없음).
 
 - [ ] **Step 3: canonical 생성자에 필드 추가 + delegating 갱신**
 
-`record InvocationOutcome(...)` 컴포넌트 목록 끝(`egressCalls` 뒤)에 `String coverageTraceId` 추가. 기존 모든 delegating 생성자(`egressCalls` 생략형 등 5개)의 위임 호출 끝에 `null`을 추가:
+`record InvocationOutcome(...)` 컴포넌트 목록 끝(`egressCalls` 뒤)에 `String coverageTraceId` 추가. 기존 delegating 생성자는 **6개**(5-arg, 6-arg, 7-arg, 8-arg, 11-arg, 12-arg) — 모두 12-arg로 체인되므로, 12-arg만 새 13-arg canonical로 위임하도록 바꾸면 나머지 5개는 그대로 작동한다:
 
 ```java
 public record InvocationOutcome(
@@ -312,20 +312,22 @@ return new InvocationOutcome(response.statusCode(),
         httpCapture == null ? List.of()
                 : coverageTraceId != null ? httpCapture.drainByTraceId(coverageTraceId)
                                           : httpCapture.drainNewExchanges(),
-        coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders,
-        egressCalls,
-        traceId);   // ← coverageTraceId = effective traceId (미주입 시 null)
+        coverageKey, drained, java.util.List.of(),
+        traceId,             // kafkaTraceId 슬롯 (상관용, 기존 동작 — 변경 없음)
+        capturedResponseHeaders, egressCalls,
+        traceId);            // coverageTraceId = effective traceId (§4.1; 미주입 시 null). 같은 값이지만 의미 다름
 ```
+
+(arg 10 `kafkaTraceId`와 arg 13 `coverageTraceId`가 같은 `traceId` 값을 받는 것은 의도된 것 — 설계 §4.1. "중복"으로 보고 제거하지 말 것.)
 
 - [ ] **Step 2: sendVariantAndDumpDelta 반환 수정**
 
-`EndpointExplorationRunner.java:2292`:
+`EndpointExplorationRunner.java:2292`. `sendVariantAndDumpDelta`에는 `doSendWithScope:2521`의 `traceId` 같은 지역 변수가 없으므로 effective traceId를 인라인으로 계산해 전달한다(`coverageTraceId`는 ~2261의 지역 변수, `probeTraceparent`도 그 스코프에 존재):
 
 ```java
-return new VariantOutcome(coverage.requestDelta(coverageTraceId), status, traceId);
+return new VariantOutcome(coverage.requestDelta(coverageTraceId), status,
+        probeTraceparent != null ? coverageTraceId : null);   // effective traceId (§4.1)
 ```
-
-여기서 `traceId`는 `sendVariantAndDumpDelta` 내 effective traceId(probeTraceparent 미주입 시 null)다. `doSendWithScope`와 동일 규칙으로 산출한다 — 그 메서드에 effective traceId 지역 변수가 없으면 `probeTraceparent != null ? coverageTraceId : null`로 계산해 둔다.
 
 - [ ] **Step 3: 컴파일 확인**
 
@@ -356,16 +358,11 @@ git commit -m "feat(run): doSend/sendVariant에서 effective traceId를 outcome�
 
 - [ ] **Step 1: 실패 테스트 작성**
 
-`ExplorationOrchestrator`를 fake `PathExplorer` 2개(같은 coverageKey, traceId t1·t2)로 구동하고, 결과 `PathCandidate.coverageTraceId`가 t1인지 확인. 두 번째 테스트: 첫 proto traceId=null, 두 번째 non-null t3 → 결과 t3.
+`ExplorationOrchestratorTraceTest`에 두 메서드를 둔다(매트릭스 REQ-002/008과 일치):
+- `representativeIsSurvivingProbe`: 같은 coverageKey, traceId t1·t2(둘 다 non-null) → `outcome.paths().get(0).coverageTraceId()`가 `"t1"`.
+- `nullTraceIdYieldsEmptyList`: 생존자 traceId=null, 후속 non-null t3 → tie-break로 `"t3"`. (그리고 후속도 없이 null만이면 PathCandidate.coverageTraceId==null.)
 
-```java
-package io.graphrag.builder.explore;
-// (테스트 하네스는 기존 ExplorationOrchestrator 테스트 패턴을 따른다. 핵심 단언:)
-//   assertThat(outcome.paths().get(0).coverageTraceId()).isEqualTo("t1");      // 둘 다 non-null
-//   assertThat(outcome.paths().get(0).coverageTraceId()).isEqualTo("t3");      // null→non-null tie-break
-```
-
-기존 orchestrator 단위 테스트가 있으면 그 하네스를 재사용한다. 없으면 `ExplorationResult.ExploredInput`을 직접 만들어 `InvocationOutcome.coverageTraceId`를 세팅한 fake `PathExplorer`로 구동한다.
+기존 `ExplorationOrchestratorTest`가 쓰는 `HeuristicExplorer`+`EndpointInvoker` 패턴은 coverageKey/traceId 제어가 어려우므로, **같은 `coverageKey`를 반환하도록 `InvocationOutcome`을 직접 구성한 stub `PathExplorer` 2개**로 구동하는 완전한 테스트를 작성한다. `ExplorationResult.ExploredInput`을 직접 만들고 각 `InvocationOutcome.coverageTraceId`를 t1/t2(또는 null/t3)로 세팅한다. (관측 지점은 `PathCandidate.coverageTraceId()` 또는 변환 후 `ExploredPath.coverageTraceIds()`.)
 
 - [ ] **Step 2: 실패 확인**
 
@@ -386,7 +383,6 @@ Expected: 컴파일 FAIL(`coverageTraceId()` 없음).
 `ExplorationOrchestrator`의 후보 수집 루프(`candidates.putIfAbsent`)를 tie-break 가능하게 바꾼다:
 
 ```java
-String tid = input.outcome().coverageTraceId();
 candidates.merge(key, new Proto(input, sorted, engine.name(), outcome), (existing, incoming) -> {
     // 대표는 첫 proto 유지(접근 A). 단 기존 traceId가 null이고 새 것이 non-null이면 교체.
     if (existing.input().outcome().coverageTraceId() == null
@@ -586,22 +582,33 @@ class ExploredPathCopyPreservationTest {
         ExploredPath p = new ExploredPath("id", "ep", null, 200, null,
                 List.of(), List.of(), List.of(), "heuristic", List.of(), List.of(), List.of(),
                 List.of(), Map.of(), Outcome.Kind.SUCCESS, 200, "200", List.of("tid-x"));
-        ExploredPath copied = EndpointExplorationRunner.withSeedIdsForTest(p, List.of("seed-1"));
+        ExploredPath copied = EndpointExplorationRunner.withSeedIds(p, List.of("seed-1"));
         assertThat(copied.coverageTraceIds()).containsExactly("tid-x");
     }
 }
 ```
 
-(`withSeedIds`가 private static이면, 테스트 가시성을 위해 package-private 위임 `withSeedIdsForTest`를 추가하거나 `withSeedIds`를 package-private으로 완화한다.)
+`withSeedIds`(~2676)는 현재 `private static`이다 — 테스트 가시성을 위해 **`static`(package-private)** 으로 완화한다(시그니처/동작 불변, 접근제어자만 변경). np 재작성(~1579)은 메서드 내부라 단위 격리가 어려우므로, 해당 PK rewrite 로직을 package-private 헬퍼 `rewriteBody(ExploredPath np, JsonNode nb)`로 추출해 테스트 가능하게 하고 동일 보존 단언을 추가한다:
+
+```java
+@Test
+void pkRewritePreservesCoverageTraceIds() {
+    ExploredPath np = new ExploredPath("id", "ep", null, 200, null,
+            List.of(), List.of(), List.of(), "heuristic", List.of(), List.of(), List.of(),
+            List.of(), Map.of(), Outcome.Kind.SUCCESS, 200, "200", List.of("tid-y"));
+    ExploredPath rewritten = EndpointExplorationRunner.rewriteBody(np, np.sampleInput());
+    assertThat(rewritten.coverageTraceIds()).containsExactly("tid-y");
+}
+```
 
 - [ ] **Step 2: 실패 확인**
 
 Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.run.ExploredPathCopyPreservationTest'`
-Expected: FAIL(coverageTraceIds 빈 리스트로 손실).
+Expected: FAIL(coverageTraceIds 빈 리스트로 손실, 또는 `rewriteBody` 미존재).
 
 - [ ] **Step 3: copy 사이트 수정**
 
-`withSeedIds`(~2677) 의 `new ExploredPath(p.id(), ...)`에 `p.coverageTraceIds()`를 마지막 인자로 전달. np 재작성(~1579)의 `new ExploredPath(np.id(), ...)`에 `np.coverageTraceIds()` 전달. 두 곳 모두 18-arg canonical로 승격.
+`withSeedIds`(~2676)를 `static`으로 완화하고 그 `new ExploredPath(p.id(), ...)`를 18-arg canonical로 승격해 마지막 인자에 `p.coverageTraceIds()` 전달. np 재작성(~1579)을 `rewriteBody` 헬퍼로 추출하고 그 `new ExploredPath(np.id(), ...)`를 18-arg로 승격해 `np.coverageTraceIds()` 전달.
 
 - [ ] **Step 4: 통과 확인**
 
@@ -682,35 +689,69 @@ git commit -m "feat(run): 직접 생성 path에 invoke traceId 적재 [REQ-014]"
 **REQ-IDs:** REQ-012, REQ-013
 
 **Files:**
-- Modify: `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java` (responsevar ~2077, egress-assertion ~2141, 변형 invoke 루프 ~1780)
+- Modify: `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java` (`KeptVariant` ~1739, `exploreResponseVariants` ~1789, `keptWithBranches` 재구성 ~2086, responsevar `new ExploredPath` ~2077, egress-assertion `new ExploredPath` ~2141)
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/run/ResponseVariantTraceTest.java`, `EgressAssertionTraceTest.java` (create)
 
+**구조적 전제(리뷰 반영):** arm별 `VariantOutcome`은 `exploreResponseVariants`(static, ~1765) 내부에서만 보이고, 호출자 `runResponseVariantLoops`(~2003)는 `vr.kept()`(=`List<KeptVariant>`)만 받는다. 따라서 arm traceId를 호출자까지 운반하려면 **`KeptVariant`에 `coverageTraceId` 필드를 추가**해 `exploreResponseVariants`에서 채워야 한다(option a). `vr.kept()`를 통해 자연히 전파된다.
+
 **Interfaces:**
-- Consumes: 변형 루프의 각 `VariantOutcome vo` → `vo.coverageTraceId()`.
-- Produces: responsevar path의 `coverageTraceIds = List.copyOf(armTraceIds)`; egress-assertion path의 `coverageTraceIds = List.of()`.
+- `KeptVariant`에 `String coverageTraceId` 추가(+ 4-arg 호환 생성자 null 위임).
+- Produces: responsevar path `coverageTraceIds = collectArmTraceIds(...)`; egress-assertion path `coverageTraceIds = List.of()`.
 
 - [ ] **Step 1: 실패 테스트 작성**
 
-responsevar arm 누적은 변형 루프(`vr.kept()`/`mergeAndDetectNewArm`)와 결합돼 있으므로, arm traceId 누적 로직을 작은 헬퍼로 추출해 단위 테스트한다:
+arm traceId 누적 헬퍼를 단위 테스트한다:
 
 ```java
-// armTraceIds = kept arms 각 vo.coverageTraceId() 중 non-null만 distinct 순서보존 수집
-@Test
-void accumulatesNonNullArmTraceIds() {
-    List<String> acc = EndpointExplorationRunner.collectArmTraceIds(
-            List.of("a1", null, "a2", "a1"));
-    assertThat(acc).containsExactly("a1", "a2");
+package io.graphrag.builder.run;
+import org.junit.jupiter.api.Test;
+import java.util.Arrays;
+import java.util.List;
+import static org.assertj.core.api.Assertions.assertThat;
+
+class ResponseVariantTraceTest {
+    @Test
+    void accumulatesNonNullDistinctArmTraceIds() {
+        List<String> acc = EndpointExplorationRunner.collectArmTraceIds(
+                Arrays.asList("a1", null, "a2", "a1"));
+        assertThat(acc).containsExactly("a1", "a2");
+    }
 }
 ```
 
-egress-assertion: 생성된 path의 coverageTraceIds가 빈 리스트인지 — 생성 헬퍼를 테스트하거나, 통합 단언.
+`EgressAssertionTraceTest`: egress-assertion 생성 경로의 path가 빈 `coverageTraceIds`인지 — 생성 헬퍼(`buildEgressAssertionPaths` 결과)를 package-private로 호출해 단언하거나, 18-arg 승격 후 `result.get(0).coverageTraceIds()).isEmpty()`.
 
 - [ ] **Step 2: 실패 확인**
 
 Run: `./gradlew :graph-rag-builder:test --tests 'io.graphrag.builder.run.ResponseVariantTraceTest'`
 Expected: 컴파일 FAIL.
 
-- [ ] **Step 3: 누적 헬퍼 + 사이트 적용**
+- [ ] **Step 3: KeptVariant 필드 + 누적 헬퍼 + 사이트 적용**
+
+(1) `KeptVariant`(~1739)에 필드 추가:
+
+```java
+public record KeptVariant(String label, JsonNode variantBody, int sutStatus,
+                          List<BranchRef> branches, String coverageTraceId) {
+    public KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches) {
+        this(label, variantBody, sutStatus, branches, null);
+    }
+}
+```
+
+(2) `exploreResponseVariants`(~1789) kept 추가 시 vo의 traceId 적재:
+
+```java
+keptVariants.add(new KeptVariant(variant.label(), body, vo.sutStatus(), List.of(), vo.coverageTraceId()));
+```
+
+(3) `keptWithBranches` 재구성(~2086)에서 traceId 보존:
+
+```java
+.map(kv -> new KeptVariant(kv.label(), kv.variantBody(), kv.sutStatus(), cumBranches, kv.coverageTraceId()))
+```
+
+(4) 누적 헬퍼:
 
 ```java
 static List<String> collectArmTraceIds(List<String> rawTraceIds) {
@@ -720,7 +761,31 @@ static List<String> collectArmTraceIds(List<String> rawTraceIds) {
 }
 ```
 
-변형 invoke 루프(~1780)에서 각 `vo.coverageTraceId()`를 `List<String> armRawTraceIds`에 모으고, responsevar `new ExploredPath(endpoint.id() + "-responsevar", ...)` (~2077)을 18-arg canonical로 승격해 마지막 인자에 `collectArmTraceIds(armRawTraceIds)` 전달. egress-assertion(~2141) `new ExploredPath(...)`은 마지막 인자에 `List.of()` 전달(의도된 빈 리스트, 주석 명시).
+(5) responsevar `new ExploredPath(endpoint.id() + "-responsevar", ...)` (~2077)을 **18-arg canonical로 승격**(현재 12-arg). outcome/semanticStatus/semanticStatusText는 현 동작대로 0/null 기반 파생값을 명시 전달하고, 마지막 인자:
+
+```java
+List<String> armTraceIds = collectArmTraceIds(
+        vr.kept().stream().map(KeptVariant::coverageTraceId).toList());
+variantPaths.add(new ExploredPath(endpoint.id() + "-responsevar", endpoint.id(),
+        triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
+        "response-variant", List.of(), List.of(), List.of(),
+        List.of(), Map.of(),
+        io.graphrag.model.Outcome.Kind.SUCCESS, 0, "0",   // 현 12-arg 파생과 동등
+        armTraceIds));
+```
+
+(6) egress-assertion(~2141)을 **18-arg canonical로 승격**(현재 14-arg), 마지막 인자 `List.of()`(의도된 빈 리스트, 주석 명시):
+
+```java
+result.add(new ExploredPath(
+        endpointId + "-egressassert-" + sanitizeLabel(kv.label()), endpointId,
+        triggerInput, kv.sutStatus(), null, List.of(), List.of(callId), kv.branches(),
+        "egress-assertion", List.of(), List.of(), List.of(), List.of(), Map.of(),
+        io.graphrag.model.Outcome.Kind.SUCCESS, kv.sutStatus(), String.valueOf(kv.sutStatus()),
+        List.of()));   // egress-assertion은 별도 probe 없음 → 의도된 빈 리스트
+```
+
+(주의: 승격 시 outcome/semanticStatus/semanticStatusText는 현 14-arg 생성자가 `expectedStatus`에서 파생하던 값과 동일하게 전달해 행위 불변을 유지한다.)
 
 - [ ] **Step 4: 통과 확인**
 
@@ -990,12 +1055,15 @@ static boolean shouldWriteCoverageReport(Path outDir) {
 }
 ```
 
-`build(config)` 내 `new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);` 직후(~364):
+`build(config)` 끝부분, 두 store 저장 후 `return asset;`(~365) **바로 위**에 삽입:
 
 ```java
-if (shouldWriteCoverageReport(config.out())) {
-    io.graphrag.builder.coverage.CoverageByPathReport.write(asset, config.out());
-}
+        new JsonFileGraphStore(config.out()).save(asset);
+        new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
+        if (shouldWriteCoverageReport(config.out())) {
+            io.graphrag.builder.coverage.CoverageByPathReport.write(asset, config.out());
+        }
+        return asset;
 ```
 
 - [ ] **Step 4: 통과 확인**
