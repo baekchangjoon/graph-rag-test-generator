@@ -77,7 +77,14 @@ public class ExplorationOrchestrator {
                 Outcome outcome = classifier.classify(status, input.outcome().response());
                 String cov = input.outcome().coverageKey();
                 String key = outcome.kind() + ":" + status + ":" + (cov != null ? cov : sorted.toString());
-                candidates.putIfAbsent(key, new Proto(input, sorted, engine.name(), outcome));
+                candidates.merge(key, new Proto(input, sorted, engine.name(), outcome), (existing, incoming) -> {
+                    // 대표는 첫 proto 유지(접근 A). 단 기존 traceId가 null이고 새 것이 non-null이면 교체.
+                    if (existing.input().outcome().coverageTraceId() == null
+                            && incoming.input().outcome().coverageTraceId() != null) {
+                        return incoming;
+                    }
+                    return existing;
+                });
             }
             if (remaining <= 0) {
                 break;
@@ -119,7 +126,8 @@ public class ExplorationOrchestrator {
                     proto.input().outcome().capturedEventEmits(),
                     proto.input().outcome().kafkaTraceId(),
                     proto.input().outcome().responseHeaders(),
-                    proto.input().outcome().egressCalls()));
+                    proto.input().outcome().egressCalls(),
+                    proto.input().outcome().coverageTraceId()));
         }
         return new ExplorationOutcome(paths, known.covered(), pathsByEngine);
     }
