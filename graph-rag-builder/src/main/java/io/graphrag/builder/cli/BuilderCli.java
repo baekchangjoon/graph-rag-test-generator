@@ -362,7 +362,21 @@ public final class BuilderCli {
                 statusField, detailField, detailContains);
         new JsonFileGraphStore(config.out()).save(asset);
         new io.graphrag.builder.store.PartitionedGraphStore(config.out()).save(asset);
+        if (shouldWriteCoverageReport(config.out())) {
+            io.graphrag.builder.coverage.CoverageByPathReport.write(asset, config.out());
+        }
         return asset;
+    }
+
+    /** work/pjacoco-exec 디렉터리에 .exec 파일이 하나 이상 존재할 때만 true를 반환한다. */
+    static boolean shouldWriteCoverageReport(Path outDir) {
+        Path execDir = outDir.resolve("work/pjacoco-exec");
+        if (!Files.isDirectory(execDir)) return false;
+        try (var s = Files.newDirectoryStream(execDir, "*.exec")) {
+            return s.iterator().hasNext();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 정적 인덱싱 산출물 묶음(직렬화는 Task 4에서 record로 승격). */
