@@ -77,7 +77,7 @@ class EgressStatusAgnosticStubE2E {
     }
 
     @Test
-    @DisplayName("REQ-S015-006: otel redirect 없이 발견된 GET /inventory/stock → SYNTHESIZED 형상 body")
+    @DisplayName("REQ-S015-006/REQ-F012-001: otel redirect 없이 발견된 GET /inventory/stock → CONTRACT 값-충실 body(소비 리터럴)")
     void otelEgressBecomesSynthesizedStub() throws Exception {
         Path sutSrc = Path.of(System.getProperty("sut.src"));
         Path sutJar = Path.of(System.getProperty("sut.jar"));
@@ -106,11 +106,14 @@ class EgressStatusAgnosticStubE2E {
                         "no /inventory/stock in httpCalls: "
                                 + asset.httpCalls().stream().map(CapturedHttpCall::urlPath).toList()));
 
+        // REQ-012 supersession: order-service의 InventoryResponse.region에 소비 코드 equals-family
+        // 리터럴("EMBARGOED")이 있어, span-발견 호출이 형상-시드(SYNTHESIZED)를 넘어 값-충실 CONTRACT로
+        // 승격된다(REQ-F012-001). 리터럴이 없는 응답이면 여전히 SYNTHESIZED.
         assertThat(inventory.responseProvenance())
-                .as("span-발견 호출이 callSite 매칭→형상 합성으로 SYNTHESIZED")
-                .isEqualTo(CapturedHttpCall.Provenance.SYNTHESIZED);
+                .as("소비 리터럴 보유 span 호출 → CONTRACT 값-충실 body(REQ-F012-001)")
+                .isEqualTo(CapturedHttpCall.Provenance.CONTRACT);
         assertThat(inventory.responseBody())
-                .as("형상-시드 body는 비어있지 않다")
-                .isNotBlank();
+                .as("CONTRACT body는 소비 리터럴 'EMBARGOED'를 반영한다")
+                .contains("EMBARGOED");
     }
 }

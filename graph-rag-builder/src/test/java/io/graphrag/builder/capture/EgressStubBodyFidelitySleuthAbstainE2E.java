@@ -39,12 +39,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>구현(Task 2~8) 전까지 RED가 정상이며 약화 금지.
  *
- * <p>필요 조건: {@code -Dsut.jar} (order-web jar), {@code -Dsut.src} (order-web 소스 루트) 둘 다 지정.
- * 미충족 시 skip. order-web은 MySQL(Testcontainers)이 필요하다 — 해당 인프라가 가용한 환경에서만 실행된다.
+ * <p>필요 조건: {@code -Dsut.egress.sleuth=true} (전용 sleuth 환경 — order-web sleuth jar/리포터 + MySQL).
+ * {@code SleuthEgressDiscoveryE2E}와 동일 게이트라 표준 CI(otel-only)에서는 skip되고, 전용 sleuth E2E
+ * 경로(`-Dsut.egress.sleuth=true`)에서만 실행된다. order-web은 sleuth 리포터 부재 시 health-check가
+ * 길어지므로 otel-only 잡에서 돌리면 boot 타임아웃이 난다(REQ-013 리포터 주입은 deferred).
  */
 @Tag("integration")
-@EnabledIfSystemProperty(named = "sut.jar", matches = ".+")
-@EnabledIfSystemProperty(named = "sut.src", matches = ".+")
+@EnabledIfSystemProperty(named = "sut.egress.sleuth", matches = "true")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class EgressStubBodyFidelitySleuthAbstainE2E {
 
