@@ -106,4 +106,24 @@ class ExploredPathCompatTest {
         ExploredPath rt = MAPPER.readValue(MAPPER.writeValueAsString(p), ExploredPath.class);
         assertThat(rt.coverageTraceIds()).containsExactly("abc", "def");
     }
+
+    /** 15-arg constructor: outcome 파생 + coverageTraceIds 전달 검증 */
+    @Test
+    void fifteenArgConstructorDerivesOutcomeAndCarriesTraceIds() {
+        // 4xx → FAILURE, coverageTraceIds 그대로 전달
+        ExploredPath failure = new ExploredPath("id-fail", "ep", null, 401, null,
+                List.of(), List.of(), List.of(), "negative-auth", List.of(), List.of(), List.of(),
+                List.of(), Map.of(), List.of("t1"));
+        assertThat(failure.outcome()).isEqualTo(Outcome.Kind.FAILURE);
+        assertThat(failure.semanticStatus()).isEqualTo(401);
+        assertThat(failure.coverageTraceIds()).containsExactly("t1");
+
+        // 2xx → SUCCESS
+        ExploredPath success = new ExploredPath("id-ok", "ep", null, 200, null,
+                List.of(), List.of(), List.of(), "form-ref-trial", List.of(), List.of(), List.of(),
+                List.of(), Map.of(), List.of("t2"));
+        assertThat(success.outcome()).isEqualTo(Outcome.Kind.SUCCESS);
+        assertThat(success.semanticStatus()).isEqualTo(200);
+        assertThat(success.coverageTraceIds()).containsExactly("t2");
+    }
 }
