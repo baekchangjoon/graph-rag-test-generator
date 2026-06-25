@@ -47,6 +47,19 @@ class EgressCollectorWiringTest {
 
     // ---- 테스트 ----
 
+    /**
+     * OTLP egress quiescence가 SUT BSP export 주기(OTEL_BSP_SCHEDULE_DELAY=100ms)의 충분한 배수로
+     * 고정돼 있는지 핀. 150ms로 되돌리면 CI 부하 시 egress CLIENT span을 놓쳐 flaky가 재발하므로
+     * (커밋 12ff860), 이 상수를 지키는 회귀 가드다.
+     */
+    @Test
+    @DisplayName("OTLP egress quiescence는 BSP(100ms) 대비 충분한 마진(≥3×)으로 고정")
+    void otlpQuiescenceIsRobustMultipleOfBspDelay() {
+        assertThat(EgressCollector.OTLP_QUIESCENCE_MILLIS).isEqualTo(500);
+        assertThat(EgressCollector.OTLP_QUIESCENCE_MILLIS).isGreaterThanOrEqualTo(300); // ≥3×BSP
+        assertThat(EgressCollector.OTLP_AWAIT_MILLIS).isEqualTo(8000);
+    }
+
     @Test
     @DisplayName("REQ-004: OTEL 모드 — otlpReceiver non-null → forMode returns non-null collector")
     void otlpMode_returnsNonNullCollector() {
