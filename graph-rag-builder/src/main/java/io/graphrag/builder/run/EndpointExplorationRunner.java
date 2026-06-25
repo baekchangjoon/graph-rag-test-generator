@@ -1725,7 +1725,11 @@ public class EndpointExplorationRunner {
     }
 
     /** 변형 invoke의 결과: per-request 커버리지 delta + SUT HTTP 응답 상태. */
-    public record VariantOutcome(ExecutionDataStore coverage, int sutStatus) {}
+    public record VariantOutcome(ExecutionDataStore coverage, int sutStatus, String coverageTraceId) {
+        public VariantOutcome(ExecutionDataStore coverage, int sutStatus) {
+            this(coverage, sutStatus, null);
+        }
+    }
 
     /** 변형 탐색 결과: 새 arm을 연(보존된) 변형 label + 시도 횟수 + 보존 변형(label,body). */
     public record VariantExploreResult(List<String> keptVariantLabels, int attempted,
