@@ -75,4 +75,35 @@ class ExploredPathCompatTest {
         assertThat(p.semanticStatus()).isEqualTo(422);
         assertThat(p.semanticStatusText()).isEqualTo("Unprocessable Entity");
     }
+
+    @Test
+    void legacyJsonYieldsEmptyCoverageTraceIds() throws Exception {
+        String json = """
+                {"id":"p1","endpointId":"ep","sampleInput":null,"expectedStatus":200,
+                 "sampleResponse":null,"capturedSqlIds":[],"capturedHttpCallIds":[],
+                 "branchesTaken":[],"discoveredBy":"heuristic","constraints":[],
+                 "validationWarnings":[],"requiredSeedIds":[],"capturedEventEmitIds":[],
+                 "responseHeaders":{}}
+                """;
+        ExploredPath p = MAPPER.readValue(json, ExploredPath.class);
+        assertThat(p.coverageTraceIds()).isEmpty();
+    }
+
+    @Test
+    void nullCoverageTraceIdsNormalizedToEmpty() throws Exception {
+        String json = """
+                {"id":"p1","endpointId":"ep","expectedStatus":200,"coverageTraceIds":null}
+                """;
+        ExploredPath p = MAPPER.readValue(json, ExploredPath.class);
+        assertThat(p.coverageTraceIds()).isEmpty();
+    }
+
+    @Test
+    void roundTripPreservesCoverageTraceIds() throws Exception {
+        ExploredPath p = new ExploredPath("p1", "ep", null, 200, null,
+                List.of(), List.of(), List.of(), "heuristic", List.of(), List.of(), List.of(),
+                List.of(), Map.of(), Outcome.Kind.SUCCESS, 200, "200", List.of("abc", "def"));
+        ExploredPath rt = MAPPER.readValue(MAPPER.writeValueAsString(p), ExploredPath.class);
+        assertThat(rt.coverageTraceIds()).containsExactly("abc", "def");
+    }
 }
