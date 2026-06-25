@@ -179,6 +179,11 @@ public class AnalysisEnvironment implements ExplorationEnvironment {
         Map<String, String> env = new HashMap<>();
         env.put("SPRING_ZIPKIN_BASEURL", zipkinBaseUrl);
         env.put("SPRING_ZIPKIN_SENDER_TYPE", "web");
+        // egress 발견 전제: BASEURL만으로는 부족하고 zipkin export 자체가 켜져 있어야 Brave CLIENT
+        // span이 발행된다. SUT 설정 의존을 없애기 위해 export를 강제로 켠다(레거시 Spring Cloud
+        // Sleuth 프로퍼티). BASEURL이 빌더 리시버로 리다이렉트돼 있고 분석 종료 시 override가
+        // 걷히므로 분석 수명주기 밖 영향은 없다. 비활성 SUT에서 egress 캡처가 0건이던 문제를 해소.
+        env.put("SPRING_ZIPKIN_ENABLED", "true");
         return Map.copyOf(env);
     }
 

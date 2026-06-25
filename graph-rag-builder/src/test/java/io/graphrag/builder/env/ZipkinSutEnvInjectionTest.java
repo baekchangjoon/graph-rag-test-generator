@@ -19,6 +19,8 @@ class ZipkinSutEnvInjectionTest {
             Map<String, String> env = AnalysisEnvironment.sleuthZipkinEnv(r);
             assertThat(env).containsEntry("SPRING_ZIPKIN_SENDER_TYPE", "web");
             assertThat(env.get("SPRING_ZIPKIN_BASEURL")).isEqualTo(r.endpoint());
+            // egress 캡처 전제: span export를 강제로 켠다 — BASEURL과 함께 주입(SUT 설정 의존 제거).
+            assertThat(env).containsEntry("SPRING_ZIPKIN_ENABLED", "true");
             assertThat(env).doesNotContainKey("SPRING_SLEUTH_SAMPLER_PROBABILITY");
         } finally {
             r.close();
@@ -32,6 +34,7 @@ class ZipkinSutEnvInjectionTest {
                 AnalysisEnvironment.sleuthZipkinEnv("http://host.docker.internal:19411");
         assertThat(env).containsEntry("SPRING_ZIPKIN_SENDER_TYPE", "web");
         assertThat(env).containsEntry("SPRING_ZIPKIN_BASEURL", "http://host.docker.internal:19411");
+        assertThat(env).containsEntry("SPRING_ZIPKIN_ENABLED", "true");
         assertThat(env).doesNotContainKey("SPRING_SLEUTH_SAMPLER_PROBABILITY");
     }
 }
