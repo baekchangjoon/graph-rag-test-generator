@@ -94,7 +94,7 @@ class EgressCollectorWiringTest {
         assertThat(collector).isNotNull();
 
         // quiescence는 awaitMillis=0이 아니면 기다려야 하므로, isQuiescent가 span 도착 후 참이 될 때까지
-        // 짧게 기다린 뒤 collect — OtlpTraceReceiver.isQuiescent 기준 quiescenceMillis=150이므로
+        // 짧게 기다린 뒤 collect — OtlpTraceReceiver.isQuiescent 기준 quiescenceMillis=500이므로
         // 여기선 단순히 non-null+non-empty가 되는지 확인하는 것이 목적이 아니라
         // 올바른 source로 연결됐음을 확인한다(span이 있으면 적어도 리스트가 생성됨).
         // 직접 collect를 호출하지 않고 source 연결 확인은 별도 검증이므로
