@@ -135,6 +135,11 @@ public class EndpointExplorationRunner {
                 p -> p.outcome() == Outcome.Kind.FAILURE && p.expectedStatus() / 100 == 2);
     }
 
+    /** traceId가 있으면 단일 요소 리스트, 없으면 빈 리스트를 반환한다. */
+    static List<String> coverageTraceIdsOf(InvocationOutcome out) {
+        return out.coverageTraceId() != null ? List.of(out.coverageTraceId()) : List.of();
+    }
+
     public record EndpointResult(List<ExploredPath> paths, List<CapturedSql> sql,
                                  List<io.graphrag.model.CapturedHttpCall> httpCalls,
                                  List<RequiredSeed> seeds,
@@ -571,7 +576,11 @@ public class EndpointExplorationRunner {
                         authConfig.headerValue("invalid-token-" + endpoint.id()));
                 finalPaths.add(new ExploredPath(endpoint.id() + "-negauth", endpoint.id(),
                         baseInput, neg.status(), neg.response(), List.of(), List.of(),
-                        List.copyOf(neg.coveredBranches()), "negative-auth", List.of(), List.of(), List.of()));
+                        List.copyOf(neg.coveredBranches()), "negative-auth", List.of(), List.of(), List.of(),
+                        List.of(), Map.of(),
+                        neg.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
+                        neg.status(), String.valueOf(neg.status()),
+                        coverageTraceIdsOf(neg)));
                 log.info("negative-auth {} -> status {}", endpoint.id(), neg.status());
             } catch (Exception e) {   // best-effort: 부정 패스 실패는 회귀 아님
                 log.warn("negative-auth pass failed for {}: {}", endpoint.id(), e.getMessage());
@@ -708,7 +717,11 @@ public class EndpointExplorationRunner {
                         out.response(), List.of(), List.of(),
                         List.copyOf(out.coveredBranches()), "negative-validation",
                         List.of("negative-validation:" + variant.field() + ":" + variant.kind()),
-                        List.of(), List.of()));
+                        List.of(), List.of(),
+                        List.of(), Map.of(),
+                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
+                        out.status(), String.valueOf(out.status()),
+                        coverageTraceIdsOf(out)));
                 log.info("negative-validation {} ({}={}) -> status {}",
                         endpoint.id(), variant.field(), variant.kind(), out.status());
             } catch (Exception e) {   // best-effort: 부정 패스 실패는 회귀 아님
@@ -929,7 +942,11 @@ public class EndpointExplorationRunner {
                 paths.add(new ExploredPath(endpoint.id() + "-formref-" + ref.field(), endpoint.id(),
                         input.body(), out.status(), out.response(), List.of(), List.of(),
                         List.copyOf(out.coveredBranches()), "form-ref-trial",
-                        List.of("form-ref-trial:" + ref.field()), List.of(), List.of()));
+                        List.of("form-ref-trial:" + ref.field()), List.of(), List.of(),
+                        List.of(), Map.of(),
+                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
+                        out.status(), String.valueOf(out.status()),
+                        coverageTraceIdsOf(out)));
                 issued++;
                 log.info("form-ref-trial {} ({}=pk) -> status {}", endpoint.id(), ref.field(), out.status());
             } catch (Exception e) {   // best-effort: trial 실패는 회귀 아님
@@ -1022,7 +1039,11 @@ public class EndpointExplorationRunner {
                         sql.stream().map(CapturedSql::id).toList(), List.of(),
                         List.copyOf(out.coveredBranches()), discoveredBy,
                         List.of(tag),
-                        List.of(), seedIds));
+                        List.of(), seedIds,
+                        List.of(), Map.of(),
+                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
+                        out.status(), String.valueOf(out.status()),
+                        coverageTraceIdsOf(out)));
             } catch (Exception e) {   // best-effort: 변종 실패는 회귀 아님(base 결과 유지)
                 log.warn("state-guard variant failed for {} ({}): {}",
                         endpoint.id(), label, e.getMessage());
