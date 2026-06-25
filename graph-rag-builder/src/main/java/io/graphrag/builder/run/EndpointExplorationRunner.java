@@ -1583,7 +1583,8 @@ public class EndpointExplorationRunner {
                         resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
                         np.branchesTaken(), np.discoveredBy(), np.constraints(),
                         np.validationWarnings(), np.requiredSeedIds(),
-                        np.capturedEventEmitIds(), np.responseHeaders());
+                        np.capturedEventEmitIds(), np.responseHeaders(),
+                        np.outcome(), np.semanticStatus(), np.semanticStatusText(), np.coverageTraceIds());
             }
             paths.set(i, np);
         }
@@ -2683,11 +2684,22 @@ public class EndpointExplorationRunner {
         }
     }
 
-    private static ExploredPath withSeedIds(ExploredPath p, List<String> seedIds) {
+    static ExploredPath withSeedIds(ExploredPath p, List<String> seedIds) {
         return new ExploredPath(p.id(), p.endpointId(), p.sampleInput(), p.expectedStatus(),
                 p.sampleResponse(), p.capturedSqlIds(), p.capturedHttpCallIds(), p.branchesTaken(),
                 p.discoveredBy(), p.constraints(), p.validationWarnings(), seedIds,
-                p.capturedEventEmitIds(), p.responseHeaders());
+                p.capturedEventEmitIds(), p.responseHeaders(),
+                p.outcome(), p.semanticStatus(), p.semanticStatusText(), p.coverageTraceIds());
+    }
+
+    /** np의 sampleInput을 nb로 교체하되 coverageTraceIds, outcome, semanticStatus 등 모든 필드를 보존. */
+    static ExploredPath rewriteBody(ExploredPath np, JsonNode nb) {
+        return new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
+                np.sampleResponse(), np.capturedSqlIds(), np.capturedHttpCallIds(),
+                np.branchesTaken(), np.discoveredBy(), np.constraints(),
+                np.validationWarnings(), np.requiredSeedIds(),
+                np.capturedEventEmitIds(), np.responseHeaders(),
+                np.outcome(), np.semanticStatus(), np.semanticStatusText(), np.coverageTraceIds());
     }
 
     /** 정수 PK는 +i 오프셋(비충돌), 문자열 PK는 "_i" 접미사 — path별 고유 시드 id. */
