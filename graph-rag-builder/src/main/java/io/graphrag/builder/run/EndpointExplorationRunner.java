@@ -1757,8 +1757,14 @@ public class EndpointExplorationRunner {
         }
     }
 
-    /** 새 arm을 연 변형의 자취: label + 변형 응답 body(합성 CapturedHttpCall body) + SUT 상태 + 관측 분기. */
-    public record KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches) {}
+    /** 새 arm을 연 변형의 자취: label + 변형 응답 body(합성 CapturedHttpCall body) + SUT 상태 + 관측 분기 + 커버리지 traceId. */
+    public record KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches,
+                              String coverageTraceId) {
+        /** 4-arg 호환 생성자: coverageTraceId를 null로 위임 (기존 호출 사이트 컴파일 유지). */
+        public KeptVariant(String label, JsonNode variantBody, int sutStatus, List<BranchRef> branches) {
+            this(label, variantBody, sutStatus, branches, null);
+        }
+    }
 
     /**
      * mergeEnvelopeCandidates의 반환 타입: 병합된 후보 맵 + envelope 출처 필드 이름 집합.
@@ -1808,7 +1814,7 @@ public class EndpointExplorationRunner {
                 if (newArm || envelopeVariant) {
                     kept.add(variant.label());
                     // branches는 analyzer가 있는 runResponseVariantLoops에서 채워진다(List.of() placeholder).
-                    keptVariants.add(new KeptVariant(variant.label(), body, vo.sutStatus(), List.of()));
+                    keptVariants.add(new KeptVariant(variant.label(), body, vo.sutStatus(), List.of(), vo.coverageTraceId()));
                 }
             } catch (Exception e) {   // best-effort: 변형 실패는 회귀 아님(나머지 변형 계속)
                 log.warn("response-variant invoke failed for {} {} ({}): {}",
@@ -2096,16 +2102,23 @@ public class EndpointExplorationRunner {
                         io.graphrag.model.CapturedHttpCall.Provenance.SYNTHESIZED));
                 variantHttpIds.add(httpId);
             }
+            // REQ-012: responsevar path는 각 arm의 traceId를 OR-누적해 coverageTraceIds로 싣는다.
+            List<String> armTraceIds = collectArmTraceIds(
+                    vr.kept().stream().map(KeptVariant::coverageTraceId).toList());
+            // 현 12-arg 파생: expectedStatus=0 → deriveOutcome(0)=FAILURE, semanticStatus=0, text="0"
             variantPaths.add(new ExploredPath(endpoint.id() + "-responsevar", endpoint.id(),
                     triggerInput, 0, null, List.of(), variantHttpIds, cumBranches,
-                    "response-variant", List.of(), List.of(), List.of()));
+                    "response-variant", List.of(), List.of(), List.of(),
+                    List.of(), Map.of(),
+                    io.graphrag.model.Outcome.Kind.FAILURE, 0, "0",
+                    armTraceIds));
 
             // variantHttpCalls: SYNTHESIZED(responsevar) + CONTRACT(egressassert) 혼재 — provenance로 구분
             // 각 보존 변형마다 egress-assertion 단언 path를 생성한다(REQ-F012-006, REQ-F012-007).
             // KeptVariant.branches는 cumBranches(변형 루프 누적)를 per-변형에 주입한다 —
             // per-variant delta가 정적 헬퍼에 노출되지 않으므로, analyzer가 있는 여기서 채운다.
             List<KeptVariant> keptWithBranches = vr.kept().stream()
-                    .map(kv -> new KeptVariant(kv.label(), kv.variantBody(), kv.sutStatus(), cumBranches))
+                    .map(kv -> new KeptVariant(kv.label(), kv.variantBody(), kv.sutStatus(), cumBranches, kv.coverageTraceId()))
                     .toList();
             List<ExploredPath> assertionPaths = buildEgressAssertionPaths(
                     endpoint.id(), triggerInput, site.httpMethod(), site.pathLiteral(),
@@ -2128,6 +2141,21 @@ public class EndpointExplorationRunner {
     /** 변형 label("mode=BACKORDER")을 path-id 토큰으로 정규화(영숫자 외 → '-'). */
     private static String sanitizeLabel(String label) {
         return label.replaceAll("[^A-Za-z0-9]+", "-");
+    }
+
+    /**
+     * arm별 traceId 목록에서 null을 제거하고 삽입 순서를 보존한 채 중복을 제거해 반환한다(REQ-012).
+     *
+     * <p>격리 모드에서 실행된 arm은 non-null traceId를 가지고, none 모드나 실패한 arm은 null을 갖는다.
+     * null을 조용히 걸러내고 동일 traceId가 여러 arm에서 재사용된 경우 한 번만 포함한다.
+     *
+     * @param rawTraceIds arm별 coverageTraceId(null 포함 가능) 목록
+     * @return null 제거 + 중복 제거(순서 보존) traceId 불변 목록
+     */
+    static List<String> collectArmTraceIds(List<String> rawTraceIds) {
+        java.util.LinkedHashSet<String> s = new java.util.LinkedHashSet<>();
+        for (String t : rawTraceIds) if (t != null) s.add(t);
+        return List.copyOf(s);
     }
 
     /**
@@ -2160,11 +2188,13 @@ public class EndpointExplorationRunner {
                     Map.of(), null, 200, kv.variantBody().toString(),
                     List.of(), false,
                     io.graphrag.model.CapturedHttpCall.Provenance.CONTRACT));
+            // REQ-013: egress-assertion은 별도 probe 없음 → coverageTraceIds 의도된 빈 리스트
             result.add(new ExploredPath(
                     endpointId + "-egressassert-" + sanitizeLabel(kv.label()), endpointId,
                     triggerInput, kv.sutStatus(), null,
                     List.of(), List.of(callId), kv.branches(),
-                    "egress-assertion", List.of(), List.of(), List.of(), List.of(), Map.of()));
+                    "egress-assertion", List.of(), List.of(), List.of(), List.of(), Map.of(),
+                    List.of()));
         }
         return result;
     }
