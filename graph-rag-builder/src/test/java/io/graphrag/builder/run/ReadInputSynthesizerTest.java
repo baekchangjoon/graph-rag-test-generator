@@ -166,6 +166,95 @@ class ReadInputSynthesizerTest {
     }
 
     @Test
+    void synthesize_decimalFk_seedsBigDecimalNotString() {
+        // DECIMAL FK/PK는 keyProbe가 숫자(BigDecimal)를 내야 한다 — varchar "probe-..." 면 INSERT가 깨진다.
+        // path 변수 "id"는 PK(INT)에만 매핑되므로 FK 컬럼(rate_ref)은 keyProbe 경로를 그대로 탄다.
+        Endpoint endpoint = new Endpoint("get-api-transfers-id", "GET", "/api/transfers/{id}",
+                "x.C", "get", List.of(new EndpointParam("id", "int", ParamKind.PATH)), true);
+        TableSchema rates = new TableSchema("rates",
+                List.of(new ColumnSchema("rate_id", "DECIMAL", false, true)),
+                List.of(), List.of());
+        TableSchema transfers = new TableSchema("transfers",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("rate_ref", "DECIMAL", false, false)),   // NOT NULL DECIMAL FK
+                List.of(new ForeignKey("rate_ref", "rates", "rate_id")),
+                List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(transfers, rates));
+
+        SynthesizedInput.SeedRow transfersRow = out.seeds().stream()
+                .filter(r -> r.table().equals("transfers")).findFirst().orElseThrow();
+        int fkIdx = transfersRow.columns().indexOf("rate_ref");
+        assertThat(transfersRow.values().get(fkIdx)).isInstanceOf(java.math.BigDecimal.class);
+        // 부모 PK도 BigDecimal이고 자식 FK == 부모 PK (FK 무결성)
+        SynthesizedInput.SeedRow ratesRow = out.seeds().stream()
+                .filter(r -> r.table().equals("rates")).findFirst().orElseThrow();
+        int pkIdx = ratesRow.columns().indexOf("rate_id");
+        assertThat(ratesRow.values().get(pkIdx)).isInstanceOf(java.math.BigDecimal.class);
+        assertThat(transfersRow.values().get(fkIdx)).isEqualTo(ratesRow.values().get(pkIdx));
+    }
+
+    @Test
+    void synthesize_doubleFk_seedsDoubleNotString() {
+        // DOUBLE FK/PK는 keyProbe가 Double을 내야 한다.
+        Endpoint endpoint = new Endpoint("get-api-samples-id", "GET", "/api/samples/{id}",
+                "x.C", "get", List.of(new EndpointParam("id", "int", ParamKind.PATH)), true);
+        TableSchema sensors = new TableSchema("sensors",
+                List.of(new ColumnSchema("sensor_id", "DOUBLE", false, true)),
+                List.of(), List.of());
+        TableSchema samples = new TableSchema("samples",
+                List.of(new ColumnSchema("id", "INT", false, true),
+                        new ColumnSchema("sensor_ref", "DOUBLE", false, false)),   // NOT NULL DOUBLE FK
+                List.of(new ForeignKey("sensor_ref", "sensors", "sensor_id")),
+                List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(samples, sensors));
+
+        SynthesizedInput.SeedRow samplesRow = out.seeds().stream()
+                .filter(r -> r.table().equals("samples")).findFirst().orElseThrow();
+        int fkIdx = samplesRow.columns().indexOf("sensor_ref");
+        assertThat(samplesRow.values().get(fkIdx)).isInstanceOf(Double.class);
+    }
+
+    @Test
+    void synthesize_decimalPathVariablePk_seedsBigDecimalAndNumericUrl() {
+        // path 변수가 DECIMAL PK에 매핑되는 흔한 케이스 — scalarFor+coerceForColumn 경로.
+        // seed 값이 BigDecimal이고 URL 값도 숫자여야 한다(varchar "probe-..." 아님).
+        Endpoint endpoint = new Endpoint("get-api-accounts-id", "GET", "/api/accounts/{id}",
+                "x.C", "get", List.of(new EndpointParam("id", "java.math.BigDecimal", ParamKind.PATH)), true);
+        TableSchema accounts = new TableSchema("accounts",
+                List.of(new ColumnSchema("id", "DECIMAL", false, true),
+                        new ColumnSchema("label", "VARCHAR", false, false)),
+                List.of(), List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(accounts));
+
+        SynthesizedInput.SeedRow seed = out.seeds().get(0);
+        int idIdx = seed.columns().indexOf("id");
+        assertThat(seed.values().get(idIdx)).isInstanceOf(java.math.BigDecimal.class);
+        // URL 값(body) == 시드 PK, 그리고 숫자 파싱 가능해야 한다
+        assertThat(out.body().get("id").asText()).isEqualTo(String.valueOf(seed.values().get(idIdx)));
+        assertThat(new java.math.BigDecimal(out.body().get("id").asText())).isNotNull();
+    }
+
+    @Test
+    void synthesize_doublePathVariablePk_seedsDouble() {
+        Endpoint endpoint = new Endpoint("get-api-readings-id", "GET", "/api/readings/{id}",
+                "x.C", "get", List.of(new EndpointParam("id", "double", ParamKind.PATH)), true);
+        TableSchema readings = new TableSchema("readings",
+                List.of(new ColumnSchema("id", "DOUBLE", false, true),
+                        new ColumnSchema("label", "VARCHAR", false, false)),
+                List.of(), List.of());
+
+        SynthesizedInput out = new ReadInputSynthesizer().synthesize(endpoint, List.of(readings));
+
+        SynthesizedInput.SeedRow seed = out.seeds().get(0);
+        int idIdx = seed.columns().indexOf("id");
+        assertThat(seed.values().get(idIdx)).isInstanceOf(Double.class);
+        assertThat(Double.parseDouble(out.body().get("id").asText())).isNotNaN();
+    }
+
+    @Test
     void synthesize_enumColumn_seededWithValidConstantNotProbe() {   // Bug 3
         Endpoint endpoint = new Endpoint("get-api-orders-id", "GET", "/api/orders/{id}", "x.C", "get",
                 List.of(new EndpointParam("id", "int", ParamKind.PATH)), false);
