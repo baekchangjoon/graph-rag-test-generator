@@ -2166,7 +2166,7 @@ public class EndpointExplorationRunner {
      *   <li>CONTRACT CapturedHttpCall(id {@code http-<endpointId>-egressassert-<sanitizedLabel>})을
      *       {@code outVariantCalls}에 추가한다.</li>
      *   <li>discoveredBy="egress-assertion", expectedStatus=sutStatus, branchesTaken=branches,
-     *       capturedHttpCallIds=[그 call id]인 ExploredPath(14-arg 생성자)를 반환 목록에 담는다.</li>
+     *       capturedHttpCallIds=[그 call id]인 ExploredPath(15-arg 생성자, 14-arg 파생 + coverageTraceIds)를 반환 목록에 담는다.</li>
      * </ul>
      *
      * @param endpointId      엔드포인트 식별자 (path-id 접두사)
