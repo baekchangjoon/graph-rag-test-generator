@@ -137,6 +137,7 @@ public class EndpointExplorationRunner {
 
     /** traceId가 있으면 단일 요소 리스트, 없으면 빈 리스트를 반환한다. */
     static List<String> coverageTraceIdsOf(InvocationOutcome out) {
+        if (out == null) return java.util.List.of();
         return out.coverageTraceId() != null ? List.of(out.coverageTraceId()) : List.of();
     }
 
@@ -578,8 +579,6 @@ public class EndpointExplorationRunner {
                         baseInput, neg.status(), neg.response(), List.of(), List.of(),
                         List.copyOf(neg.coveredBranches()), "negative-auth", List.of(), List.of(), List.of(),
                         List.of(), Map.of(),
-                        neg.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
-                        neg.status(), String.valueOf(neg.status()),
                         coverageTraceIdsOf(neg)));
                 log.info("negative-auth {} -> status {}", endpoint.id(), neg.status());
             } catch (Exception e) {   // best-effort: 부정 패스 실패는 회귀 아님
@@ -719,8 +718,6 @@ public class EndpointExplorationRunner {
                         List.of("negative-validation:" + variant.field() + ":" + variant.kind()),
                         List.of(), List.of(),
                         List.of(), Map.of(),
-                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
-                        out.status(), String.valueOf(out.status()),
                         coverageTraceIdsOf(out)));
                 log.info("negative-validation {} ({}={}) -> status {}",
                         endpoint.id(), variant.field(), variant.kind(), out.status());
@@ -944,8 +941,6 @@ public class EndpointExplorationRunner {
                         List.copyOf(out.coveredBranches()), "form-ref-trial",
                         List.of("form-ref-trial:" + ref.field()), List.of(), List.of(),
                         List.of(), Map.of(),
-                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
-                        out.status(), String.valueOf(out.status()),
                         coverageTraceIdsOf(out)));
                 issued++;
                 log.info("form-ref-trial {} ({}=pk) -> status {}", endpoint.id(), ref.field(), out.status());
@@ -1041,8 +1036,6 @@ public class EndpointExplorationRunner {
                         List.of(tag),
                         List.of(), seedIds,
                         List.of(), Map.of(),
-                        out.status() / 100 == 2 ? Outcome.Kind.SUCCESS : Outcome.Kind.FAILURE,
-                        out.status(), String.valueOf(out.status()),
                         coverageTraceIdsOf(out)));
             } catch (Exception e) {   // best-effort: 변종 실패는 회귀 아님(base 결과 유지)
                 log.warn("state-guard variant failed for {} ({}): {}",

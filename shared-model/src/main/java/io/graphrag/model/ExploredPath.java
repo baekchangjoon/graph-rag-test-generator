@@ -72,6 +72,23 @@ public record ExploredPath(
              deriveOutcome(expectedStatus), expectedStatus, String.valueOf(expectedStatus));
     }
 
+    /**
+     * 15-argument constructor: 14-arg 기반에 coverageTraceIds를 추가.
+     * outcome/semanticStatus/semanticStatusText는 expectedStatus에서 파생한다(14-arg와 동일).
+     * 직접 생성 path 사이트(negauth/negval/formref/state-guard)에서 사용한다.
+     */
+    public ExploredPath(String id, String endpointId, JsonNode sampleInput, int expectedStatus,
+                        JsonNode sampleResponse, List<String> capturedSqlIds, List<String> capturedHttpCallIds,
+                        List<BranchRef> branchesTaken, String discoveredBy, List<String> constraints,
+                        List<String> validationWarnings, List<String> requiredSeedIds,
+                        List<String> capturedEventEmitIds, Map<String, String> responseHeaders,
+                        List<String> coverageTraceIds) {
+        this(id, endpointId, sampleInput, expectedStatus, sampleResponse, capturedSqlIds, capturedHttpCallIds,
+             branchesTaken, discoveredBy, constraints, validationWarnings, requiredSeedIds,
+             capturedEventEmitIds, responseHeaders,
+             deriveOutcome(expectedStatus), expectedStatus, String.valueOf(expectedStatus), coverageTraceIds);
+    }
+
     /** 13-argument compatibility constructor (no responseHeaders — backward compat) */
     public ExploredPath(String id, String endpointId, JsonNode sampleInput, int expectedStatus,
                         JsonNode sampleResponse, List<String> capturedSqlIds, List<String> capturedHttpCallIds,
