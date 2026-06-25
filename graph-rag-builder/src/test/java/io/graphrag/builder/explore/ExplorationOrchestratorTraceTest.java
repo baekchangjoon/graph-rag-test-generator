@@ -45,9 +45,9 @@ class ExplorationOrchestratorTraceTest {
         assertThat(paths.get(0).coverageTraceId()).isEqualTo("t1");
     }
 
-    /** 첫 proto traceId=null, 두 번째 non-null(t3) → tie-break로 t3 채택. */
+    /** REQ-002 tie-break: 첫 proto traceId=null, 두 번째 non-null(t3) → non-null(t3) 채택. */
     @Test
-    void nullTraceIdYieldsEmptyList() {
+    void nullThenNonNullTraceIdTieBreakKeepsNonNull() {
         JsonNode body = Json.mapper().createObjectNode().put("x", 1);
 
         InvocationOutcome outcomeNull = outcomeWithTrace(COVERAGE_KEY, null);
@@ -64,6 +64,25 @@ class ExplorationOrchestratorTraceTest {
 
         assertThat(paths).hasSize(1);
         assertThat(paths.get(0).coverageTraceId()).isEqualTo("t3");
+    }
+
+    /**
+     * REQ-008: traceparent 미주입(effective traceId=null) probe만 있으면 대표 traceId가 null이다.
+     * (이 null은 PathCandidate→ExploredPath 변환에서 빈 리스트 coverageTraceIds로 정규화된다.)
+     */
+    @Test
+    void nullOnlyProbeYieldsNullRepresentative() {
+        JsonNode body = Json.mapper().createObjectNode().put("x", 1);
+
+        InvocationOutcome outcomeNull = outcomeWithTrace(COVERAGE_KEY, null);
+        PathExplorer engine = stubExplorer("e1", body, outcomeNull);
+
+        ExplorationOrchestrator orchestrator = new ExplorationOrchestrator(List.of(engine), 10);
+
+        List<PathCandidate> paths = orchestrator.explore(minimalTarget()).paths();
+
+        assertThat(paths).hasSize(1);
+        assertThat(paths.get(0).coverageTraceId()).isNull();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

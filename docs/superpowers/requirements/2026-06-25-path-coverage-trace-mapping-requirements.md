@@ -147,13 +147,13 @@ E2E REQ(001/003/004/006)는 **`BuilderCli.build`를 컨테이너 SUT에 대해 �
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
 | REQ-001 | path가 coverageTraceIds 보유 | `CoverageTraceMappingE2E#graphPathsHaveCoverageTraceIds` | E2E | 🟢 green |
-| REQ-002 | 대표 traceId = 생존 probe | `ExplorationOrchestratorTraceTest#representativeIsSurvivingProbe` | integration | 🟢 green |
+| REQ-002 | 대표 traceId = 생존 probe | `ExplorationOrchestratorTraceTest#representativeIsSurvivingProbe`·`#nullThenNonNullTraceIdTieBreakKeepsNonNull` | integration | 🟢 green |
 | REQ-003 | dangling 0건 | `CoverageTraceMappingE2E#traceIdsResolveToExecFiles` | E2E | 🟢 green |
 | REQ-004 | coverage-by-path.json 생성 | `CoverageTraceMappingE2E#reportFileExistsAndSchemaValid` | E2E | 🟢 green |
 | REQ-005 | pathId→traceIds→상대경로 매핑 | `CoverageByPathReportTest#mapsPathToExecRelativePaths` | integration | 🟢 green |
 | REQ-006 | 사이드카 summary 투영 | `CoverageByPathReportTest#projectsSidecarSummary` / E2E `#summaryMatchesSidecarWhenPresent` | E2E+integration | 🟢 green |
 | REQ-007 | 누락·손상 graceful | `CoverageByPathReportTest#missingSidecarYieldsNullSummaryNoThrow`·`#malformedSidecarYieldsNullSummaryNoThrow` | integration | 🟢 green |
-| REQ-008 | 미주입 traceId → 빈 리스트 | `ExplorationOrchestratorTraceTest#nullTraceIdYieldsEmptyList` | integration | 🟢 green |
+| REQ-008 | 미주입 traceId → 빈 리스트 | `ExplorationOrchestratorTraceTest#nullOnlyProbeYieldsNullRepresentative`(대표 null → 변환 시 빈 리스트) | integration | 🟢 green |
 | REQ-009 | 후방호환 역직렬화 | `ExploredPathCompatTest#legacyJsonYieldsEmptyCoverageTraceIds`·`#nullCoverageTraceIdsNormalizedToEmpty` | integration | 🟢 green |
 | REQ-010 | exec 부재 시 미생성 | `CoverageReportWiringTest#noExecDirSkips`·`#emptyExecDirSkips`·`#execPresentTriggers` | integration | 🟢 green |
 | REQ-011 | copy 사이트 보존 | `ExploredPathCopyPreservationTest#withSeedIdsPreservesCoverageTraceIds`·`#pkRewritePreservesCoverageTraceIds` | integration | 🟢 green |

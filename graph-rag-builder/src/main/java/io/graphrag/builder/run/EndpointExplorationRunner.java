@@ -135,7 +135,14 @@ public class EndpointExplorationRunner {
                 p -> p.outcome() == Outcome.Kind.FAILURE && p.expectedStatus() / 100 == 2);
     }
 
-    /** traceId가 있으면 단일 요소 리스트, 없으면 빈 리스트를 반환한다. */
+    /**
+     * traceId가 있으면 단일 요소 리스트, 없으면 빈 리스트를 반환한다.
+     *
+     * <p>직접 생성 path 사이트(negauth/negval/formref/state-guard)가 공유하는 단일 변환 지점이다.
+     * 양 분기는 {@code DirectPathSiteTraceTest}로 단위 검증되고, 각 사이트의 실제 배선은
+     * {@code CoverageTraceMappingE2E} 풀빌드 E2E로 커버된다(negauth/negval path가 coverageTraceIds를
+     * 보유함을 확인). 사이트가 private full-SUT 경로라 per-site 단위 테스트는 두지 않는다.
+     */
     static List<String> coverageTraceIdsOf(InvocationOutcome out) {
         if (out == null) return java.util.List.of();
         return out.coverageTraceId() != null ? List.of(out.coverageTraceId()) : List.of();
@@ -1593,12 +1600,7 @@ public class EndpointExplorationRunner {
                     }
                     resp = rc;
                 }
-                np = new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
-                        resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
-                        np.branchesTaken(), np.discoveredBy(), np.constraints(),
-                        np.validationWarnings(), np.requiredSeedIds(),
-                        np.capturedEventEmitIds(), np.responseHeaders(),
-                        np.outcome(), np.semanticStatus(), np.semanticStatusText(), np.coverageTraceIds());
+                np = rewriteBody(np, nb, resp);
             }
             paths.set(i, np);
         }
@@ -2738,8 +2740,16 @@ public class EndpointExplorationRunner {
 
     /** np의 sampleInput을 nb로 교체하되 coverageTraceIds, outcome, semanticStatus 등 모든 필드를 보존. */
     static ExploredPath rewriteBody(ExploredPath np, JsonNode nb) {
+        return rewriteBody(np, nb, np.sampleResponse());
+    }
+
+    /**
+     * np의 sampleInput을 nb로, sampleResponse를 resp로 교체하되 나머지 모든 필드
+     * (coverageTraceIds, outcome, semanticStatus 등)를 보존한다. PK rewrite 호출부와 공유하는 단일 생성 지점.
+     */
+    static ExploredPath rewriteBody(ExploredPath np, JsonNode nb, JsonNode resp) {
         return new ExploredPath(np.id(), np.endpointId(), nb, np.expectedStatus(),
-                np.sampleResponse(), np.capturedSqlIds(), np.capturedHttpCallIds(),
+                resp, np.capturedSqlIds(), np.capturedHttpCallIds(),
                 np.branchesTaken(), np.discoveredBy(), np.constraints(),
                 np.validationWarnings(), np.requiredSeedIds(),
                 np.capturedEventEmitIds(), np.responseHeaders(),
