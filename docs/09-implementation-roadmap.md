@@ -185,3 +185,8 @@ OPEN-DECISIONS.md 항목 중 일부는 phase 진입을 막을 수 있음:
 착수 전 방향·통합 지점·리스크를 못 박은 3건(OTEL 기반 SQL/bind 캡처·OpenAPI 외부 stub seeding·override
 키 치환 경고)은 [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) 참조. 각 항목은
 착수 시 각자 spec→plan으로 확장한다.
+
+폼/ParamMap 엔드포인트 테스트 생성(현재 미지원)은
+[superpowers/followups/2026-06-25-form-parammap-test-generation](superpowers/followups/2026-06-25-form-parammap-test-generation.md)
+참조 — A(form-urlencoded, 우선)·B(멀티파트)·C(동적 `@RequestParam Map`) 3갈래로 현황·필요 작업·리스크를
+정리했다. A는 생성기/템플릿 변경에 국한(빌더 무변경), B·C는 빌더 확장 필요.
