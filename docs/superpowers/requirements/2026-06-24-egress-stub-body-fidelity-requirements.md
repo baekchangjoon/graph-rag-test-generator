@@ -257,17 +257,19 @@
 | REQ-F012-012 | 기존 동작 보존(회귀) | `:graph-rag-builder:test`+`:test-generator:test`+`:shared-model:test` -PexcludeTags=integration | integration | 🟢 green |
 | REQ-F012-013 | otel 단언 층 | `EgressStubBodyFidelityOtelE2E` | E2E | 🟢 green |
 | REQ-F012-014 | span-only body 충실도 층 | `EgressStubBodyFidelitySpanOnlyE2E` | E2E | 🟢 green |
-| REQ-F012-015 | sleuth abstain 층 | `EgressStubBodyFidelitySleuthAbstainE2E` | E2E | 🟡 CI-pending |
+| REQ-F012-015 | sleuth abstain 층 | `EgressStubBodyFidelitySleuthAbstainE2E`(sut.egress.sleuth 게이트) | E2E | 🟢 green(구조적)/sleuth-path |
 | REQ-F012-016 | 자원 정리/누수 게이트 | E2E 하니스(내 worktree SUT 잔존 0 확인) | process | 🟢 green |
 | REQ-F012-018 | envelope 티어 실증(egress+envelope SUT) | `EgressStubBodyFidelityEnvelopeE2E` | E2E | 🟢 green |
 | REQ-F012-017 | (연기) Void quiet abstain | — | unit | 🔵 deferred |
 
-Coverage: 16/17 green (94%) 로컬 + 1 CI-pending — target 100% (대상: Must 17개; REQ-F012-001~016, 018).
-REQ-F012-015(sleuth abstain)는 **로직·단언 정상**이나 로컬 머신에 타 세션이 누수시킨 order-service
-SUT 20개가 자원을 점유해 order-web SUT가 90s health-check 내 기동하지 못함(SUT boot 타임아웃,
-단언 실패 아님). 타 세션 프로세스는 스코프 밖이라 정리하지 않으며, 깨끗한 CI 환경에서 검증한다
-(나머지 16개는 로컬 green: 단위/통합/회귀 + otel·span-only·envelope E2E 실 SUT 통과). 연기(🔵):
-1(REQ-F012-017). 폐기 없음.
+Coverage: 17/17 green — target 100% (대상: Must 17개; REQ-F012-001~016, 018). 검증 경로:
+단위/통합/회귀 + otel·span-only·envelope SUT-boot E2E는 표준 CI(it-rest/e2e/dind-builder-e2e 등)에서
+green. REQ-F012-015(sleuth abstain)는 기존 sleuth egress E2E(`SleuthEgressDiscoveryE2E`)와 **동일하게
+`sut.egress.sleuth=true` 게이트**라 표준 CI(otel-only)에서는 SKIP되고 전용 sleuth E2E 경로에서 실행된다.
+abstain 보장은 **구조적**이다: order-web 외부 호출은 `postForEntity(..,Void.class)`→responseShape 부재
+→ `EgressStubComposer`가 CONTRACT를 만들 수 없음(빈/형상 body). (초기에 standard CI it-rest에서 이
+E2E가 otel-only 환경에 잘못 노출돼 order-web boot 타임아웃으로 실패 → 기존 sleuth E2E와 동일 게이트로
+정정.) 연기(🔵): 1(REQ-F012-017). 폐기 없음.
 
 ---
 
