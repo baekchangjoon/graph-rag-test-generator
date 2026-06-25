@@ -2293,7 +2293,8 @@ public class EndpointExplorationRunner {
         } finally {
             sqlScope.drain();   // scope 닫기(send 실패해도 리시버 버퍼 정리; SQL은 변형 루프 미사용)
         }
-        return new VariantOutcome(coverage.requestDelta(coverageTraceId), status);   // 이 invoke의 delta+status (pjacoco per-trace)
+        return new VariantOutcome(coverage.requestDelta(coverageTraceId), status,
+                probeTraceparent != null ? coverageTraceId : null);   // effective traceId (§4.1)
     }
 
     /** RawHttpExchange → CapturedHttpCall. consumedFields는 응답 ∩ DTO 필드 (2.5 근사). */
@@ -2543,8 +2544,10 @@ public class EndpointExplorationRunner {
                         : coverageTraceId != null
                                 ? httpCapture.drainByTraceId(coverageTraceId)
                                 : httpCapture.drainNewExchanges(),
-                coverageKey, drained, java.util.List.of(), traceId, capturedResponseHeaders,
-                egressCalls);
+                coverageKey, drained, java.util.List.of(),
+                traceId,             // kafkaTraceId 슬롯 (상관용, 기존 동작 — 변경 없음)
+                capturedResponseHeaders, egressCalls,
+                traceId);            // coverageTraceId = effective traceId (§4.1; 미주입 시 null). 같은 값이지만 의미 다름
     }
 
     /**
