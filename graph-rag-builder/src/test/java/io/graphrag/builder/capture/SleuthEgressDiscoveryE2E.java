@@ -90,7 +90,7 @@ class SleuthEgressDiscoveryE2E {
         env = new AnalysisEnvironment(dbConfig, false, false, new SleuthTraceKey());
 
         // RESERVATION_URL → 호스트 stub (WireMock/redirect 미사용 — REQ-010)
-        // SPRING_ZIPKIN_BASEURL + SPRING_ZIPKIN_SENDER_TYPE 은 AnalysisEnvironment.sleuthZipkinEnv()로 자동 주입됨
+        // SPRING_ZIPKIN_BASEURL + SPRING_ZIPKIN_SENDER_TYPE + SPRING_ZIPKIN_ENABLED 은 AnalysisEnvironment.sleuthZipkinEnv()로 자동 주입됨
         // SPRING_SLEUTH_SAMPLER_PROBABILITY=0.0 → SUT 자체 Brave 샘플러를 0%로 설정.
         // 빌더는 이 값을 주입하지 않는다 — 테스트가 의도적으로 설정해
         // "주입 X-B3-Sampled:1만으로 export 강제"(REQ-008 AC2)를 실증한다.

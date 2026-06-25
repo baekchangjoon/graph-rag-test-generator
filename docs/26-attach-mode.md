@@ -94,6 +94,19 @@ A 서비스에 주입하고(B3 헤더 / Kafka 레코드 헤더), 그 trace-id가
 비동기로 B→C 호출이 일어나는 멀티서비스 구성은 `--capture-services a,b,c` 로 여러 컨테이너 로그를
 한 파일로 인터리브 tail해 함께 상관한다. 미지정 시 `--app-service` 한 컨테이너만 본다.
 
+> **egress(외부 HTTP) 캡처와 zipkin export — 빌더가 자동으로 켠다:**
+> sleuth 모드의 egress(외부 다운스트림 호출) 발견은 SUT가 내보내는 Brave CLIENT(zipkin) span을
+> 호스트 Zipkin 리시버가 받아 이뤄진다(`BuilderCli` sleuth 분기 → `EgressCollector.forMode`).
+> 빌더는 sleuth 모드에서 다음 3개를 SUT app 컨테이너에 자동 주입한다
+> (`AnalysisEnvironment.sleuthZipkinEnv`):
+> `SPRING_ZIPKIN_BASEURL`(호스트 리시버 주소), `SPRING_ZIPKIN_SENDER_TYPE=web`,
+> 그리고 **`SPRING_ZIPKIN_ENABLED=true`**. 마지막 항목이 핵심이다 — BASEURL만 주입하고 export가
+> 꺼져 있으면 span이 발행되지 않아 egress 캡처가 0건이 되므로, 빌더가 export 자체를 강제로 켜
+> SUT 측 설정 의존을 없앤다. BASEURL이 빌더 리시버로 리다이렉트돼 있고 분석 종료 시 override가
+> 걷히므로 분석 수명주기 밖 영향은 없다(SQL 로그 상관은 B3 헤더로 별개 동작). `SPRING_ZIPKIN_ENABLED`는
+> 레거시 Spring Cloud Sleuth 프로퍼티이며, sleuth 모드 대상(레거시 Java8+Sleuth SUT)에 맞다.
+> SUT가 다른 경로로 export를 명시적으로 끄는 특수 케이스라면 `--sut-env`로 덮어쓸 수 있다.
+
 ### 외부 HTTP(downstream) 캡처
 
 SUT가 호출하는 외부 HTTP 서비스를, 빌더가 띄운 capture WireMock으로 우회시켜
