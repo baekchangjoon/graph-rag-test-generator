@@ -50,6 +50,11 @@ zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag
 흐름: SUT jar 빌드 → 도구 1이 SUT를 **외부 프로세스**로 띄운 Testcontainers + JaCoCo 분석
 환경에서 분기 탐색 후 graph.json + exploration-report.json 생성 → 도구 2가 endpoint별 전 path
 테스트 생성(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
+
+탐색 단계에서 요청 단위 JaCoCo exec 데이터가 수집된 경우, 도구 1은 `<out>/coverage-by-path.json`도
+함께 생성한다. 이 파일은 각 path가 담고 있는 `coverageTraceIds` 필드(그 path를 정의한 탐색 probe의
+W3C traceId 목록)를 역참조 키로 삼아, `<out>/work/pjacoco-exec/<traceId>.exec` 파일을 pathId →
+endpointId → execFiles 형태로 매핑한다. `work/pjacoco-exec/`에 `.exec` 파일이 없으면 생성하지 않는다.
 성공 시 `✅ E2E PASS — tests=N skipped=0 failures=0 errors=0` (skipped·errors도 0이어야 한다).
 
 입력 생성: happy 입력 + (generic 경계 변이 ⊕ **InputOracle** 후보)를 HTTP로 호출한다. 오라클은
