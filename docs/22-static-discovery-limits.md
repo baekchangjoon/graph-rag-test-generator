@@ -200,6 +200,79 @@ public AbcDTO abcDbyE(String d, String e) { ... }   // 파라미터에 @PathVari
 
 ---
 
+## 8. 입력 합성 불가 + 내부 egress 호출 — 빈 바디 탐색 워크라운드(참고)
+
+```java
+// @RequestBody shape도 path param도 없는 non-GET 핸들러.
+// 내부에서 RestTemplate으로 외부를 호출하지만, 합성할 inbound 입력 표면이 없다.
+@PostMapping("/sync")            // body shape 0, path param 0
+public SyncResult sync() {
+    return restTemplate.getForObject("https://ext/api/state", SyncResult.class);
+}
+```
+
+- **무슨 일이 일어나나:** 탐색 사전 필터가 이 엔드포인트를 **skip**한다 —
+  `BuilderCli.java`의 다음 조건이다(라인 번호는 변동 가능하므로 조건으로 식별):
+
+  ```java
+  // graph-rag-builder/.../cli/BuilderCli.java — 탐색 대상 사전 필터 루프
+  if (bodyShapeFor(endpoint, index.bodyShapes()) == null
+          && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+      log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
+      continue;
+  }
+  ```
+
+  skip되면 그 엔드포인트는 `toExplore`에서 빠져 **실행되지 않고**, 따라서 내부
+  RestTemplate 호출(egress)도 발동하지 않아 `httpCalls` 엣지가 캡처되지 않는다 —
+  test-generator가 만들 `ExploredPath`도 없어 테스트가 생성되지 않는다. (엔드포인트
+  노드 자체는 `index.endpoints()` 전체가 `GraphAsset`에 들어가므로 `graph.json`에는
+  남고, `exploration-report.json`의 `unsupportedShapes`에 사유가 기록된다 — 조용히
+  사라지지는 않는다.)
+
+- **skip의 본래 이유:** body shape도 path param도 없는 non-GET은 "유효한 성공 호출을
+  합성할 입력 재료가 0"이라는 판단이다. 무리하게 200 기대 테스트를 만들면 거의 항상
+  깨지므로 보수적으로 제외한다(이 도구의 관측 기반(capture-driven) 철학).
+
+- **워크라운드 — skip을 제거하면 진행된다(실측 확인):** 위 `continue` 분기를 제거하면
+  탐색기가 **빈 바디**로 핸들러를 호출하고, 빈 바디로도 핸들러가 egress 라인까지
+  실행되는 부류에서는 **sleuth/zipkin span으로 외부 호출이 정상 캡처**된다. 현재까지
+  **1개 엔드포인트**에서 이 동작을 확인했다. 옵트인 토글 형태(기본 off → 기존 동작
+  보존)로 가두는 것을 권장한다:
+
+  ```java
+  // 예: 환경변수 GRB_EXPLORER_EMPTY_BODY=1 이면 빈 바디 탐색 허용, 아니면 기존처럼 skip
+  boolean allowEmptyBody = "1".equals(System.getenv("GRB_EXPLORER_EMPTY_BODY"));
+  if (bodyShapeFor(endpoint, index.bodyShapes()) == null
+          && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+      if (!allowEmptyBody) {
+          log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
+          continue;
+      }
+      log.info("empty-body explore {} (GRB_EXPLORER_EMPTY_BODY=1)", endpoint.id());
+  }
+  ```
+
+- **주의 — 일반 해법 아님(가드 없는 전역 토글의 한계):** 이 워크라운드는 다음
+  경우엔 오도성 테스트를 만들 수 있으므로 단일 케이스 확인용으로만 쓴다.
+  1. **빈 바디 → egress 도달 전 400/415.** `@RequestBody(required=true)`·`@Valid`
+     엔드포인트는 빈 바디면 컨트롤러 진입 직후 거부되어 egress가 발동하지 않는다.
+     이때 happy path로 박히면 외부 연동을 전혀 안 건드리는 "400 기대" 테스트가 생긴다.
+     → 채택 가드 권장: `outcome==SUCCESS`(2xx, 엔벨로프-에러 아님) ∧ egress ≥ 1건일
+     때만 path를 채택, 아니면 기존처럼 unsupported 기록.
+  2. **body 의존 egress.** outbound URL/파라미터가 요청 바디에서 파생되면, 빈 바디는
+     엉뚱한 경로로 나가거나 NPE가 되어 잘못된 stub을 합성한다.
+  3. **input-driven 커버리지 없음.** inbound가 빈 바디라 바디 분기는 못 탄다.
+
+- **본 수정 방향:** 근본은 inbound 입력 합성이다. `--reflect-instantiate`/shape 해석을
+  강화해 **유효한 바디**를 만들면 skip 조건 첫 항(`bodyShapeFor==null`)이 풀려 정상
+  탐색 경로를 타고, body 의존 egress도 올바르게 캡처되며 입력 기반 커버리지까지 얻는다.
+  빈 바디 토글은 그것조차 불가능한 엔드포인트의 **명시적 폴백**으로 둔다. 정식 도입
+  시에는 새 REQ-ID로 역전파하고 위 채택 가드와 함께 E2E(빈 바디로 egress 캡처되는
+  케이스 + 빈 바디가 거부되어 테스트가 생성되지 **않아야** 하는 케이스)를 추가한다.
+
+---
+
 ## 미도달 분기를 만났을 때
 
 `exploration-report.json`에서 분기가 미도달로 남았다면 소스 위치부터 본다.
@@ -210,7 +283,10 @@ public AbcDTO abcDbyE(String d, String e) { ... }   // 파라미터에 @PathVari
 3. **인터페이스 파라미터/의존성을 받는 메서드 안** → 5절. 특정 구현체를 깨우는 입력을
    찾거나, 수동 `ExploredPath`를 작성한다.
 4. **리플렉션으로 dispatch** → 6절. 구현체별로 수동 path 작성.
-5. **그 외** → 인덱서/오라클 버그일 수 있다. 실패하는 컨트롤러 shape를 인덱서 테스트
+5. **`@RequestBody` shape도 path param도 없는 non-GET 핸들러가 미탐색** → 8절.
+   입력 합성 재료가 없어 사전 필터가 skip한 경우. 내부 egress가 핵심이면 빈 바디
+   탐색 워크라운드(가드 주의)나 reflect-instantiate를 검토한다.
+6. **그 외** → 인덱서/오라클 버그일 수 있다. 실패하는 컨트롤러 shape를 인덱서 테스트
    (`index/` 테스트들)에 추가해 재현한다.
 
 ## 아직 범위 밖
