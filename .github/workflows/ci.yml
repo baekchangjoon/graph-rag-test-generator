@@ -27,9 +27,11 @@ jobs:
           # Docker 데몬을 요구하는 컴포넌트 테스트(Testcontainers DB/Kafka, samples SUT slice).
           - name: docker
             args: "test -PincludeTags=docker"
-          # it-cli(cli 통합 4개)가 한 샤드에선 ~12분 → 무거운 OTEL 풀빌드 2개와 가벼운 2개로 분할.
+          # it-cli(cli 통합)를 무거운 OTEL 풀빌드 2개와 가벼운 것들로 분할.
+          # LlmOracleE2E는 오프라인(커밋 캐시) E2E — CI에 포함해 LLM 캐시 키 drift(Spoon 핸들러
+          # 직렬화 변경 시 무효화)를 조기에 잡는다. API 키 불필요.
           - name: it-cli-light
-            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderIntegrationTest' --tests 'io.graphrag.builder.cli.BuilderEndpointSelectorIntegrationTest'"
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderIntegrationTest' --tests 'io.graphrag.builder.cli.BuilderEndpointSelectorIntegrationTest' --tests 'io.graphrag.builder.cli.LlmOracleE2E'"
           - name: it-cli-otel
             args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderCollectionIntegrationTest' --tests 'io.graphrag.builder.cli.OtelKafkaBuildIntegrationTest'"
           - name: it-rest
