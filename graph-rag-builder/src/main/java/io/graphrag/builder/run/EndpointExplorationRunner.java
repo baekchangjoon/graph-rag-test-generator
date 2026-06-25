@@ -1462,6 +1462,8 @@ public class EndpointExplorationRunner {
                     ? "error-envelope"
                     : candidate.discoveredBy();
             // seed는 성공(2xx) path에만 연결 — attachSeeds에서 채운다
+            String tid = candidate.coverageTraceId();
+            List<String> covTraceIds = tid != null ? List.of(tid) : List.of();
             paths.add(new ExploredPath(
                     candidate.pathId(),
                     endpoint.id(),
@@ -1479,7 +1481,8 @@ public class EndpointExplorationRunner {
                     candidate.responseHeaders(),
                     o.kind(),
                     o.semanticStatus(),
-                    o.semanticStatusText()));
+                    o.semanticStatusText(),
+                    covTraceIds));
         }
         return new PathsBundle(paths, allSql, allHttpCalls, allCapturedEventEmits);
     }
