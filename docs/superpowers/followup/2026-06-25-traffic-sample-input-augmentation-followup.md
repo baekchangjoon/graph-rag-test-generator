@@ -217,7 +217,7 @@ builder build --incremental-base <pruned-dir> --traffic-samples …  (다음 라
 ```
 graph-rag-test-generator에서 "트래픽 샘플 기반 입력 보강 어댑터"를 진행해줘.
 
-배경/설계: docs/superpowers/followups/2026-06-25-traffic-sample-input-augmentation-followup.md.
+배경/설계: docs/superpowers/followup/2026-06-25-traffic-sample-input-augmentation-followup.md.
 입력은 엔드포인트별 {method, path, queryParam[], count, sampleRequests[]} JSON 배열(응답·body 없음,
 HTTP REST 전용).
 
@@ -262,5 +262,5 @@ no-op(회귀 불변).
 - budget/옵션: `graph-rag-builder/.../cli/BuilderCli.java`, `.../cli/BuildConfig.java`(`budgetRequests`,
   `parallelism`)
 - 추적 리포트: `shared-model/src/main/java/io/graphrag/model/ExplorationReport.java`
-- 짝 문서(출력 평가·prune 축): `docs/superpowers/followups/2026-06-25-graph-json-reuse-prune-followup.md`
+- 짝 문서(출력 평가·prune 축): `docs/superpowers/followup/2026-06-25-graph-json-reuse-prune-followup.md`
 - builder 사용: `docs/03-graph-rag-builder.md`
