@@ -397,8 +397,9 @@ public class EndpointExplorationRunner {
         Map<String, String> nameRefValues = nameTokens(formRefCandidates);
         SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints,
                 null, shapesByType, formBindings, nameRefValues, skipHappySynthesis);
+        logSynthesizedInput(endpoint, skipHappySynthesis ? "happy-skipped" : "happy", happy);
 
-        List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
+        List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables, "happy");
 
         coverage.baselineCut();   // 부팅/seed 구간을 잘라내고 baseline 확보 (pjacoco: no-op — traceId별 스토어가 비어 시작)
 
@@ -509,7 +510,8 @@ public class EndpointExplorationRunner {
                         SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
                                 enumConstants, enumColumns, happyConstraints, attemptHint,
                                 shapesByType, formBindings, nameRefValues, skipHappySynthesis);
-                        requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
+                        logSynthesizedInput(endpoint, "sql-hint-pass2-" + attempt, happy2);
+                        requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables, "sql-hint-pass2");
                         coverage.baselineCut();                       // baseline: 부팅+이전 구간 컷 (pjacoco: no-op — traceId별 스토어가 비어 시작)
                         cumulativeCoverage = new ExecutionDataStore(); // 리포트를 마지막 pass-2 run만 반영
                         EndpointInvoker invoker2 = buildInvoker(endpoint, readPath, hasPathParam, happy2);
@@ -989,8 +991,11 @@ public class EndpointExplorationRunner {
                 new ReadInputSynthesizer(enumConstants, enumColumns)
                         .synthesizeVariants(endpoint, tables, stateGuards, stateGuardConjunctions);
         if (variants.size() <= 1) {
+            log.debug("state-guard variants skipped endpoint={} (synthesized={})", endpoint.id(), variants.size());
             return new VariantResult(paths, seeds, sqls);
         }
+        log.info("state-guard variants endpoint={} synthesized={} exploring={}",
+                endpoint.id(), variants.size(), variants.size() - 1);
         EndpointInvoker invoker = httpInvoker(endpoint);   // raw — 시드 리셋 래핑 없음
         int vseq = 0;
         for (int v = 1; v < variants.size(); v++) {
@@ -998,6 +1003,8 @@ public class EndpointExplorationRunner {
             vseq++;
             String label = variantLabel(variant);   // null-safe: guard 또는 conjunction 중 하나
             try {
+                log.info("state-guard variant endpoint={} seq={} label={} seedRows={} body={}",
+                        endpoint.id(), vseq, label, variant.input().seeds().size(), variant.input().body());
                 for (SynthesizedInput.SeedRow row : variant.input().seeds()) {
                     Seeds.insert(connection, dbType, row);   // 변종 행(offset PK) — 기존 happy 행과 공존
                 }
@@ -1140,7 +1147,9 @@ public class EndpointExplorationRunner {
 
     /** 시드 INSERT + (read/by-id) IDENTITY 시퀀스 재동기화 + RequiredSeed 구성. */
     private List<RequiredSeed> insertSeeds(SynthesizedInput happy, Endpoint endpoint,
-                                           boolean seedResource, List<TableSchema> tables) throws Exception {
+                                           boolean seedResource, List<TableSchema> tables,
+                                           String phase) throws Exception {
+        log.info("inserting seeds endpoint={} phase={} rows={}", endpoint.id(), phase, happy.seeds().size());
         List<RequiredSeed> requiredSeeds = new ArrayList<>();
         int seedSeq = 0;
         for (SynthesizedInput.SeedRow seed : happy.seeds()) {
@@ -1156,6 +1165,17 @@ public class EndpointExplorationRunner {
             }
         }
         return requiredSeeds;
+    }
+
+    static void logSynthesizedInput(Endpoint endpoint, String phase, SynthesizedInput input) {
+        log.info("input synthesized endpoint={} phase={} seedRows={} body={}",
+                endpoint.id(), phase, input.seeds().size(), input.body());
+        if (log.isDebugEnabled()) {
+            for (SynthesizedInput.SeedRow row : input.seeds()) {
+                log.debug("  seed plan endpoint={} phase={}: table={} columns={} values={}",
+                        endpoint.id(), phase, row.table(), row.columns(), row.values());
+            }
+        }
     }
 
     /** pass-1 시드를 역순(child→parent) DELETE. 시드 없으면 no-op. */
