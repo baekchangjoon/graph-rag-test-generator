@@ -25,7 +25,7 @@ z3turnkey = "4.13.0.1"
 instancio = "5.4.1"
 anthropicJava = "2.34.0"
 awsSdk = "2.28.16"
-pjacoco = "1.3.0"
+pjacoco = "1.4.0"
 
 [libraries]
 anthropic-java = { module = "com.anthropic:anthropic-java", version.ref = "anthropicJava" }
