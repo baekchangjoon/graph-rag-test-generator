@@ -109,4 +109,29 @@ class BuilderCliFilterEndpointsTest {
 
         assertThat(filtered).containsExactly(ep);
     }
+
+    @Test
+    void skipsPOSTEndpointWhenReflectInstantiateIsDisabled() {
+        BuildConfig configNoReflect = new BuildConfig(
+                Path.of("."), Path.of("."), Path.of("."), Path.of("."),
+                "sut-id", "sha",
+                new DbConfig(DbConfig.Type.POSTGRES, "postgres", "user", "pass", "db"),
+                60, Path.of("."), Path.of("."),
+                Map.of(), null, List.of(),
+                null, false, false, null,
+                null, null, List.of(), "otel",
+                null, false, false
+        );
+        EndpointParam bodyParam = new EndpointParam("dto", "com.example.Dto", ParamKind.BODY);
+        Endpoint ep = new Endpoint("ep-skip-noreflect", "POST", "/api/skip-noreflect", "Handler", "handle", List.of(bodyParam), false);
+        IndexResult index = new IndexResult(List.of(ep), Map.of(), Set.of());
+        IncrementalPlan plan = IncrementalPlan.exploreAll();
+        List<ExplorationReport.UnsupportedShape> unsupported = new ArrayList<>();
+
+        List<Endpoint> filtered = BuilderCli.filterEndpoints(index, plan, configNoReflect, unsupported);
+
+        assertThat(filtered).isEmpty();
+        assertThat(unsupported).isNotEmpty();
+        assertThat(unsupported.get(0).reason()).contains("reflect-instantiate disabled");
+    }
 }

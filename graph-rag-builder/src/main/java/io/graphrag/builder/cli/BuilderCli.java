@@ -1065,6 +1065,9 @@ public final class BuilderCli {
             List<ExplorationReport.UnsupportedShape> unsupportedShapes) {
         boolean allowEmptyBody = "1".equals(System.getenv("GRB_EXPLORER_EMPTY_BODY"))
                 || "1".equals(System.getProperty("GRB_EXPLORER_EMPTY_BODY"));
+        ReflectiveBodyInstantiator instantiator = config.reflectInstantiate()
+                ? new ReflectiveBodyInstantiator(true)
+                : null;
         List<Endpoint> toExplore = new ArrayList<>();
         for (Endpoint endpoint : index.endpoints()) {
             if (!plan.shouldExplore(endpoint.id())) {
@@ -1080,10 +1083,10 @@ public final class BuilderCli {
                     .map(io.graphrag.model.EndpointParam::javaType)
                     .findFirst().orElse(null);
             if (shape == null && bodyFqn != null) {
-                if (config.reflectInstantiate()) {
-                    var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
-                            .resolve(bodyFqn, config.sutJar());
+                if (instantiator != null) {
+                    var reflected = instantiator.resolve(bodyFqn, config.sutJar());
                     if (reflected.isPresent()) {
+                        shape = reflected.get().shape();
                         log.info("reflect-instantiate fallback: {} → {} field(s)",
                                 bodyFqn, reflected.get().shape().fields().size());
                     } else {
@@ -1095,7 +1098,7 @@ public final class BuilderCli {
                             endpoint.id(), bodyFqn, "reflect-instantiate disabled"));
                 }
             }
-            if (bodyShapeFor(endpoint, index.bodyShapes()) == null
+            if (shape == null
                     && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
                 if (!allowEmptyBody) {
                     log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
