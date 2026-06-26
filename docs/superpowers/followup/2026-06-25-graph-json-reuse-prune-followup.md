@@ -208,7 +208,7 @@ builder 쪽은 `--incremental-base`가 이미 있어 **신규 builder 변경 없
 ```
 graph-rag-test-generator에서 "graph.json 외부 평가·prune 도구"를 진행해줘.
 
-배경/설계: docs/superpowers/followups/2026-06-25-graph-json-reuse-prune-followup.md 참고.
+배경/설계: docs/superpowers/followup/2026-06-25-graph-json-reuse-prune-followup.md 참고.
 현재 builder는 --incremental-base <prev-graph-dir>(파일 아닌 graph 디렉터리)로 carry-over
 (IncrementalBuildPlanner.plan/planForEndpoints)와 정적 인덱스 캐시(IndexCache)를 이미 지원한다
 (단방향: builder→graph→generator, 가치 피드백 없음). 두 carry 모드의 참조 폐포 완성도가 다름에 주의
