@@ -5,12 +5,14 @@ import org.jacoco.core.tools.ExecFileLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -112,6 +114,55 @@ public final class PjacocoCoverageBackend {
      */
     public void flush(String traceId) {
         post("/__coverage__/test/stop?testId=" + traceId + "&result=passed");
+    }
+
+    /**
+     * POST stop with {@code format=binary}; returns exec bytes from the response body.
+     * Falls back to {@link StopLoadPath#LEGACY_TEXT} when the agent responds with plain text.
+     */
+    public StopLoadOutcome stopAndLoad(String traceId, boolean persistToDisk) {
+        String path = "/__coverage__/test/stop?testId=" + traceId
+                + "&result=passed&format=binary&persist=" + persistToDisk;
+        try {
+            HttpResponse<byte[]> response = http.send(
+                    HttpRequest.newBuilder()
+                            .uri(URI.create("http://" + host + ":" + controlPort + path))
+                            .header("Accept", "application/octet-stream")
+                            .POST(HttpRequest.BodyPublishers.noBody())
+                            .build(),
+                    HttpResponse.BodyHandlers.ofByteArray());
+            String contentType = response.headers().firstValue("Content-Type").orElse("");
+            if (response.statusCode() == 204) {
+                return new StopLoadOutcome(new ExecutionDataStore(), StopLoadPath.BINARY);
+            }
+            if (contentType.startsWith("application/octet-stream") && response.statusCode() == 200) {
+                return new StopLoadOutcome(loadExecFromBytes(response.body()), StopLoadPath.BINARY);
+            }
+            if (contentType.startsWith("text/plain") && response.statusCode() == 200) {
+                String body = new String(response.body(), StandardCharsets.UTF_8);
+                if (body.startsWith("stopped ")) {
+                    return new StopLoadOutcome(new ExecutionDataStore(), StopLoadPath.LEGACY_TEXT);
+                }
+            }
+            log.warn("pjacoco binary stop failed for traceId={} — HTTP {} contentType={}",
+                    traceId, response.statusCode(), contentType);
+            return new StopLoadOutcome(new ExecutionDataStore(), StopLoadPath.ERROR);
+        } catch (IOException | InterruptedException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            log.warn("pjacoco binary stop request failed for traceId={}: {}", traceId, e.toString());
+            return new StopLoadOutcome(new ExecutionDataStore(), StopLoadPath.ERROR);
+        }
+    }
+
+    public enum StopLoadPath {
+        BINARY,
+        LEGACY_TEXT,
+        ERROR
+    }
+
+    public record StopLoadOutcome(ExecutionDataStore store, StopLoadPath path) {
     }
 
     // ── exec 대기 + 로드 ──────────────────────────────────────────────────────
@@ -242,6 +293,16 @@ public final class PjacocoCoverageBackend {
             }
             throw new UncheckedIOException("pjacoco control request failed: " + path,
                     e instanceof IOException io ? io : new IOException(e.getMessage(), e));
+        }
+    }
+
+    private static ExecutionDataStore loadExecFromBytes(byte[] execBytes) {
+        try {
+            ExecFileLoader loader = new ExecFileLoader();
+            loader.load(new ByteArrayInputStream(execBytes));
+            return loader.getExecutionDataStore();
+        } catch (IOException e) {
+            throw new UncheckedIOException("exec load failed from response body", e);
         }
     }
 

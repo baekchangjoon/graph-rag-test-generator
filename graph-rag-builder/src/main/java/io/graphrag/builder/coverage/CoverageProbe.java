@@ -24,7 +24,8 @@ public interface CoverageProbe {
      * 요청 1건의 커버리지 delta를 반환한다.
      *
      * <p>JaCoCo 구현: {@code coverage.dump(true)} — 리셋 동반 전역 덤프.<br>
-     * pjacoco 구현: flush(traceId) → awaitExec(traceId) — traceId별 .exec 파일 로드.
+     * pjacoco 구현: {@code stopAndLoad(traceId)} — binary stop 응답 body에서 exec 로드;
+     * 구 에이전트는 {@code awaitExec(traceId)} 파일 폴링으로 폴백.
      *
      * @param traceId 이 요청에 할당된 W3C traceId (32-hex). JaCoCo 구현에서는 무시된다.
      * @return 이 요청에서 실행된 probe만 담은 {@link ExecutionDataStore}

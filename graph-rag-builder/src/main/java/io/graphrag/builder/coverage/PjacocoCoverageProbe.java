@@ -1,6 +1,10 @@
 package io.graphrag.builder.coverage;
 
 import org.jacoco.core.data.ExecutionDataStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * pjacoco per-traceId .exec 기반 {@link CoverageProbe} 구현.
@@ -9,6 +13,9 @@ import org.jacoco.core.data.ExecutionDataStore;
  * 각 traceId 스토어는 생성 시 비어 있으므로 부팅/seed probe가 요청 delta에 섞이지 않는다.
  */
 public final class PjacocoCoverageProbe implements CoverageProbe {
+
+    private static final Logger log = LoggerFactory.getLogger(PjacocoCoverageProbe.class);
+    private static final AtomicBoolean BINARY_MODE_LOGGED = new AtomicBoolean(false);
 
     private final PjacocoCoverageBackend backend;
 
@@ -26,14 +33,22 @@ public final class PjacocoCoverageProbe implements CoverageProbe {
     }
 
     /**
-     * pjacoco {@code /__coverage__/test/stop}을 POST(flush)하고 {@code <traceId>.exec}를 폴링해 반환한다.
+     * pjacoco binary stop 응답 body에서 exec를 로드한다. 구 에이전트는 text stop 후 파일 폴링으로 폴백한다.
      *
      * @param traceId 이 요청의 W3C traceId (32-hex)
      */
     @Override
     public ExecutionDataStore requestDelta(String traceId) {
-        backend.flush(traceId);
-        return backend.awaitExec(traceId);
+        PjacocoCoverageBackend.StopLoadOutcome outcome = backend.stopAndLoad(traceId, false);
+        if (outcome.path() == PjacocoCoverageBackend.StopLoadPath.BINARY) {
+            logBinaryModeOnce(true);
+            return outcome.store();
+        }
+        if (outcome.path() == PjacocoCoverageBackend.StopLoadPath.LEGACY_TEXT) {
+            logBinaryModeOnce(false);
+            return backend.awaitExec(traceId);
+        }
+        return outcome.store();
     }
 
     /**
@@ -47,5 +62,11 @@ public final class PjacocoCoverageProbe implements CoverageProbe {
     @Override
     public void shutdown() {
         backend.shutdown();
+    }
+
+    private static void logBinaryModeOnce(boolean enabled) {
+        if (BINARY_MODE_LOGGED.compareAndSet(false, true)) {
+            log.info("pjacoco binary stop: {}", enabled ? "enabled" : "fallback-to-file-poll");
+        }
     }
 }
