@@ -123,7 +123,16 @@ public class ReadInputSynthesizer {
             allSeeds.add(new SynthesizedInput.SeedRow(target.name(), columns, values));
             seeds = allSeeds;
         }
-        return new SynthesizedInput(input, seeds);
+        SynthesizedInput result = new SynthesizedInput(input, seeds);
+        if (log.isDebugEnabled()) {
+            log.debug("read input synthesized endpoint={} targetTable={} probeId={} params={} seedRows={}",
+                    endpoint.id(), target != null ? target.name() : null, probeId, input, seeds.size());
+            for (SynthesizedInput.SeedRow row : seeds) {
+                log.debug("  read seed plan: table={} columns={} values={}",
+                        row.table(), row.columns(), row.values());
+            }
+        }
+        return result;
     }
 
     /**
@@ -396,6 +405,18 @@ public class ReadInputSynthesizer {
                         : base.seeds().get(i));
             }
             out.set(0, new SeedVariant(new SynthesizedInput(base.body(), correctedSeeds), null));
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("seed variants synthesized endpoint={} guards={} conjunctions={} variants={}",
+                    endpoint.id(), safeGuards.size(), safeConjunctions.size(), out.size());
+            for (int vi = 1; vi < out.size(); vi++) {
+                SeedVariant variant = out.get(vi);
+                String label = variant.guard() != null
+                        ? variant.guard().kind() + ":" + variant.guard().column()
+                        : (variant.conjunction() != null ? "conjunction" : "base");
+                log.debug("  variant[{}] {} body={} seedRows={}", vi, label,
+                        variant.input().body(), variant.input().seeds().size());
+            }
         }
         return out;
     }

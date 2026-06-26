@@ -20,6 +20,9 @@ final class Seeds {
     static void insert(Connection connection, DbConfig.Type type,
                        SynthesizedInput.SeedRow seed) throws Exception {
         String sql = SqlDialect.idempotentInsert(type, seed.table(), seed.columns());
+        if (log.isDebugEnabled()) {
+            log.debug("seed insert sql: {}", sql);
+        }
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             for (int i = 0; i < seed.values().size(); i++) {
                 statement.setObject(i + 1, seed.values().get(i));

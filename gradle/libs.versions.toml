@@ -12,6 +12,7 @@ mustache = "0.9.14"
 postgresql = "42.7.7"
 mysqlConnector = "9.3.0"
 slf4j = "2.0.16"
+logback = "1.5.12"
 assertj = "3.26.3"
 awaitility = "4.2.2"
 mybatisStarter = "3.0.5"
@@ -63,6 +64,7 @@ opentelemetry-proto = { module = "io.opentelemetry.proto:opentelemetry-proto", v
 postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
 instancio-core = { module = "org.instancio:instancio-core", version.ref = "instancio" }
 pjacoco-agent = { module = "io.pjacoco:pjacoco-agent", version.ref = "pjacoco" }
