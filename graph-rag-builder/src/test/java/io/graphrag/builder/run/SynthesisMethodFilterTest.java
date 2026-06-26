@@ -27,6 +27,38 @@ class SynthesisMethodFilterTest {
     }
 
     @Test
+    void parse_dotWildcardSyntax() {
+        Set<Map.Entry<String, String>> parsed = SynthesisMethodFilter.parse(
+                "com.example.PaymentService.*, ReservationService#*");
+
+        assertThat(parsed).containsExactly(
+                entry("com.example.PaymentService", "*"),
+                entry("ReservationService", "*"));
+    }
+
+    @Test
+    void matches_classWildcard_excludesAnyMethodOnType() {
+        Set<Map.Entry<String, String>> exclude = Set.of(entry("PaymentService", "*"));
+
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.PaymentService", "charge")).isTrue();
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.PaymentService", "refund")).isTrue();
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.ReservationService", "charge")).isFalse();
+    }
+
+    @Test
+    void reachableTouchesExcluded_classWildcardMatchesAnyReachableMethod() {
+        Set<Map.Entry<String, String>> reachable = Set.of(
+                entry("com.example.BookingController", "create"),
+                entry("com.example.PaymentService", "authorize"));
+
+        assertThat(SynthesisMethodFilter.reachableTouchesExcluded(reachable,
+                SynthesisMethodFilter.parse("PaymentService.*"))).isTrue();
+    }
+
+    @Test
     void matches_simpleNameAgainstFqn() {
         Set<Map.Entry<String, String>> exclude = Set.of(entry("ReservationService", "list"));
 
