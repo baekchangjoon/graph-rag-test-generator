@@ -14,6 +14,8 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -141,8 +143,8 @@ public final class PjacocoCoverageBackend {
                 break;
             }
         }
-        log.warn("pjacoco .exec not produced within {}ms for traceId={} at {} — returning empty store",
-                limit, traceId, execFile);
+        log.warn("pjacoco .exec not produced within {}ms for traceId={} at {} — returning empty store{}",
+                limit, traceId, execFile, buildDiagnostics(traceId, execFile));
         return new ExecutionDataStore();
     }
 
@@ -176,6 +178,47 @@ public final class PjacocoCoverageBackend {
             flushExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
+    }
+
+    // ── 진단 ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 타임아웃 후 .exec 파일 상태를 검사해 원인을 좁히는 진단 문자열을 반환한다.
+     */
+    private String buildDiagnostics(String traceId, Path execFile) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            if (Files.exists(execFile)) {
+                long size = Files.size(execFile);
+                if (size == 0) {
+                    sb.append("\n  [diagnosis] (F) .exec file exists but is empty (0 bytes)"
+                            + " — no instrumented code executed on this trace, or I/O flush race");
+                }
+                // size > 0: loadExec must have failed — handled as a separate exception
+            } else if (!Files.isDirectory(destfileDir)) {
+                sb.append("\n  [diagnosis] (D) destfileDir does not exist: ").append(destfileDir)
+                  .append(" — pjacoco agent -Ddestfile path may differ from builder config");
+            } else {
+                // destfileDir exists but no file for this traceId
+                List<String> others = new ArrayList<>();
+                try (var stream = Files.list(destfileDir)) {
+                    stream.filter(p -> p.getFileName().toString().endsWith(".exec"))
+                          .limit(5)
+                          .forEach(p -> others.add(p.getFileName().toString()));
+                } catch (IOException ignored) { }
+
+                if (!others.isEmpty()) {
+                    sb.append("\n  [diagnosis] (C) no .exec for traceId=").append(traceId)
+                      .append(", but found other .exec files: ").append(others)
+                      .append(" — traceparent header not forwarded, or traceKeyAutoCreate=false");
+                } else {
+                    sb.append("\n  [diagnosis] (B/E) destfileDir is empty"
+                            + " — pjacoco agent may not be attached, or flush POST failed");
+                }
+            }
+        } catch (IOException ignored) { }
+
+        return sb.toString();
     }
 
     // ── 내부 ──────────────────────────────────────────────────────────────────
