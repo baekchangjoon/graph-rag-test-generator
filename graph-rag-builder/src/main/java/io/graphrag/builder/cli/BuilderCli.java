@@ -1063,6 +1063,8 @@ public final class BuilderCli {
             IncrementalPlan plan,
             BuildConfig config,
             List<ExplorationReport.UnsupportedShape> unsupportedShapes) {
+        boolean allowEmptyBody = "1".equals(System.getenv("GRB_EXPLORER_EMPTY_BODY"))
+                || "1".equals(System.getProperty("GRB_EXPLORER_EMPTY_BODY"));
         List<Endpoint> toExplore = new ArrayList<>();
         for (Endpoint endpoint : index.endpoints()) {
             if (!plan.shouldExplore(endpoint.id())) {
@@ -1095,8 +1097,6 @@ public final class BuilderCli {
             }
             if (bodyShapeFor(endpoint, index.bodyShapes()) == null
                     && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
-                boolean allowEmptyBody = "1".equals(System.getenv("GRB_EXPLORER_EMPTY_BODY"))
-                        || "1".equals(System.getProperty("GRB_EXPLORER_EMPTY_BODY"));
                 if (!allowEmptyBody) {
                     log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
                     continue;
