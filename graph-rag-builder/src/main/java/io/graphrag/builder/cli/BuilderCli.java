@@ -848,45 +848,7 @@ public final class BuilderCli {
                 log.info("HTTP endpoint loop parallelism={}", parallelism);
 
                 // 탐색 대상 엔드포인트만 사전 필터(순차와 동일한 skip 로직)
-                List<Endpoint> toExplore = new ArrayList<>();
-                List<ExplorationReport.UnsupportedShape> preFilterShapes = new ArrayList<>();
-                for (Endpoint endpoint : index.endpoints()) {
-                    if (!plan.shouldExplore(endpoint.id())) {
-                        log.info("skip {} (partition clean; carrying over)", endpoint.id());
-                        continue;
-                    }
-                    BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
-                    boolean hasPathParam = endpoint.params().stream()
-                            .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
-                    String bodyFqn = endpoint.params().stream()
-                            .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
-                                    || p.kind() == io.graphrag.model.ParamKind.FORM)
-                            .map(io.graphrag.model.EndpointParam::javaType)
-                            .findFirst().orElse(null);
-                    if (shape == null && bodyFqn != null) {
-                        if (config.reflectInstantiate()) {
-                            var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
-                                    .resolve(bodyFqn, config.sutJar());
-                            if (reflected.isPresent()) {
-                                log.info("reflect-instantiate fallback: {} → {} field(s)",
-                                        bodyFqn, reflected.get().shape().fields().size());
-                            } else {
-                                preFilterShapes.add(new ExplorationReport.UnsupportedShape(
-                                        endpoint.id(), bodyFqn, "reflect-instantiate failed"));
-                            }
-                        } else {
-                            preFilterShapes.add(new ExplorationReport.UnsupportedShape(
-                                    endpoint.id(), bodyFqn, "reflect-instantiate disabled"));
-                        }
-                    }
-                    if (bodyShapeFor(endpoint, index.bodyShapes()) == null
-                            && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
-                        log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
-                        continue;
-                    }
-                    toExplore.add(endpoint);
-                }
-                unsupportedShapes.addAll(preFilterShapes);
+                List<Endpoint> toExplore = filterEndpoints(index, plan, config, unsupportedShapes);
                 log.info("endpoints to explore: {} (parallelism={})", toExplore.size(), parallelism);
 
                 // 실제 탐색 실행 — 순차(P=1) 또는 병렬(P>1)
@@ -1094,6 +1056,56 @@ public final class BuilderCli {
                 .map(p -> shapes.get(p.javaType()))
                 .filter(java.util.Objects::nonNull)
                 .findFirst().orElse(null);
+    }
+
+    static List<Endpoint> filterEndpoints(
+            IndexResult index,
+            IncrementalPlan plan,
+            BuildConfig config,
+            List<ExplorationReport.UnsupportedShape> unsupportedShapes) {
+        List<Endpoint> toExplore = new ArrayList<>();
+        for (Endpoint endpoint : index.endpoints()) {
+            if (!plan.shouldExplore(endpoint.id())) {
+                log.info("skip {} (partition clean; carrying over)", endpoint.id());
+                continue;
+            }
+            BodyShape shape = bodyShapeFor(endpoint, index.bodyShapes());
+            boolean hasPathParam = endpoint.params().stream()
+                    .anyMatch(p -> p.kind() == io.graphrag.model.ParamKind.PATH);
+            String bodyFqn = endpoint.params().stream()
+                    .filter(p -> p.kind() == io.graphrag.model.ParamKind.BODY
+                            || p.kind() == io.graphrag.model.ParamKind.FORM)
+                    .map(io.graphrag.model.EndpointParam::javaType)
+                    .findFirst().orElse(null);
+            if (shape == null && bodyFqn != null) {
+                if (config.reflectInstantiate()) {
+                    var reflected = new ReflectiveBodyInstantiator(config.reflectInstantiate())
+                            .resolve(bodyFqn, config.sutJar());
+                    if (reflected.isPresent()) {
+                        log.info("reflect-instantiate fallback: {} → {} field(s)",
+                                bodyFqn, reflected.get().shape().fields().size());
+                    } else {
+                        unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                                endpoint.id(), bodyFqn, "reflect-instantiate failed"));
+                    }
+                } else {
+                    unsupportedShapes.add(new ExplorationReport.UnsupportedShape(
+                            endpoint.id(), bodyFqn, "reflect-instantiate disabled"));
+                }
+            }
+            if (bodyShapeFor(endpoint, index.bodyShapes()) == null
+                    && !endpoint.httpMethod().equals("GET") && !hasPathParam) {
+                boolean allowEmptyBody = "1".equals(System.getenv("GRB_EXPLORER_EMPTY_BODY"))
+                        || "1".equals(System.getProperty("GRB_EXPLORER_EMPTY_BODY"));
+                if (!allowEmptyBody) {
+                    log.warn("skip {} (no @RequestBody shape and no path param)", endpoint.id());
+                    continue;
+                }
+                log.info("empty-body explore {} (GRB_EXPLORER_EMPTY_BODY=1)", endpoint.id());
+            }
+            toExplore.add(endpoint);
+        }
+        return toExplore;
     }
 
     /** "K=V[,K2=V2]" 형식 파싱. */
