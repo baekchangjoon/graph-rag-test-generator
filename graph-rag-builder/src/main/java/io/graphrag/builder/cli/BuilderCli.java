@@ -37,6 +37,7 @@ import io.graphrag.builder.capture.TraceParent;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
 import io.graphrag.builder.run.EndpointExplorationRunner;
+import io.graphrag.builder.run.SynthesisMethodFilter;
 import io.graphrag.builder.store.IndexCache;
 import io.graphrag.builder.store.IndexManifest;
 import io.graphrag.builder.store.JsonFileGraphStore;
@@ -727,6 +728,11 @@ public final class BuilderCli {
             // 상태 의존 가드(TEMPORAL/ENUM) + conjunction(저장행 복합 AND) ablation 게이트.
             // GRB_STATE_GUARDS=off 면 둘 다 빈 리스트 → 변종 pass 완전 no-op(ablation/회귀 control, REQ-008).
             boolean stateGuardsEnabled = stateGuardsEnabled(System.getenv("GRB_STATE_GUARDS"));
+            Set<Map.Entry<String, String>> synthesisExcludeMethods = SynthesisMethodFilter.fromEnvironment();
+            if (!synthesisExcludeMethods.isEmpty()) {
+                log.info("input synthesis exclude: {} method(s) via {}", synthesisExcludeMethods.size(),
+                        SynthesisMethodFilter.ENV);
+            }
             // 상태 의존 가드(TEMPORAL/ENUM) — by-id 양 arm 시드 변종 근거 (Stage 4). 전 계층 1회.
             List<ConstraintExtractor.StateGuard> allStateGuards =
                     stateGuardsEnabled ? constraintExtractor.extractStateGuards(sharedModel.get()) : List.of();
@@ -923,15 +929,27 @@ public final class BuilderCli {
                                         workerSpoon, endpoint.handlerClass(), endpoint.handlerMethod()));
                         List<ConstraintExtractor.StateGuard> endpointStateGuards = sharedAllStateGuards.stream()
                                 .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
+                                .filter(g -> !SynthesisMethodFilter.matches(synthesisExcludeMethods,
+                                        g.classFqn(), g.method()))
                                 .toList();
                         List<ConstraintExtractor.JoinGuard> endpointJoinGuards = sharedAllJoinGuards.stream()
                                 .filter(g -> isReachable(reachable, g.classFqn(), g.method()))
+                                .filter(g -> !SynthesisMethodFilter.matches(synthesisExcludeMethods,
+                                        g.classFqn(), g.method()))
                                 .toList();
                         // REQ-006: 이 엔드포인트 reachable에 귀속된 conjunction만 전달(cross-class 포함).
                         List<ConstraintExtractor.StateGuardConjunction> endpointStateGuardConjunctions =
                                 sharedAllStateGuardConjunctions.stream()
                                         .filter(c -> isReachable(reachable, c.classFqn(), c.method()))
+                                        .filter(c -> !SynthesisMethodFilter.matches(synthesisExcludeMethods,
+                                                c.classFqn(), c.method()))
                                         .toList();
+                        boolean skipHappySynthesis = SynthesisMethodFilter.reachableTouchesExcluded(
+                                reachable, synthesisExcludeMethods);
+                        if (skipHappySynthesis) {
+                            log.info("skip happy input synthesis for {} ({})", endpoint.id(),
+                                    SynthesisMethodFilter.ENV);
+                        }
 
                         return runner.run(endpoint, shape, tables, conditions,
                                 sharedAllComparisons, sharedInputCandidates, fieldConstraints,
@@ -939,7 +957,8 @@ public final class BuilderCli {
                                 endpointStateGuardConjunctions,
                                 index.validBodyEndpointIds().contains(endpoint.id()),
                                 index.bodyShapes(),
-                                index.formBindingIndex().getOrDefault(endpoint.id(), List.of()));
+                                index.formBindingIndex().getOrDefault(endpoint.id(), List.of()),
+                                skipHappySynthesis);
                     } catch (Exception e) {
                         throw new RuntimeException("endpoint exploration failed for " + endpoint.id(), e);
                     }
@@ -1300,25 +1319,6 @@ public final class BuilderCli {
     }
 
     static boolean isReachable(Set<Map.Entry<String, String>> reachable, String classFqn, String method) {
-        // 1단계: 정확 일치
-        if (reachable.contains(new AbstractMap.SimpleEntry<>(classFqn, method))) {
-            return true;
-        }
-        // 2단계: simpleName endsWith 폴백 (noClasspath 미해소)
-        for (Map.Entry<String, String> e : reachable) {
-            if (!e.getValue().equals(method)) {
-                continue;
-            }
-            String t = e.getKey();
-            // reachable의 타입이 simpleName, 가드의 classFqn이 FQN인 경우
-            if (classFqn.endsWith("." + t)) {
-                return true;
-            }
-            // 반대: 가드의 classFqn이 simpleName, reachable의 타입이 FQN인 경우
-            if (t.endsWith("." + classFqn)) {
-                return true;
-            }
-        }
-        return false;
+        return SynthesisMethodFilter.matches(reachable, classFqn, method);
     }
 }

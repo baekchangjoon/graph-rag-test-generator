@@ -1,6 +1,7 @@
 package io.graphrag.builder.cli;
 
 import io.graphrag.builder.index.ConstraintExtractor;
+import io.graphrag.builder.run.SynthesisMethodFilter;
 import org.junit.jupiter.api.Test;
 
 import java.util.AbstractMap;
@@ -142,6 +143,32 @@ class BuilderCliAttributionTest {
         boolean result = BuilderCli.isReachable(reachable, conj.classFqn(), conj.method());
 
         assertThat(result).isTrue();
+    }
+
+    // --- GRB_SYNTH_EXCLUDE_METHODS: denylist 기반 가드 변종 합성 제외(A) ---
+
+    @Test
+    void excludedGuardMethod_notMatchedForVariantSynthesis() {
+        Set<Map.Entry<String, String>> exclude = Set.of(
+                entry("com.example.PaymentService", "charge"));
+
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.PaymentService", "charge")).isTrue();
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.ReservationService", "list")).isFalse();
+    }
+
+    @Test
+    void reachableGuard_keptWhenNotOnExcludeList() {
+        Set<Map.Entry<String, String>> reachable = Set.of(
+                entry("com.example.BookingController", "getById"),
+                entry("com.example.ReservationService", "getById"));
+        Set<Map.Entry<String, String>> exclude = Set.of(entry("PaymentService", "charge"));
+
+        assertThat(BuilderCli.isReachable(reachable, "com.example.ReservationService", "getById"))
+                .isTrue();
+        assertThat(SynthesisMethodFilter.matches(exclude,
+                "com.example.ReservationService", "getById")).isFalse();
     }
 
     // --- REQ-008: GRB_STATE_GUARDS ablation 게이트 ---

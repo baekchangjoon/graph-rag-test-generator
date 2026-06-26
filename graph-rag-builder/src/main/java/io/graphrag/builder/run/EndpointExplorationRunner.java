@@ -376,7 +376,8 @@ public class EndpointExplorationRunner {
                               List<ConstraintExtractor.StateGuardConjunction> stateGuardConjunctions,
                               boolean validBody,
                               Map<String, BodyShape> shapesByType,
-                              List<FormFieldBinding> formBindings) throws Exception {
+                              List<FormFieldBinding> formBindings,
+                              boolean skipHappySynthesis) throws Exception {
         cumulativeCoverage = new ExecutionDataStore();   // 엔드포인트마다 초기화
         externalLoudFails.clear();                        // 외부 stub loud-fail도 엔드포인트마다 초기화
         variantPaths.clear();
@@ -395,7 +396,7 @@ public class EndpointExplorationRunner {
         Map<String, RefCandidate> formRefCandidates = resolveFormRefCandidates(formBindings, tables);
         Map<String, String> nameRefValues = nameTokens(formRefCandidates);
         SynthesizedInput happy = happyInput(endpoint, shape, tables, enumConstants, enumColumns, happyConstraints,
-                null, shapesByType, formBindings, nameRefValues);
+                null, shapesByType, formBindings, nameRefValues, skipHappySynthesis);
 
         List<RequiredSeed> requiredSeeds = insertSeeds(happy, endpoint, seedResource, tables);
 
@@ -483,7 +484,7 @@ public class EndpointExplorationRunner {
         // 해석한 엔드포인트(petclinic /pets→pets 등)는 건드리지 않는다 — 다중 SELECT(부모 엔티티+
         // 컬렉션 로드)에서 param명이 자식 FK 컬럼명과 우연히 일치해 자식 테이블을 오선택하는
         // 회귀를 원천 차단(회귀 0). 실제 타깃(analytics/mindgraph/diary/auth-user)은 모두 null.
-        if (seedResource) {
+        if (seedResource && !skipHappySynthesis) {
             ResolutionHint heuristic = new ReadInputSynthesizer(enumConstants, enumColumns)
                     .heuristicResolution(endpoint, tables);
             ResolutionHint hint = heuristic.table() == null
@@ -507,7 +508,7 @@ public class EndpointExplorationRunner {
                         deleteSeeds(prevHappy);
                         SynthesizedInput happy2 = happyInput(endpoint, shape, tables,
                                 enumConstants, enumColumns, happyConstraints, attemptHint,
-                                shapesByType, formBindings, nameRefValues);
+                                shapesByType, formBindings, nameRefValues, skipHappySynthesis);
                         requiredSeeds = insertSeeds(happy2, endpoint, seedResource, tables);
                         coverage.baselineCut();                       // baseline: 부팅+이전 구간 컷 (pjacoco: no-op — traceId별 스토어가 비어 시작)
                         cumulativeCoverage = new ExecutionDataStore(); // 리포트를 마지막 pass-2 run만 반영
@@ -606,7 +607,7 @@ public class EndpointExplorationRunner {
 
         // 폼 참조-id backtrack 패스(Phase 3): name 1순위로 안 열리는 참조 필드(예: Converter<String,E> PK 조회)를
         // 필드별 PK 후보로 재발행 → bound arm 커버. discoveredBy 마커로 생성 제외, POST라 repro-verify 대상 외.
-        if (!formRefCandidates.isEmpty() && shape != null) {
+        if (!formRefCandidates.isEmpty() && shape != null && !skipHappySynthesis) {
             finalPaths.addAll(exploreFormReferenceTrials(endpoint, shape, tables, formBindings,
                     happyConstraints, shapesByType, formRefCandidates, nameRefValues));
         }
@@ -941,7 +942,7 @@ public class EndpointExplorationRunner {
             trial.put(ref.field(), candidates.get(ref.field()).pk());   // 이 필드 → PK 후보
             try {
                 SynthesizedInput input = happyInput(endpoint, shape, tables, enumConstants, enumColumns,
-                        fieldConstraints, null, shapesByType, formBindings, trial);
+                        fieldConstraints, null, shapesByType, formBindings, trial, false);
                 InvocationOutcome out = doSend(http, endpoint, input.body(), authHeader);
                 paths.add(new ExploredPath(endpoint.id() + "-formref-" + ref.field(), endpoint.id(),
                         input.body(), out.status(), out.response(), List.of(), List.of(),
@@ -2660,7 +2661,12 @@ public class EndpointExplorationRunner {
                                        Map<String, List<String>> enumColumns,
                                        Map<String, List<FieldConstraint>> fieldConstraints) {
         return happyInput(endpoint, shape, tables, enumConstants, enumColumns, fieldConstraints, null,
-                Map.of(), List.of(), Map.of());
+                Map.of(), List.of(), Map.of(), false);
+    }
+
+    /** GRB_SYNTH_EXCLUDE_METHODS(C): denylist reachable 교차 시 합성 없이 빈 body·시드 없음. */
+    static SynthesizedInput unsynthesizedHappy() {
+        return new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
     }
 
     // 제약-aware happy(Feature A: fieldConstraints) + SQL-driven seed 보정(hint) + 폼 바인딩 컨텍스트를 받는 정본.
@@ -2673,7 +2679,11 @@ public class EndpointExplorationRunner {
                                        ResolutionHint hint,
                                        Map<String, BodyShape> shapesByType,
                                        List<FormFieldBinding> formBindings,
-                                       Map<String, String> refValues) {
+                                       Map<String, String> refValues,
+                                       boolean skipHappySynthesis) {
+        if (skipHappySynthesis) {
+            return unsynthesizedHappy();
+        }
         boolean get = endpoint.httpMethod().equals("GET");
         boolean hasPath = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.PATH);
         boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
