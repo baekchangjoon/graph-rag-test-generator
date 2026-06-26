@@ -1,0 +1,2423 @@
+jacocoReport: "graph-rag-builder/build/reports/jacoco/test/jacocoTestReport.xml"
+files:
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/B3TraceId.java"
+  coveredLines: 13
+  executableLines: 13
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/LogParserCapture.java"
+  coveredLines: 26
+  executableLines: 28
+  lineCoverage: 0.9286
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/OtelSpanCapture.java"
+  coveredLines: 59
+  executableLines: 77
+  lineCoverage: 0.7662
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/ParsedSql.java"
+  coveredLines: 48
+  executableLines: 57
+  lineCoverage: 0.8421
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/SleuthLogCapture.java"
+  coveredLines: 44
+  executableLines: 47
+  lineCoverage: 0.9362
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/SqlCaptureBackend.java"
+  coveredLines: 0
+  executableLines: 1
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/SqlLogParser.java"
+  coveredLines: 70
+  executableLines: 72
+  lineCoverage: 0.9722
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/TraceParent.java"
+  coveredLines: 21
+  executableLines: 23
+  lineCoverage: 0.913
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/egress/EgressCall.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/egress/EgressCallMapper.java"
+  coveredLines: 7
+  executableLines: 7
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/egress/EgressCollector.java"
+  coveredLines: 20
+  executableLines: 21
+  lineCoverage: 0.9524
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/egress/EgressNormalizer.java"
+  coveredLines: 18
+  executableLines: 19
+  lineCoverage: 0.9474
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/OtlpTraceReceiver.java"
+  coveredLines: 92
+  executableLines: 118
+  lineCoverage: 0.7797
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/otlp/SpanRecord.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/trace/TraceReceiverLimits.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/capture/zipkin/ZipkinSpanReceiver.java"
+  coveredLines: 38
+  executableLines: 45
+  lineCoverage: 0.8444
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/BuildConfig.java"
+  coveredLines: 28
+  executableLines: 35
+  lineCoverage: 0.8
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/BuilderCli.java"
+  coveredLines: 198
+  executableLines: 724
+  lineCoverage: 0.2735
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/EndpointSelector.java"
+  coveredLines: 46
+  executableLines: 51
+  lineCoverage: 0.902
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/GlobMatcher.java"
+  coveredLines: 32
+  executableLines: 36
+  lineCoverage: 0.8889
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/GlobToken.java"
+  coveredLines: 22
+  executableLines: 23
+  lineCoverage: 0.9565
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/IncrementalBuildPlanner.java"
+  coveredLines: 69
+  executableLines: 69
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/IncrementalPlan.java"
+  coveredLines: 3
+  executableLines: 3
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/cli/SutSrcResolver.java"
+  coveredLines: 50
+  executableLines: 57
+  lineCoverage: 0.8772
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/BranchCoverage.java"
+  coveredLines: 0
+  executableLines: 6
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/BranchCoverageAnalyzer.java"
+  coveredLines: 0
+  executableLines: 54
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/CoverageByPathReport.java"
+  coveredLines: 39
+  executableLines: 41
+  lineCoverage: 0.9512
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/CoverageFingerprint.java"
+  coveredLines: 0
+  executableLines: 21
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/CoverageProbe.java"
+  coveredLines: 0
+  executableLines: 3
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/OtelAgent.java"
+  coveredLines: 25
+  executableLines: 29
+  lineCoverage: 0.8621
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/PjacocoAgent.java"
+  coveredLines: 47
+  executableLines: 55
+  lineCoverage: 0.8545
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/PjacocoCoverageBackend.java"
+  coveredLines: 32
+  executableLines: 67
+  lineCoverage: 0.4776
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/coverage/PjacocoCoverageProbe.java"
+  coveredLines: 0
+  executableLines: 9
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/AnalysisEnvironment.java"
+  coveredLines: 32
+  executableLines: 95
+  lineCoverage: 0.3368
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/AttachedComposeEnvironment.java"
+  coveredLines: 23
+  executableLines: 82
+  lineCoverage: 0.2805
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/ComposeInspector.java"
+  coveredLines: 37
+  executableLines: 55
+  lineCoverage: 0.6727
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/ContainerSut.java"
+  coveredLines: 9
+  executableLines: 22
+  lineCoverage: 0.4091
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/DbConfig.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/ExplorationEnvironment.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/HttpCaptureServer.java"
+  coveredLines: 91
+  executableLines: 127
+  lineCoverage: 0.7165
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/JdbcContainers.java"
+  coveredLines: 6
+  executableLines: 14
+  lineCoverage: 0.4286
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/NoTraceKey.java"
+  coveredLines: 3
+  executableLines: 4
+  lineCoverage: 0.75
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/OtelTraceKey.java"
+  coveredLines: 7
+  executableLines: 7
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/OverrideComposeGenerator.java"
+  coveredLines: 45
+  executableLines: 52
+  lineCoverage: 0.8654
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/SleuthTraceKey.java"
+  coveredLines: 4
+  executableLines: 4
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/SqlDialect.java"
+  coveredLines: 5
+  executableLines: 5
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/SutHandle.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/SutOptions.java"
+  coveredLines: 3
+  executableLines: 8
+  lineCoverage: 0.375
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/SutProcess.java"
+  coveredLines: 13
+  executableLines: 86
+  lineCoverage: 0.1512
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/env/TraceKey.java"
+  coveredLines: 11
+  executableLines: 13
+  lineCoverage: 0.8462
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/ConditionBoundarySolver.java"
+  coveredLines: 9
+  executableLines: 9
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/CoverageGuidedFuzzer.java"
+  coveredLines: 36
+  executableLines: 37
+  lineCoverage: 0.973
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/EndpointInvoker.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/EndpointTarget.java"
+  coveredLines: 9
+  executableLines: 9
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationBudget.java"
+  coveredLines: 9
+  executableLines: 9
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationOrchestrator.java"
+  coveredLines: 70
+  executableLines: 72
+  lineCoverage: 0.9722
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationOutcome.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/ExplorationResult.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/HeuristicExplorer.java"
+  coveredLines: 24
+  executableLines: 24
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/InputMutator.java"
+  coveredLines: 205
+  executableLines: 228
+  lineCoverage: 0.8991
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/InvocationOutcome.java"
+  coveredLines: 12
+  executableLines: 27
+  lineCoverage: 0.4444
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/KnownCoverage.java"
+  coveredLines: 13
+  executableLines: 13
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/PathCandidate.java"
+  coveredLines: 14
+  executableLines: 20
+  lineCoverage: 0.7
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/PathExplorer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/explore/RawHttpExchange.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/BodyShape.java"
+  coveredLines: 5
+  executableLines: 5
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/BodyShapeExtractor.java"
+  coveredLines: 117
+  executableLines: 123
+  lineCoverage: 0.9512
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ConstraintExtractor.java"
+  coveredLines: 543
+  executableLines: 605
+  lineCoverage: 0.8975
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ConverterRegistryIndexer.java"
+  coveredLines: 51
+  executableLines: 59
+  lineCoverage: 0.8644
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/EndpointIds.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/EndpointIndexer.java"
+  coveredLines: 254
+  executableLines: 269
+  lineCoverage: 0.9442
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/EnumConstantExtractor.java"
+  coveredLines: 8
+  executableLines: 8
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ExternalCallSite.java"
+  coveredLines: 3
+  executableLines: 3
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/FormFieldBinding.java"
+  coveredLines: 8
+  executableLines: 8
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/GatewayRouteIndexer.java"
+  coveredLines: 92
+  executableLines: 100
+  lineCoverage: 0.92
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/IndexResult.java"
+  coveredLines: 12
+  executableLines: 12
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/JsonPaths.java"
+  coveredLines: 39
+  executableLines: 39
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/KafkaIndexResult.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/KafkaListenerIndexer.java"
+  coveredLines: 55
+  executableLines: 66
+  lineCoverage: 0.8333
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/LiteralCandidateExtractor.java"
+  coveredLines: 14
+  executableLines: 14
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/MapperXmlIndexer.java"
+  coveredLines: 39
+  executableLines: 45
+  lineCoverage: 0.8667
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ResponseDtoIndexer.java"
+  coveredLines: 85
+  executableLines: 94
+  lineCoverage: 0.9043
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ResponseStringLiteralExtractor.java"
+  coveredLines: 95
+  executableLines: 99
+  lineCoverage: 0.9596
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/RouterFunctionIndexer.java"
+  coveredLines: 91
+  executableLines: 101
+  lineCoverage: 0.901
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/SharedSpoonModel.java"
+  coveredLines: 15
+  executableLines: 15
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/SourceRoots.java"
+  coveredLines: 8
+  executableLines: 8
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/SpoonExpressionRefs.java"
+  coveredLines: 14
+  executableLines: 15
+  lineCoverage: 0.9333
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/ValidationConstraintExtractor.java"
+  coveredLines: 56
+  executableLines: 63
+  lineCoverage: 0.8889
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/WsEndpointIndexer.java"
+  coveredLines: 49
+  executableLines: 52
+  lineCoverage: 0.9423
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/index/WsIndexResult.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/AnthropicValueClient.java"
+  coveredLines: 27
+  executableLines: 48
+  lineCoverage: 0.5625
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/CandidateLifter.java"
+  coveredLines: 48
+  executableLines: 49
+  lineCoverage: 0.9796
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/ClassifierConfig.java"
+  coveredLines: 14
+  executableLines: 14
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/CliValueClient.java"
+  coveredLines: 11
+  executableLines: 29
+  lineCoverage: 0.3793
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/ConcolicOracle.java"
+  coveredLines: 9
+  executableLines: 402
+  lineCoverage: 0.0224
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/EndpointFieldSelector.java"
+  coveredLines: 24
+  executableLines: 24
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/ErrorEnvelopeClassifier.java"
+  coveredLines: 14
+  executableLines: 14
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/HandlerSourceExtractor.java"
+  coveredLines: 23
+  executableLines: 25
+  lineCoverage: 0.92
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/InputCandidates.java"
+  coveredLines: 25
+  executableLines: 26
+  lineCoverage: 0.9615
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/InputOracle.java"
+  coveredLines: 4
+  executableLines: 4
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmBackends.java"
+  coveredLines: 7
+  executableLines: 7
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmFieldValues.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmJson.java"
+  coveredLines: 33
+  executableLines: 35
+  lineCoverage: 0.9429
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmOptions.java"
+  coveredLines: 6
+  executableLines: 6
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmOracle.java"
+  coveredLines: 63
+  executableLines: 66
+  lineCoverage: 0.9545
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmRequest.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmValueCache.java"
+  coveredLines: 32
+  executableLines: 49
+  lineCoverage: 0.6531
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/LlmValueClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/Rational.java"
+  coveredLines: 40
+  executableLines: 41
+  lineCoverage: 0.9756
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/ResponseClassifier.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/ShapeGate.java"
+  coveredLines: 17
+  executableLines: 17
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/StaticLiteralOracle.java"
+  coveredLines: 15
+  executableLines: 16
+  lineCoverage: 0.9375
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/oracle/StatusOnlyClassifier.java"
+  coveredLines: 4
+  executableLines: 4
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/AuthConfig.java"
+  coveredLines: 4
+  executableLines: 4
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/AuthTokenProvider.java"
+  coveredLines: 26
+  executableLines: 32
+  lineCoverage: 0.8125
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/CallSiteMatcher.java"
+  coveredLines: 19
+  executableLines: 24
+  lineCoverage: 0.7917
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/EgressStubComposer.java"
+  coveredLines: 26
+  executableLines: 26
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java"
+  coveredLines: 573
+  executableLines: 1517
+  lineCoverage: 0.3777
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ErrorContractDescriptor.java"
+  coveredLines: 5
+  executableLines: 5
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ErrorEnvelopeSynthesizer.java"
+  coveredLines: 10
+  executableLines: 10
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ExternalStubSynthesizer.java"
+  coveredLines: 43
+  executableLines: 44
+  lineCoverage: 0.9773
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/FormBodySynthesizer.java"
+  coveredLines: 36
+  executableLines: 36
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/KafkaCaptureReceiver.java"
+  coveredLines: 45
+  executableLines: 180
+  lineCoverage: 0.25
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/KafkaCaptureRunner.java"
+  coveredLines: 3
+  executableLines: 134
+  lineCoverage: 0.0224
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/KafkaPayloadDiffer.java"
+  coveredLines: 22
+  executableLines: 24
+  lineCoverage: 0.9167
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/NegativeValidationSynthesizer.java"
+  coveredLines: 66
+  executableLines: 76
+  lineCoverage: 0.8684
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ReadInputSynthesizer.java"
+  coveredLines: 419
+  executableLines: 516
+  lineCoverage: 0.812
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ResolutionHint.java"
+  coveredLines: 1
+  executableLines: 1
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ResponseFieldVariantGenerator.java"
+  coveredLines: 38
+  executableLines: 38
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/SampleInputSynthesizer.java"
+  coveredLines: 67
+  executableLines: 80
+  lineCoverage: 0.8375
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/Seeds.java"
+  coveredLines: 0
+  executableLines: 16
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/ShapeJsonSynthesizer.java"
+  coveredLines: 74
+  executableLines: 84
+  lineCoverage: 0.881
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/SqlSeedResolver.java"
+  coveredLines: 38
+  executableLines: 39
+  lineCoverage: 0.9744
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/SynthesizedInput.java"
+  coveredLines: 2
+  executableLines: 2
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/run/WsCaptureRunner.java"
+  coveredLines: 0
+  executableLines: 76
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/schema/SchemaExtractor.java"
+  coveredLines: 0
+  executableLines: 43
+  lineCoverage: 0.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/GraphPartitioner.java"
+  coveredLines: 16
+  executableLines: 16
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/GraphStore.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/IndexCache.java"
+  coveredLines: 56
+  executableLines: 67
+  lineCoverage: 0.8358
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/IndexManifest.java"
+  coveredLines: 4
+  executableLines: 4
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/JsonFileGraphStore.java"
+  coveredLines: 10
+  executableLines: 14
+  lineCoverage: 0.7143
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/PartitionedGraphStore.java"
+  coveredLines: 88
+  executableLines: 92
+  lineCoverage: 0.9565
+- path: "graph-rag-builder/src/main/java/io/graphrag/builder/store/StaticIndex.java"
+  coveredLines: 8
+  executableLines: 8
+  lineCoverage: 1.0
+- path: "graph-rag-builder/src/main/java/io/graphrag/oracle/ReflectiveBodyInstantiator.java"
+  coveredLines: 84
+  executableLines: 177
+  lineCoverage: 0.4746
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/BizException.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/ErrorEnvelopeApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/GlobalExceptionHandler.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/Item.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/ItemController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/ItemRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/PricingClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/PricingResponse.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/gateway-service/src/main/java/io/graphrag/sample/gateway/GatewayConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/gateway-service/src/main/java/io/graphrag/sample/gateway/GatewayServiceApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/B3MessageInterceptor.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/EventuateReceivedMessagesEntity.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/LedgerApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/LedgerEntry.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/LedgerEntryRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/OrderEventHandlers.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/ledger/TramSubscriberConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/ledger/src/main/java/sample/reservation/OrderReserved.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/order-web/src/main/java/sample/order/Order.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderRequest.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderWebApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/B3MessageInterceptor.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/EventuateMessageEntity.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/OrderReserved.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/Reservation.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/ReservationApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/ReservationController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/ReservationRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/legacy-tram/reservation/src/main/java/sample/reservation/TramMessagingConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Address.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BatchEventConsumer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingStatus.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingTier.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Brand.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BrandConverter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/BrandRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/CollectionsController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Color.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/ColorFormatter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/ColorRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/CouponController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/DeepNestedController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/EditorFormController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/FulfillmentMode.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/IdRefFormController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/InventoryClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/MultiCommandWebController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/NestedFormController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Order.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderBatchController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderCountWsController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderEvent.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderEventConsumer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderEventRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderSearchController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderSearchMapper.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderServiceApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderWebController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/PricingController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/ProfileController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/PromoController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/PromoService.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/RefFormController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/ShipController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/SignupController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/Sku.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/SkuRecord.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/SkuRecordRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/User.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/UserOrderWebController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/UserRepository.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/WebSocketConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/AuthController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/AuthTimeInterceptor.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/AuthTimeWebConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/JwtAuthFilter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/JwtUtil.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/SecurityConfig.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/AuthMode.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/BindingOrigin.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/BranchRef.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/CapturedEventEmit.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/CapturedHttpCall.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/CapturedSql.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ColumnSchema.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/Endpoint.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/EndpointParam.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/EventType.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ExplorationReport.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ExploredPath.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ForeignKey.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/GeneratedFile.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/GenerationRequest.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/GenerationResult.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/GraphAsset.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/HeaderTemplate.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/Json.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/KafkaConsumer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/KafkaExchange.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/MapperStatement.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/Outcome.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ParallelSafetyReport.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/ParamKind.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/PathPatterns.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/RequestHeaders.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/RequiredSeed.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/SerialRequired.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/SqlBinding.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/TableSchema.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/TestEvent.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/WsEndpoint.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "shared-model/src/main/java/io/graphrag/model/WsExchange.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/AdminController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/Expectation.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/ExpectationRegistry.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/HexCodec.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/MatchMode.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/SocketMockApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "socket-mock-server/src/main/java/io/graphrag/socketmock/TcpListenerManager.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/Generator.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/cli/GeneratorCli.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/client/FileGraphRagClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/client/GraphRagClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/compose/ComposedFixture.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/compose/FixtureComposer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/compose/HttpMockComposer.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-generator/src/main/java/io/graphrag/generator/compose/ServerGeneratedDetector.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardApplication.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/LeakDetector.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/LeakScanScheduler.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/RunStatus.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TokenAuthFilter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/dashboard/DashboardReporters.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/dashboard/HttpDashboardReporter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/dashboard/NoopDashboardReporter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/jdbc/PlainJdbcAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/noop/NoopAuthAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/noop/NoopHttpMockAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/noop/NoopSocketMockAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/real/JwtAuthClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/real/RealAuthAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/wiremock/WireMockHttpMockAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/adapter/wiremock/WireMockHttpMockClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/AuthClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/HttpMockClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/HttpStubBuilder.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/JdbcHelper.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/KafkaHelper.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/RestAssuredHelper.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/SocketMockClient.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/StompHelper.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/api/TestScope.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/internal/SqlTableParser.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/Adapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/Adapters.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/AuthAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/DashboardReporter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/Env.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/HttpMockAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/JdbcAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/spi/SocketMockAdapter.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+- path: "testlib/src/main/java/io/graphrag/testlib/stomp/StompFrames.java"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+apiHotspots:
+- httpMethod: "DELETE"
+  route: "/__admin/expectations"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.socketmock.AdminController#clear()"
+    file: "socket-mock-server/src/main/java/io/graphrag/socketmock/AdminController.java"
+    lines: "50-53"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.socketmock.ExpectationRegistry#clear()"
+    file: "socket-mock-server/src/main/java/io/graphrag/socketmock/ExpectationRegistry.java"
+    lines: "44-46"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/__admin/expectations"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.socketmock.AdminController#register(ExpectationRequest)"
+    file: "socket-mock-server/src/main/java/io/graphrag/socketmock/AdminController.java"
+    lines: "28-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.socketmock.TcpListenerManager#ensureListening(int)"
+    file: "socket-mock-server/src/main/java/io/graphrag/socketmock/TcpListenerManager.java"
+    lines: "40-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.socketmock.ExpectationRegistry#register(Expectation)"
+    file: "socket-mock-server/src/main/java/io/graphrag/socketmock/ExpectationRegistry.java"
+    lines: "19-22"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/active"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.dashboard.DashboardController#active()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java"
+    lines: "38-41"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#active()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "76-78"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getStatus()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "46-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/auth/login"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.auth.AuthController#login(LoginRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/AuthController.java"
+    lines: "29-36"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.auth.JwtUtil#generate(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/auth/JwtUtil.java"
+    lines: "19-27"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/bookings"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#create(CreateBookingRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "43-72"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "185-188"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "63-65"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getNights()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "67-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "75-77"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getTier()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "79-81"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCheckInDate()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "91-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "DELETE"
+  route: "/api/bookings/{id}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#delete(Long, boolean)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "110-126"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/bookings/{id}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#get(Long, boolean)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "74-86"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCheckInDate()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "91-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "185-188"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "63-65"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getNights()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "67-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "75-77"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getTier()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "79-81"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "PUT"
+  route: "/api/bookings/{id}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#update(Long, UpdateBookingRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "88-108"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#setNights(int)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "71-73"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#setStatus(BookingStatus)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "87-89"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/bookings/{id}/advance"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#advance(Long)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "166-183"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "185-188"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "63-65"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getNights()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "67-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "75-77"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getTier()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "79-81"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCheckInDate()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "91-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/bookings/{id}/eligibility"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#eligibility(Long, int)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "148-159"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getNights()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "67-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "185-188"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "63-65"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "75-77"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getTier()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "79-81"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCheckInDate()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "91-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/bookings/{id}/premium-eligible"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.BookingController#premiumEligible(Long)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "133-141"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "83-85"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getTier()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "79-81"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/BookingController.java"
+    lines: "185-188"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "63-65"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getNights()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "67-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "75-77"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Booking#getCheckInDate()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Booking.java"
+    lines: "91-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/coupons"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.CouponController#redeem(RedeemRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/CouponController.java"
+    lines: "24-30"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/deep"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.DeepNestedController#deep(Root)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/DeepNestedController.java"
+    lines: "19-29"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/orders"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderController#getByUserId(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderController.java"
+    lines: "95-98"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.OrderRepository#findByUser_Id(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderRepository.java"
+    lines: "11-11"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/orders"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderController#create(CreateOrderRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderController.java"
+    lines: "43-86"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.InventoryClient#check(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/InventoryClient.java"
+    lines: "21-24"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Order#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Order.java"
+    lines: "43-45"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.User#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/User.java"
+    lines: "26-28"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Order#getStatus()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Order.java"
+    lines: "59-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/orders/by-ids"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderBatchController#byIds(List<String>)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderBatchController.java"
+    lines: "54-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.OrderRepository#findByUser_Id(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderRepository.java"
+    lines: "11-11"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/orders/search"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderSearchController#search(SearchRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderSearchController.java"
+    lines: "29-37"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.OrderSearchMapper#search(String, String,\
+      \ Integer)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderSearchMapper.java"
+    lines: "13-15"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/orders/ship"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.ShipController#ship(ShipRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/ShipController.java"
+    lines: "18-25"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Address#getCity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Address.java"
+    lines: "8-10"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/orders/{id}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderController#getById(Long)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderController.java"
+    lines: "88-93"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/prefs"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.CollectionsController#prefs(Map<String,String>)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/CollectionsController.java"
+    lines: "20-26"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/pricing"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.PricingController#quote(QuoteRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/PricingController.java"
+    lines: "31-44"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/profiles-map"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.CollectionsController#profilesMap(Map<String,ProfileDto>)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/CollectionsController.java"
+    lines: "40-51"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/api/profiles/by-name/{name}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.ProfileController#byName(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/ProfileController.java"
+    lines: "29-34"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.UserRepository#findByName(String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/UserRepository.java"
+    lines: "9-9"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.User#getId()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/User.java"
+    lines: "26-28"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.User#getName()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/User.java"
+    lines: "30-32"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/promo"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.PromoController#evaluate(PromoRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/PromoController.java"
+    lines: "29-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.PromoService#classify(Integer, String, String)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/PromoService.java"
+    lines: "12-21"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/signups"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.SignupController#signup(SignupRequest)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/SignupController.java"
+    lines: "33-37"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/api/tags"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.CollectionsController#tags(List<String>)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/CollectionsController.java"
+    lines: "28-39"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/events"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.dashboard.DashboardController#receive(TestEvent)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java"
+    lines: "28-36"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#apply(TestEvent)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "20-61"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#evictFinishedRuns()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "63-66"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getStatus()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "46-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#markCleaned(Instant)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "66-69"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getDbRows()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "54-56"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#text(JsonNode, String)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "68-70"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getHttpStubs()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "58-60"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getSocketSessions()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "62-64"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/items/{id}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.envelope.ItemController#getItem(Long)"
+    file: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/ItemController.java"
+    lines: "20-24"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/items/{id}/price"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.envelope.ItemController#getItemPrice(Long)"
+    file: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/ItemController.java"
+    lines: "26-33"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.envelope.PricingClient#quote(Long)"
+    file: "samples/error-envelope-service/src/main/java/io/graphrag/sample/envelope/PricingClient.java"
+    lines: "18-20"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/leaked"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.dashboard.DashboardController#leaked()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java"
+    lines: "43-46"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#leaked()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "80-82"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRun#getStatus()"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRun.java"
+    lines: "46-48"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/orders"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "sample.order.OrderController#create(OrderRequest)"
+    file: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderController.java"
+    lines: "24-37"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "sample.order.OrderRequest#getUserId()"
+    file: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderRequest.java"
+    lines: "9-9"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "sample.order.OrderRequest#getAmount()"
+    file: "samples/legacy-tram/order-web/src/main/java/sample/order/OrderRequest.java"
+    lines: "12-12"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "sample.order.Order#getId()"
+    file: "samples/legacy-tram/order-web/src/main/java/sample/order/Order.java"
+    lines: "13-13"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/reservations"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "sample.reservation.ReservationController#create(Map<String,Object>)"
+    file: "samples/legacy-tram/reservation/src/main/java/sample/reservation/ReservationController.java"
+    lines: "21-32"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "GET"
+  route: "/test/{testId}"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.dashboard.DashboardController#find(String)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java"
+    lines: "48-52"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.dashboard.TestRunStore#find(String)"
+    file: "test-state-dashboard/src/main/java/io/graphrag/dashboard/TestRunStore.java"
+    lines: "72-74"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/editor"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.EditorFormController#submit(EditorForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/EditorFormController.java"
+    lines: "53-60"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.EditorFormController.EditorForm#getSku()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/EditorFormController.java"
+    lines: "36-38"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.EditorFormController.EditorForm#getQuantity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/EditorFormController.java"
+    lines: "44-46"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/idref"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.IdRefFormController#submit(IdRefForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/IdRefFormController.java"
+    lines: "36-43"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.IdRefFormController.IdRefForm#getBrand()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/IdRefFormController.java"
+    lines: "19-21"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.IdRefFormController.IdRefForm#getQuantity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/IdRefFormController.java"
+    lines: "27-29"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/nested"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.NestedFormController#submit(NestedForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/NestedFormController.java"
+    lines: "37-44"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.NestedFormController.NestedForm#getAddress()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/NestedFormController.java"
+    lines: "20-22"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.Address#getCity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/Address.java"
+    lines: "8-10"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.NestedFormController.NestedForm#getQuantity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/NestedFormController.java"
+    lines: "28-30"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/orders"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.OrderWebController#submit(OrderForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderWebController.java"
+    lines: "38-45"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.OrderWebController.OrderForm#getQuantity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/OrderWebController.java"
+    lines: "29-31"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/ref"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.RefFormController#submit(RefForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/RefFormController.java"
+    lines: "37-44"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.RefFormController.RefForm#getColor()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/RefFormController.java"
+    lines: "20-22"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.RefFormController.RefForm#getQuantity()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/RefFormController.java"
+    lines: "28-30"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+- httpMethod: "POST"
+  route: "/web/users/{userId}/submit"
+  coveredLines: 0
+  executableLines: 0
+  lineCoverage: "N/A"
+  coverageMultiplier: "N/A"
+  methods:
+  - signature: "io.graphrag.sample.orders.UserOrderWebController#submit(OrderForm)"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/UserOrderWebController.java"
+    lines: "45-53"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"
+  - signature: "io.graphrag.sample.orders.UserOrderWebController.OrderForm#getAmount()"
+    file: "samples/order-service/src/main/java/io/graphrag/sample/orders/UserOrderWebController.java"
+    lines: "36-38"
+    coveredLines: 0
+    executableLines: 0
+    coverage: "N/A"
+    note: "no coverage data — contributes nothing"

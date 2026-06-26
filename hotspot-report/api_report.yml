@@ -1,0 +1,775 @@
+meta:
+  analyzedAt: "2026-06-26T04:44:36.973832068Z"
+  targetDescription: "LOCAL_GIT:/root/graph-rag-test-generator"
+  totalCommits: 784
+  totalFiles: 316
+  totalMethods: 1236
+apiHotspots:
+- simpleRank: 2
+  compositeRank: 1
+  httpMethod: "POST"
+  route: "/api/orders"
+  fqcn: "io.graphrag.sample.orders.OrderController"
+  method: "create"
+  parameters:
+  - "CreateOrderRequest"
+  loc: 57
+  revisions: 10
+  simpleScore: 570
+  recencyDecay: 4.59
+  cognitiveComplexity: 19
+  coverageMultiplier: 1
+  compositeScore: 87.2107
+  callGraph:
+  - "io.graphrag.sample.orders.InventoryClient#check(String)"
+  - "io.graphrag.sample.orders.Order#getId()"
+  - "io.graphrag.sample.orders.User#getId()"
+  - "io.graphrag.sample.orders.Order#getStatus()"
+- simpleRank: 3
+  compositeRank: 2
+  httpMethod: "POST"
+  route: "/api/bookings"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "create"
+  parameters:
+  - "CreateBookingRequest"
+  loc: 55
+  revisions: 9
+  simpleScore: 495
+  recencyDecay: 3.0633
+  cognitiveComplexity: 14
+  coverageMultiplier: 1
+  compositeScore: 42.8862
+  callGraph:
+  - "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+  - "io.graphrag.sample.orders.Booking#getId()"
+  - "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+  - "io.graphrag.sample.orders.Booking#getNights()"
+  - "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+  - "io.graphrag.sample.orders.Booking#getTier()"
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+  - "io.graphrag.sample.orders.Booking#getCheckInDate()"
+- simpleRank: 1
+  compositeRank: 3
+  httpMethod: "POST"
+  route: "/events"
+  fqcn: "io.graphrag.dashboard.DashboardController"
+  method: "receive"
+  parameters:
+  - "TestEvent"
+  loc: 74
+  revisions: 12
+  simpleScore: 888
+  recencyDecay: 2.461
+  cognitiveComplexity: 13
+  coverageMultiplier: 1
+  compositeScore: 31.9931
+  callGraph:
+  - "io.graphrag.dashboard.TestRunStore#apply(TestEvent)"
+  - "io.graphrag.dashboard.TestRunStore#evictFinishedRuns()"
+  - "io.graphrag.dashboard.TestRun#getStatus()"
+  - "io.graphrag.dashboard.TestRun#markCleaned(Instant)"
+  - "io.graphrag.dashboard.TestRun#getDbRows()"
+  - "io.graphrag.dashboard.TestRunStore#text(JsonNode, String)"
+  - "io.graphrag.dashboard.TestRun#getHttpStubs()"
+  - "io.graphrag.dashboard.TestRun#getSocketSessions()"
+- simpleRank: 9
+  compositeRank: 4
+  httpMethod: "POST"
+  route: "/api/promo"
+  fqcn: "io.graphrag.sample.orders.PromoController"
+  method: "evaluate"
+  parameters:
+  - "PromoRequest"
+  loc: 30
+  revisions: 5
+  simpleScore: 150
+  recencyDecay: 1.6824
+  cognitiveComplexity: 12
+  coverageMultiplier: 1
+  compositeScore: 20.1885
+  callGraph:
+  - "io.graphrag.sample.orders.PromoService#classify(Integer, String, String)"
+- simpleRank: 11
+  compositeRank: 5
+  httpMethod: "POST"
+  route: "/web/nested"
+  fqcn: "io.graphrag.sample.orders.NestedFormController"
+  method: "submit"
+  parameters:
+  - "NestedForm"
+  loc: 17
+  revisions: 4
+  simpleScore: 68
+  recencyDecay: 2.6918
+  cognitiveComplexity: 5
+  coverageMultiplier: 1
+  compositeScore: 13.459
+  callGraph:
+  - "io.graphrag.sample.orders.NestedFormController.NestedForm#getAddress()"
+  - "io.graphrag.sample.orders.Address#getCity()"
+  - "io.graphrag.sample.orders.NestedFormController.NestedForm#getQuantity()"
+- simpleRank: 6
+  compositeRank: 6
+  httpMethod: "POST"
+  route: "/api/bookings/{id}/advance"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "advance"
+  parameters:
+  - "Long"
+  loc: 43
+  revisions: 7
+  simpleScore: 301
+  recencyDecay: 2.3553
+  cognitiveComplexity: 5
+  coverageMultiplier: 1
+  compositeScore: 11.7766
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+  - "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+  - "io.graphrag.sample.orders.Booking#getId()"
+  - "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+  - "io.graphrag.sample.orders.Booking#getNights()"
+  - "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+  - "io.graphrag.sample.orders.Booking#getTier()"
+  - "io.graphrag.sample.orders.Booking#getCheckInDate()"
+- simpleRank: 5
+  compositeRank: 7
+  httpMethod: "GET"
+  route: "/api/bookings/{id}"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "get"
+  parameters:
+  - "Long"
+  - "boolean"
+  loc: 38
+  revisions: 8
+  simpleScore: 304
+  recencyDecay: 2.6918
+  cognitiveComplexity: 4
+  coverageMultiplier: 1
+  compositeScore: 10.7672
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#getCheckInDate()"
+  - "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+  - "io.graphrag.sample.orders.Booking#getId()"
+  - "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+  - "io.graphrag.sample.orders.Booking#getNights()"
+  - "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+  - "io.graphrag.sample.orders.Booking#getTier()"
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+- simpleRank: 10
+  compositeRank: 8
+  httpMethod: "PUT"
+  route: "/api/bookings/{id}"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "update"
+  parameters:
+  - "Long"
+  - "UpdateBookingRequest"
+  loc: 27
+  revisions: 3
+  simpleScore: 81
+  recencyDecay: 1.0094
+  cognitiveComplexity: 10
+  coverageMultiplier: 1
+  compositeScore: 10.0943
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#setNights(int)"
+  - "io.graphrag.sample.orders.Booking#setStatus(BookingStatus)"
+- simpleRank: 4
+  compositeRank: 9
+  httpMethod: "GET"
+  route: "/api/bookings/{id}/premium-eligible"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "premiumEligible"
+  parameters:
+  - "Long"
+  loc: 34
+  revisions: 10
+  simpleScore: 340
+  recencyDecay: 4.4529
+  cognitiveComplexity: 2
+  coverageMultiplier: 1
+  compositeScore: 8.9058
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+  - "io.graphrag.sample.orders.Booking#getTier()"
+  - "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+  - "io.graphrag.sample.orders.Booking#getId()"
+  - "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+  - "io.graphrag.sample.orders.Booking#getNights()"
+  - "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+  - "io.graphrag.sample.orders.Booking#getCheckInDate()"
+- simpleRank: 8
+  compositeRank: 10
+  httpMethod: "POST"
+  route: "/__admin/expectations"
+  fqcn: "io.graphrag.socketmock.AdminController"
+  method: "register"
+  parameters:
+  - "ExpectationRequest"
+  loc: 34
+  revisions: 5
+  simpleScore: 170
+  recencyDecay: 1.0254
+  cognitiveComplexity: 8
+  coverageMultiplier: 1
+  compositeScore: 8.2034
+  callGraph:
+  - "io.graphrag.socketmock.TcpListenerManager#ensureListening(int)"
+  - "io.graphrag.socketmock.ExpectationRegistry#register(Expectation)"
+- simpleRank: 7
+  compositeRank: 11
+  httpMethod: "GET"
+  route: "/api/bookings/{id}/eligibility"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "eligibility"
+  parameters:
+  - "Long"
+  - "int"
+  loc: 37
+  revisions: 8
+  simpleScore: 296
+  recencyDecay: 2.7268
+  cognitiveComplexity: 3
+  coverageMultiplier: 1
+  compositeScore: 8.1805
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#getNights()"
+  - "io.graphrag.sample.orders.BookingController#toResponse(Booking)"
+  - "io.graphrag.sample.orders.Booking#getId()"
+  - "io.graphrag.sample.orders.Booking#getCustomerEmail()"
+  - "io.graphrag.sample.orders.Booking#getLoyaltyPoints()"
+  - "io.graphrag.sample.orders.Booking#getTier()"
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+  - "io.graphrag.sample.orders.Booking#getCheckInDate()"
+- simpleRank: 12
+  compositeRank: 12
+  httpMethod: "POST"
+  route: "/web/editor"
+  fqcn: "io.graphrag.sample.orders.EditorFormController"
+  method: "submit"
+  parameters:
+  - "EditorForm"
+  loc: 14
+  revisions: 3
+  simpleScore: 42
+  recencyDecay: 2.0189
+  cognitiveComplexity: 4
+  coverageMultiplier: 1
+  compositeScore: 8.0754
+  callGraph:
+  - "io.graphrag.sample.orders.EditorFormController.EditorForm#getSku()"
+  - "io.graphrag.sample.orders.EditorFormController.EditorForm#getQuantity()"
+- simpleRank: 13
+  compositeRank: 13
+  httpMethod: "POST"
+  route: "/web/idref"
+  fqcn: "io.graphrag.sample.orders.IdRefFormController"
+  method: "submit"
+  parameters:
+  - "IdRefForm"
+  loc: 14
+  revisions: 3
+  simpleScore: 42
+  recencyDecay: 2.0189
+  cognitiveComplexity: 4
+  coverageMultiplier: 1
+  compositeScore: 8.0754
+  callGraph:
+  - "io.graphrag.sample.orders.IdRefFormController.IdRefForm#getBrand()"
+  - "io.graphrag.sample.orders.IdRefFormController.IdRefForm#getQuantity()"
+- simpleRank: 14
+  compositeRank: 14
+  httpMethod: "POST"
+  route: "/web/ref"
+  fqcn: "io.graphrag.sample.orders.RefFormController"
+  method: "submit"
+  parameters:
+  - "RefForm"
+  loc: 14
+  revisions: 3
+  simpleScore: 42
+  recencyDecay: 2.0189
+  cognitiveComplexity: 4
+  coverageMultiplier: 1
+  compositeScore: 8.0754
+  callGraph:
+  - "io.graphrag.sample.orders.RefFormController.RefForm#getColor()"
+  - "io.graphrag.sample.orders.RefFormController.RefForm#getQuantity()"
+- simpleRank: 26
+  compositeRank: 15
+  httpMethod: "POST"
+  route: "/api/tags"
+  fqcn: "io.graphrag.sample.orders.CollectionsController"
+  method: "tags"
+  parameters:
+  - "List<String>"
+  loc: 12
+  revisions: 1
+  simpleScore: 12
+  recencyDecay: 0.743
+  cognitiveComplexity: 6
+  coverageMultiplier: 1
+  compositeScore: 4.458
+  callGraph: []
+- simpleRank: 19
+  compositeRank: 16
+  httpMethod: "POST"
+  route: "/api/orders/ship"
+  fqcn: "io.graphrag.sample.orders.ShipController"
+  method: "ship"
+  parameters:
+  - "ShipRequest"
+  loc: 11
+  revisions: 2
+  simpleScore: 22
+  recencyDecay: 1.4159
+  cognitiveComplexity: 3
+  coverageMultiplier: 1
+  compositeScore: 4.2478
+  callGraph:
+  - "io.graphrag.sample.orders.Address#getCity()"
+- simpleRank: 27
+  compositeRank: 17
+  httpMethod: "POST"
+  route: "/api/deep"
+  fqcn: "io.graphrag.sample.orders.DeepNestedController"
+  method: "deep"
+  parameters:
+  - "Root"
+  loc: 11
+  revisions: 1
+  simpleScore: 11
+  recencyDecay: 0.743
+  cognitiveComplexity: 5
+  coverageMultiplier: 1
+  compositeScore: 3.715
+  callGraph: []
+- simpleRank: 20
+  compositeRank: 18
+  httpMethod: "GET"
+  route: "/items/{id}/price"
+  fqcn: "io.graphrag.sample.envelope.ItemController"
+  method: "getItemPrice"
+  parameters:
+  - "Long"
+  loc: 11
+  revisions: 2
+  simpleScore: 22
+  recencyDecay: 1.8114
+  cognitiveComplexity: 2
+  coverageMultiplier: 1
+  compositeScore: 3.6229
+  callGraph:
+  - "io.graphrag.sample.envelope.PricingClient#quote(Long)"
+- simpleRank: 15
+  compositeRank: 19
+  httpMethod: "DELETE"
+  route: "/api/bookings/{id}"
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "delete"
+  parameters:
+  - "Long"
+  - "boolean"
+  loc: 20
+  revisions: 2
+  simpleScore: 40
+  recencyDecay: 0.673
+  cognitiveComplexity: 5
+  coverageMultiplier: 1
+  compositeScore: 3.3648
+  callGraph:
+  - "io.graphrag.sample.orders.Booking#getStatus()"
+- simpleRank: 25
+  compositeRank: 20
+  httpMethod: "POST"
+  route: "/api/profiles-map"
+  fqcn: "io.graphrag.sample.orders.CollectionsController"
+  method: "profilesMap"
+  parameters:
+  - "Map<String,ProfileDto>"
+  loc: 12
+  revisions: 1
+  simpleScore: 12
+  recencyDecay: 0.743
+  cognitiveComplexity: 4
+  coverageMultiplier: 1
+  compositeScore: 2.972
+  callGraph: []
+- simpleRank: 21
+  compositeRank: 21
+  httpMethod: "POST"
+  route: "/web/orders"
+  fqcn: "io.graphrag.sample.orders.OrderWebController"
+  method: "submit"
+  parameters:
+  - "OrderForm"
+  loc: 11
+  revisions: 2
+  simpleScore: 22
+  recencyDecay: 0.743
+  cognitiveComplexity: 3
+  coverageMultiplier: 1
+  compositeScore: 2.229
+  callGraph:
+  - "io.graphrag.sample.orders.OrderWebController.OrderForm#getQuantity()"
+- simpleRank: 18
+  compositeRank: 22
+  httpMethod: "POST"
+  route: "/web/users/{userId}/submit"
+  fqcn: "io.graphrag.sample.orders.UserOrderWebController"
+  method: "submit"
+  parameters:
+  - "OrderForm"
+  loc: 12
+  revisions: 2
+  simpleScore: 24
+  recencyDecay: 0.743
+  cognitiveComplexity: 3
+  coverageMultiplier: 1
+  compositeScore: 2.229
+  callGraph:
+  - "io.graphrag.sample.orders.UserOrderWebController.OrderForm#getAmount()"
+- simpleRank: 30
+  compositeRank: 23
+  httpMethod: "POST"
+  route: "/api/prefs"
+  fqcn: "io.graphrag.sample.orders.CollectionsController"
+  method: "prefs"
+  parameters:
+  - "Map<String,String>"
+  loc: 7
+  revisions: 1
+  simpleScore: 7
+  recencyDecay: 0.743
+  cognitiveComplexity: 2
+  coverageMultiplier: 1
+  compositeScore: 1.486
+  callGraph: []
+- simpleRank: 24
+  compositeRank: 24
+  httpMethod: "POST"
+  route: "/api/pricing"
+  fqcn: "io.graphrag.sample.orders.PricingController"
+  method: "quote"
+  parameters:
+  - "QuoteRequest"
+  loc: 14
+  revisions: 1
+  simpleScore: 14
+  recencyDecay: 0.673
+  cognitiveComplexity: 2
+  coverageMultiplier: 1
+  compositeScore: 1.3459
+  callGraph: []
+- simpleRank: 17
+  compositeRank: 25
+  httpMethod: "POST"
+  route: "/api/orders/search"
+  fqcn: "io.graphrag.sample.orders.OrderSearchController"
+  method: "search"
+  parameters:
+  - "SearchRequest"
+  loc: 12
+  revisions: 2
+  simpleScore: 24
+  recencyDecay: 0.4102
+  cognitiveComplexity: 3
+  coverageMultiplier: 1
+  compositeScore: 1.2305
+  callGraph:
+  - "io.graphrag.sample.orders.OrderSearchMapper#search(String, String, Integer)"
+- simpleRank: 16
+  compositeRank: 26
+  httpMethod: "POST"
+  route: "/api/auth/login"
+  fqcn: "io.graphrag.sample.orders.auth.AuthController"
+  method: "login"
+  parameters:
+  - "LoginRequest"
+  loc: 17
+  revisions: 2
+  simpleScore: 34
+  recencyDecay: 0.6095
+  cognitiveComplexity: 2
+  coverageMultiplier: 1
+  compositeScore: 1.219
+  callGraph:
+  - "io.graphrag.sample.orders.auth.JwtUtil#generate(String)"
+- simpleRank: 29
+  compositeRank: 27
+  httpMethod: "POST"
+  route: "/api/coupons"
+  fqcn: "io.graphrag.sample.orders.CouponController"
+  method: "redeem"
+  parameters:
+  - "RedeemRequest"
+  loc: 7
+  revisions: 1
+  simpleScore: 7
+  recencyDecay: 0.8203
+  cognitiveComplexity: 1
+  coverageMultiplier: 1
+  compositeScore: 0.8203
+  callGraph: []
+- simpleRank: 23
+  compositeRank: 28
+  httpMethod: "POST"
+  route: "/api/orders/by-ids"
+  fqcn: "io.graphrag.sample.orders.OrderBatchController"
+  method: "byIds"
+  parameters:
+  - "List<String>"
+  loc: 9
+  revisions: 2
+  simpleScore: 18
+  recencyDecay: 0.7576
+  cognitiveComplexity: 1
+  coverageMultiplier: 1
+  compositeScore: 0.7576
+  callGraph:
+  - "io.graphrag.sample.orders.OrderRepository#findByUser_Id(String)"
+- simpleRank: 28
+  compositeRank: 29
+  httpMethod: "DELETE"
+  route: "/__admin/expectations"
+  fqcn: "io.graphrag.socketmock.AdminController"
+  method: "clear"
+  parameters: []
+  loc: 7
+  revisions: 1
+  simpleScore: 7
+  recencyDecay: 0.2051
+  cognitiveComplexity: 0
+  coverageMultiplier: 1
+  compositeScore: 0
+  callGraph:
+  - "io.graphrag.socketmock.ExpectationRegistry#clear()"
+- simpleRank: 22
+  compositeRank: 30
+  httpMethod: "GET"
+  route: "/active"
+  fqcn: "io.graphrag.dashboard.DashboardController"
+  method: "active"
+  parameters: []
+  loc: 10
+  revisions: 2
+  simpleScore: 20
+  recencyDecay: 0.4102
+  cognitiveComplexity: 0
+  coverageMultiplier: 1
+  compositeScore: 0
+  callGraph:
+  - "io.graphrag.dashboard.TestRunStore#active()"
+  - "io.graphrag.dashboard.TestRun#getStatus()"
+sharedComponents:
+- simpleRank: 1
+  compositeRank: 1
+  fqcn: "io.graphrag.dashboard.TestRun"
+  method: "getStatus"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.2051
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "POST /events"
+  - "GET /leaked"
+  - "GET /active"
+- simpleRank: 2
+  compositeRank: 2
+  fqcn: "io.graphrag.sample.orders.Address"
+  method: "getCity"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.673
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "POST /web/nested"
+  - "POST /api/orders/ship"
+- simpleRank: 3
+  compositeRank: 3
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getCheckInDate"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 4
+  compositeRank: 4
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getCustomerEmail"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 5
+  compositeRank: 5
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getId"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 6
+  compositeRank: 6
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getLoyaltyPoints"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 7
+  compositeRank: 7
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getNights"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 8
+  compositeRank: 8
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getStatus"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "DELETE /api/bookings/{id}"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 9
+  compositeRank: 9
+  fqcn: "io.graphrag.sample.orders.Booking"
+  method: "getTier"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.3365
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 12
+  compositeRank: 10
+  fqcn: "io.graphrag.sample.orders.BookingController"
+  method: "toResponse"
+  parameters:
+  - "Booking"
+  loc: 4
+  revisions: 0
+  simpleScore: 0
+  recencyDecay: 0
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/bookings/{id}/premium-eligible"
+  - "GET /api/bookings/{id}"
+  - "POST /api/bookings"
+  - "POST /api/bookings/{id}/advance"
+  - "GET /api/bookings/{id}/eligibility"
+- simpleRank: 11
+  compositeRank: 11
+  fqcn: "io.graphrag.sample.orders.OrderRepository"
+  method: "findByUser_Id"
+  parameters:
+  - "String"
+  loc: 1
+  revisions: 1
+  simpleScore: 1
+  recencyDecay: 0.3048
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "GET /api/orders"
+  - "POST /api/orders/by-ids"
+- simpleRank: 10
+  compositeRank: 12
+  fqcn: "io.graphrag.sample.orders.User"
+  method: "getId"
+  parameters: []
+  loc: 3
+  revisions: 1
+  simpleScore: 3
+  recencyDecay: 0.2051
+  cognitiveComplexity: 0
+  coverageMultiplier: 10
+  compositeScore: 0
+  callingApis:
+  - "POST /api/orders"
+  - "GET /api/profiles/by-name/{name}"

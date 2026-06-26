@@ -71,6 +71,21 @@ tasks.register("printTestRuntimeClasspath") {
     }
 }
 
+// JaCoCo report: 번들된 agent fat jar(otel-javaagent, pjacoco-agent)가 classDirectories에 포함되면
+// 동일 클래스명 충돌(IllegalStateException: Can't add different class with same name)이 발생한다.
+// resources/main/agents/ 경로를 제외해 순수 빌더 소스만 리포트에 포함시킨다.
+tasks.named<JacocoReport>("jacocoTestReport") {
+    classDirectories.setFrom(
+        fileTree(layout.buildDirectory.dir("classes/java/main")) {
+            exclude("**/agents/**")
+        }
+    )
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+}
+
 // 통합 테스트는 샘플 SUT jar + 외부 스텁이 필요하다
 tasks.test {
     dependsOn(":samples:order-service:bootJar")
