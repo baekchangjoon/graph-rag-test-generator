@@ -39,7 +39,10 @@ public final class PjacocoCoverageProbe implements CoverageProbe {
      */
     @Override
     public ExecutionDataStore requestDelta(String traceId) {
-        PjacocoCoverageBackend.StopLoadOutcome outcome = backend.stopAndLoad(traceId, false);
+        // persist=true: 에이전트가 body 반환에 더해 <traceId>.exec(+.json 사이드카)를 디스크에도 쓴다.
+        // BINARY 경로는 body에서 store를 받아 즉시 반환하므로 awaitExec 폴링 레이스는 없다.
+        // REQ-003(coverageTraceIds가 실재 .exec를 역참조)·REQ-006(사이드카 summary) 계약을 지킨다.
+        PjacocoCoverageBackend.StopLoadOutcome outcome = backend.stopAndLoad(traceId, true);
         if (outcome.path() == PjacocoCoverageBackend.StopLoadPath.BINARY) {
             logBinaryModeOnce(true);
             return outcome.store();

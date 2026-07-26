@@ -20,7 +20,7 @@ The hot path uses `POST /__coverage__/test/stop?format=binary` instead of pollin
 Query parameters:
 
 - `format=binary` — return exec in the response body
-- `persist=true|false` — whether the agent also writes `<traceId>.exec` to disk (Priority 2 uses `false` during exploration)
+- `persist=true|false` — whether the agent also writes `<traceId>.exec` (+`.json` sidecar) to disk. Priority 1 uses `true` so `coverageTraceIds` resolve to on-disk `.exec` files (REQ-003) and sidecar summaries (REQ-006); reading the exec from the binary body still avoids the `awaitExec` poll race. (A later exploration-only optimization may switch this to `false`.)
 
 Builder logs once per run: `pjacoco binary stop: enabled` or `fallback-to-file-poll`.
 
