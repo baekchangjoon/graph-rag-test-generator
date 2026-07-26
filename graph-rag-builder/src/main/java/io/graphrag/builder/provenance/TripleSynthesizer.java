@@ -45,6 +45,8 @@ import java.util.Set;
  * 정렬(REQ-033), stubs.json의 WireMock mapping 스키마 엄격 검증(REQ-008), {@code &&}/{@code ||} 등
  * 결합 논리 가드의 다중 피연산자 라우팅, {@link InputCandidates} DERIVED 해 배치. 현재는 단일
  * {@link TripleCandidate}만 반환한다 — cap/정렬은 Task 9에서 도입.
+ * <b>동일 테이블 다중 행(예: from/to 계좌처럼 같은 테이블을 서로 다른 행으로 참조하는 경우)은 현재
+ * 테이블당 한 행으로 병합되어 구분되지 않는다 — Task 9+ 백로그(REQ-006 범위에서는 구조 일반화 보류).</b>
  */
 public final class TripleSynthesizer {
 
@@ -107,6 +109,9 @@ public final class TripleSynthesizer {
         }
         // seed 대상 테이블별 컬럼→값 배정 (co-location: 같은 테이블에 여러 가드가 값을 보태면 한 행에 합쳐진다).
         Map<String, LinkedHashMap<String, Object>> rowsByTable = new LinkedHashMap<>();
+        // 확장 지점 명시(클래스 Javadoc과 동일 내용) — 동일 테이블을 서로 다른 행으로 구분해야 하는
+        // 경우(from/to 계좌 등)는 현재 1행으로 병합된다.
+        notes.add("확장 지점: 동일 테이블 다중 행(from/to 계좌류)은 현재 1행으로 병합됨(Task 9+ 백로그)");
 
         String primaryTable = solePrimaryTable(report);
 
@@ -281,7 +286,11 @@ public final class TripleSynthesizer {
         return statements;
     }
 
-    /** 부모(FK 참조 테이블)를 먼저 재귀적으로 채운 뒤 자신을 {@link #emitOrder}에 등록(부모 선행 emission 보장). */
+    /**
+     * 부모(FK 참조 테이블)를 먼저 재귀적으로 채운 뒤 자신을 {@link #emitOrder}에 등록(부모 선행 emission 보장).
+     * 부모 스키마가 {@code tablesByName}에 없거나 부모 PK 해결에 실패하면, 그 NOT NULL FK 컬럼에 null을
+     * 침묵 삽입하지 않고 컬럼 자체를 행에서 제외하며 {@code notes}에 {@code "unresolved-fk: ..."}로 남긴다.
+     */
     private void fillTable(String tableName, Map<String, TableSchema> tablesByName,
                            Map<String, LinkedHashMap<String, Object>> rowsByTable, Set<String> visiting,
                            List<String> notes) {
@@ -305,14 +314,29 @@ public final class TripleSynthesizer {
                 continue;
             }
             ForeignKey fk = findForeignKey(column.name(), schema);
-            if (fk != null) {
-                fillTable(fk.referencedTable(), tablesByName, rowsByTable, visiting, notes);
-                LinkedHashMap<String, Object> parentRow = rowsByTable.get(fk.referencedTable());
-                Object parentPk = parentRow == null ? null : parentRow.get(fk.referencedColumn());
-                row.put(column.name(), parentPk);
-            } else {
+            if (fk == null) {
                 row.put(column.name(), defaultValueFor(column));
+                continue;
             }
+            if (!tablesByName.containsKey(fk.referencedTable())) {
+                // 부모 스키마가 tables에 없음 — null을 침묵 삽입하지 않고 컬럼 자체를 INSERT에서 제외한다
+                // (NOT NULL 위반 SQL 생성 방지). 근거는 notes에 "unresolved-fk:"로 남겨 추적 가능하게 한다.
+                notes.add("unresolved-fk: " + tableName + "." + column.name() + " -> "
+                        + fk.referencedTable() + "." + fk.referencedColumn()
+                        + " (부모 스키마가 tables에 없음 — NOT NULL 컬럼을 INSERT에서 제외, 침묵 null 금지)");
+                continue;
+            }
+            fillTable(fk.referencedTable(), tablesByName, rowsByTable, visiting, notes);
+            LinkedHashMap<String, Object> parentRow = rowsByTable.get(fk.referencedTable());
+            Object parentPk = parentRow == null ? null : parentRow.get(fk.referencedColumn());
+            if (parentPk == null) {
+                // 방어적 이중 점검: 부모 스키마는 있으나 PK가 referencedColumn과 불일치하는 등 예기치 못한 미해결.
+                notes.add("unresolved-fk: " + tableName + "." + column.name() + " -> "
+                        + fk.referencedTable() + "." + fk.referencedColumn()
+                        + " (부모 PK 해결 실패 — NOT NULL 컬럼을 INSERT에서 제외, 침묵 null 금지)");
+                continue;
+            }
+            row.put(column.name(), parentPk);
         }
         emitOrder.add(tableName);
         visiting.remove(tableName);
