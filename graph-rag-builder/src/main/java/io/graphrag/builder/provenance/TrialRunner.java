@@ -85,9 +85,15 @@ public final class TrialRunner {
     public TrialOutcome runCandidate(Endpoint endpoint, Path candDir, List<RequiredSeed> happySeeds,
                                      ProvenanceReport report) throws Exception {
         resetHappySeeds(happySeeds);
-        List<InsertedRow> inserted = insertCandidateSeed(candDir.resolve("seed.sql"));
-        UUID stubId = registerCandidateStub(candDir.resolve("stubs.json"));
+        // ②/③ 모두 try 안에서 수행한다 — 다중 INSERT 중 후반 statement가 던지거나 stubs.json이
+        // malformed여도 finally가 반드시 실행돼야 한다(부분 삽입분 누수 방지). inserted는 try 밖에서
+        // 선언해 finally에서 보이게 하고, insertCandidateSeed는 이 리스트에 "직접" append하므로
+        // 도중에 던져도 그 시점까지 성공한 행은 리스트에 남아 정리 대상이 된다.
+        List<InsertedRow> inserted = new ArrayList<>();
+        UUID stubId = null;
         try {
+            insertCandidateSeed(candDir.resolve("seed.sql"), inserted);
+            stubId = registerCandidateStub(candDir.resolve("stubs.json"));
             JsonNode body = Json.mapper().readTree(candDir.resolve("body.json").toFile());
             long logStart = sut.logOffset();
             InvocationOutcome invocation = invoker.invoke(endpoint, body);
@@ -130,14 +136,17 @@ public final class TrialRunner {
     }
 
     /**
-     * ② 후보 {@code seed.sql}을 줄 단위로 실행하고 삽입한 (table, pk컬럼, pk 리터럴)을 추적한다. 이
-     * 시점의 seed.sql은 이미 T1 게이트({@link TripleValidator}, allowlist·마커-diff)를 통과했다는
-     * 전제이므로 파싱된 원문을 그대로 실행한다.
+     * ② 후보 {@code seed.sql}을 줄 단위로 실행하고 삽입한 (table, pk컬럼, pk 리터럴)을 {@code inserted}에
+     * 직접 append한다(반환값이 아니라 파라미터 리스트를 채우는 이유 — Important 3 fix: 여러 INSERT
+     * 문장 중 후반 문장이 {@code st.execute}에서 던지면 이 메서드 자체는 예외로 끝나지만, 이미
+     * append된 앞쪽 성공 행은 호출자({@link #runCandidate})의 {@code inserted} 참조에 그대로 남아
+     * finally의 {@link #deleteInsertedRows}가 부분 삽입분까지 정리할 수 있다). 이 시점의 seed.sql은
+     * 이미 T1 게이트({@link TripleValidator}, allowlist·마커-diff)를 통과했다는 전제이므로 파싱된
+     * 원문을 그대로 실행한다.
      */
-    private List<InsertedRow> insertCandidateSeed(Path seedSqlFile) throws Exception {
-        List<InsertedRow> rows = new ArrayList<>();
+    private void insertCandidateSeed(Path seedSqlFile, List<InsertedRow> inserted) throws Exception {
         if (!Files.exists(seedSqlFile)) {
-            return rows;
+            return;
         }
         String content = Files.readString(seedSqlFile);
         SeedSqlWhitelist parser = new SeedSqlWhitelist();
@@ -148,7 +157,7 @@ public final class TrialRunner {
                 continue;   // 방어적 skip — T1 게이트를 통과한 후보 전제이므로 정상 경로에서는 발생하지 않음
             }
             try (Statement st = connection.createStatement()) {
-                st.execute(line);
+                st.execute(line);   // 실패 시(예: PK 충돌) 여기서 던져 이 줄 이후는 실행되지 않는다.
             }
             Insert insert = parsed.get();
             String table = insert.getTable().getUnquotedName();
@@ -156,10 +165,9 @@ public final class TrialRunner {
             if (columns != null && !columns.isEmpty() && insert.getValues() != null
                     && !insert.getValues().getExpressions().isEmpty()) {
                 Expression firstValue = insert.getValues().getExpressions().get(0);
-                rows.add(new InsertedRow(table, columns.get(0).getUnquotedColumnName(), firstValue.toString()));
+                inserted.add(new InsertedRow(table, columns.get(0).getUnquotedColumnName(), firstValue.toString()));
             }
         }
-        return rows;
     }
 
     /** 후보가 삽입한 행을 역순으로 삭제한다(다음 trial 시도와 상태가 겹치지 않도록). best-effort. */
