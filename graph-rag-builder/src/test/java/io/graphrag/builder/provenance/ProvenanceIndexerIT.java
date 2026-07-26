@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * REQ-002(+REQ-001 INPUT 부분): 재귀 슬라이서 코어 — 호출그래프 DFS, depth cap/순환 종료,
- * INPUT 태깅. 픽스처: src/test/resources/provenance-fixtures/{basic,recursive}/.
+ * INPUT 태깅. 픽스처: src/test/resources/provenance-fixtures/{basic,recursive,exists}/.
  */
 class ProvenanceIndexerIT {
 
@@ -47,6 +47,26 @@ class ProvenanceIndexerIT {
                 .as("req.getAmount() < 1 가드의 좌변 피연산자는 INPUT + jsonPath=\"amount\"로 태깅되어야 한다")
                 .anyMatch(g -> g.operands().stream()
                         .anyMatch(v -> v.origin() == Origin.INPUT && v.jsonPath().equals("amount")));
+    }
+
+    @Test
+    @DisplayName("EXISTS 가드(Optional.orElseThrow) + record accessor INPUT 태깅")
+    void existsGuardWithRecordAccessorTagged() {
+        // record 기반 DTO(CreateTransferRequest.fromAccountId())를 쓰는 TransferController/
+        // OrderController 실제 관례를 재현: accountRepository.findById(req.fromAccountId())
+        // .orElseThrow(...) 가 EXISTS 가드로 수집되고, get/is 접두사 없는 record accessor의
+        // 인자가 INPUT + jsonPath="fromAccountId"로 태깅되어야 한다.
+        ProvenanceReport report = analyzeFixture(
+                "exists",
+                "io.graphrag.fixture.exists.ExistsController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("orElseThrow EXISTS 가드가 record accessor의 INPUT 피연산자와 함께 수집되어야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "fromAccountId".equals(v.jsonPath())));
     }
 
     @Test

@@ -25,6 +25,7 @@ import spoon.reflect.cu.SourcePosition;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtParameter;
+import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.reference.CtExecutableReference;
 import spoon.reflect.visitor.filter.TypeFilter;
@@ -52,8 +53,10 @@ import java.util.Set;
  *       그 수신 표현식을 존재(EXISTS) 가드로 수집.</li>
  *   <li>피연산자 분해 — {@code CtBinaryOperator}/단항연산자/{@code equals} 계열을 재귀 분해해 리프
  *       피연산자를 얻는다.</li>
- *   <li>INPUT 태깅 — 리프 피연산자의 루트가 핸들러 자신의 파라미터이면(getter 체인 경유 포함)
- *       {@link Origin#INPUT} + jsonPath(dot-path, 예: "amount", "user.id").</li>
+ *   <li>INPUT 태깅 — 리프 피연산자의 루트가 핸들러 자신의 파라미터이면(JavaBean getter 체인 또는
+ *       record canonical accessor 경유 포함) {@link Origin#INPUT} + jsonPath(dot-path, 예:
+ *       "amount", "user.id"). record는 {@code req.amount()}처럼 get/is 접두사가 없으므로,
+ *       호출 메서드명이 수신 타입의 record component명과 정확히 일치하면 별도로 인식한다.</li>
  * </ul>
  *
  * <p>DB_READ/EXTERNAL_RESPONSE/DERIVED 태깅은 후속 task 범위 — 이 클래스는 그 경우 피연산자를
@@ -106,7 +109,7 @@ public class ProvenanceIndexer {
             CtMethod<?> method = frame.method();
             int depth = frame.depth();
 
-            collectGuards(method, handlerParams, guards);
+            collectGuards(model, method, handlerParams, guards);
 
             for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 CtExecutableReference<?> executable = inv.getExecutable();
@@ -167,20 +170,22 @@ public class ProvenanceIndexer {
 
     // ---- 가드 수집 ----
 
-    private void collectGuards(CtMethod<?> method, Set<CtParameter<?>> handlerParams, List<GuardFact> guards) {
-        collectIfGuards(method, handlerParams, guards);
-        collectExistsGuards(method, handlerParams, guards);
+    private void collectGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+                               List<GuardFact> guards) {
+        collectIfGuards(model, method, handlerParams, guards);
+        collectExistsGuards(model, method, handlerParams, guards);
     }
 
     /** ① CtIf 가드: then/else 분기가 throw 또는 ResponseEntity.status(4xx|5xx) 반환으로 이어지는 경우만 채택. */
-    private void collectIfGuards(CtMethod<?> method, Set<CtParameter<?>> handlerParams, List<GuardFact> guards) {
+    private void collectIfGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+                                 List<GuardFact> guards) {
         for (CtIf ctIf : method.getElements(new TypeFilter<>(CtIf.class))) {
             if (!isErrorGuard(ctIf)) {
                 continue;
             }
             CtExpression<?> condition = ctIf.getCondition();
             List<ValueRef> operands = new ArrayList<>();
-            decomposeCondition(condition, handlerParams, operands);
+            decomposeCondition(condition, handlerParams, model, operands);
             guards.add(new GuardFact(locationOf(condition), opSymbol(condition), operands));
         }
     }
@@ -190,7 +195,8 @@ public class ProvenanceIndexer {
      * 람다 본문이 throw 또는 ResponseStatusException 생성이면, 수신 표현식(예: findById(x))의
      * 인자를 피연산자로 삼아 EXISTS 가드로 수집한다.
      */
-    private void collectExistsGuards(CtMethod<?> method, Set<CtParameter<?>> handlerParams, List<GuardFact> guards) {
+    private void collectExistsGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+                                     List<GuardFact> guards) {
         for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
             String name = inv.getExecutable().getSimpleName();
             if (!"orElseThrow".equals(name) && !"orElseGet".equals(name)) {
@@ -208,7 +214,7 @@ public class ProvenanceIndexer {
             List<ValueRef> operands = new ArrayList<>();
             if (receiver instanceof CtInvocation<?> receiverInvocation) {
                 for (CtExpression<?> arg : receiverInvocation.getArguments()) {
-                    decomposeCondition(arg, handlerParams, operands);
+                    decomposeCondition(arg, handlerParams, model, operands);
                 }
             }
             if (operands.isEmpty()) {
@@ -276,23 +282,24 @@ public class ProvenanceIndexer {
      * 조건식을 리프 피연산자까지 재귀 분해한다: {@code CtBinaryOperator}(AND/OR 포함)는 좌우변으로,
      * 단항연산자는 피연산자로, {@code equals}/{@code equalsIgnoreCase} 호출은 수신자+첫 인자로 분해한다.
      */
-    private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, List<ValueRef> out) {
+    private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+                                    List<ValueRef> out) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            decomposeCondition(bin.getLeftHandOperand(), handlerParams, out);
-            decomposeCondition(bin.getRightHandOperand(), handlerParams, out);
+            decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, out);
+            decomposeCondition(bin.getRightHandOperand(), handlerParams, model, out);
             return;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            decomposeCondition(un.getOperand(), handlerParams, out);
+            decomposeCondition(un.getOperand(), handlerParams, model, out);
             return;
         }
         if (expr instanceof CtInvocation<?> inv && isEqualsLike(inv)
                 && inv.getTarget() != null && !inv.getArguments().isEmpty()) {
-            decomposeCondition(inv.getTarget(), handlerParams, out);
-            decomposeCondition(inv.getArguments().get(0), handlerParams, out);
+            decomposeCondition(inv.getTarget(), handlerParams, model, out);
+            decomposeCondition(inv.getArguments().get(0), handlerParams, model, out);
             return;
         }
-        out.add(classifyOperand(expr, handlerParams));
+        out.add(classifyOperand(expr, handlerParams, model));
     }
 
     private static boolean isEqualsLike(CtInvocation<?> inv) {
@@ -300,8 +307,8 @@ public class ProvenanceIndexer {
         return "equals".equals(name) || "equalsIgnoreCase".equals(name);
     }
 
-    private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams) {
-        Optional<List<String>> segments = getterSegments(expr, handlerParams);
+    private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model) {
+        Optional<List<String>> segments = getterSegments(expr, handlerParams, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
             String jsonPath = segs.isEmpty() ? bareParamName(expr) : String.join(".", segs);
@@ -321,18 +328,19 @@ public class ProvenanceIndexer {
      * (빈 리스트 = 파라미터 자체가 직접 사용됨, 예: path variable). 루트가 파라미터가 아니거나
      * getter 관례를 따르지 않는 메서드를 경유하면 empty.
      */
-    private Optional<List<String>> getterSegments(CtExpression<?> expr, Set<CtParameter<?>> handlerParams) {
+    private Optional<List<String>> getterSegments(CtExpression<?> expr, Set<CtParameter<?>> handlerParams,
+                                                   CtModel model) {
         if (expr instanceof CtVariableRead<?> vr
                 && vr.getVariable().getDeclaration() instanceof CtParameter<?> param
                 && handlerParams.contains(param)) {
             return Optional.of(new ArrayList<>());
         }
         if (expr instanceof CtInvocation<?> inv && inv.getTarget() != null) {
-            String field = getterFieldName(inv.getExecutable().getSimpleName());
+            String field = getterFieldName(inv.getExecutable().getSimpleName(), inv.getTarget(), model);
             if (field == null) {
                 return Optional.empty();
             }
-            return getterSegments(inv.getTarget(), handlerParams).map(segs -> {
+            return getterSegments(inv.getTarget(), handlerParams, model).map(segs -> {
                 segs.add(field);
                 return segs;
             });
@@ -344,8 +352,12 @@ public class ProvenanceIndexer {
         return expr instanceof CtVariableRead<?> vr ? vr.getVariable().getSimpleName() : null;
     }
 
-    /** {@code getFoo}/{@code isFoo} → {@code foo}. 관례를 따르지 않으면 null. */
-    private static String getterFieldName(String methodName) {
+    /**
+     * {@code getFoo}/{@code isFoo} → {@code foo}(JavaBean 관례), 또는 수신 타입이 record이고
+     * 호출된 메서드명이 그 record component명과 정확히 일치하면 그 이름 그대로(record canonical
+     * accessor, 예: {@code req.amount()} → {@code "amount"}). 어느 쪽도 아니면 null.
+     */
+    private static String getterFieldName(String methodName, CtExpression<?> target, CtModel model) {
         if (methodName.startsWith("get") && methodName.length() > 3) {
             return decapitalize(methodName.substring(3));
         }
@@ -353,11 +365,53 @@ public class ProvenanceIndexer {
                 && Character.isUpperCase(methodName.charAt(2))) {
             return decapitalize(methodName.substring(2));
         }
+        if (isRecordCanonicalAccessor(methodName, target, model)) {
+            return methodName;
+        }
         return null;
     }
 
     private static String decapitalize(String s) {
         return Character.toLowerCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /** 수신 표현식의 정적 타입이 record이고, 그 record component명이 호출된 메서드명과 일치하는지. */
+    private static boolean isRecordCanonicalAccessor(String methodName, CtExpression<?> target, CtModel model) {
+        if (target == null || target.getType() == null) {
+            return false;
+        }
+        CtType<?> declaredType = resolveType(model, target.getType().getQualifiedName());
+        return declaredType instanceof CtRecord record
+                && record.getRecordComponents().stream()
+                        .anyMatch(component -> component.getSimpleName().equals(methodName));
+    }
+
+    /** 타입 FQN으로 모델에서 {@code CtType}을 찾는다(중첩 타입 포함, {@code BodyShapeExtractor.findNested}와 동일 관례). */
+    private static CtType<?> resolveType(CtModel model, String typeFqn) {
+        if (typeFqn == null || typeFqn.isEmpty()) {
+            return null;
+        }
+        String normalized = typeFqn.replace('$', '.');
+        for (CtType<?> type : model.getAllTypes()) {
+            CtType<?> found = findNestedType(type, normalized);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    private static CtType<?> findNestedType(CtType<?> type, String qualifiedName) {
+        if (type.getQualifiedName().replace('$', '.').equals(qualifiedName)) {
+            return type;
+        }
+        for (CtType<?> nested : type.getNestedTypes()) {
+            CtType<?> found = findNestedType(nested, qualifiedName);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
     }
 
     private static String typeNameOf(CtExpression<?> expr) {
