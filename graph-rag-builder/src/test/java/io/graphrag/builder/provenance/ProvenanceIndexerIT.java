@@ -70,6 +70,24 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-004: @Table/@Column 오버라이드가 ValueRef.table/column에 반영")
+    void req004_jpaOverrides() {
+        // fixture: @Table(name="fund_accounts") + @Column(name="balance_amount") long balance
+        ProvenanceReport report = analyzeFixture(
+                "jpa-override",
+                "io.graphrag.fixture.jpaoverride.JpaOverrideController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("repository에서 조회한 엔티티의 getter 체인은 DB_READ로 태깅되고, "
+                        + "@Table/@Column 오버라이드가 table/column에 반영되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.DB_READ
+                        && "fund_accounts".equals(v.table()) && "balance_amount".equals(v.column())));
+    }
+
+    @Test
     void recursionDoesNotHangOnMutualRecursion() {
         // methodA()↔methodB() 상호 재귀가 방문 집합으로 자연 종료하는지(무한루프 없이) 확인.
         // 테스트 자체가 유한 시간 내 반환되면 통과(타임아웃되면 실패).

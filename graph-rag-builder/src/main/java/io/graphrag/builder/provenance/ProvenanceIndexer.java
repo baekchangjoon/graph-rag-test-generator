@@ -16,6 +16,7 @@ import spoon.reflect.code.CtIf;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLambda;
 import spoon.reflect.code.CtLiteral;
+import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtReturn;
 import spoon.reflect.code.CtStatement;
 import spoon.reflect.code.CtThrow;
@@ -28,6 +29,7 @@ import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.reference.CtExecutableReference;
+import spoon.reflect.reference.CtTypeReference;
 import spoon.reflect.visitor.filter.TypeFilter;
 
 import java.util.ArrayDeque;
@@ -43,7 +45,7 @@ import java.util.Set;
  * 재귀 슬라이서 코어: 핸들러 메서드에서 시작해 호출 그래프를 DFS로 순회하며 가드(guard)를
  * 수집하고, 가드 피연산자의 출처(origin)를 태깅한다.
  *
- * <p>이 클래스의 범위(REQ-002 + REQ-001의 INPUT 부분):
+ * <p>이 클래스의 범위(REQ-002 + REQ-001의 INPUT 부분 + REQ-004):
  * <ul>
  *   <li>호출 그래프 DFS — 방문 집합(순환 종료) + depth cap(무한 체인 방지, cap 초과는
  *       {@link Reason#DEPTH_CAP}로 unresolved에 기록).</li>
@@ -57,9 +59,12 @@ import java.util.Set;
  *       record canonical accessor 경유 포함) {@link Origin#INPUT} + jsonPath(dot-path, 예:
  *       "amount", "user.id"). record는 {@code req.amount()}처럼 get/is 접두사가 없으므로,
  *       호출 메서드명이 수신 타입의 record component명과 정확히 일치하면 별도로 인식한다.</li>
+ *   <li>DB_READ 태깅 — 리프 피연산자가 repository({@code JpaRepository} 서브타입/{@code @Repository}/
+ *       알려진 MyBatis mapper FQN) 반환값(직접 체이닝 또는 로컬 변수 경유)에서 시작하는 getter 체인이면
+ *       {@link Origin#DB_READ} + {@link JpaColumnResolver}로 해석한 table/column.</li>
  * </ul>
  *
- * <p>DB_READ/EXTERNAL_RESPONSE/DERIVED 태깅은 후속 task 범위 — 이 클래스는 그 경우 피연산자를
+ * <p>EXTERNAL_RESPONSE/DERIVED 태깅은 후속 task 범위 — 이 클래스는 그 경우 피연산자를
  * {@link Origin#UNKNOWN}으로 둔다. unguarded 필드 탐지도 후속 task 범위(항상 빈 리스트).
  *
  * <p>메서드 조회는 1-hop 선례({@code ConstraintExtractor.reachableMethods})와 동일하게
@@ -88,6 +93,18 @@ public class ProvenanceIndexer {
     private record Frame(CtMethod<?> method, int depth) {
     }
 
+    /** MyBatis mapper 인터페이스 FQN 집합(REQ-004 repository 인식용). 없으면 빈 집합. */
+    private final Set<String> mapperInterfaceFqns;
+
+    public ProvenanceIndexer() {
+        this(Set.of());
+    }
+
+    /** mapperInterfaceFqns: 기존 {@code MapperXmlIndexer} 결과의 namespace(=mapper 인터페이스 FQN) 집합. */
+    public ProvenanceIndexer(Set<String> mapperInterfaceFqns) {
+        this.mapperInterfaceFqns = mapperInterfaceFqns == null ? Set.of() : mapperInterfaceFqns;
+    }
+
     public ProvenanceReport analyze(CtModel model, Endpoint endpoint, int maxDepth) {
         List<GuardFact> guards = new ArrayList<>();
         List<Unresolved> unresolved = new ArrayList<>();
@@ -98,6 +115,7 @@ public class ProvenanceIndexer {
         }
 
         Set<CtParameter<?>> handlerParams = new LinkedHashSet<>(handler.getParameters());
+        JpaColumnResolver columnResolver = new JpaColumnResolver(model);
 
         Deque<Frame> stack = new ArrayDeque<>();
         Set<String> visited = new LinkedHashSet<>();
@@ -109,7 +127,7 @@ public class ProvenanceIndexer {
             CtMethod<?> method = frame.method();
             int depth = frame.depth();
 
-            collectGuards(model, method, handlerParams, guards);
+            collectGuards(model, method, handlerParams, columnResolver, guards);
 
             for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 CtExecutableReference<?> executable = inv.getExecutable();
@@ -171,21 +189,21 @@ public class ProvenanceIndexer {
     // ---- 가드 수집 ----
 
     private void collectGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                               List<GuardFact> guards) {
-        collectIfGuards(model, method, handlerParams, guards);
-        collectExistsGuards(model, method, handlerParams, guards);
+                               JpaColumnResolver columnResolver, List<GuardFact> guards) {
+        collectIfGuards(model, method, handlerParams, columnResolver, guards);
+        collectExistsGuards(model, method, handlerParams, columnResolver, guards);
     }
 
     /** ① CtIf 가드: then/else 분기가 throw 또는 ResponseEntity.status(4xx|5xx) 반환으로 이어지는 경우만 채택. */
     private void collectIfGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                                 List<GuardFact> guards) {
+                                 JpaColumnResolver columnResolver, List<GuardFact> guards) {
         for (CtIf ctIf : method.getElements(new TypeFilter<>(CtIf.class))) {
             if (!isErrorGuard(ctIf)) {
                 continue;
             }
             CtExpression<?> condition = ctIf.getCondition();
             List<ValueRef> operands = new ArrayList<>();
-            decomposeCondition(condition, handlerParams, model, operands);
+            decomposeCondition(condition, handlerParams, model, columnResolver, operands);
             guards.add(new GuardFact(locationOf(condition), opSymbol(condition), operands));
         }
     }
@@ -196,7 +214,7 @@ public class ProvenanceIndexer {
      * 인자를 피연산자로 삼아 EXISTS 가드로 수집한다.
      */
     private void collectExistsGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                                     List<GuardFact> guards) {
+                                     JpaColumnResolver columnResolver, List<GuardFact> guards) {
         for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
             String name = inv.getExecutable().getSimpleName();
             if (!"orElseThrow".equals(name) && !"orElseGet".equals(name)) {
@@ -214,7 +232,7 @@ public class ProvenanceIndexer {
             List<ValueRef> operands = new ArrayList<>();
             if (receiver instanceof CtInvocation<?> receiverInvocation) {
                 for (CtExpression<?> arg : receiverInvocation.getArguments()) {
-                    decomposeCondition(arg, handlerParams, model, operands);
+                    decomposeCondition(arg, handlerParams, model, columnResolver, operands);
                 }
             }
             if (operands.isEmpty()) {
@@ -283,23 +301,23 @@ public class ProvenanceIndexer {
      * 단항연산자는 피연산자로, {@code equals}/{@code equalsIgnoreCase} 호출은 수신자+첫 인자로 분해한다.
      */
     private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
-                                    List<ValueRef> out) {
+                                    JpaColumnResolver columnResolver, List<ValueRef> out) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, out);
-            decomposeCondition(bin.getRightHandOperand(), handlerParams, model, out);
+            decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out);
+            decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out);
             return;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            decomposeCondition(un.getOperand(), handlerParams, model, out);
+            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out);
             return;
         }
         if (expr instanceof CtInvocation<?> inv && isEqualsLike(inv)
                 && inv.getTarget() != null && !inv.getArguments().isEmpty()) {
-            decomposeCondition(inv.getTarget(), handlerParams, model, out);
-            decomposeCondition(inv.getArguments().get(0), handlerParams, model, out);
+            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out);
+            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out);
             return;
         }
-        out.add(classifyOperand(expr, handlerParams, model));
+        out.add(classifyOperand(expr, handlerParams, model, columnResolver));
     }
 
     private static boolean isEqualsLike(CtInvocation<?> inv) {
@@ -307,7 +325,8 @@ public class ProvenanceIndexer {
         return "equals".equals(name) || "equalsIgnoreCase".equals(name);
     }
 
-    private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model) {
+    private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+                                     JpaColumnResolver columnResolver) {
         Optional<List<String>> segments = getterSegments(expr, handlerParams, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
@@ -315,12 +334,104 @@ public class ProvenanceIndexer {
             return new ValueRef(Origin.INPUT, jsonPath, null, null, null, null,
                     typeNameOf(expr), null, null);
         }
+        Optional<ValueRef> dbRead = classifyDbRead(expr, model, columnResolver);
+        if (dbRead.isPresent()) {
+            return dbRead.get();
+        }
         if (expr instanceof CtLiteral<?> literal) {
             Object value = literal.getValue();
             return new ValueRef(Origin.UNKNOWN, null, null, null, null, null,
                     typeNameOf(expr), null, value == null ? null : String.valueOf(value));
         }
         return new ValueRef(Origin.UNKNOWN, null, null, null, null, null, typeNameOf(expr), null, null);
+    }
+
+    // ---- DB_READ 태깅(REQ-004) ----
+
+    /**
+     * expr이 repository(JpaRepository 서브타입/@Repository/MyBatis mapper) 반환값에서 시작하는
+     * getter 체인이면 {@link Origin#DB_READ}로 태깅하고, {@link JpaColumnResolver}로 table/column을
+     * 해석한다. 체인 루트가 repository 호출이 아니면 empty.
+     */
+    private Optional<ValueRef> classifyDbRead(CtExpression<?> expr, CtModel model, JpaColumnResolver columnResolver) {
+        if (!(expr instanceof CtInvocation<?> inv) || inv.getTarget() == null) {
+            return Optional.empty();
+        }
+        String methodName = inv.getExecutable().getSimpleName();
+        if (getterFieldName(methodName, inv.getTarget(), model) == null) {
+            return Optional.empty(); // getter 관례를 따르지 않는 호출은 DB_READ 후보가 아님
+        }
+        return repositoryEntityType(inv.getTarget(), model).map(entityType -> {
+            JpaColumnResolver.TableColumn tc = columnResolver.resolve(entityType, methodName);
+            return new ValueRef(Origin.DB_READ, null, tc.table(), tc.column(), null, null,
+                    typeNameOf(expr), null, null);
+        });
+    }
+
+    /**
+     * 표현식 체인을 거슬러 올라가며 repository 호출을 찾는다. {@code orElseThrow}/{@code orElseGet}/
+     * {@code orElse}/{@code get}(Optional 언랩)은 통과(pass-through)하고, 로컬 변수 읽기는 그
+     * 선언식(초기화 표현식)으로 계속 추적한다(실제 SUT 관례: {@code Account account =
+     * repo.findById(x).orElseThrow(...)} 뒤 {@code account.getX()}). repository 호출을 찾으면 그
+     * 반환 타입(Optional/List 등 컨테이너 해제)을 엔티티 타입으로 반환한다.
+     */
+    private Optional<CtTypeReference<?>> repositoryEntityType(CtExpression<?> expr, CtModel model) {
+        if (expr instanceof CtInvocation<?> inv) {
+            String name = inv.getExecutable().getSimpleName();
+            if (isOptionalPassThrough(name)) {
+                return inv.getTarget() == null
+                        ? Optional.empty()
+                        : repositoryEntityType(inv.getTarget(), model);
+            }
+            CtExecutableReference<?> executable = inv.getExecutable();
+            var declaringTypeRef = executable.getDeclaringType();
+            if (declaringTypeRef != null && isRepositoryType(declaringTypeRef, model)) {
+                return Optional.ofNullable(unwrapContainerType(executable.getType()));
+            }
+            return Optional.empty();
+        }
+        if (expr instanceof CtVariableRead<?> vr
+                && vr.getVariable().getDeclaration() instanceof CtLocalVariable<?> localVar
+                && localVar.getDefaultExpression() != null) {
+            return repositoryEntityType(localVar.getDefaultExpression(), model);
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isOptionalPassThrough(String methodName) {
+        return "orElseThrow".equals(methodName) || "orElseGet".equals(methodName)
+                || "orElse".equals(methodName) || "get".equals(methodName);
+    }
+
+    /** 선언 타입이 {@code JpaRepository} 상속, {@code @Repository} 어노테이션, 또는 알려진 MyBatis mapper FQN인지. */
+    private boolean isRepositoryType(CtTypeReference<?> typeRef, CtModel model) {
+        String fqn = typeRef.getQualifiedName() == null ? null : typeRef.getQualifiedName().replace('$', '.');
+        if (fqn != null && mapperInterfaceFqns.contains(fqn)) {
+            return true;
+        }
+        CtType<?> type = resolveType(model, fqn);
+        if (type == null) {
+            return false;
+        }
+        boolean annotatedRepository = type.getAnnotations().stream()
+                .anyMatch(a -> "Repository".equals(a.getAnnotationType().getSimpleName()));
+        if (annotatedRepository) {
+            return true;
+        }
+        return type.getSuperInterfaces().stream()
+                .anyMatch(i -> "JpaRepository".equals(i.getSimpleName()));
+    }
+
+    /** {@code Optional<T>}/{@code List<T>} 등 단일 타입 인자 컨테이너면 T를, 아니면 그대로 반환. */
+    private static CtTypeReference<?> unwrapContainerType(CtTypeReference<?> type) {
+        if (type == null) {
+            return null;
+        }
+        Set<String> containers = Set.of("Optional", "List", "Collection", "Iterable", "Set", "Page", "Stream");
+        if (containers.contains(type.getSimpleName()) && type.getActualTypeArguments().size() == 1) {
+            return type.getActualTypeArguments().get(0);
+        }
+        return type;
     }
 
     /**
