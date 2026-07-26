@@ -232,7 +232,7 @@ POST /api/transfers  { fromAccountId, amount, note }
 ```
 .graphrag/triples/post-api-transfers/cand-01/
   body.json   { "fromAccountId":"ACC-1", "amount":100, "note":"__AGENT_FILL__{semanticHint:free-text}" }
-  seed.sql    INSERT INTO accounts (id, balance) VALUES ('ACC-1', 100);   -- ①② 공동 배치
+  seed.sql    INSERT INTO fund_accounts (id, balance_amount) VALUES ('ACC-1', 100);   -- ①② 공동 배치 (fixture 실스키마: @Table/@Column 오버라이드)
   stubs.json  [ { "request": { "method":"POST", "urlPath":"/fraud/check" },
                  "response": { "status":200, "jsonBody": { "status":"CLEAR" } } } ]   // WireMock mapping 스키마
   notes.md    각 값의 근거 trace(가드 위치) — 도구 자동 생성
