@@ -303,10 +303,10 @@
 | REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010 | integration | 🟢 green |
 | REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green |
-| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#REQ-013 | E2E | 🔴 planned |
-| REQ-014 | FailureDigest·역매핑 | TrialDigestIT#REQ-014 | integration | 🔴 planned |
+| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert | E2E | 🟢 green |
+| REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
-| REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#REQ-016 | E2E | 🔴 planned |
+| REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
 | REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#REQ-017 | integration | 🔴 planned |
 | REQ-018 | promoted 완주 경로 | TriplePromotionE2E#REQ-018 | E2E | 🔴 planned |
 | REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#REQ-019 | integration | 🔴 planned |
@@ -315,7 +315,7 @@
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🔴 planned |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
-| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split] |
+| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split][^req036-task12-partial] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#REQ-023 | integration | 🔴 planned |
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#REQ-024 | integration | 🔴 planned |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#REQ-025 | integration | 🔴 planned |
@@ -374,7 +374,20 @@ reject되므로 실질적으로 커버되지만, 완전한 응답 DTO 형상 대
 (Task 12/18)까지 🔴 planned로 이연했다. Task 11의 선언 파일 범위(TripleStore/
 EndpointExplorationRunner)에는 애초에 CLI 서브커맨드 변경이 포함되지 않았다.
 
-Coverage: 17/36 green (47%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
+[^req036-task12-partial]: Task 12(`trial` CLI, REQ-013/014/016)가 REQ-036의 CLI 계약 중 다음만
+배선했다 — ① `--triple-store <dir>`(기본 `.graphrag/triples`)와 ② 후보 전용 `--triple-candidates
+<dir>`(미지정 시 `--triple-store`와 동일 경로) 두 플래그의 분리, 그리고 그 기본 경로 자체
+(`BuilderCli.runTrial`). **미배선(그대로 🔴 planned 유지 — 완성 아님):** (a) SUT가 실제로 참조하는
+외부 stub WireMock에 attach하는 방법 — 이 CLI는 자체 `HttpCaptureServer`를 기동하지 않으므로
+`TrialRunner`의 stub 등록(③ 단계)은 이 CLI 경로에서는 항상 skip된다(`TrialRunner` 자체는 nullable
+`HttpCaptureServer`를 받아 단위 레벨에서는 등록/제거를 지원 — `TrialDigestIT`가 그 계약을 커버하진
+않고, CLI 미배선만 이 각주의 범위다), (b) `--graph`로 그래프 자산에서 Endpoint/happy 시드를 자동
+로드하는 경로(REQ-018 T3 파이프라인 통합 소관) — 현재 `trial`은 `--http-method`/`--path`로
+Endpoint를 직접 명시받고 happy 시드는 별도 JSON 파일(`--happy-seeds`)로 받는다, (c) e2e fixture
+`promoted/` 커밋 경로(Task 18 소관). 이 세 항목이 남아 있어 REQ-036은 이번 task로도 완성되지
+않았고 🔴 planned를 유지한다.
+
+Coverage: 20/36 green (56%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 
