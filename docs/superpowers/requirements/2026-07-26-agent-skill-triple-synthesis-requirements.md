@@ -281,9 +281,9 @@
 |--------|----------|-------------|-------|--------|
 | REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🔴 planned |
 | REQ-002 | 깊이 cap·순환 종료 | ProvenanceIndexerIT#REQ-002 | integration | 🟢 done |
-| REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🔴 planned |
+| REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done |
-| REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🔴 planned |
+| REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🟡[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🔴 planned |
 | REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005 | E2E | 🔴 planned |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🔴 planned |
@@ -316,6 +316,8 @@
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🔴 planned |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
+
+[^derived-half]: DERIVED **태깅**(origin=DERIVED + javaType 유지, `ProvenanceIndexerIT#req032_derivedTagged`)은 완료. REQ-032 수용기준의 나머지 절반 — concolic 해(예: 42)를 body 결정값으로 실제 배치하는 합성 로직·"concolic이 못 푸는 파생은 갭 마커" 처리 — 은 synthesize-triple(C2, Task 8)에서 완성된다. 그때 REQ-032를 🟢로 승격.
 
 Coverage: 1/35 green (3%) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
 

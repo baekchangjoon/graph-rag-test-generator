@@ -14,8 +14,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * REQ-002(+REQ-001 INPUT 부분): 재귀 슬라이서 코어 — 호출그래프 DFS, depth cap/순환 종료,
- * INPUT 태깅. 픽스처: src/test/resources/provenance-fixtures/{basic,recursive,exists}/.
+ * REQ-002(+REQ-001 INPUT/EXTERNAL 부분)+REQ-003+REQ-004+REQ-032: 재귀 슬라이서 코어 — 호출그래프
+ * DFS, depth cap/순환 종료, INPUT/DB_READ/EXTERNAL_RESPONSE/DERIVED 태깅, UNKNOWN+MULTI_IMPL
+ * unresolved 표면화. 픽스처: src/test/resources/provenance-fixtures/
+ * {basic,recursive,exists,jpa-override,external,derived,multiimpl}/.
  */
 class ProvenanceIndexerIT {
 
@@ -85,6 +87,63 @@ class ProvenanceIndexerIT {
                 .anyMatch(g -> g.operands().stream().anyMatch(v ->
                         v.origin() == Origin.DB_READ
                         && "fund_accounts".equals(v.table()) && "balance_amount".equals(v.column())));
+    }
+
+    @Test
+    @DisplayName("REQ-001: RestTemplate 래핑 클라이언트 응답의 accessor 체인이 EXTERNAL_RESPONSE로 태깅")
+    void req001_externalResponseTagged() {
+        // 실제 SUT(FraudClient/TransferController) 관례를 미러링: fraudClient.check(...)를 로컬
+        // 변수(fraud)로 받고, record accessor(fraud.status())를 가드 조건에서 비교.
+        ProvenanceReport report = analyzeFixture(
+                "external",
+                "io.graphrag.fixture.external.ExternalController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("fraud.status() 피연산자는 EXTERNAL_RESPONSE + callSite(\"POST /fraud/check\") "
+                        + "+ stubField(\"status\")로 태깅되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.EXTERNAL_RESPONSE
+                        && "POST /fraud/check".equals(v.callSite())
+                        && "status".equals(v.stubField())));
+    }
+
+    @Test
+    @DisplayName("REQ-032: INPUT을 감싼 산술 파생식이 DERIVED로 태깅(concolic 해 배치는 C2 범위)")
+    void req032_derivedTagged() {
+        ProvenanceReport report = analyzeFixture(
+                "derived",
+                "io.graphrag.fixture.derived.DerivedController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("req.getScore() * 2 전체가 하나의 리프로 DERIVED + javaType 유지로 태깅되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.DERIVED && v.javaType() != null));
+    }
+
+    @Test
+    @DisplayName("REQ-003: 구현체 2개인 인터페이스 호출은 UNKNOWN + unresolved(MULTI_IMPL)")
+    void req003_multiImplUnresolved() {
+        ProvenanceReport report = analyzeFixture(
+                "multiimpl",
+                "io.graphrag.fixture.multiimpl.MultiImplController",
+                "create",
+                3);
+
+        assertThat(report.unresolved())
+                .as("PaymentGateway는 모델 내 구현체가 2개(Stripe/Paypal)이므로 unresolved에 "
+                        + "MULTI_IMPL + targetType=PaymentGateway로 기록되어야 한다")
+                .anyMatch(u -> u.reason() == Reason.MULTI_IMPL
+                        && u.targetType().endsWith("PaymentGateway"));
+
+        assertThat(report.guards())
+                .as("gateway.charge(...) 피연산자는 origin=UNKNOWN으로 남아야 한다(literal이 아닌, "
+                        + "즉 호출 자체가 미해결로 강등된 피연산자)")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.UNKNOWN && v.literal() == null && "String".equals(v.javaType())));
     }
 
     @Test
