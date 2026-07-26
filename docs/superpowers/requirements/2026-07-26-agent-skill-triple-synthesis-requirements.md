@@ -287,7 +287,7 @@
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
 | REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005 | E2E | 🟢 green |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
-| REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green |
+| REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
 | REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009 | E2E | 🔴 planned |
@@ -320,6 +320,18 @@
 [^derived-half]: DERIVED **태깅**(origin=DERIVED + javaType 유지, `ProvenanceIndexerIT#req032_derivedTagged`)은 완료. REQ-032 수용기준의 나머지 절반 — concolic 해(예: 42)를 body 결정값으로 실제 배치하는 합성 로직·"concolic이 못 푸는 파생은 갭 마커" 처리 — 은 Task 9(`synthesize-triple`, REQ-005/007/008/033 완성)에서 재검토했으나 **여전히 아키텍처상 미해결**로 판정해 🟡를 유지한다: `ProvenanceIndexer.classifyOperand`가 DERIVED `ValueRef`를 만들 때 `jsonPath`를 의도적으로 `null`로 남긴다(REQ-001 unguarded 오탐 방지 — 파생식이 감싸는 INPUT 리프의 경로를 최종 ValueRef에는 노출하지 않음). 그 결과 `TripleSynthesizer`가 `InputCandidates`(필드 simple-name 키)의 concolic 해를 어느 body jsonPath에 배치해야 하는지 결정적으로 복원할 근거가 없다 — 필드가 1개뿐이라고 가정하는 휴리스틱은 다중-DERIVED-가드 리포트에서 오배치 위험이 있어 채택하지 않았다. Task 9는 대신 `unguarded` 필드(가드에 전혀 쓰이지 않는, jsonPath가 보존된 필드)에 대해서만 `InputCandidates`를 실제로 소비하도록 배선했다(REQ-033 cap/정렬의 조합 소스로 사용, `TripleSynthesizerIT#req033`). REQ-032의 완전한 완성에는 `ProvenanceIndexer`/`ValueRef` 스키마 확장(DERIVED 리프에 원본 필드명 보존)이 필요하며 이는 Task 9의 선언된 파일 범위(TripleSynthesizer/BuilderCli) 밖이므로 별도 후속 작업으로 남긴다.
 
 [^jpa-inherited-fix]: Task 7(provenance CLI golden E2E)에서 order-service 실 fixture(`POST /api/transfers`)를 구동해 발견: 리포지토리 인터페이스가 `findById` 등을 재선언하지 않고 `JpaRepository<Entity, Id>`에서 그대로 상속받으면(실 SUT의 일반적 관례), noClasspath에서 `executable.getDeclaringType()`/반환 타입이 모두 해소되지 않아 DB_READ 태깅이 UNKNOWN으로 조용히 강등되는 회귀가 있었다 — REQ-001의 balance 가드 수용기준("INPUT과 DB_READ 피연산자를 함께")을 위반. `ProvenanceIndexer.repositoryEntityType`을 리시버 정적 타입 기반 판별 + `JpaRepository` 제네릭 인자 역산으로 수정하고, `ProvenanceIndexerIT#req004_inheritedRepositoryMethodNotRedeclared`(fixture: `jpa-inherited`)로 회귀 테스트를 추가했다(REQ-004 확장, 새 REQ-ID 아님 — 기존 요구사항의 커버리지 갭 보강).
+
+[^jsql-defer]: REQ-007 수용기준의 "seed.sql이 JSqlParser로 파싱 가능하며"는 이 task(Task 9) 시점에는
+**구조 검증으로 대체**했다 — graph-rag-builder 모듈에 JSqlParser 의존성이 아직 없고(REQ-010/T1이
+"신규 의존성"으로 도입 예정), 이 task의 선언 파일 범위(TripleSynthesizer/BuilderCli)에 새 빌드
+의존성 추가는 포함되지 않는다. 대신 `TripleSynthesizerIT#req007_gapMarkersOnlyAtUndecidablePositions`의
+`isWellFormedSingleStatementInsert()`가 괄호 균형·따옴표 짝·단일 문장 종결을 구조적으로 확인해
+"갭 마커를 포함해도 SQL 파싱이 깨지지 않는다"는 계약의 결정적 부분(마커가 작은따옴표 문자열
+리터럴 형태를 유지하는지)을 검증한다. **의무**: Task 10(REQ-010, seed.sql 화이트리스트)에서
+JSqlParser가 실제로 도입되면, 갭 마커가 포함된 seed.sql 리터럴(예:
+`'__AGENT_FILL__{type:long, semanticHint:none, guard:none}'`)을 그 JSqlParser로 실제 파싱해
+예외 없이 INSERT로 인식되는지 재검증하는 테스트를 추가해야 한다 — 구조 검증은 임시 대체물이며
+실제 파서 검증을 갈음하지 않는다.
 
 [^unguarded-fix]: 코드리뷰에서 Critical로 지적: 최초 커밋은 `ProvenanceIndexer.analyze()`가 `unguarded`를 항상 빈 리스트로 반환하는 상태(후속 task 범위로 표시돼 있었음)에서 REQ-001을 🟢로 표기 — REQ-001 수용기준의 "unguarded의 free-text 필드(semanticHint)가 golden과 일치" 부분이 실제로는 미충족이었다. Task 9(갭 마커)가 이 출력을 소비하는 설계라 연기하지 않고 즉시 구현: `@RequestBody` 파라미터 타입을 재귀 전개(record canonical accessor/JavaBean getFoo·isFoo, List는 대표원소로 계속 전개, Map은 동적 키라 leaf 처리 — 기존 INPUT dot-path 관례 재사용)해 가드에 한 번도 참조되지 않은 필드를 `UnguardedField`로 수집하고, 필드명 기반 결정적 규칙(`ProvenanceIndexer#semanticHint` — email/phone·tel/name/note·memo·comment·description/그 외 String→free-text/비-String→none)으로 semanticHint를 부여했다. `ProvenanceIndexerIT#req001_unguardedFieldTagged`(basic fixture, userId 미참조 확인)로 회귀 테스트를 추가하고, golden에 실산출 기준 unguarded 2건(`note`, `items.sku` — 둘 다 String이고 다른 규칙에 매칭되지 않아 free-text)을 반영했다. 클래스 Javadoc의 "unguarded 필드 탐지는 후속 task 범위" 문구는 제거했다.
 
