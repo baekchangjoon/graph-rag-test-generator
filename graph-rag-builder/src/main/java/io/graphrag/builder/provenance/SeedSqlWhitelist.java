@@ -65,7 +65,12 @@ import java.util.Set;
  * ({@code (SELECT ...)}), 함수 호출(예: {@code LOAD_FILE(...)}), 컬럼 참조 등은 reject한다.
  *
  * <p><b>지원 문법:</b> {@code INSERT INTO t (cols) VALUES (닫힌 리터럴, ...)} 단일 문장뿐이며, 그 외
- * 모든 절은(이 Javadoc이 미처 나열하지 못한 것 포함 — allowlist이므로 자동으로) reject된다.
+ * 모든 절은(이 Javadoc이 미처 나열하지 못한 것 포함 — allowlist이므로 자동으로) reject된다. 테이블 {@code t}는
+ * **스키마 비한정 이름만** 허용한다 — {@code schema.table} 형태(예: {@code attacker.orders},
+ * {@code public.orders})는 마지막 식별자({@code orders})가 화이트리스트에 있어도 reject한다. 대상 테이블명
+ * 문자열만 비교하면 대상 DB에 동일명의 다른 스키마가 존재할 때 화이트리스트를 우회할 수 있는 조건부 갭이
+ * 생기므로, 시드 대상은 provenance가 지목한 스키마 비한정 테이블로만 한정한다(seed.sql이 스키마를 명시할
+ * 이유가 없다).
  *
  * <p>그 밖의 판정 규칙:
  * <ul>
@@ -132,6 +137,12 @@ public final class SeedSqlWhitelist {
         for (String line : nonBlankLines(seedSqlContent)) {
             Optional<Insert> insert = parseSingleInsert(line, dialect, reasons);
             insert.ifPresent(ins -> {
+                if (ins.getTable().getSchemaName() != null) {
+                    reasons.add("seed.sql이 스키마 한정 테이블명을 사용함(REQ-010 reject) — 시드 대상은 "
+                            + "provenance가 지목한 스키마 비한정 테이블뿐(대상 DB에 동일명 다른 스키마가 "
+                            + "존재하면 화이트리스트를 우회할 수 있음): " + ins.getTable().getFullyQualifiedName());
+                    return;
+                }
                 String table = ins.getTable().getUnquotedName();
                 if (!whitelistedTables.contains(table)) {
                     reasons.add("seed.sql이 화이트리스트 밖 테이블을 대상으로 함(REQ-010 reject): " + table

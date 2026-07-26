@@ -309,4 +309,44 @@ class SeedSqlWhitelistIT {
                 .as("allowlist 전환 후에도 정상 리터럴 INSERT는 통과해야 한다: " + result.reasons())
                 .isTrue();
     }
+
+    // ---- 재리뷰 라운드 4: 조건부 우회 — 스키마 한정 테이블명이 마지막 식별자만으로 비교돼 화이트리스트를 통과 ----
+
+    @Test
+    @DisplayName("REQ-010(fix4): 스키마 한정 테이블명(attacker.orders)은 마지막 식별자가 화이트리스트에 있어도 reject된다 "
+            + "(대상 DB에 동일명 다른 스키마가 존재하면 악용 가능한 조건부 갭)")
+    void req010_schemaQualifiedTableNameRejected() {
+        String seedSql = "INSERT INTO attacker.orders (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("스키마 한정 테이블명(attacker.orders)은 reject되어야 한다 — 시드 대상은 provenance가 지목한 "
+                        + "비한정 테이블뿐")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix4): 흔한 스키마 한정자(public.orders)도 예외 없이 reject된다")
+    void req010_publicSchemaQualifiedTableNameRejected() {
+        String seedSql = "INSERT INTO public.orders (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("public.orders처럼 흔한 스키마 한정자도 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix4): 스키마 비한정 테이블명(orders)은 여전히 통과한다(무회귀)")
+    void req010_unqualifiedTableNameStillAccepted() {
+        String seedSql = "INSERT INTO orders (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("스키마 비한정 테이블명은 여전히 통과해야 한다(회귀 없음): " + result.reasons())
+                .isTrue();
+    }
 }
