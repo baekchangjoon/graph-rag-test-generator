@@ -32,10 +32,15 @@ import io.graphrag.builder.index.SharedSpoonModel;
 import io.graphrag.builder.index.ValidationConstraintExtractor;
 import io.graphrag.builder.index.WsEndpointIndexer;
 import io.graphrag.builder.index.WsIndexResult;
+import io.graphrag.builder.env.SutHandle;
 import io.graphrag.builder.oracle.ClassifierConfig;
+import io.graphrag.builder.oracle.ResponseClassifier;
+import io.graphrag.builder.provenance.FailureDigest;
 import io.graphrag.builder.provenance.ProvenanceIndexer;
 import io.graphrag.builder.provenance.ProvenanceReport;
+import io.graphrag.builder.provenance.TrialRunner;
 import io.graphrag.builder.provenance.TripleCandidate;
+import io.graphrag.builder.provenance.TripleStore;
 import io.graphrag.builder.provenance.TripleSynthesizer;
 import io.graphrag.builder.capture.TraceParent;
 import io.graphrag.builder.run.AuthConfig;
@@ -52,6 +57,7 @@ import io.graphrag.model.Endpoint;
 import io.graphrag.model.ExplorationReport;
 import io.graphrag.model.ExploredPath;
 import io.graphrag.model.GraphAsset;
+import io.graphrag.model.RequestHeaders;
 import io.graphrag.model.RequiredSeed;
 import io.graphrag.model.Json;
 import io.graphrag.model.MapperStatement;
@@ -111,6 +117,13 @@ public final class BuilderCli {
         }
         if (args.length > 0 && args[0].equals("synthesize-triple")) {
             runSynthesizeTriple(parseArgs(args));
+            return;
+        }
+        if (args.length > 0 && args[0].equals("trial")) {
+            int exitCode = runTrial(parseArgs(args));
+            if (exitCode != 0) {
+                System.exit(exitCode);
+            }
             return;
         }
         Map<String, String> options = parseArgs(args);
@@ -1295,6 +1308,155 @@ public final class BuilderCli {
             throws Exception {
         Object toWrite = stubMappings.isEmpty() ? Json.mapper().createObjectNode() : stubMappings.get(0);
         return Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(toWrite);
+    }
+
+    /**
+     * trial 서브커맨드(T2, REQ-013/014/016): {@code --triple-store}(또는 후보 전용
+     * {@code --triple-candidates})의 대기 후보를 순번순으로 시도한다. 각 시도는
+     * {@link io.graphrag.builder.provenance.TrialRunner}의 4단계 시퀀스(happy 시드 정리→후보
+     * seed.sql INSERT→stub 등록→invoke)로 적용되고, 판정이 성공이면 그 후보를 {@code promoted/}로
+     * 옮기고 즉시 0을 반환한다. {@code --trial-budget}(기본 8)회 시도 안에 성공이 없으면(후보
+     * 소진 포함) 시도한 모든 후보를 {@code failed/}로 옮기고 endpoint 디렉토리에 최종 다이제스트
+     * 보고서({@code failed/digest-final.json})를 남긴 뒤 3을 반환한다.
+     *
+     * <p>usage: {@code trial --endpoint <id> --http-method <M> --path </x> --sut-base-url <url>
+     * --jdbc-url <url> --db-user <u> --db-password <p> --db-type postgres|mysql|mariadb
+     * [--triple-store <dir>] [--triple-candidates <dir>] [--trial-budget 8]
+     * [--happy-seeds <required-seeds.json>] [--provenance-report <report.json>]
+     * [--sut-log-file <path>] [--error-when-present ...]}.
+     *
+     * <p><b>REQ-036 부분 배선(각주):</b> {@code --triple-store}/{@code --triple-candidates}의 기본
+     * 경로({@code .graphrag/triples})와 두 플래그의 분리(생성 루트 vs trial이 읽는 후보 디렉토리)만
+     * 이 task에서 배선한다. 미배선(향후 task 소관): (a) SUT가 실제로 쓰는 외부 stub WireMock에
+     * attach하는 방법 — 이 CLI는 자체 {@code HttpCaptureServer}를 기동하지 않으므로 stub 등록(③)은
+     * 항상 skip된다, (b) {@code --graph}로 그래프 자산에서 Endpoint/happy 시드를 자동 로드하는 경로
+     * (REQ-018 T3 파이프라인 통합 소관) — 이 CLI는 {@code --http-method}/{@code --path}로 Endpoint를
+     * 직접 명시받고, happy 시드는 별도 JSON 파일로 받는다. e2e fixture {@code promoted/} 커밋 경로는
+     * Task 18 소관.
+     */
+    static int runTrial(Map<String, String> o) throws Exception {
+        Path tripleStoreRoot = Path.of(o.getOrDefault("--triple-store", ".graphrag/triples"));
+        Path candidatesRoot = o.containsKey("--triple-candidates")
+                ? Path.of(o.get("--triple-candidates")) : tripleStoreRoot;
+        String endpointId = required(o, "--endpoint");
+        Endpoint endpoint = new Endpoint(
+                endpointId, required(o, "--http-method"), required(o, "--path"),
+                "unknown", "unknown", List.of(), false);
+        int budget = Integer.parseInt(o.getOrDefault("--trial-budget", "8"));
+
+        List<RequiredSeed> happySeeds = o.containsKey("--happy-seeds")
+                ? List.of(Json.mapper().readValue(Path.of(o.get("--happy-seeds")).toFile(), RequiredSeed[].class))
+                : List.of();
+        ProvenanceReport report = o.containsKey("--provenance-report")
+                ? Json.mapper().readValue(Path.of(o.get("--provenance-report")).toFile(), ProvenanceReport.class)
+                : null;
+
+        DbConfig.Type dbType = DbConfig.Type.valueOf(
+                required(o, "--db-type").toUpperCase(java.util.Locale.ROOT));
+        ResponseClassifier classifier = ClassifierConfig.from(o).toClassifier();
+
+        try (Connection connection = java.sql.DriverManager.getConnection(
+                required(o, "--jdbc-url"), o.getOrDefault("--db-user", ""), o.getOrDefault("--db-password", ""))) {
+            SutHandle sut = new LogFileSutHandle(
+                    required(o, "--sut-base-url"),
+                    o.containsKey("--sut-log-file") ? Path.of(o.get("--sut-log-file")) : null);
+            EndpointExplorationRunner invokeRunner = new EndpointExplorationRunner(
+                    sut, connection, dbType, null, null, 0, null,
+                    List.of(), List.of(), null, null, Map.of(), Map.of(),
+                    RequestHeaders.empty(), null, null);
+            TrialRunner trialRunner = new TrialRunner(
+                    connection, dbType, null, classifier, sut, invokeRunner::invokeTrial);
+
+            TripleStore store = new TripleStore(candidatesRoot);
+            List<Path> candidates = store.candidates(endpointId);
+            List<FailureDigest> digests = new ArrayList<>();
+            int attempts = 0;
+            for (Path candDir : candidates) {
+                if (attempts >= budget) {
+                    break;
+                }
+                attempts++;
+                TrialRunner.TrialOutcome outcome = trialRunner.runCandidate(endpoint, candDir, happySeeds, report);
+                if (outcome.promoted()) {
+                    Path promoted = store.promote(candDir);
+                    log.info("trial: {} promoted -> {} (status {})", candDir, promoted, outcome.status());
+                    return 0;
+                }
+                digests.add(outcome.digest());
+                String digestJson = outcome.digest() == null ? ""
+                        : Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(outcome.digest());
+                store.fail(candDir, digestJson);
+                log.warn("trial: {} failed (status {})", candDir, outcome.status());
+            }
+            Path finalReport = Files.createDirectories(candidatesRoot.resolve(endpointId).resolve("failed"))
+                    .resolve("digest-final.json");
+            Files.writeString(finalReport,
+                    Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(digests));
+            log.warn("trial: {} candidate(s) exhausted for {} (budget={}) -> {}",
+                    digests.size(), endpointId, budget, finalReport);
+            return 3;
+        }
+    }
+
+    /**
+     * trial CLI 전용 경량 {@link SutHandle} — 이미 떠 있는 SUT에 attach한다(프로세스를 소유·기동하지
+     * 않음, {@link #stop()}은 no-op). 로그 슬라이스는 {@code --sut-log-file}로 지정한 파일을 매 호출 시
+     * 전체 재로드해 byte 오프셋으로 자른다(REQ-014 stackExcerpt 근거). 파일 미지정 시 로그 구간은 항상
+     * 빈 문자열(FailureDigest는 여전히 raw 응답/상태로 산출되고, mappedGuard는 로그 기반 스택 매칭 없이
+     * literal-fallback만 시도한다).
+     */
+    private static final class LogFileSutHandle implements SutHandle {
+        private final String baseUri;
+        private final Path logFile;
+
+        LogFileSutHandle(String baseUri, Path logFile) {
+            this.baseUri = baseUri;
+            this.logFile = logFile;
+        }
+
+        @Override
+        public String baseUri() {
+            return baseUri;
+        }
+
+        @Override
+        public long logOffset() {
+            try {
+                return logFile != null && Files.exists(logFile) ? Files.size(logFile) : 0;
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+
+        @Override
+        public String readLog() {
+            return readLogRange(0, Long.MAX_VALUE);
+        }
+
+        @Override
+        public String readLogFrom(long offset) {
+            return readLogRange(offset, Long.MAX_VALUE);
+        }
+
+        @Override
+        public String readLogRange(long start, long end) {
+            if (logFile == null || !Files.exists(logFile)) {
+                return "";
+            }
+            try {
+                byte[] bytes = Files.readAllBytes(logFile);
+                int from = (int) Math.min(Math.max(start, 0), bytes.length);
+                int to = (int) Math.min(Math.max(end, 0), bytes.length);
+                return from >= to ? "" : new String(bytes, from, to - from, java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        }
+
+        @Override
+        public void stop() {
+            // no-op — attach 모드: 이 CLI가 SUT 프로세스를 소유하지 않는다.
+        }
     }
 
     /** --sut-src + (optional) --sut-resources → SourceRoots. 멀티 루트 + --incremental-base 조합은 거부. */
