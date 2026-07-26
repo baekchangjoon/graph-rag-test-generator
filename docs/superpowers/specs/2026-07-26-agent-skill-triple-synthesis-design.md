@@ -336,6 +336,11 @@ POST /api/transfers  { fromAccountId, amount, note }
   에이전트냐는 A3의 검증 대상이 아님) — E2E-B1은 에이전트 주체의 완주를 별도로 실증한다.
 - **Phase B (별도 spec)**: 갭필 자동화 — **미머지 wip 브랜치** `worktree-feat-llm-body-resynthesis`
   완주 후 그 인프라(LlmBodyBackends·캐시·예산·폴백)에 C2/C3 갭필을 접속.
+- **Phase C (백로그)**: attach egress 라우팅 — attach된 실 SUT의 외부 호출을 도구 소유
+  WireMock으로 돌리는 배선(§8의 미구현 갭). 이것이 있어야 attach 캠페인에서도
+  EXTERNAL_RESPONSE 가드가 낀 깊은 happy의 탐색 확정과 TC 재현이 성립한다(A/B까지는
+  attach에서 INPUT+DB_READ 가드만 개방). 전제: 대상 SUT가 외부 URL을 설정/환경변수로
+  주입 가능해야 한다.
 
 ## 11. 테스트 전략과 E2E 수용 기준
 
