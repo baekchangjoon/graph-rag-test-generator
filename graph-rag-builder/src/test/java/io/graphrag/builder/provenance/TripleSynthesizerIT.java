@@ -293,6 +293,52 @@ class TripleSynthesizerIT {
                 .contains("cand-01");
     }
 
+    @Test
+    @DisplayName("REQ-033: unguarded 필드 2개 × 옵션 각 3개(cross product 9 > cap 4)에서도 "
+            + "cand-01이 결정 필드 수·사전순 규칙의 최상위 조합이고 정확히 4개만 산출되어야 한다 "
+            + "(단일 필드 5옵션 케이스는 MAX_OPTIONS_PER_FIELD 사전-절단과 겹쳐 rank+cap 로직을 "
+            + "충분히 검증하지 못하므로, 결정 필드 수가 0/1/2로 실제로 갈리는 다중 필드 시나리오로 보강)")
+    void req033_multiFieldCrossProductRanksByDecidedCountThenLexOrder() {
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(),
+                List.of(
+                        new UnguardedField("fieldA", "String", "hintA"),
+                        new UnguardedField("fieldB", "String", "hintB")),
+                List.of());
+        // 필드당 옵션 3개(갭 마커 1 + 오라클 결정값 2) × 필드 2개 = cross product 9 > cap(4).
+        // 조합별 결정 필드 수가 0(마커,마커)/1(한쪽만 결정)/2(둘 다 결정)로 실제로 갈리므로,
+        // "결정 필드 수 내림차순" 정렬이 실제로 동작해야만 상위 4개가 전부 decidedCount=2인 조합이 된다.
+        InputCandidates oracle = new InputCandidates(Map.of(), Map.of(
+                "fieldA", new java.util.TreeSet<>(List.of("A2", "A1")),
+                "fieldB", new java.util.TreeSet<>(List.of("B2", "B1"))));
+
+        TripleSynthesizer synthesizer = new TripleSynthesizer();
+        List<TripleCandidate> candidates = synthesizer.synthesize(
+                report, BodyShape.empty(), List.of(), oracle);
+
+        assertThat(candidates).as("cross product 9 > cap(4)이므로 정확히 4개만 산출되어야 한다").hasSize(4);
+        List<List<String>> pairs = candidates.stream()
+                .map(c -> List.of(c.body().get("fieldA").asText(), c.body().get("fieldB").asText()))
+                .toList();
+        assertThat(pairs)
+                .as("결정 필드 수(둘 다 결정=2)가 가장 높은 4개 조합만 살아남아야 하고, 그 안에서는 "
+                        + "정규화 키(필드 값을 순서대로 이어붙인 문자열) 사전순이어야 한다 — "
+                        + "결정 필드 수가 1이나 0인 조합(마커 포함)은 전부 제외되어야 한다")
+                .containsExactly(
+                        List.of("A1", "B1"),
+                        List.of("A1", "B2"),
+                        List.of("A2", "B1"),
+                        List.of("A2", "B2"));
+        for (TripleCandidate candidate : candidates) {
+            assertThat(candidate.body().toString())
+                    .as("cap 이내 4개 후보는 전부 결정 필드 수 2(둘 다 오라클 결정값)이어야 하므로 갭 마커가 없어야 한다")
+                    .doesNotContain("__AGENT_FILL__");
+        }
+        assertThat(candidates.get(0).notes())
+                .as("cand-01은 결정 필드 2/2(unguarded 기준) 조합이어야 한다")
+                .contains("cand-01")
+                .contains("결정 필드 2/2");
+    }
+
     /**
      * {@code "INSERT INTO t (c1, c2) VALUES (v1, v2);"} 형태가 구조적으로 파싱 가능한 단일 문장인지
      * 검증(괄호 균형·세미콜론 종결·따옴표 짝 맞음). 이 모듈은 JSqlParser 의존성이 없으므로(REQ-010/T1
