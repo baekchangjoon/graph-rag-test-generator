@@ -286,7 +286,7 @@
 | REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🟡[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
 | REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005 | E2E | 🔴 planned |
-| REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🔴 planned |
+| REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🔴 planned |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🔴 planned |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🔴 planned |
