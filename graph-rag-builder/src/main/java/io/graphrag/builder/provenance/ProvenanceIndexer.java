@@ -67,13 +67,29 @@ import java.util.Set;
  *       {@link #repositoryEntityType} 참고).</li>
  * </ul>
  *
- * <p>EXTERNAL_RESPONSE/DERIVED 태깅은 후속 task 범위 — 이 클래스는 그 경우 피연산자를
- * {@link Origin#UNKNOWN}으로 둔다. unguarded 필드 탐지도 후속 task 범위(항상 빈 리스트).
+ * <p>이 클래스의 추가 범위(REQ-003 + REQ-032 + REQ-001의 EXTERNAL 부분):
+ * <ul>
+ *   <li>EXTERNAL_RESPONSE 태깅 — RestTemplate/WebClient 직접 호출, 또는 그것을 감싼 클라이언트
+ *       클래스(필드에 {@code RestTemplate}/{@code WebClient}를 갖거나 {@code @FeignClient}가 붙은
+ *       타입)의 메서드 반환값에 대한 accessor(JavaBean getter 또는 record canonical accessor) 호출이면
+ *       {@link Origin#EXTERNAL_RESPONSE} + callSite(`"<HTTP메서드> <pathLiteral>"`, 클라이언트 메서드
+ *       본문에서 추출 불가하면 `"<클라이언트FQN>#<메서드명>"` 폴백) + stubField(accessor가 읽는 필드명).</li>
+ *   <li>DERIVED 태깅 — 비교/논리 연산자(AND/OR/EQ/NE/GT/GE/LT/LE)가 아닌 이항연산자(산술·문자열 파생,
+ *       예: {@code score * 2})가 INPUT/DB_READ 피연산자를 하나 이상 감싸고 있으면 그 전체 식을 하나의
+ *       리프로 분류해 {@link Origin#DERIVED} + javaType(원본 유지)로 태깅한다. concolic 채널로의 실제
+ *       해 배치(합성 시 결정값 vs 갭 마커)는 이 클래스 범위 밖 — synthesize-triple(C2)이 담당한다.</li>
+ *   <li>UNKNOWN + MULTI_IMPL — 피연산자가 되는 호출의 선언 타입이 인터페이스이고, 모델 내 그 인터페이스의
+ *       구현체가 2개 이상이면 {@link Origin#UNKNOWN}으로 태깅하고 {@link Unresolved}(location,
+ *       {@link Reason#MULTI_IMPL}, targetType=인터페이스 FQN)를 리포트의 unresolved 배열에 표면화한다.</li>
+ * </ul>
+ * unguarded 필드 탐지는 후속 task 범위(항상 빈 리스트).
  *
  * <p>메서드 조회는 1-hop 선례({@code ConstraintExtractor.reachableMethods})와 동일하게
  * {@code CtModel} 전체를 타입명·메서드명으로 선형 탐색한다(재사용이 아니라 일반화 재구현 — Spoon
  * noClasspath 모드에서 {@code CtExecutableReference.getExecutableDeclaration()}이 크로스클래스
- * 호출에 대해 신뢰성 있게 해소되지 않기 때문).
+ * 호출에 대해 신뢰성 있게 해소되지 않기 때문). 같은 이유로 외부 클라이언트 callSite 추출 로직도
+ * {@code ResponseDtoIndexer}의 URL 리터럴/HTTP 메서드 추출과 유사하지만 별도로 축소 재구현한다
+ * (패키지 자기완결성 유지 — provenance 패키지가 index 패키지 내부 구현에 결합하지 않도록).
  */
 public class ProvenanceIndexer {
 
@@ -91,6 +107,13 @@ public class ProvenanceIndexer {
     private static final Set<String> SUCCESS_STATUS_NAMES = Set.of(
             "OK", "CREATED", "ACCEPTED", "NO_CONTENT", "FOUND",
             "MOVED_PERMANENTLY", "NOT_MODIFIED", "PARTIAL_CONTENT");
+
+    /** 외부 HTTP 클라이언트 라이브러리 타입(직접 호출 또는 래핑 클래스 필드 판별용, REQ-001 EXTERNAL 부분). */
+    private static final Set<String> CLIENT_LIB_TYPES = Set.of("RestTemplate", "WebClient");
+
+    /** {@code ResponseDtoIndexer.CLIENT_METHODS}와 동일 관례(축소 재구현, 클래스 상단 doc 참고). */
+    private static final Set<String> CLIENT_LIB_METHODS = Set.of(
+            "getForObject", "postForObject", "getForEntity", "postForEntity", "exchange");
 
     /** DFS 프론티어 항목: 방문할 메서드와 핸들러로부터의 깊이. */
     private record Frame(CtMethod<?> method, int depth) {
@@ -130,7 +153,7 @@ public class ProvenanceIndexer {
             CtMethod<?> method = frame.method();
             int depth = frame.depth();
 
-            collectGuards(model, method, handlerParams, columnResolver, guards);
+            collectGuards(model, method, handlerParams, columnResolver, guards, unresolved);
 
             for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 CtExecutableReference<?> executable = inv.getExecutable();
@@ -192,21 +215,23 @@ public class ProvenanceIndexer {
     // ---- 가드 수집 ----
 
     private void collectGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                               JpaColumnResolver columnResolver, List<GuardFact> guards) {
-        collectIfGuards(model, method, handlerParams, columnResolver, guards);
-        collectExistsGuards(model, method, handlerParams, columnResolver, guards);
+                               JpaColumnResolver columnResolver, List<GuardFact> guards,
+                               List<Unresolved> unresolved) {
+        collectIfGuards(model, method, handlerParams, columnResolver, guards, unresolved);
+        collectExistsGuards(model, method, handlerParams, columnResolver, guards, unresolved);
     }
 
     /** ① CtIf 가드: then/else 분기가 throw 또는 ResponseEntity.status(4xx|5xx) 반환으로 이어지는 경우만 채택. */
     private void collectIfGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                                 JpaColumnResolver columnResolver, List<GuardFact> guards) {
+                                 JpaColumnResolver columnResolver, List<GuardFact> guards,
+                                 List<Unresolved> unresolved) {
         for (CtIf ctIf : method.getElements(new TypeFilter<>(CtIf.class))) {
             if (!isErrorGuard(ctIf)) {
                 continue;
             }
             CtExpression<?> condition = ctIf.getCondition();
             List<ValueRef> operands = new ArrayList<>();
-            decomposeCondition(condition, handlerParams, model, columnResolver, operands);
+            decomposeCondition(condition, handlerParams, model, columnResolver, operands, unresolved);
             guards.add(new GuardFact(locationOf(condition), opSymbol(condition), operands));
         }
     }
@@ -217,7 +242,8 @@ public class ProvenanceIndexer {
      * 인자를 피연산자로 삼아 EXISTS 가드로 수집한다.
      */
     private void collectExistsGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
-                                     JpaColumnResolver columnResolver, List<GuardFact> guards) {
+                                     JpaColumnResolver columnResolver, List<GuardFact> guards,
+                                     List<Unresolved> unresolved) {
         for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
             String name = inv.getExecutable().getSimpleName();
             if (!"orElseThrow".equals(name) && !"orElseGet".equals(name)) {
@@ -235,7 +261,7 @@ public class ProvenanceIndexer {
             List<ValueRef> operands = new ArrayList<>();
             if (receiver instanceof CtInvocation<?> receiverInvocation) {
                 for (CtExpression<?> arg : receiverInvocation.getArguments()) {
-                    decomposeCondition(arg, handlerParams, model, columnResolver, operands);
+                    decomposeCondition(arg, handlerParams, model, columnResolver, operands, unresolved);
                 }
             }
             if (operands.isEmpty()) {
@@ -300,27 +326,36 @@ public class ProvenanceIndexer {
     // ---- 피연산자 분해·분류 ----
 
     /**
-     * 조건식을 리프 피연산자까지 재귀 분해한다: {@code CtBinaryOperator}(AND/OR 포함)는 좌우변으로,
-     * 단항연산자는 피연산자로, {@code equals}/{@code equalsIgnoreCase} 호출은 수신자+첫 인자로 분해한다.
+     * 조건식을 리프 피연산자까지 재귀 분해한다: 비교/논리 {@code CtBinaryOperator}(AND/OR/EQ/NE/GT/GE/
+     * LT/LE — {@link #OP_SYMBOLS}에 등록된 종류)는 좌우변으로 계속 분해하지만, 그 외의 이항연산자
+     * (산술·문자열 concat 등, 예: {@code score * 2})는 더 분해하지 않고 그 식 전체를 하나의 리프로
+     * 남겨 {@link #classifyOperand}가 DERIVED 여부를 판정하게 한다(REQ-032 — 분해해버리면 "파생"이라는
+     * 구조 자체가 사라진다). 단항연산자는 피연산자로, {@code equals}/{@code equalsIgnoreCase} 호출은
+     * 수신자+첫 인자로 분해한다.
      */
     private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
-                                    JpaColumnResolver columnResolver, List<ValueRef> out) {
+                                    JpaColumnResolver columnResolver, List<ValueRef> out,
+                                    List<Unresolved> unresolved) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out);
-            decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out);
+            if (OP_SYMBOLS.containsKey(bin.getKind())) {
+                decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out, unresolved);
+                decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out, unresolved);
+                return;
+            }
+            out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved));
             return;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out);
+            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out, unresolved);
             return;
         }
         if (expr instanceof CtInvocation<?> inv && isEqualsLike(inv)
                 && inv.getTarget() != null && !inv.getArguments().isEmpty()) {
-            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out);
-            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out);
+            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out, unresolved);
+            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out, unresolved);
             return;
         }
-        out.add(classifyOperand(expr, handlerParams, model, columnResolver));
+        out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved));
     }
 
     private static boolean isEqualsLike(CtInvocation<?> inv) {
@@ -329,7 +364,7 @@ public class ProvenanceIndexer {
     }
 
     private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
-                                     JpaColumnResolver columnResolver) {
+                                     JpaColumnResolver columnResolver, List<Unresolved> unresolved) {
         Optional<List<String>> segments = getterSegments(expr, handlerParams, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
@@ -341,12 +376,214 @@ public class ProvenanceIndexer {
         if (dbRead.isPresent()) {
             return dbRead.get();
         }
+        Optional<ValueRef> external = classifyExternalResponse(expr, model);
+        if (external.isPresent()) {
+            return external.get();
+        }
+        if (expr instanceof CtBinaryOperator<?> bin
+                && derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved)) {
+            return new ValueRef(Origin.DERIVED, null, null, null, null, null, typeNameOf(expr), null, null);
+        }
+        Optional<String> multiImplTarget = multiImplTargetType(expr, model);
+        if (multiImplTarget.isPresent()) {
+            unresolved.add(new Unresolved(locationOf(expr), Reason.MULTI_IMPL, multiImplTarget.get()));
+            return new ValueRef(Origin.UNKNOWN, null, null, null, null, null, typeNameOf(expr), null, null);
+        }
         if (expr instanceof CtLiteral<?> literal) {
             Object value = literal.getValue();
             return new ValueRef(Origin.UNKNOWN, null, null, null, null, null,
                     typeNameOf(expr), null, value == null ? null : String.valueOf(value));
         }
         return new ValueRef(Origin.UNKNOWN, null, null, null, null, null, typeNameOf(expr), null, null);
+    }
+
+    // ---- DERIVED 태깅(REQ-032, 태깅 절반 — concolic 해 합성 배치는 synthesize-triple(C2) 범위) ----
+
+    /**
+     * 이항연산자 트리(중첩 산술 포함, 예: {@code (a + b) * 2})를 리프까지 내려가며 각 리프를
+     * {@link #classifyOperand}로 분류해 INPUT 또는 DB_READ 출처가 하나라도 있는지 확인한다. 리프
+     * 분류 과정에서 발생하는 부수효과(예: MULTI_IMPL 미해결 기록)는 그 리프가 실제로 미해결이므로
+     * 그대로 유지한다 — DERIVED 여부와 무관하게 유효한 기록이다.
+     */
+    private boolean derivesFromTrackedOrigin(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+                                             JpaColumnResolver columnResolver, List<Unresolved> unresolved) {
+        if (expr instanceof CtBinaryOperator<?> bin) {
+            return derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model, columnResolver, unresolved)
+                    || derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model, columnResolver, unresolved);
+        }
+        if (expr instanceof CtUnaryOperator<?> un) {
+            return derivesFromTrackedOrigin(un.getOperand(), handlerParams, model, columnResolver, unresolved);
+        }
+        Origin origin = classifyOperand(expr, handlerParams, model, columnResolver, unresolved).origin();
+        return origin == Origin.INPUT || origin == Origin.DB_READ;
+    }
+
+    // ---- UNKNOWN + MULTI_IMPL 태깅(REQ-003) ----
+
+    /**
+     * expr이 메서드 호출이고 그 선언 타입이 모델 내 인터페이스이며, 그 인터페이스를 구현하는 클래스가
+     * 모델 내에 2개 이상이면 그 인터페이스의 FQN을 반환한다(다형 호출이라 정적으로 어느 구현체가
+     * 실행될지 결정할 수 없음 — UNKNOWN 강등 + unresolved 표면화 대상).
+     */
+    private Optional<String> multiImplTargetType(CtExpression<?> expr, CtModel model) {
+        if (!(expr instanceof CtInvocation<?> inv)) {
+            return Optional.empty();
+        }
+        var declaringTypeRef = inv.getExecutable().getDeclaringType();
+        if (declaringTypeRef == null) {
+            return Optional.empty();
+        }
+        CtType<?> declaringType = resolveType(model, declaringTypeRef.getQualifiedName());
+        if (declaringType == null || !declaringType.isInterface()) {
+            return Optional.empty();
+        }
+        String fqn = declaringType.getQualifiedName().replace('$', '.');
+        long implCount = model.getAllTypes().stream()
+                .filter(t -> !t.isInterface())
+                .filter(t -> t.getSuperInterfaces().stream()
+                        .anyMatch(i -> fqn.equals(i.getQualifiedName().replace('$', '.'))))
+                .count();
+        return implCount >= 2 ? Optional.of(fqn) : Optional.empty();
+    }
+
+    // ---- EXTERNAL_RESPONSE 태깅(REQ-001 EXTERNAL 부분) ----
+
+    /**
+     * expr이 외부 HTTP 클라이언트 응답값에 대한 accessor 호출(JavaBean getter 또는 record canonical
+     * accessor)이면 {@link Origin#EXTERNAL_RESPONSE}로 태깅하고 callSite/stubField를 채운다.
+     * {@link #getterFieldName}을 그대로 재사용하므로 INPUT/DB_READ와 동일한 accessor 인식 규칙을 쓴다
+     * (record면 get/is 접두사 없는 canonical accessor, 예: {@code fraud.status()}).
+     */
+    private Optional<ValueRef> classifyExternalResponse(CtExpression<?> expr, CtModel model) {
+        if (!(expr instanceof CtInvocation<?> inv) || inv.getTarget() == null) {
+            return Optional.empty();
+        }
+        String methodName = inv.getExecutable().getSimpleName();
+        String field = getterFieldName(methodName, inv.getTarget(), model);
+        if (field == null) {
+            return Optional.empty();
+        }
+        return externalCallSite(inv.getTarget(), model).map(callSite ->
+                new ValueRef(Origin.EXTERNAL_RESPONSE, null, null, null, callSite, field,
+                        typeNameOf(expr), null, null));
+    }
+
+    /**
+     * expr(의 로컬 변수 1단 간접 해제 결과)이 외부 클라이언트 호출인지 판별하고, 그렇다면 callSite
+     * 문자열(`"<HTTP메서드> <pathLiteral>"`, 추출 불가 시 `"<클라이언트FQN>#<메서드명>"` 폴백)을
+     * 반환한다. 직접 호출(RestTemplate/WebClient 메서드를 바로 호출)과 래핑 호출(그런 필드를 가진
+     * 커스텀 클라이언트 클래스의 메서드 — 실제 SUT의 {@code FraudClient} 관례) 두 형태를 인식한다.
+     */
+    private Optional<String> externalCallSite(CtExpression<?> expr, CtModel model) {
+        if (expr instanceof CtVariableRead<?> vr
+                && vr.getVariable().getDeclaration() instanceof CtLocalVariable<?> localVar
+                && localVar.getDefaultExpression() != null) {
+            return externalCallSite(localVar.getDefaultExpression(), model);
+        }
+        if (!(expr instanceof CtInvocation<?> inv)) {
+            return Optional.empty();
+        }
+        CtExecutableReference<?> executable = inv.getExecutable();
+        var declaringTypeRef = executable.getDeclaringType();
+        if (declaringTypeRef == null) {
+            return Optional.empty();
+        }
+        if (CLIENT_LIB_TYPES.contains(declaringTypeRef.getSimpleName())
+                && CLIENT_LIB_METHODS.contains(executable.getSimpleName())) {
+            return Optional.of(directClientCallSite(executable.getSimpleName(), inv.getArguments()));
+        }
+        CtType<?> declaringType = resolveType(model, declaringTypeRef.getQualifiedName());
+        if (declaringType != null && isExternalClientType(declaringType)) {
+            return Optional.of(wrappedClientCallSite(declaringType, executable.getSimpleName()));
+        }
+        return Optional.empty();
+    }
+
+    /** {@code @FeignClient} 어노테이션이 있거나, {@code RestTemplate}/{@code WebClient} 타입 필드를 가진 타입인지. */
+    private static boolean isExternalClientType(CtType<?> type) {
+        boolean feignClient = type.getAnnotations().stream()
+                .anyMatch(a -> "FeignClient".equals(a.getAnnotationType().getSimpleName()));
+        if (feignClient) {
+            return true;
+        }
+        return type.getFields().stream()
+                .anyMatch(f -> f.getType() != null && CLIENT_LIB_TYPES.contains(f.getType().getSimpleName()));
+    }
+
+    /**
+     * 래핑 클라이언트 클래스({@code declaringType}) 안의 {@code methodName} 메서드 본문에서 첫
+     * {@link #CLIENT_LIB_METHODS} 호출을 찾아 callSite를 추출한다. 본문이 없거나(예: {@code @FeignClient}
+     * 인터페이스 메서드) 그런 호출을 찾지 못하면(예: WebClient의 유동적 빌더 체인) 클라이언트클래스#
+     * 메서드로 폴백한다(클래스 상단 doc에 명시된 대로 — 이 task 범위에서는 폴백까지만 보장).
+     */
+    private String wrappedClientCallSite(CtType<?> declaringType, String methodName) {
+        for (CtMethod<?> method : declaringType.getMethods()) {
+            if (!method.getSimpleName().equals(methodName) || method.getBody() == null) {
+                continue;
+            }
+            for (CtInvocation<?> inner : method.getElements(new TypeFilter<>(CtInvocation.class))) {
+                if (CLIENT_LIB_METHODS.contains(inner.getExecutable().getSimpleName())) {
+                    return directClientCallSite(inner.getExecutable().getSimpleName(), inner.getArguments());
+                }
+            }
+        }
+        return declaringType.getQualifiedName().replace('$', '.') + "#" + methodName;
+    }
+
+    /** RestTemplate/WebClient 직접 호출의 인자에서 `"<HTTP메서드> <pathLiteral>"`을 합성(추출 실패 시 메서드명만). */
+    private String directClientCallSite(String methodName, List<CtExpression<?>> args) {
+        if (args.isEmpty()) {
+            return methodName;
+        }
+        String pathLiteral = pathLiteralOf(args.get(0));
+        if (pathLiteral == null) {
+            return methodName;
+        }
+        String httpMethod = httpMethodOf(methodName, args);
+        return httpMethod.isEmpty() ? pathLiteral : httpMethod + " " + pathLiteral;
+    }
+
+    /**
+     * URL 인자의 정적 문자열 concat({@code CtBinaryOperator} PLUS 트리)에서 '/'로 시작하는 첫 리터럴
+     * 토큰의 path(query 제외)를 반환한다({@code ResponseDtoIndexer.pathLiteralOf}와 동일 관례).
+     */
+    private static String pathLiteralOf(CtExpression<?> urlArg) {
+        List<String> literals = new ArrayList<>();
+        collectStringLiterals(urlArg, literals);
+        for (String token : literals) {
+            int slash = token.indexOf('/');
+            if (slash < 0) {
+                continue;
+            }
+            String fromSlash = token.substring(slash);
+            int query = fromSlash.indexOf('?');
+            return query < 0 ? fromSlash : fromSlash.substring(0, query);
+        }
+        return null;
+    }
+
+    private static void collectStringLiterals(CtExpression<?> expr, List<String> out) {
+        if (expr instanceof CtBinaryOperator<?> binary) {
+            collectStringLiterals(binary.getLeftHandOperand(), out);
+            collectStringLiterals(binary.getRightHandOperand(), out);
+        } else if (expr instanceof CtLiteral<?> literal && literal.getValue() instanceof String value) {
+            out.add(value);
+        }
+    }
+
+    /** get*→GET, post*→POST, exchange→HttpMethod enum 상수(변수/필드 참조면 빈 문자열). */
+    private static String httpMethodOf(String methodName, List<CtExpression<?>> args) {
+        if (methodName.startsWith("get")) {
+            return "GET";
+        }
+        if (methodName.startsWith("post")) {
+            return "POST";
+        }
+        if ("exchange".equals(methodName) && args.size() >= 2
+                && args.get(1) instanceof CtFieldRead<?> fieldRead) {
+            return fieldRead.getVariable().getSimpleName();
+        }
+        return "";
     }
 
     // ---- DB_READ 태깅(REQ-004) ----
