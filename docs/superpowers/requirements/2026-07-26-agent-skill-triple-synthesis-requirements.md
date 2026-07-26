@@ -279,7 +279,7 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🟢 done |
+| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🟢 done[^unguarded-fix] |
 | REQ-002 | 깊이 cap·순환 종료 | ProvenanceIndexerIT#REQ-002 | integration | 🟢 done |
 | REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
@@ -320,6 +320,8 @@
 [^derived-half]: DERIVED **태깅**(origin=DERIVED + javaType 유지, `ProvenanceIndexerIT#req032_derivedTagged`)은 완료. REQ-032 수용기준의 나머지 절반 — concolic 해(예: 42)를 body 결정값으로 실제 배치하는 합성 로직·"concolic이 못 푸는 파생은 갭 마커" 처리 — 은 synthesize-triple(C2, Task 8)에서 완성된다. 그때 REQ-032를 🟢로 승격.
 
 [^jpa-inherited-fix]: Task 7(provenance CLI golden E2E)에서 order-service 실 fixture(`POST /api/transfers`)를 구동해 발견: 리포지토리 인터페이스가 `findById` 등을 재선언하지 않고 `JpaRepository<Entity, Id>`에서 그대로 상속받으면(실 SUT의 일반적 관례), noClasspath에서 `executable.getDeclaringType()`/반환 타입이 모두 해소되지 않아 DB_READ 태깅이 UNKNOWN으로 조용히 강등되는 회귀가 있었다 — REQ-001의 balance 가드 수용기준("INPUT과 DB_READ 피연산자를 함께")을 위반. `ProvenanceIndexer.repositoryEntityType`을 리시버 정적 타입 기반 판별 + `JpaRepository` 제네릭 인자 역산으로 수정하고, `ProvenanceIndexerIT#req004_inheritedRepositoryMethodNotRedeclared`(fixture: `jpa-inherited`)로 회귀 테스트를 추가했다(REQ-004 확장, 새 REQ-ID 아님 — 기존 요구사항의 커버리지 갭 보강).
+
+[^unguarded-fix]: 코드리뷰에서 Critical로 지적: 최초 커밋은 `ProvenanceIndexer.analyze()`가 `unguarded`를 항상 빈 리스트로 반환하는 상태(후속 task 범위로 표시돼 있었음)에서 REQ-001을 🟢로 표기 — REQ-001 수용기준의 "unguarded의 free-text 필드(semanticHint)가 golden과 일치" 부분이 실제로는 미충족이었다. Task 9(갭 마커)가 이 출력을 소비하는 설계라 연기하지 않고 즉시 구현: `@RequestBody` 파라미터 타입을 재귀 전개(record canonical accessor/JavaBean getFoo·isFoo, List는 대표원소로 계속 전개, Map은 동적 키라 leaf 처리 — 기존 INPUT dot-path 관례 재사용)해 가드에 한 번도 참조되지 않은 필드를 `UnguardedField`로 수집하고, 필드명 기반 결정적 규칙(`ProvenanceIndexer#semanticHint` — email/phone·tel/name/note·memo·comment·description/그 외 String→free-text/비-String→none)으로 semanticHint를 부여했다. `ProvenanceIndexerIT#req001_unguardedFieldTagged`(basic fixture, userId 미참조 확인)로 회귀 테스트를 추가하고, golden에 실산출 기준 unguarded 2건(`note`, `items.sku` — 둘 다 String이고 다른 규칙에 매칭되지 않아 free-text)을 반영했다. 클래스 Javadoc의 "unguarded 필드 탐지는 후속 task 범위" 문구는 제거했다.
 
 Coverage: 2/35 green (6%) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
 

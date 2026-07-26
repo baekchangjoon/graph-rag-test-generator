@@ -36,6 +36,9 @@
       ]
     }
   ],
-  "unguarded": [],
+  "unguarded": [
+    { "jsonPath": "note", "javaType": "String", "semanticHint": "free-text" },
+    { "jsonPath": "items.sku", "javaType": "String", "semanticHint": "free-text" }
+  ],
   "unresolved": []
 }
