@@ -177,14 +177,21 @@ public final class TrialRunner {
 
     /**
      * ③ 후보 {@code stubs.json}을 등록한다. httpCapture가 없거나(외부 stub 서버 미연결) 파일이 없거나
-     * 빈 객체({@code {}}, TripleSynthesizer "stub 없음" 관례)면 skip(null 반환).
+     * 빈 객체({@code {}}, TripleSynthesizer/{@code stubsJsonContent} "stub 없음" 관례)면 skip(null
+     * 반환). 빈 객체 판정은 파싱된 {@link JsonNode#isEmpty()}로 한다 — {@code writerWithDefaultPrettyPrinter}가
+     * 실제로는 {@code "{ }"}(공백 포함)를 산출하므로 원문 문자열 정확 일치({@code "{}"})는 오탐(실제
+     * 빈 stub을 "내용 있음"으로 오판)을 낸다.
      */
     private UUID registerCandidateStub(Path stubsJsonFile) throws Exception {
         if (httpCapture == null || !Files.exists(stubsJsonFile)) {
             return null;
         }
-        String content = Files.readString(stubsJsonFile).strip();
-        if (content.isEmpty() || content.equals("{}")) {
+        String content = Files.readString(stubsJsonFile);
+        if (content.isBlank()) {
+            return null;
+        }
+        JsonNode node = Json.mapper().readTree(content);
+        if (node == null || node.isEmpty()) {
             return null;
         }
         StubMapping mapping = StubMapping.buildFrom(content);
