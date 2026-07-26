@@ -111,7 +111,7 @@ Phase A의 trial 진입점은 **하나**다: 오프라인 스킬 시퀀스가 pr
 |---|---|---|---|
 | `body.json` | 값 위치에 `__AGENT_FILL__{...}` | JSON 키 단위 구조 diff | 마커 값만 |
 | `stubs.json` (WireMock mapping) | `response.jsonBody` 내 값 위치 | JSON 키 단위 구조 diff | 마커 값만 |
-| `seed.sql` | INSERT 값 리터럴 위치에 `__AGENT_FILL__` 문자열 | **파서 레벨**: (테이블, 컬럼→값) 구조로 정규화 후 비교 — 텍스트 재포맷·주석에 비민감 | 마커 컬럼 값만. **비-마커 컬럼 값 변경도 reject**(가드 만족값 충실도 보장 — DB_READ 채널의 무-fabrication) |
+| `seed.sql` | INSERT 값 리터럴 위치에 **작은따옴표 문자열 리터럴** `'__AGENT_FILL__{...}'`(컬럼 타입 무관 — SQL 파싱 유지, 파서·T1이 마커 위치로 인식) | **파서 레벨**: (테이블, 컬럼→값) 구조로 정규화 후 비교 — 텍스트 재포맷·주석에 비민감 | 마커 컬럼 값만. **비-마커 컬럼 값 변경도 reject**(가드 만족값 충실도 보장 — DB_READ 채널의 무-fabrication) |
 | `notes.md`·리포트 주석 | — | 검사 안 함 | 자유(근거·사유 기록용) |
 
 ```json
@@ -160,8 +160,9 @@ SKILL.md 지시: "**마커만 채워라. 마커 아닌 값 수정 금지.**" —
   (httpMethod, pathLiteral, responseShape)로 mapping 뼈대를 생성하고, `ShapeJsonSynthesizer`
   형상 위에 가드 만족값을 덮어쓰며, 도출 불가 값은 `response.jsonBody` 안에 갭 마커.
   → 기존 로더·test-generator external-stubs 경로를 무변경 재사용.
-- `seed.sql`도 갭 마커 포함 base로 생성(§4.1 — UNKNOWN 컬럼 값만 마커). 후보 수 cap +
-  우선순위 정렬. 모든 결정값에 근거 trace(가드 위치)를 `notes.md`로 자동 생성.
+- `seed.sql`도 갭 마커 포함 base로 생성(§4.1 — UNKNOWN 컬럼 값만 마커). 후보 수 cap
+  (**기본 4**) + 우선순위 정렬(**cand-01이 최우선**, 정렬 기준 결정적). 모든 결정값에 근거
+  trace(가드 위치)를 `notes.md`로 자동 생성.
 - **SKILL.md**: 실행 후 **갭 마커만** 채우는 규칙 — semanticHint 준수, 제약(Bean Validation·
   가드) 위반 금지, 채운 값마다 사유 주석, 실존 인물·연락처 등 실데이터 금지(합성값만).
 
@@ -374,7 +375,8 @@ invoices/quotas, 커밋 b60b9a3)을 본 브랜치로 cherry-pick해 착륙시킨
 ### 11.4 내부 루프 (unit TDD)
 
 - C1: origin 판정 규칙별(repository/외부클라이언트/파라미터 유래), 깊이 cap·순환 가드,
-  미해석·인터페이스 다구현체→UNKNOWN 강등, `@Column`/`@Table` 오버라이드 매핑.
+  미해석·인터페이스 다구현체→UNKNOWN 강등, `@Column`/`@Table` 오버라이드 매핑,
+  **DTO List/Map/중첩 재귀 전개**(중첩 필드 dot-path·origin 태깅).
 - C2: 공동 배치, 경계 만족값, 마커 생성 조건, 라우팅(컬럼↔jsonPath↔WireMock mapping),
   seed.sql 마커 base 생성.
 - T2/T1: digest 추출(스택↔가드 역매핑 + 메시지-텍스트 매칭, byte-정합 로그 규율),
