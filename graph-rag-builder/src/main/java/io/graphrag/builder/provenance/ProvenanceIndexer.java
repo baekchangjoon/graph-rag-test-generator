@@ -111,6 +111,21 @@ public class ProvenanceIndexer {
     /** 외부 HTTP 클라이언트 라이브러리 타입(직접 호출 또는 래핑 클래스 필드 판별용, REQ-001 EXTERNAL 부분). */
     private static final Set<String> CLIENT_LIB_TYPES = Set.of("RestTemplate", "WebClient");
 
+    /**
+     * List 계열 타입명(REQ-034 대표원소 규약 — {@code list.get(index)}는 dot-path 세그먼트를
+     * 추가하지 않고 대표(첫) 원소 그대로 부모 경로를 이어간다).
+     */
+    private static final Set<String> LIST_LIKE_TYPES = Set.of(
+            "List", "ArrayList", "LinkedList", "Collection", "Set", "HashSet", "LinkedHashSet",
+            "Queue", "Deque");
+
+    /**
+     * Map 계열 타입명(REQ-034 — {@code map.get("key")}는 리터럴 키 이름을 그대로 dot-path
+     * 세그먼트로 추가한다, 예: {@code "configs.region"}).
+     */
+    private static final Set<String> MAP_LIKE_TYPES = Set.of(
+            "Map", "HashMap", "LinkedHashMap", "TreeMap", "SortedMap", "ConcurrentHashMap");
+
     /** {@code ResponseDtoIndexer.CLIENT_METHODS}와 동일 관례(축소 재구현, 클래스 상단 doc 참고). */
     private static final Set<String> CLIENT_LIB_METHODS = Set.of(
             "getForObject", "postForObject", "getForEntity", "postForEntity", "exchange");
@@ -708,6 +723,12 @@ public class ProvenanceIndexer {
      * 표현식의 루트가 핸들러 자신의 파라미터이면 그로부터의 getter 체인 세그먼트 목록을 반환한다
      * (빈 리스트 = 파라미터 자체가 직접 사용됨, 예: path variable). 루트가 파라미터가 아니거나
      * getter 관례를 따르지 않는 메서드를 경유하면 empty.
+     *
+     * <p>REQ-034 — DTO 중첩 재귀 전개: 체인 중간에 {@code List.get(index)}/{@code Map.get(key)}
+     * 호출이 끼어 있어도 계속 재귀한다. List는 대표원소(첫 원소) 규약으로 세그먼트를 추가하지 않고
+     * (bracket 없이 부모 경로 그대로 이어감, 예: {@code items.get(0).qty()} → "items.qty"), Map은
+     * 리터럴 키를 그대로 세그먼트로 추가한다(예: {@code configs.get("region")} → "configs.region").
+     * Map 키가 리터럴이 아니면(정적으로 알 수 없음) empty로 강등한다.
      */
     private Optional<List<String>> getterSegments(CtExpression<?> expr, Set<CtParameter<?>> handlerParams,
                                                    CtModel model) {
@@ -717,6 +738,14 @@ public class ProvenanceIndexer {
             return Optional.of(new ArrayList<>());
         }
         if (expr instanceof CtInvocation<?> inv && inv.getTarget() != null) {
+            Optional<Optional<String>> collectionSegment = collectionElementSegment(inv);
+            if (collectionSegment.isPresent()) {
+                Optional<String> mapKey = collectionSegment.get();
+                return getterSegments(inv.getTarget(), handlerParams, model).map(segs -> {
+                    mapKey.ifPresent(segs::add);
+                    return segs;
+                });
+            }
             String field = getterFieldName(inv.getExecutable().getSimpleName(), inv.getTarget(), model);
             if (field == null) {
                 return Optional.empty();
@@ -727,6 +756,37 @@ public class ProvenanceIndexer {
             });
         }
         return Optional.empty();
+    }
+
+    /**
+     * {@code inv}가 List 원소(대표원소 규약) 또는 Map 키 접근({@code .get(...)}, 단일 인자)이면
+     * 채택 여부를 바깥쪽 {@code Optional}로, 추가할 세그먼트(Map 키만 존재, List는 empty — 세그먼트
+     * 없이 부모 경로를 그대로 이어감)를 안쪽 {@code Optional}로 반환한다. {@code .get(...)}이 아니거나
+     * 대상이 List/Map 어느 쪽도 아니면(예: 일반 사용자 정의 {@code get()} 메서드) empty(채택 안 함).
+     * Map인데 키 인자가 문자열 리터럴이 아니면(동적 키라 정적으로 dot-path를 알 수 없음) empty(채택
+     * 안 함 — 호출부에서 {@link #getterFieldName} 경로로 폴백해 결국 UNKNOWN으로 강등된다).
+     */
+    private static Optional<Optional<String>> collectionElementSegment(CtInvocation<?> inv) {
+        if (!"get".equals(inv.getExecutable().getSimpleName()) || inv.getArguments().size() != 1) {
+            return Optional.empty();
+        }
+        CtTypeReference<?> targetType = inv.getTarget().getType();
+        if (targetType == null) {
+            return Optional.empty();
+        }
+        String simpleName = targetType.getSimpleName();
+        if (LIST_LIKE_TYPES.contains(simpleName)) {
+            return Optional.of(Optional.empty());
+        }
+        if (MAP_LIKE_TYPES.contains(simpleName)) {
+            String key = literalStringArg(inv.getArguments().get(0));
+            return key == null ? Optional.empty() : Optional.of(Optional.of(key));
+        }
+        return Optional.empty();
+    }
+
+    private static String literalStringArg(CtExpression<?> arg) {
+        return arg instanceof CtLiteral<?> literal && literal.getValue() instanceof String s ? s : null;
     }
 
     private static String bareParamName(CtExpression<?> expr) {
