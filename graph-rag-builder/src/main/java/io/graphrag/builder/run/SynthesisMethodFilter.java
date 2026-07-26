@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.AbstractMap;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -52,7 +53,9 @@ public final class SynthesisMethodFilter {
                 out.add(parsed);
             }
         }
-        return Set.copyOf(out);
+        // LinkedHashSet의 삽입 순서를 보존한다. Set.copyOf는 JVM SALT로 iteration 순서가
+        // 실행마다 바뀌어 순서 민감 소비자(테스트 containsExactly 등)를 비결정적으로 깨뜨린다.
+        return Collections.unmodifiableSet(out);
     }
 
     private static Map.Entry<String, String> parseEntry(String trimmed) {
