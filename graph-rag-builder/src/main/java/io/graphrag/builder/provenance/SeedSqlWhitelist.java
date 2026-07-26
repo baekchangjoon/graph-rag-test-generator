@@ -4,6 +4,13 @@ import io.graphrag.builder.env.DbConfig;
 import io.graphrag.model.ForeignKey;
 import io.graphrag.model.TableSchema;
 import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.expression.BooleanValue;
+import net.sf.jsqlparser.expression.DoubleValue;
+import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.LongValue;
+import net.sf.jsqlparser.expression.NullValue;
+import net.sf.jsqlparser.expression.SignedExpression;
+import net.sf.jsqlparser.expression.StringValue;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.parser.feature.Feature;
 import net.sf.jsqlparser.parser.feature.FeatureConfiguration;
@@ -35,6 +42,13 @@ import java.util.Set;
  *       {@code VALUES ('DELETE FROM x')})는 파서가 리터럴로 인식하므로 문장 수에 영향을 주지 않아
  *       정상 통과한다.</li>
  *   <li>허용 테이블(화이트리스트) 밖을 대상으로 하는 INSERT는 reject.</li>
+ *   <li>{@code VALUES} 절이 없는 INSERT(예: {@code INSERT ... SELECT}, {@code DEFAULT VALUES})는
+ *       reject — 마커 위치는 "값 치환" 계약이지 값의 출처를 임의 쿼리로 대체하는 것이 아니다.</li>
+ *   <li>{@code VALUES} 절의 각 표현식은 닫힌 리터럴 집합({@link StringValue}/{@link LongValue}/
+ *       {@link DoubleValue}/{@link NullValue}/{@link BooleanValue}, {@link SignedExpression}로 감싼
+ *       부호 있는 상수 포함)만 허용한다 — 서브쿼리({@code (SELECT ...)}), 함수 호출(예:
+ *       {@code LOAD_FILE(...)}), 컬럼 참조 등은 reject한다. 화이트리스트 테이블 + 마커 위치라는 조건만으로는
+ *       "값 치환"과 "임의 SQL 표현식 대체"를 구분하지 못하므로 표현식 종류 자체를 제한한다.</li>
  * </ul>
  *
  * <p>파서는 {@link DbConfig.Type}에 따라 구성한다 — MySQL/MariaDB는 백슬래시 escape 문자열 리터럴을
@@ -102,10 +116,12 @@ public final class SeedSqlWhitelist {
     }
 
     /**
-     * 한 줄(하나의 의도된 문장 텍스트)을 파싱해 정확히 1개의 {@link Insert} 문장인지 확인한다.
-     * 파싱 실패, 2개 이상 문장, 또는 INSERT가 아닌 문장이면 {@code reasons}에 사유를 남기고
-     * {@link Optional#empty()}를 반환한다. {@link TripleValidator}가 seed.sql 마커-diff(REQ-009)의
-     * 컬럼→값 맵 추출에도 이 메서드를 재사용한다(같은 패키지, 파싱 로직 단일화).
+     * 한 줄(하나의 의도된 문장 텍스트)을 파싱해 정확히 1개의 {@link Insert} 문장이고, {@code VALUES} 절이
+     * 닫힌 리터럴 집합으로만 구성되어 있는지 확인한다(REQ-010 정본 검사 — {@link TripleValidator}의
+     * seed.sql 마커-diff(REQ-009) 컬럼→값 맵 추출도 이 메서드를 재사용하므로, 여기서 거부된 표현식은
+     * 두 경로 모두에서 안전하게 배제된다). 파싱 실패, 2개 이상 문장, INSERT가 아닌 문장, {@code VALUES}
+     * 절이 없는 INSERT, 또는 VALUES 절에 상수가 아닌 표현식이 있으면 {@code reasons}에 사유를 남기고
+     * {@link Optional#empty()}를 반환한다.
      */
     Optional<Insert> parseSingleInsert(String line, DbConfig.Type dialect, List<String> reasons) {
         Statements statements;
@@ -125,7 +141,39 @@ public final class SeedSqlWhitelist {
             reasons.add("seed.sql 문장이 INSERT가 아님(REQ-010 reject): " + line);
             return Optional.empty();
         }
-        return Optional.of((Insert) statement);
+        Insert insert = (Insert) statement;
+        if (!insert.isUseValues()) {
+            reasons.add("seed.sql이 VALUES 절 없는 INSERT(예: INSERT ... SELECT, DEFAULT VALUES)를 사용함"
+                    + "(REQ-010 reject): " + line);
+            return Optional.empty();
+        }
+        for (Expression value : insert.getValues().getExpressions()) {
+            if (!isClosedLiteral(value)) {
+                reasons.add("seed.sql VALUES 절에 상수 리터럴이 아닌 표현식 감지(REQ-010 reject — 임의 SQL "
+                        + "표현식 삽입 의심): " + value.getClass().getSimpleName() + " = " + value
+                        + " (line: " + line + ")");
+                return Optional.empty();
+            }
+        }
+        return Optional.of(insert);
+    }
+
+    /**
+     * {@code VALUES} 절 표현식이 닫힌 리터럴 집합에 속하는지 판정한다. 서브쿼리
+     * ({@link net.sf.jsqlparser.statement.select.ParenthesedSelect}), 함수 호출({@link
+     * net.sf.jsqlparser.expression.Function}), 컬럼 참조({@link net.sf.jsqlparser.schema.Column}) 등은
+     * 전부 거부된다 — 마커 위치는 값 하나를 치환하는 자리이지, 임의 SQL 표현식으로 대체할 자리가 아니다.
+     * {@link SignedExpression}(단항 부호, 예: {@code -5})은 감싼 내부 표현식이 상수이면 재귀적으로 허용한다.
+     */
+    private static boolean isClosedLiteral(Expression expr) {
+        if (expr instanceof SignedExpression) {
+            return isClosedLiteral(((SignedExpression) expr).getExpression());
+        }
+        return expr instanceof StringValue
+                || expr instanceof LongValue
+                || expr instanceof DoubleValue
+                || expr instanceof NullValue
+                || expr instanceof BooleanValue;
     }
 
     private static Statements parseStatements(String sql, DbConfig.Type dialect) throws JSQLParserException {
