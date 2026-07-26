@@ -83,8 +83,12 @@ public final class TripleSynthesizer {
     /** 전체 조합 수 안전 상한. 초과 시 오라클 변주를 포기하고 갭 마커 단일 조합으로 폴백한다(회귀·성능 안전판). */
     private static final long SAFE_COMBO_LIMIT = 4096L;
 
-    /** 갭 마커 접두. body/stubs jsonBody는 이 문자열을 JSON 문자열 값으로, seed.sql은 작은따옴표 리터럴로 담는다. */
-    private static final String GAP_MARKER_PREFIX = "__AGENT_FILL__";
+    /**
+     * 갭 마커 접두. body/stubs jsonBody는 이 문자열을 JSON 문자열 값으로, seed.sql은 작은따옴표 리터럴로
+     * 담는다. {@link TripleValidator}/{@link SeedSqlWhitelist}(T1 검증 게이트, REQ-009/012)가 마커
+     * 위치를 판별할 때도 이 상수를 그대로 참조한다(갭 마커 문법의 단일 소스).
+     */
+    public static final String GAP_MARKER_PREFIX = "__AGENT_FILL__";
 
     /** EXTERNAL_RESPONSE callSite가 {@code "<HTTP메서드> <path>"} 형식인지 판정할 때 허용하는 메서드 집합. */
     private static final Set<String> HTTP_METHODS =

@@ -42,6 +42,7 @@ dependencies {
     implementation(libs.slf4j.api)
     implementation(libs.jackson.dataformat.yaml)
     implementation(libs.opentelemetry.proto)
+    implementation(libs.jsqlparser)
     runtimeOnly(libs.logback.classic)
     otelAgent(libs.otel.javaagent)
     pjacocoAgent(libs.pjacoco.agent)
