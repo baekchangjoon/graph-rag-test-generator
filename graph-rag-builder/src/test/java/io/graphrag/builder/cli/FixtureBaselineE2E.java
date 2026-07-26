@@ -40,6 +40,10 @@ class FixtureBaselineE2E {
         GraphAsset graph = buildOrderServiceGraph();
         List<ExploredPath> transferPaths = graph.paths().stream()
                 .filter(p -> p.endpointId().equals("post-api-transfers")).toList();
+        // vacuous-통과 방지: endpoint 자체가 탐색되지 않아도(회귀로 그래프에서 사라져도) 아래
+        // noneMatch는 빈 스트림에 자명하게 참이 되어 outer-red를 감지 못한다. transferPaths가
+        // 비어있지 않음을 먼저 단언해 "가드에 막혀 2xx 없음"과 "endpoint 자체가 없음"을 구분한다.
+        assertThat(transferPaths).isNotEmpty();
         assertThat(transferPaths).noneMatch(p -> p.expectedStatus() / 100 == 2
                 && p.outcome() == Outcome.Kind.SUCCESS);
     }
