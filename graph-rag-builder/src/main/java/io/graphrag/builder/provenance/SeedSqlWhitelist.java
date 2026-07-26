@@ -17,6 +17,7 @@ import net.sf.jsqlparser.parser.feature.FeatureConfiguration;
 import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.Statements;
 import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.select.Values;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -33,7 +34,40 @@ import java.util.Set;
  * seed.sql의 각 문장을 구조적으로 파싱해 판정한다 — 정규식 기반 검사는 쓰지 않는다(기존 {@code testlib}의
  * regex 기반 {@code SqlTableParser}는 이 보안 게이트에 재사용하지 않는다, REQ-010 명시).
  *
- * <p>판정 규칙:
+ * <p><b>설계: blocklist가 아니라 allowlist(구조적 화이트리스트).</b> 세 차례의 코드리뷰에서 "새 절 발견 →
+ * 개별 차단"이 반복됐다 — VALUES 절 표현식 종류(서브쿼리/함수/컬럼참조), upsert/RETURNING 절
+ * (ON CONFLICT/ON DUPLICATE KEY UPDATE/RETURNING), 마지막으로 CTE({@code WITH ... INSERT})까지
+ * 임의 서브쿼리 실행 경로였다(Postgres data-modifying CTE는 주 쿼리가 참조하지 않아도 실행이 보장된다).
+ * blocklist는 구조적으로 "우리가 아직 생각하지 못한 절"에 항상 뚫린다. 그래서 이 클래스는
+ * {@link net.sf.jsqlparser.statement.insert.Insert}의 **필드 전수**(JSqlParser 5.3 소스 기준, 아래
+ * 열거)를 열거해 "허용 목록에 없는 필드가 하나라도 non-null/non-empty/true이면 reject"로 뒤집었다.
+ *
+ * <p><b>{@code Insert}의 전체 필드 18개(JSqlParser 5.3 {@code Insert.java} 소스 확인)와 판정:</b>
+ * <ul>
+ *   <li><b>허용(값 채움에 필요):</b> {@code table}(대상 테이블), {@code columns}(컬럼 목록),
+ *       {@code select}(단, 런타임 타입이 정확히 {@link Values}여야 함 — VALUES 절).</li>
+ *   <li><b>reject(아래 중 하나라도 존재/true면 절 자체를 reject — 내부를 들여다보지 않는다):</b>
+ *       {@code oracleHint}, {@code partitions}, {@code onlyDefaultValues}, {@code overriding},
+ *       {@code duplicateUpdateSets}(ON DUPLICATE KEY UPDATE), {@code modifierPriority}
+ *       (LOW_PRIORITY/DELAYED/HIGH_PRIORITY), {@code modifierIgnore}(INSERT IGNORE),
+ *       {@code overwrite}, {@code tableKeyword}, {@code returningClause}(RETURNING),
+ *       {@code setUpdateSets}(INSERT ... SET), {@code withItemsList}(CTE — {@code WITH ... INSERT},
+ *       읽기 전용이든 data-modifying이든 무조건 reject), {@code outputClause}(T-SQL OUTPUT),
+ *       {@code conflictTarget}/{@code conflictAction}(ON CONFLICT).</li>
+ * </ul>
+ * ({@code isUseValues()}/{@code isUseSet()}/{@code isUseDuplicate()}/{@code isUseSelectBrackets()}는
+ * 위 필드에서 파생되는 {@code @Deprecated} 편의 메서드라 별도 호출하지 않고 원본 필드의 getter만 쓴다 —
+ * {@code isUseSelectBrackets()}는 소스 확인 결과 항상 {@code false}를 반환하는 죽은 API다.)
+ *
+ * <p><b>VALUES 절 리터럴 제한:</b> {@code select instanceof Values}로 확인한 뒤, 그 안의 각 표현식은
+ * 닫힌 리터럴 집합({@link StringValue}/{@link LongValue}/{@link DoubleValue}/{@link NullValue}/
+ * {@link BooleanValue}, {@link SignedExpression}로 감싼 부호 있는 상수 포함)만 허용한다 — 서브쿼리
+ * ({@code (SELECT ...)}), 함수 호출(예: {@code LOAD_FILE(...)}), 컬럼 참조 등은 reject한다.
+ *
+ * <p><b>지원 문법:</b> {@code INSERT INTO t (cols) VALUES (닫힌 리터럴, ...)} 단일 문장뿐이며, 그 외
+ * 모든 절은(이 Javadoc이 미처 나열하지 못한 것 포함 — allowlist이므로 자동으로) reject된다.
+ *
+ * <p>그 밖의 판정 규칙:
  * <ul>
  *   <li>{@code CCJSqlParserUtil} 파싱 결과가 {@link Insert}가 아니면 reject(DDL·UPDATE·DELETE 등).</li>
  *   <li>한 줄(=하나의 의도된 INSERT 문장, {@link TripleSynthesizer}가 seed.sql 한 줄에 문장 하나를 쓰는
@@ -42,26 +76,7 @@ import java.util.Set;
  *       {@code VALUES ('DELETE FROM x')})는 파서가 리터럴로 인식하므로 문장 수에 영향을 주지 않아
  *       정상 통과한다.</li>
  *   <li>허용 테이블(화이트리스트) 밖을 대상으로 하는 INSERT는 reject.</li>
- *   <li>{@code VALUES} 절이 없는 INSERT(예: {@code INSERT ... SELECT}, {@code DEFAULT VALUES})는
- *       reject — 마커 위치는 "값 치환" 계약이지 값의 출처를 임의 쿼리로 대체하는 것이 아니다.</li>
- *   <li>{@code VALUES} 절의 각 표현식은 닫힌 리터럴 집합({@link StringValue}/{@link LongValue}/
- *       {@link DoubleValue}/{@link NullValue}/{@link BooleanValue}, {@link SignedExpression}로 감싼
- *       부호 있는 상수 포함)만 허용한다 — 서브쿼리({@code (SELECT ...)}), 함수 호출(예:
- *       {@code LOAD_FILE(...)}), 컬럼 참조 등은 reject한다. 화이트리스트 테이블 + 마커 위치라는 조건만으로는
- *       "값 치환"과 "임의 SQL 표현식 대체"를 구분하지 못하므로 표현식 종류 자체를 제한한다.</li>
- *   <li>upsert/returning 절({@code ON CONFLICT ... DO UPDATE}, {@code ON DUPLICATE KEY UPDATE},
- *       {@code INSERT ... SET}, {@code RETURNING})이 있으면 절 자체를 reject한다 — 이 절들의 내부
- *       표현식은 JSqlParser가 {@code Insert.getValues()}와 별도 필드({@code getConflictAction()},
- *       {@code getDuplicateUpdateSets()}, {@code getSetUpdateSets()}, {@code getReturningClause()})로
- *       파싱하므로 VALUES 절 리터럴 검사망 밖에 있다 — 그 안에 서브쿼리를 숨기면(예:
- *       {@code ON CONFLICT (id) DO UPDATE SET secret = (SELECT password FROM admin_users LIMIT 1)})
- *       단일 INSERT + 화이트리스트 테이블 + VALUES 리터럴-only 조건을 모두 만족하면서 임의 서브쿼리가
- *       실행된다. seed 목적상 upsert/returning은 불필요하므로 절 자체를 통째로 reject한다.</li>
  * </ul>
- *
- * <p><b>지원 문법:</b> 단일 {@code INSERT ... VALUES}(닫힌 리터럴)만 지원한다 — upsert
- * ({@code ON CONFLICT}/{@code ON DUPLICATE KEY UPDATE}/{@code INSERT ... SET})·{@code RETURNING}
- * 절은 미지원(reject)이다.
  *
  * <p>파서는 {@link DbConfig.Type}에 따라 구성한다 — MySQL/MariaDB는 백슬래시 escape 문자열 리터럴을
  * 허용해야 하므로 {@link Feature#allowBackslashEscapeCharacter}를 켠다(표준 SQL/Postgres는 escape가
@@ -128,12 +143,12 @@ public final class SeedSqlWhitelist {
     }
 
     /**
-     * 한 줄(하나의 의도된 문장 텍스트)을 파싱해 정확히 1개의 {@link Insert} 문장이고, {@code VALUES} 절이
-     * 닫힌 리터럴 집합으로만 구성되어 있는지 확인한다(REQ-010 정본 검사 — {@link TripleValidator}의
-     * seed.sql 마커-diff(REQ-009) 컬럼→값 맵 추출도 이 메서드를 재사용하므로, 여기서 거부된 표현식은
-     * 두 경로 모두에서 안전하게 배제된다). 파싱 실패, 2개 이상 문장, INSERT가 아닌 문장, {@code VALUES}
-     * 절이 없는 INSERT, 또는 VALUES 절에 상수가 아닌 표현식이 있으면 {@code reasons}에 사유를 남기고
-     * {@link Optional#empty()}를 반환한다.
+     * 한 줄(하나의 의도된 문장 텍스트)을 파싱해 정확히 1개의 {@link Insert} 문장이고, 그 구조가 allowlist
+     * ({@code INSERT INTO t (cols) VALUES (닫힌 리터럴, ...)} 단일 형태)에 정확히 부합하는지 확인한다
+     * (REQ-010 정본 검사 — {@link TripleValidator}의 seed.sql 마커-diff(REQ-009) 컬럼→값 맵 추출도 이
+     * 메서드를 재사용하므로, 여기서 거부된 표현식은 두 경로 모두에서 안전하게 배제된다). 파싱 실패, 2개
+     * 이상 문장, INSERT가 아닌 문장, allowlist 밖 절 사용, 또는 VALUES 절에 상수가 아닌 표현식이 있으면
+     * {@code reasons}에 사유를 남기고 {@link Optional#empty()}를 반환한다.
      */
     Optional<Insert> parseSingleInsert(String line, DbConfig.Type dialect, List<String> reasons) {
         Statements statements;
@@ -154,17 +169,13 @@ public final class SeedSqlWhitelist {
             return Optional.empty();
         }
         Insert insert = (Insert) statement;
-        if (!insert.isUseValues()) {
-            reasons.add("seed.sql이 VALUES 절 없는 INSERT(예: INSERT ... SELECT, DEFAULT VALUES)를 사용함"
-                    + "(REQ-010 reject): " + line);
+        List<String> violations = allowlistViolations(insert);
+        if (!violations.isEmpty()) {
+            reasons.add("seed.sql이 allowlist 밖 구성요소를 사용함(REQ-010 reject) — 허용 문법은 단일 "
+                    + "INSERT INTO t (cols) VALUES(닫힌 리터럴)뿐: " + violations + " (line: " + line + ")");
             return Optional.empty();
         }
-        if (hasUnsupportedClause(insert)) {
-            reasons.add("seed.sql이 upsert/returning 절(ON CONFLICT/ON DUPLICATE KEY UPDATE/INSERT ... SET/"
-                    + "RETURNING)을 사용함(REQ-010 reject) — 지원 문법은 단일 INSERT ... VALUES(닫힌 리터럴)만: "
-                    + line);
-            return Optional.empty();
-        }
+        // violations가 비었다는 것은 select가 정확히 Values임을 의미(allowlistViolations가 보장) — 안전.
         for (Expression value : insert.getValues().getExpressions()) {
             if (!isClosedLiteral(value)) {
                 reasons.add("seed.sql VALUES 절에 상수 리터럴이 아닌 표현식 감지(REQ-010 reject — 임의 SQL "
@@ -177,15 +188,68 @@ public final class SeedSqlWhitelist {
     }
 
     /**
-     * upsert/returning 절이 하나라도 있으면 {@code true} — {@code Insert.getValues()}와 별도 필드로
-     * 파싱되므로 {@link #isClosedLiteral}의 VALUES 검사가 미치지 못한다(재리뷰에서 실증된 우회 벡터).
-     * seed.sql은 단일 {@code INSERT ... VALUES}만 지원하므로 이 절들은 존재 자체를 reject한다.
+     * {@link Insert}의 필드 18개(class Javadoc 열거) 중 허용 목록(table/columns/select-as-Values)에
+     * 없는 필드가 non-null·non-empty·true이면 그 이름을 사유 목록에 담아 반환한다. 반환 목록이 비어
+     * 있어야만 이 INSERT를 allowlist 통과로 간주한다 — 새 JSqlParser 버전이 필드를 추가해도, 그 필드가
+     * 이 열거에 없으면 (allowlist 설계상) 자동으로는 통과시키지 않고 컴파일 시점에는 드러나지 않지만
+     * 런타임 동작은 "알 수 없는 필드는 검사하지 않는" 사각지대가 될 수 있으므로, JSqlParser를 업그레이드할
+     * 때는 이 열거를 {@code Insert.java} 소스와 다시 대조해야 한다(Javadoc에 소스 대조 방법 명시).
      */
-    private static boolean hasUnsupportedClause(Insert insert) {
-        return insert.getConflictAction() != null
-                || (insert.getDuplicateUpdateSets() != null && !insert.getDuplicateUpdateSets().isEmpty())
-                || (insert.getSetUpdateSets() != null && !insert.getSetUpdateSets().isEmpty())
-                || insert.getReturningClause() != null;
+    private static List<String> allowlistViolations(Insert insert) {
+        List<String> violations = new ArrayList<>();
+        if (!(insert.getSelect() instanceof Values)) {
+            violations.add("select(VALUES 절이 아니거나 없음 — INSERT ... SELECT/서브쿼리/DEFAULT VALUES 등)");
+        }
+        if (insert.getOracleHint() != null) {
+            violations.add("oracleHint");
+        }
+        if (nonEmpty(insert.getPartitions())) {
+            violations.add("partitions");
+        }
+        if (insert.isOnlyDefaultValues()) {
+            violations.add("onlyDefaultValues");
+        }
+        if (insert.isOverriding()) {
+            violations.add("overriding");
+        }
+        if (nonEmpty(insert.getDuplicateUpdateSets())) {
+            violations.add("duplicateUpdateSets(ON DUPLICATE KEY UPDATE)");
+        }
+        if (insert.getModifierPriority() != null) {
+            violations.add("modifierPriority(LOW_PRIORITY/DELAYED/HIGH_PRIORITY)");
+        }
+        if (insert.isModifierIgnore()) {
+            violations.add("modifierIgnore(INSERT IGNORE)");
+        }
+        if (insert.isOverwrite()) {
+            violations.add("overwrite");
+        }
+        if (insert.isTableKeyword()) {
+            violations.add("tableKeyword");
+        }
+        if (insert.getReturningClause() != null) {
+            violations.add("returningClause(RETURNING)");
+        }
+        if (nonEmpty(insert.getSetUpdateSets())) {
+            violations.add("setUpdateSets(INSERT ... SET)");
+        }
+        if (nonEmpty(insert.getWithItemsList())) {
+            violations.add("withItemsList(CTE — WITH ... INSERT)");
+        }
+        if (insert.getOutputClause() != null) {
+            violations.add("outputClause(T-SQL OUTPUT)");
+        }
+        if (insert.getConflictTarget() != null) {
+            violations.add("conflictTarget(ON CONFLICT)");
+        }
+        if (insert.getConflictAction() != null) {
+            violations.add("conflictAction(ON CONFLICT ... DO ...)");
+        }
+        return violations;
+    }
+
+    private static boolean nonEmpty(List<?> list) {
+        return list != null && !list.isEmpty();
     }
 
     /**
