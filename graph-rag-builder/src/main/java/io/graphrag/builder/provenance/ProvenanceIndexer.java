@@ -155,6 +155,11 @@ public class ProvenanceIndexer {
     public ProvenanceReport analyze(CtModel model, Endpoint endpoint, int maxDepth) {
         List<GuardFact> guards = new ArrayList<>();
         List<Unresolved> unresolved = new ArrayList<>();
+        // REQ-001 unguarded 오탐 방지: DERIVED로 감싸이는 리프의 jsonPath는 최종 ValueRef에 남지
+        // 않으므로(derivesFromTrackedOrigin은 origin만 보고 jsonPath를 버림), classifyOperand가
+        // INPUT을 인식하는 모든 지점(가드 최상위 피연산자든 DERIVED 판정용 내부 재귀 호출이든)에서
+        // 별도로 적재하는 분석-스코프 참조 집합. ValueRef 스키마는 그대로 두고 내부적으로만 쓴다.
+        Set<String> referencedInputPaths = new LinkedHashSet<>();
 
         CtMethod<?> handler = resolveMethod(model, endpoint.handlerClass(), endpoint.handlerMethod());
         if (handler == null) {
@@ -174,7 +179,7 @@ public class ProvenanceIndexer {
             CtMethod<?> method = frame.method();
             int depth = frame.depth();
 
-            collectGuards(model, method, handlerParams, columnResolver, guards, unresolved);
+            collectGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
 
             for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 CtExecutableReference<?> executable = inv.getExecutable();
@@ -206,7 +211,7 @@ public class ProvenanceIndexer {
             }
         }
 
-        List<UnguardedField> unguarded = collectUnguardedFields(handler, guards, model);
+        List<UnguardedField> unguarded = collectUnguardedFields(handler, referencedInputPaths, model);
         return new ProvenanceReport(endpoint.id(), guards, unguarded, unresolved);
     }
 
@@ -214,21 +219,15 @@ public class ProvenanceIndexer {
 
     /**
      * {@code handler}의 {@code @RequestBody} 파라미터 타입을 재귀 전개해 얻은 전체 필드 dot-path 중,
-     * {@code guards}의 어떤 피연산자(Origin.INPUT)의 jsonPath로도 참조되지 않은 필드를 반환한다.
-     * {@code @RequestBody} 파라미터가 없으면(예: body 없는 GET) 빈 리스트.
+     * {@code referencedInputPaths}(가드 수집 중 INPUT으로 인식된 모든 jsonPath — DERIVED로 감싸여
+     * 최종 ValueRef에는 남지 않는 리프도 포함)에 없는 필드를 반환한다. {@code @RequestBody} 파라미터가
+     * 없으면(예: body 없는 GET) 빈 리스트.
      */
-    private List<UnguardedField> collectUnguardedFields(CtMethod<?> handler, List<GuardFact> guards, CtModel model) {
+    private List<UnguardedField> collectUnguardedFields(CtMethod<?> handler, Set<String> referencedInputPaths,
+                                                         CtModel model) {
         CtParameter<?> bodyParam = findRequestBodyParam(handler);
         if (bodyParam == null) {
             return List.of();
-        }
-        Set<String> referencedInputPaths = new LinkedHashSet<>();
-        for (GuardFact guard : guards) {
-            for (ValueRef operand : guard.operands()) {
-                if (operand.origin() == Origin.INPUT && operand.jsonPath() != null) {
-                    referencedInputPaths.add(operand.jsonPath());
-                }
-            }
         }
         List<UnguardedField> out = new ArrayList<>();
         collectFieldPaths(bodyParam.getType(), "", model, referencedInputPaths, out, new LinkedHashSet<>());
@@ -381,22 +380,23 @@ public class ProvenanceIndexer {
 
     private void collectGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
                                JpaColumnResolver columnResolver, List<GuardFact> guards,
-                               List<Unresolved> unresolved) {
-        collectIfGuards(model, method, handlerParams, columnResolver, guards, unresolved);
-        collectExistsGuards(model, method, handlerParams, columnResolver, guards, unresolved);
+                               List<Unresolved> unresolved, Set<String> referencedInputPaths) {
+        collectIfGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
+        collectExistsGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
     }
 
     /** ① CtIf 가드: then/else 분기가 throw 또는 ResponseEntity.status(4xx|5xx) 반환으로 이어지는 경우만 채택. */
     private void collectIfGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
                                  JpaColumnResolver columnResolver, List<GuardFact> guards,
-                                 List<Unresolved> unresolved) {
+                                 List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         for (CtIf ctIf : method.getElements(new TypeFilter<>(CtIf.class))) {
             if (!isErrorGuard(ctIf)) {
                 continue;
             }
             CtExpression<?> condition = ctIf.getCondition();
             List<ValueRef> operands = new ArrayList<>();
-            decomposeCondition(condition, handlerParams, model, columnResolver, operands, unresolved);
+            decomposeCondition(condition, handlerParams, model, columnResolver, operands, unresolved,
+                    referencedInputPaths);
             guards.add(new GuardFact(locationOf(condition), opSymbol(condition), operands));
         }
     }
@@ -408,7 +408,7 @@ public class ProvenanceIndexer {
      */
     private void collectExistsGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
                                      JpaColumnResolver columnResolver, List<GuardFact> guards,
-                                     List<Unresolved> unresolved) {
+                                     List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
             String name = inv.getExecutable().getSimpleName();
             if (!"orElseThrow".equals(name) && !"orElseGet".equals(name)) {
@@ -426,7 +426,8 @@ public class ProvenanceIndexer {
             List<ValueRef> operands = new ArrayList<>();
             if (receiver instanceof CtInvocation<?> receiverInvocation) {
                 for (CtExpression<?> arg : receiverInvocation.getArguments()) {
-                    decomposeCondition(arg, handlerParams, model, columnResolver, operands, unresolved);
+                    decomposeCondition(arg, handlerParams, model, columnResolver, operands, unresolved,
+                            referencedInputPaths);
                 }
             }
             if (operands.isEmpty()) {
@@ -500,27 +501,32 @@ public class ProvenanceIndexer {
      */
     private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
                                     JpaColumnResolver columnResolver, List<ValueRef> out,
-                                    List<Unresolved> unresolved) {
+                                    List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         if (expr instanceof CtBinaryOperator<?> bin) {
             if (OP_SYMBOLS.containsKey(bin.getKind())) {
-                decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out, unresolved);
-                decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out, unresolved);
+                decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out, unresolved,
+                        referencedInputPaths);
+                decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out, unresolved,
+                        referencedInputPaths);
                 return;
             }
-            out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved));
+            out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths));
             return;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out, unresolved);
+            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out, unresolved,
+                    referencedInputPaths);
             return;
         }
         if (expr instanceof CtInvocation<?> inv && isEqualsLike(inv)
                 && inv.getTarget() != null && !inv.getArguments().isEmpty()) {
-            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out, unresolved);
-            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out, unresolved);
+            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out, unresolved,
+                    referencedInputPaths);
+            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out, unresolved,
+                    referencedInputPaths);
             return;
         }
-        out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved));
+        out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths));
     }
 
     private static boolean isEqualsLike(CtInvocation<?> inv) {
@@ -528,12 +534,23 @@ public class ProvenanceIndexer {
         return "equals".equals(name) || "equalsIgnoreCase".equals(name);
     }
 
+    /**
+     * {@code referencedInputPaths}: INPUT으로 인식된 리프의 jsonPath를 무조건 적재하는 분석-스코프
+     * 누적기(unguarded 판정용, REQ-001) — 이 메서드가 반환하는 {@link ValueRef}가 그대로 가드
+     * 피연산자로 쓰이든({@link #decomposeCondition}), DERIVED 판정용으로 origin만 보고 버려지든
+     * ({@link #derivesFromTrackedOrigin}) 상관없이 "이 필드는 어떤 가드에 실제로 쓰였다"는 사실은
+     * 동일하므로, ValueRef 스키마를 건드리지 않고 이 누적기 하나로 both call site를 커버한다.
+     */
     private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
-                                     JpaColumnResolver columnResolver, List<Unresolved> unresolved) {
+                                     JpaColumnResolver columnResolver, List<Unresolved> unresolved,
+                                     Set<String> referencedInputPaths) {
         Optional<List<String>> segments = getterSegments(expr, handlerParams, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
             String jsonPath = segs.isEmpty() ? bareParamName(expr) : String.join(".", segs);
+            if (jsonPath != null) {
+                referencedInputPaths.add(jsonPath);
+            }
             return new ValueRef(Origin.INPUT, jsonPath, null, null, null, null,
                     typeNameOf(expr), null, null);
         }
@@ -546,7 +563,7 @@ public class ProvenanceIndexer {
             return external.get();
         }
         if (expr instanceof CtBinaryOperator<?> bin
-                && derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved)) {
+                && derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved, referencedInputPaths)) {
             return new ValueRef(Origin.DERIVED, null, null, null, null, null, typeNameOf(expr), null, null);
         }
         Optional<String> multiImplTarget = multiImplTargetType(expr, model);
@@ -567,19 +584,24 @@ public class ProvenanceIndexer {
     /**
      * 이항연산자 트리(중첩 산술 포함, 예: {@code (a + b) * 2})를 리프까지 내려가며 각 리프를
      * {@link #classifyOperand}로 분류해 INPUT 또는 DB_READ 출처가 하나라도 있는지 확인한다. 리프
-     * 분류 과정에서 발생하는 부수효과(예: MULTI_IMPL 미해결 기록)는 그 리프가 실제로 미해결이므로
-     * 그대로 유지한다 — DERIVED 여부와 무관하게 유효한 기록이다.
+     * 분류 과정에서 발생하는 부수효과(예: MULTI_IMPL 미해결 기록, {@code referencedInputPaths} 적재)는
+     * 그 리프가 실제로 미해결/참조된 것이므로 그대로 유지한다 — DERIVED 여부와 무관하게 유효한 기록이다.
      */
     private boolean derivesFromTrackedOrigin(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
-                                             JpaColumnResolver columnResolver, List<Unresolved> unresolved) {
+                                             JpaColumnResolver columnResolver, List<Unresolved> unresolved,
+                                             Set<String> referencedInputPaths) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            return derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model, columnResolver, unresolved)
-                    || derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model, columnResolver, unresolved);
+            return derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model, columnResolver,
+                            unresolved, referencedInputPaths)
+                    || derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model, columnResolver,
+                            unresolved, referencedInputPaths);
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            return derivesFromTrackedOrigin(un.getOperand(), handlerParams, model, columnResolver, unresolved);
+            return derivesFromTrackedOrigin(un.getOperand(), handlerParams, model, columnResolver, unresolved,
+                    referencedInputPaths);
         }
-        Origin origin = classifyOperand(expr, handlerParams, model, columnResolver, unresolved).origin();
+        Origin origin = classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths)
+                .origin();
         return origin == Origin.INPUT || origin == Origin.DB_READ;
     }
 

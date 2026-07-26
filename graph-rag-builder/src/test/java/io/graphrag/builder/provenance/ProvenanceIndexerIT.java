@@ -189,6 +189,24 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-001: DERIVED로 감싸인 INPUT 리프는 unguarded로 오탐되면 안 된다")
+    void req001_derivedGuardFieldNotUnguarded() {
+        // score는 유일한 가드(req.getScore() * 2 == 84)의 파생식 안에서만 쓰인다. derivesFromTrackedOrigin이
+        // classifyOperand(req.getScore())를 호출해 INPUT임을 확인하고도 origin만 보고 jsonPath를 버리므로
+        // (DERIVED ValueRef는 jsonPath=null), 이 리프가 실제로는 가드에 쓰였다는 사실이 별도로 적재되지
+        // 않으면 unguarded로 오탐된다.
+        ProvenanceReport report = analyzeFixture(
+                "derived",
+                "io.graphrag.fixture.derived.DerivedController",
+                "create",
+                3);
+
+        assertThat(report.unguarded())
+                .as("score는 DERIVED 가드(req.getScore() * 2 == 84)에 실제로 쓰였으므로 unguarded에 없어야 한다")
+                .noneMatch(u -> "score".equals(u.jsonPath()));
+    }
+
+    @Test
     @DisplayName("REQ-003: 구현체 2개인 인터페이스 호출은 UNKNOWN + unresolved(MULTI_IMPL)")
     void req003_multiImplUnresolved() {
         ProvenanceReport report = analyzeFixture(
