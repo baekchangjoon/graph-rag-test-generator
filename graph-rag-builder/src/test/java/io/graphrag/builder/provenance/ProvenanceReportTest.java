@@ -57,12 +57,71 @@ class ProvenanceReportTest {
 
         // Assert: round-trip 후 동등성 확인
         assertThat(deserialized)
-                .isEqualTo(original)
-                .as("JSON round-trip should preserve ProvenanceReport equality");
+                .as("JSON round-trip should preserve ProvenanceReport equality")
+                .isEqualTo(original);
 
         // Assert: 각 nested type도 동등성 확인
         assertThat(deserialized.guards()).isEqualTo(original.guards());
         assertThat(deserialized.unguarded()).isEqualTo(original.unguarded());
         assertThat(deserialized.unresolved()).isEqualTo(original.unresolved());
+    }
+
+    @Test
+    void jsonIncludeNonNullExcludesNullFields() throws Exception {
+        // Arrange: null 필드를 포함한 ValueRef 생성
+        // origin=INPUT, table/column/stubField/literal은 null
+        var valueRefWithNulls = new ProvenanceReport.ValueRef(
+                ProvenanceReport.Origin.INPUT,
+                "$.userId",
+                null,  // table is null
+                null,  // column is null
+                "POST /transfer",
+                null,  // stubField is null
+                "Long",
+                "userId",
+                null   // literal is null
+        );
+
+        var guardFactWithNulls = new ProvenanceReport.GuardFact(
+                "Service.java:10",
+                "checkLimit",
+                List.of(valueRefWithNulls)
+        );
+
+        var reportWithNulls = new ProvenanceReport(
+                "endpoint-456",
+                List.of(guardFactWithNulls),
+                List.of(),
+                List.of()
+        );
+
+        // Act: JSON 직렬화
+        var mapper = Json.mapper();
+        var json = mapper.writeValueAsString(reportWithNulls);
+
+        // Assert: null 필드의 키가 JSON 문자열에 없어야 함
+        assertThat(json)
+                .as("null fields should not appear in JSON serialization")
+                .doesNotContain("\"table\"")
+                .doesNotContain("\"column\"")
+                .doesNotContain("\"stubField\"")
+                .doesNotContain("\"literal\"");
+
+        // Assert: non-null 필드는 JSON에 포함되어야 함
+        assertThat(json)
+                .as("non-null fields should appear in JSON serialization")
+                .contains("\"origin\":\"INPUT\"")
+                .contains("\"jsonPath\":\"$.userId\"")
+                .contains("\"callSite\":\"POST /transfer\"")
+                .contains("\"javaType\":\"Long\"")
+                .contains("\"semanticHint\":\"userId\"");
+
+        // Assert: round-trip 후에도 null 필드는 null이어야 함
+        var deserialized = mapper.readValue(json, ProvenanceReport.class);
+        var deserializedValueRef = deserialized.guards().get(0).operands().get(0);
+        assertThat(deserializedValueRef.table()).isNull();
+        assertThat(deserializedValueRef.column()).isNull();
+        assertThat(deserializedValueRef.stubField()).isNull();
+        assertThat(deserializedValueRef.literal()).isNull();
     }
 }
