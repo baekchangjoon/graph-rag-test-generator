@@ -284,7 +284,7 @@
 | REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done |
 | REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🟡[^derived-half] |
-| REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🔴 planned |
+| REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
 | REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005 | E2E | 🔴 planned |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🔴 planned |
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🔴 planned |

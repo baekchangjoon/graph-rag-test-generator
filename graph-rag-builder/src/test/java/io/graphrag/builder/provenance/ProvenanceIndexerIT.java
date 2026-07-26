@@ -168,6 +168,38 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-034: 중첩 DTO(List 원소 필드) 가드가 dot-path로 태깅")
+    void req034_nestedDtoRecursion() {
+        // fixture: if (req.items() == null || req.items().isEmpty() || req.items().get(0).qty() <= 0)
+        ProvenanceReport report = analyzeFixture(
+                "nested",
+                "io.graphrag.fixture.nested.NestedController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("req.items().get(0).qty() 피연산자는 대표원소 규약으로 INPUT + jsonPath=\"items.qty\"로 태깅되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.INPUT && "items.qty".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-034: 중첩 DTO(Map 키 필드) 가드가 dot-path로 태깅")
+    void req034_nestedDtoMapKeyRecursion() {
+        // fixture: if (req.configs() == null || req.configs().get("region") == null)
+        ProvenanceReport report = analyzeFixture(
+                "nested",
+                "io.graphrag.fixture.nested.NestedController",
+                "createByConfig",
+                3);
+
+        assertThat(report.guards())
+                .as("req.configs().get(\"region\") 피연산자는 Map 키 규약으로 INPUT + jsonPath=\"configs.region\"으로 태깅되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.INPUT && "configs.region".equals(v.jsonPath())));
+    }
+
+    @Test
     void recursionDoesNotHangOnMutualRecursion() {
         // methodA()↔methodB() 상호 재귀가 방문 집합으로 자연 종료하는지(무한루프 없이) 확인.
         // 테스트 자체가 유한 시간 내 반환되면 통과(타임아웃되면 실패).
