@@ -659,6 +659,16 @@ public class ProvenanceIndexer {
      * account}이지 {@code getX()} 자신이 아니므로, 로컬 변수 1단 간접까지만 지원되고 그 이상의
      * getter 체인은 지원 범위 밖이다). repository 호출을 찾으면 그 반환 타입(Optional/List 등
      * 컨테이너 해제)을 엔티티 타입으로 반환한다.
+     *
+     * <p>판별은 호출의 {@code executable.getDeclaringType()}이 아니라 **수신 표현식의 정적 타입**
+     * (예: {@code accountRepository} 필드의 선언 타입 {@code AccountRepository})으로 한다 — Spoon의
+     * noClasspath 모드는 {@code findById}처럼 리포지토리 인터페이스가 재선언하지 않고 라이브러리
+     * {@code JpaRepository}에서 그대로 상속받는 메서드에 대해 {@code getDeclaringType()}/{@code
+     * getType()}(반환 타입) 모두 해소하지 못한다(실 SUT의 일반적 관례 — 커스텀 파인더를 재선언하지
+     * 않는 순수 {@code interface AccountRepository extends JpaRepository<Account, String> {}}).
+     * 반환 타입이 해소되면 그대로 컨테이너 해제해 쓰고, 해소되지 않으면 리시버 타입의
+     * {@code JpaRepository<Entity, Id>} 제네릭 인자에서 엔티티 타입을 역산한다
+     * ({@link #jpaRepositoryEntityTypeArg}).
      */
     private Optional<CtTypeReference<?>> repositoryEntityType(CtExpression<?> expr, CtModel model) {
         if (expr instanceof CtInvocation<?> inv) {
@@ -668,17 +678,41 @@ public class ProvenanceIndexer {
                         ? Optional.empty()
                         : repositoryEntityType(inv.getTarget(), model);
             }
-            CtExecutableReference<?> executable = inv.getExecutable();
-            var declaringTypeRef = executable.getDeclaringType();
-            if (declaringTypeRef != null && isRepositoryType(declaringTypeRef, model)) {
-                return Optional.ofNullable(unwrapContainerType(executable.getType()));
+            CtExpression<?> target = inv.getTarget();
+            CtTypeReference<?> targetType = target == null ? null : target.getType();
+            if (targetType == null || !isRepositoryType(targetType, model)) {
+                return Optional.empty();
             }
-            return Optional.empty();
+            CtTypeReference<?> returnType = inv.getExecutable().getType();
+            if (returnType != null) {
+                return Optional.of(unwrapContainerType(returnType));
+            }
+            return jpaRepositoryEntityTypeArg(targetType, model);
         }
         if (expr instanceof CtVariableRead<?> vr
                 && vr.getVariable().getDeclaration() instanceof CtLocalVariable<?> localVar
                 && localVar.getDefaultExpression() != null) {
             return repositoryEntityType(localVar.getDefaultExpression(), model);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * {@code repoType}(예: {@code AccountRepository})의 {@code JpaRepository<Entity, Id>} 상위
+     * 인터페이스 선언에서 첫 제네릭 인자(엔티티 타입)를 역산한다. {@code findById} 등 리포지토리가
+     * 재선언하지 않고 상속만 하는 메서드는 noClasspath에서 반환 타입이 해소되지 않으므로
+     * ({@link #repositoryEntityType} 참고), 리시버 타입 선언 자체(소스에 있으므로 항상 해소 가능)의
+     * 상위 인터페이스 제네릭 인자로 대체한다.
+     */
+    private static Optional<CtTypeReference<?>> jpaRepositoryEntityTypeArg(CtTypeReference<?> repoType, CtModel model) {
+        CtType<?> repoDecl = resolveType(model, repoType.getQualifiedName());
+        if (repoDecl == null) {
+            return Optional.empty();
+        }
+        for (CtTypeReference<?> superIntf : repoDecl.getSuperInterfaces()) {
+            if ("JpaRepository".equals(superIntf.getSimpleName()) && !superIntf.getActualTypeArguments().isEmpty()) {
+                return Optional.of(superIntf.getActualTypeArguments().get(0));
+            }
         }
         return Optional.empty();
     }

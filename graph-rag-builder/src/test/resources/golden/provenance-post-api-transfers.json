@@ -1,0 +1,41 @@
+{
+  "endpointId": "post-api-transfers",
+  "guards": [
+    {
+      "at": "TransferController.java:30",
+      "op": "<",
+      "operands": [
+        { "origin": "DB_READ", "table": "fund_accounts", "column": "balance_amount", "javaType": "long" },
+        { "origin": "INPUT", "jsonPath": "amount", "javaType": "long" }
+      ]
+    },
+    {
+      "at": "TransferController.java:33",
+      "op": "||",
+      "operands": [
+        { "origin": "INPUT", "jsonPath": "items", "javaType": "List" },
+        { "origin": "UNKNOWN", "javaType": "<nulltype>" },
+        { "origin": "INPUT", "jsonPath": "items.empty", "javaType": "boolean" },
+        { "origin": "INPUT", "jsonPath": "items.qty", "javaType": "int" },
+        { "origin": "UNKNOWN", "javaType": "int", "literal": "0" }
+      ]
+    },
+    {
+      "at": "TransferController.java:37",
+      "op": "!",
+      "operands": [
+        { "origin": "UNKNOWN", "javaType": "String", "literal": "CLEAR" },
+        { "origin": "EXTERNAL_RESPONSE", "callSite": "POST /fraud/check", "stubField": "status", "javaType": "String" }
+      ]
+    },
+    {
+      "at": "TransferController.java:28",
+      "op": "EXISTS",
+      "operands": [
+        { "origin": "INPUT", "jsonPath": "fromAccountId", "javaType": "String" }
+      ]
+    }
+  ],
+  "unguarded": [],
+  "unresolved": []
+}
