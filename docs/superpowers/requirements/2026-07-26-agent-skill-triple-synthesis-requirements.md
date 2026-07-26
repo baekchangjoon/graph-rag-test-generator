@@ -312,7 +312,7 @@
 | REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#REQ-019 | integration | 🔴 planned |
 | REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#REQ-020 | E2E | 🔴 planned |
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#REQ-035 | integration | 🔴 planned |
-| REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🔴 planned |
+| REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🟢 green |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
 | REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split][^req036-task12-partial] |
@@ -387,7 +387,7 @@ Endpoint를 직접 명시받고 happy 시드는 별도 JSON 파일(`--happy-seed
 `promoted/` 커밋 경로(Task 18 소관). 이 세 항목이 남아 있어 REQ-036은 이번 task로도 완성되지
 않았고 🔴 planned를 유지한다.
 
-Coverage: 20/36 green (56%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
+Coverage: 21/36 green (58%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 

@@ -49,6 +49,15 @@ public record ExplorationReport(
      *
      * <p>noHappyPathReason: 탐색된 경로가 전부 FAILURE(에러 엔벨로프 포함)일 때 사유 문자열을 기록한다.
      * SUCCESS 경로가 하나라도 있거나 탐색 경로 자체가 없으면 null.
+     *
+     * <p>REQ-021 trial observation fields:
+     * <ul>
+     *   <li>trialCount: 총 시행 횟수</li>
+     *   <li>tripleAdopted: 최종 triple 채택 여부</li>
+     *   <li>tripleRejected: 거부된 triple 분류별 개수 (key: 거부 사유, value: 개수)</li>
+     *   <li>staleTriples: 폐기된 후보 경로 (형식: {@code <endpointId>/promoted/cand-NN},
+     *     스토어 루트 기준 상대 경로)</li>
+     * </ul>
      */
     public record EndpointExploration(
             String endpointId,
@@ -58,7 +67,26 @@ public record ExplorationReport(
             Map<String, Integer> pathsByEngine,
             int solverRelevantMissed,
             List<DroppedPath> droppedPaths,
-            String noHappyPathReason) {
+            String noHappyPathReason,
+            int trialCount,
+            boolean tripleAdopted,
+            Map<String, Integer> tripleRejected,
+            List<String> staleTriples) {
+
+        /**
+         * 8-argument backward-compat constructor (no trial observation fields).
+         * 기존 호출자는 trialCount=0, tripleAdopted=false, tripleRejected=[], staleTriples=[] 기본값을 얻는다.
+         */
+        public EndpointExploration(String endpointId, int totalBranches, int coveredBranches,
+                                   List<BranchRef> missedBranches,
+                                   Map<String, Integer> pathsByEngine,
+                                   int solverRelevantMissed,
+                                   List<DroppedPath> droppedPaths,
+                                   String noHappyPathReason) {
+            this(endpointId, totalBranches, coveredBranches, missedBranches,
+                    pathsByEngine, solverRelevantMissed, droppedPaths, noHappyPathReason,
+                    0, false, Map.of(), List.of());
+        }
 
         /**
          * 7-argument backward-compat constructor (no noHappyPathReason).
@@ -85,9 +113,11 @@ public record ExplorationReport(
                     pathsByEngine, solverRelevantMissed, List.of(), null);
         }
 
-        /** compact canonical constructor: null-guard droppedPaths. */
+        /** compact canonical constructor: null-guard droppedPaths, tripleRejected, staleTriples. */
         public EndpointExploration {
             droppedPaths = droppedPaths == null ? List.of() : droppedPaths;
+            tripleRejected = tripleRejected == null ? Map.of() : tripleRejected;
+            staleTriples = staleTriples == null ? List.of() : staleTriples;
         }
 
         /** REQ-009: pathsByEngine 합산 — 탐색된 총 경로 수. */
