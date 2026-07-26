@@ -110,6 +110,27 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-003: URL 인자가 리터럴이 아니면 callSite는 클라이언트클래스#메서드로 폴백")
+    void req003_externalCallSiteFallsBackWhenUrlNotLiteral() {
+        // DynamicUrlClient.check(path, ...)의 URL 인자는 메서드 파라미터(변수)라 path literal을
+        // 추출할 수 없다 — bare 메서드명("postForObject")이 아니라 클라이언트클래스#메서드로
+        // 폴백해야 추적성이 유지된다(리뷰 반영: 계약 "추출 가능한 범위까지, 불가하면 클래스#메서드").
+        ProvenanceReport report = analyzeFixture(
+                "external",
+                "io.graphrag.fixture.external.DynamicUrlController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("result.status() 피연산자는 EXTERNAL_RESPONSE이고 callSite는 "
+                        + "\"io.graphrag.fixture.external.DynamicUrlClient#check\"로 폴백되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.EXTERNAL_RESPONSE
+                        && "io.graphrag.fixture.external.DynamicUrlClient#check".equals(v.callSite())
+                        && "status".equals(v.stubField())));
+    }
+
+    @Test
     @DisplayName("REQ-032: INPUT을 감싼 산술 파생식이 DERIVED로 태깅(concolic 해 배치는 C2 범위)")
     void req032_derivedTagged() {
         ProvenanceReport report = analyzeFixture(
