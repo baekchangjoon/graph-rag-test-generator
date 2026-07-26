@@ -60,8 +60,11 @@ import java.util.Set;
  *       "amount", "user.id"). record는 {@code req.amount()}처럼 get/is 접두사가 없으므로,
  *       호출 메서드명이 수신 타입의 record component명과 정확히 일치하면 별도로 인식한다.</li>
  *   <li>DB_READ 태깅 — 리프 피연산자가 repository({@code JpaRepository} 서브타입/{@code @Repository}/
- *       알려진 MyBatis mapper FQN) 반환값(직접 체이닝 또는 로컬 변수 경유)에서 시작하는 getter 체인이면
- *       {@link Origin#DB_READ} + {@link JpaColumnResolver}로 해석한 table/column.</li>
+ *       알려진 MyBatis mapper FQN) 반환값(직접 체이닝 또는 로컬 변수 1단 경유)에 대한 **단일 getter
+ *       hop**이면 {@link Origin#DB_READ} + {@link JpaColumnResolver}로 해석한 table/column. 중첩
+ *       엔티티 관계를 넘나드는 다단 getter 체인(예: {@code account.getOwner().getEmail()})은
+ *       미지원 — 그 피연산자는 UNKNOWN으로 남는다(자세한 범위는 {@link #classifyDbRead}/
+ *       {@link #repositoryEntityType} 참고).</li>
  * </ul>
  *
  * <p>EXTERNAL_RESPONSE/DERIVED 태깅은 후속 task 범위 — 이 클래스는 그 경우 피연산자를
@@ -349,9 +352,19 @@ public class ProvenanceIndexer {
     // ---- DB_READ 태깅(REQ-004) ----
 
     /**
-     * expr이 repository(JpaRepository 서브타입/@Repository/MyBatis mapper) 반환값에서 시작하는
-     * getter 체인이면 {@link Origin#DB_READ}로 태깅하고, {@link JpaColumnResolver}로 table/column을
-     * 해석한다. 체인 루트가 repository 호출이 아니면 empty.
+     * expr이 repository(JpaRepository 서브타입/@Repository/MyBatis mapper) 반환값에 대한 **단일
+     * getter 호출**(예: {@code account.getBalance()})이면 {@link Origin#DB_READ}로 태깅하고,
+     * {@link JpaColumnResolver}로 table/column을 해석한다.
+     *
+     * <p><b>지원 범위(단일 hop만):</b> {@code expr}은 그 자체가 getter 호출이어야 하고, 그 호출의
+     * 수신 표현식({@code inv.getTarget()})이 (pass-through 언랩·로컬 변수 1단 간접을 거쳐) repository
+     * 호출로 직접 귀결되어야 한다. 즉 repository가 돌려준 엔티티 위에서 getter를 **한 번만** 호출하는
+     * 형태만 인식한다. {@code account.getOwner().getEmail()}처럼 엔티티 관계를 넘나드는 다단 getter
+     * 체인은 지원하지 않는다 — {@code getEmail()}의 수신 표현식은 {@code getOwner()} 호출(엔티티
+     * getter)이지 repository 호출이 아니므로 {@link #repositoryEntityType}이 empty를 반환하고, 그
+     * 피연산자는 (INPUT도 아니므로) {@link Origin#UNKNOWN}으로 남는다 — 조용한 강등이며 별도
+     * unresolved 기록은 없다(REQ-004 수용기준은 단일 hop만 요구; 중첩 관계 탐색은 이 task 범위 밖).
+     * 체인 루트가 repository 호출이 아니면 empty.
      */
     private Optional<ValueRef> classifyDbRead(CtExpression<?> expr, CtModel model, JpaColumnResolver columnResolver) {
         if (!(expr instanceof CtInvocation<?> inv) || inv.getTarget() == null) {
@@ -369,11 +382,20 @@ public class ProvenanceIndexer {
     }
 
     /**
-     * 표현식 체인을 거슬러 올라가며 repository 호출을 찾는다. {@code orElseThrow}/{@code orElseGet}/
-     * {@code orElse}/{@code get}(Optional 언랩)은 통과(pass-through)하고, 로컬 변수 읽기는 그
-     * 선언식(초기화 표현식)으로 계속 추적한다(실제 SUT 관례: {@code Account account =
-     * repo.findById(x).orElseThrow(...)} 뒤 {@code account.getX()}). repository 호출을 찾으면 그
-     * 반환 타입(Optional/List 등 컨테이너 해제)을 엔티티 타입으로 반환한다.
+     * expr이 repository 호출 그 자체(또는 그것을 Optional pass-through·로컬 변수 1단으로 감싼
+     * 표현식)인지 판별한다 — {@code account.getOwner()}처럼 **엔티티의 getter 호출**은 여기서
+     * 재귀하지 않으므로(그런 호출의 declaringType은 repository가 아니라 엔티티) 다단 getter 체인의
+     * 중간 hop을 넘어 repository까지 거슬러 올라가지 않는다. 즉 이 메서드는 "체인 어딘가에
+     * repository 호출이 있는가"가 아니라 "expr(의 pass-through/로컬 변수 해제 결과)가 정확히
+     * repository 호출인가"를 확인한다.
+     *
+     * <p>{@code orElseThrow}/{@code orElseGet}/{@code orElse}/{@code get}(Optional 언랩)은
+     * 통과(pass-through)하고, 로컬 변수 읽기는 그 선언식(초기화 표현식)으로 계속 추적한다(실제 SUT
+     * 관례: {@code Account account = repo.findById(x).orElseThrow(...)} 뒤 {@code account.getX()}
+     * — 이때 {@code getX()}를 호출하는 {@link #classifyDbRead}가 이 메서드에 넘기는 것은 {@code
+     * account}이지 {@code getX()} 자신이 아니므로, 로컬 변수 1단 간접까지만 지원되고 그 이상의
+     * getter 체인은 지원 범위 밖이다). repository 호출을 찾으면 그 반환 타입(Optional/List 등
+     * 컨테이너 해제)을 엔티티 타입으로 반환한다.
      */
     private Optional<CtTypeReference<?>> repositoryEntityType(CtExpression<?> expr, CtModel model) {
         if (expr instanceof CtInvocation<?> inv) {
