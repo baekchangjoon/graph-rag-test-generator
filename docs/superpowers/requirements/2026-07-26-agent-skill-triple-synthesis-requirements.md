@@ -311,13 +311,13 @@
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#REQ-025 | integration | 🔴 planned |
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🔴 planned |
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🔴 planned |
-| REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🔴 planned |
+| REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🔴 planned |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🔴 planned |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
-Coverage: 0/35 green (0%) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
+Coverage: 1/35 green (3%) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 
