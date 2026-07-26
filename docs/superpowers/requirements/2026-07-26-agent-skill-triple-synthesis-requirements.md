@@ -307,11 +307,11 @@
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
-| REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#REQ-017 | integration | 🔴 planned |
-| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#REQ-018 | E2E | 🔴 planned |
-| REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#REQ-019 | integration | 🔴 planned |
-| REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#REQ-020 | E2E | 🔴 planned |
-| REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#REQ-035 | integration | 🔴 planned |
+| REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#req017_* (2케이스: 락 상호배제·2-endpoint 무중첩) | integration | 🟢 green |
+| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#REQ-018 (Task 18에서 추가 예정) | E2E | 🟡[^req018-builder-part] |
+| REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#req019_confirmRunMismatchRejectsCandidateAndRestoresOriginal | integration | 🟢 green |
+| REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#req020_staleTripleOnTrialMismatchFallsBackToBaseline | E2E | 🟢 green |
+| REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#req035_* (2케이스) | integration | 🟢 green |
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🟢 green |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
@@ -387,7 +387,19 @@ Endpoint를 직접 명시받고 happy 시드는 별도 JSON 파일(`--happy-seed
 `promoted/` 커밋 경로(Task 18 소관). 이 세 항목이 남아 있어 REQ-036은 이번 task로도 완성되지
 않았고 🔴 planned를 유지한다.
 
-Coverage: 21/36 green (58%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
+[^req018-builder-part]: Task 14가 REQ-018의 **빌더 소비 부분**을 구현·검증했다 —
+`EndpointExplorationRunner`가 base happy invoke FAILURE인 endpoint에서
+`TriplePromotionGate.attempt`(promoted 존재 확인→T1 재검증→trial 1회 재확인)를 거쳐 성공하면 그
+삼중을 영속 적용하고 확정 run(캡처-on 재explore)까지 수행해, 확정 run이 SUCCESS면 채택
+(`tripleAdopted=true`)한 뒤 현행 explore 파이프라인을 그대로 이어간다(REQ-017 정적 락으로 직렬화).
+이 경로 자체는 `TriplePromotionIT`/`ParallelTrialRegressionIT`가 직접 호출로 커버하지만,
+REQ-018 수용기준이 요구하는 **완주 E2E**("전체 빌드+생성+TC 실행 → 대상 EP의 2xx ExploredPath와
+생성 TC green")는 test-generator TC 생성·실행까지 필요해 이 task의 선언 파일 범위(
+`EndpointExplorationRunner`/`BuilderCli`) 밖이다 — Task 18이 `TriplePromotionE2E`에 ADOPT-성공
+경로를 검증하는 REQ-018 전용 메서드를 추가해 완성한다(브리핑에 명시된 "Task 18의 REQ-018 메서드와
+공존"). 따라서 🟡(빌더 부분 완료, 완주 E2E 미완)로 표기한다.
+
+Coverage: 25/36 green (69%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 

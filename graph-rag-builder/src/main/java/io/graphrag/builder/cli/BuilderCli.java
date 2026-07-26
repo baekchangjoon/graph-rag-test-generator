@@ -65,6 +65,7 @@ import io.graphrag.model.TableSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -229,7 +230,10 @@ public final class BuilderCli {
                 // P2-4: .exec await 타임아웃 ms (0 = PjacocoCoverageBackend 기본 30_000ms)
                 Long.parseLong(options.getOrDefault("--exec-await-ms", "0")),
                 // F1b: OTLP entry-span await 타임아웃 ms (0 = 모드별 기본: 순차 8_000ms, 병렬 30_000ms)
-                Long.parseLong(options.getOrDefault("--sql-await-ms", "0")));
+                Long.parseLong(options.getOrDefault("--sql-await-ms", "0")),
+                // REQ-018/019/020/035: promoted triple 소비 게이트 루트(미지정 시 게이트 비활성)
+                options.containsKey("--triple-candidates")
+                        ? Path.of(options.get("--triple-candidates")) : null);
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -251,6 +255,15 @@ public final class BuilderCli {
         Map<String, Map<String, List<String>>> stringLiteralsByDto = si.stringLiteralsByDto();
         log.info("found {} endpoint(s), {} mapper statement(s), {} response dto shape(s), {} external call site(s)",
                 index.endpoints().size(), mappers.size(), responseDtoFieldSets.size(), callSites.size());
+
+        // REQ-035: 인덱싱 결과에 없는 endpointId(제거·개명) 아래의 promoted triple은 trial 없이 stale 보고한다.
+        if (config.tripleCandidatesRoot() != null) {
+            Set<String> knownEndpointIds = index.endpoints().stream()
+                    .map(io.graphrag.model.Endpoint::id).collect(java.util.stream.Collectors.toSet());
+            for (String stale : detectStaleEndpointTriples(config.tripleCandidatesRoot(), knownEndpointIds)) {
+                log.warn("triple stale (REQ-035, endpoint not in current index): {}", stale);
+            }
+        }
 
         IncrementalPlan plan = IncrementalPlan.exploreAll();
         if (!config.endpointSelectors().isEmpty()) {
@@ -684,6 +697,43 @@ public final class BuilderCli {
 
     private record ExplorationResult(int totalAppBranches, java.util.List<io.graphrag.model.TableSchema> tables) {}
 
+    private static final java.util.regex.Pattern TRIPLE_CAND_DIR = java.util.regex.Pattern.compile("cand-\\d+");
+
+    /**
+     * REQ-035: {@code tripleCandidatesRoot} 아래 각 endpointId 디렉토리 중 현재 인덱싱 결과
+     * ({@code knownEndpointIds})에 없는(제거·개명된) 것을 찾아, 그 {@code promoted/cand-NN} 각각을
+     * {@code <endpointId>/promoted/cand-NN} 포맷으로 반환한다. trial은 전혀 시도하지 않는다 — 이
+     * endpointId는 애초에 탐색 루프({@code explore}의 workerTask)를 타지 않으므로 EndpointExploration
+     * 리포트 엔트리가 존재하지 않는다(REQ-021 staleTriples는 실존 endpoint 전용); 이 메서드의 반환값은
+     * 빌드 로그로 표면화하는 용도다(design spec §5.2 "드롭 경로는 반드시 로그로 표면화").
+     */
+    public static List<String> detectStaleEndpointTriples(Path tripleCandidatesRoot, Set<String> knownEndpointIds)
+            throws IOException {
+        if (!Files.isDirectory(tripleCandidatesRoot)) {
+            return List.of();
+        }
+        List<String> stale = new ArrayList<>();
+        try (Stream<Path> endpointDirs = Files.list(tripleCandidatesRoot)) {
+            for (Path endpointDir : endpointDirs.filter(Files::isDirectory).sorted().toList()) {
+                String endpointId = endpointDir.getFileName().toString();
+                if (knownEndpointIds.contains(endpointId)) {
+                    continue;
+                }
+                Path promotedDir = endpointDir.resolve("promoted");
+                if (!Files.isDirectory(promotedDir)) {
+                    continue;
+                }
+                try (Stream<Path> cands = Files.list(promotedDir)) {
+                    cands.filter(Files::isDirectory)
+                            .filter(p -> TRIPLE_CAND_DIR.matcher(p.getFileName().toString()).matches())
+                            .sorted()
+                            .forEach(p -> stale.add(endpointId + "/promoted/" + p.getFileName()));
+                }
+            }
+        }
+        return stale;
+    }
+
     /**
      * Phase 0.5 spike: 락 제거 버전 — unlocked speedup 측정.
      * dump(reset=true) 동시 호출 시 IOException 발생 가능 → catch-and-return-empty로 무시.
@@ -943,7 +993,9 @@ public final class BuilderCli {
                                 config.classifierConfig().toClassifier(), callSites,
                                 io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto,
                                 sharedTraceParentRef,
-                                io.graphrag.builder.run.ErrorContractDescriptor.fromClassifierConfig(config.classifierConfig()));
+                                io.graphrag.builder.run.ErrorContractDescriptor.fromClassifierConfig(config.classifierConfig()),
+                                // REQ-018/019/020/035: attach 모드는 REQ-023/024 이중 opt-in 미구현이라 항상 비활성.
+                                config.attach() == null ? config.tripleCandidatesRoot() : null);
 
                         // REQ-012: handler당 reachable 집합(cross-class 귀속). 병렬 워커 공유 → ConcurrentHashMap.
                         // computeIfAbsent는 키별 1회 실행(실행 스레드의 workerSpoon 사용) — Spoon 재빌드 없이 traversal만.

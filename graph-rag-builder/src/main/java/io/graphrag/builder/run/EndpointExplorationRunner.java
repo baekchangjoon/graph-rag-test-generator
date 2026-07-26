@@ -29,6 +29,8 @@ import io.graphrag.builder.oracle.CandidateLifter;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.oracle.ResponseClassifier;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
+import io.graphrag.builder.provenance.TriplePromotionGate;
+import io.graphrag.builder.provenance.TrialRunner;
 import io.graphrag.model.BindingOrigin;
 import io.graphrag.model.BranchRef;
 import io.graphrag.model.CapturedSql;
@@ -55,6 +57,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -65,11 +68,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
 /**
@@ -221,6 +227,34 @@ public class EndpointExplorationRunner {
     private final io.graphrag.builder.capture.TraceParent traceParent;
     /** 에러 envelope 계약 기술자(nullable) — errorWhenPresent 미지정 SUT은 null. Task 4. */
     private final ErrorContractDescriptor errorContract;
+    /**
+     * REQ-018/019/020/035: {@code --triple-candidates} 루트(nullable). null이면 게이트
+     * 코드 경로 자체를 타지 않는다(REQ-022 회귀 0 — ablation과 동등). attach 모드는 BuilderCli가
+     * 이 값을 항상 null로 전달한다(REQ-023/024 이중 opt-in 미구현 — attach seed 안전 경계 §8).
+     */
+    private final Path tripleCandidatesRoot;
+
+    /**
+     * REQ-017: trial 게이트 구간(T1 재검증→trial 재확인→확정 run)은 endpoint 단위 직렬 실행이어야
+     * 한다 — trial의 시드 적용이 SUT DB 전역 상태를 만지므로 병렬 탐색과 겹치면 상태가 오염된다.
+     * 이 클래스의 인스턴스는 병렬 fan-out에서 워커 스레드마다 새로 생성되므로(BuilderCli
+     * workerTask), 인스턴스 락으로는 교차 인스턴스 상호배제를 보장할 수 없다 — 정적(클래스 전체
+     * 공유) 락으로 전 워커에 걸쳐 게이트 구간을 완전 직렬화한다(요구사항이 요구하는 "겹치지 않음"
+     * 보다 엄격하지만, 정확성을 트래픽으로 바꾸는 안전한 선택 — 게이트는 base happy가 실패한
+     * endpoint에서만 발화하므로 흔치 않다). {@link #tripleGateLockForTest()}는 테스트 전용 접근자.
+     */
+    private static final ReentrantLock TRIPLE_GATE_LOCK = new ReentrantLock();
+
+    /** REQ-017 테스트 훅 — 운영 코드가 실제로 쓰는 그 정적 락을 노출한다(직접 트리거 금지, 검증만). */
+    static ReentrantLock tripleGateLockForTest() {
+        return TRIPLE_GATE_LOCK;
+    }
+
+    // ---- REQ-021 관측 필드(run()마다 초기화) ----
+    private int tripleTrialCount;
+    private boolean tripleAdopted;
+    private final Map<String, Integer> tripleRejectedReasons = new LinkedHashMap<>();
+    private final List<String> tripleStalePaths = new ArrayList<>();
 
     /** classifier 생략 호환 생성자 — 기본 {@link StatusOnlyClassifier} (status/100==2 → 성공). */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
@@ -312,7 +346,10 @@ public class EndpointExplorationRunner {
                 classifier, callSites, egressCollector, Map.of(), null, null);
     }
 
-    /** canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) + errorContract(nullable) 포함. */
+    /**
+     * egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) + errorContract(nullable)
+     * 호환 생성자 — tripleCandidatesRoot=null(REQ-018 게이트 비활성)로 canonical에 위임.
+     */
     public EndpointExplorationRunner(SutHandle sut, Connection connection,
                                      DbConfig.Type dbType,
                                      CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
@@ -333,6 +370,38 @@ public class EndpointExplorationRunner {
                                      Map<String, Map<String, List<String>>> stringLiteralsByDto,
                                      io.graphrag.builder.capture.TraceParent traceParent,
                                      ErrorContractDescriptor errorContract) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                classifier, callSites, egressCollector, stringLiteralsByDto, traceParent,
+                errorContract, null);
+    }
+
+    /**
+     * canonical 생성자 — egressCollector(nullable) + stringLiteralsByDto + traceParent(nullable) +
+     * errorContract(nullable) + tripleCandidatesRoot(nullable, REQ-018/019/020/035) 포함.
+     */
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier,
+                                     List<io.graphrag.builder.index.ExternalCallSite> callSites,
+                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector,
+                                     Map<String, Map<String, List<String>>> stringLiteralsByDto,
+                                     io.graphrag.builder.capture.TraceParent traceParent,
+                                     ErrorContractDescriptor errorContract,
+                                     Path tripleCandidatesRoot) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -363,6 +432,7 @@ public class EndpointExplorationRunner {
         this.traceParent = traceParent != null ? traceParent
                 : new io.graphrag.builder.capture.TraceParent("local-" + System.nanoTime());
         this.errorContract = errorContract;
+        this.tripleCandidatesRoot = tripleCandidatesRoot;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -382,6 +452,10 @@ public class EndpointExplorationRunner {
         externalLoudFails.clear();                        // 외부 stub loud-fail도 엔드포인트마다 초기화
         variantPaths.clear();
         variantHttpCalls.clear();
+        tripleTrialCount = 0;                              // REQ-021 관측 필드도 엔드포인트마다 초기화
+        tripleAdopted = false;
+        tripleRejectedReasons.clear();
+        tripleStalePaths.clear();
         if (appClasses.isEmpty()) {
             appClasses = analyzer.appClassNames();
         }
@@ -440,6 +514,24 @@ public class EndpointExplorationRunner {
         ExplorationOutcome outcome = orchestrator.explore(target);
         log.info("explored {}: {} path(s), {} branch(es) covered",
                 endpoint.id(), outcome.paths().size(), outcome.coveredBranches().size());
+
+        // ---- REQ-018/019/020/035: promoted triple 소비 게이트 ----
+        // base happy invoke가 FAILURE일 때만 발화한다. "base happy invoke" 신호는 방금 끝난 첫 explore()
+        // 자체의 결과(SUCCESS path 존재 여부)로 판정한다 — 별도의 사전 invoke를 추가하면 POST-create 등
+        // 비멱등 엔드포인트에 이중 부작용(중복 행 생성 등)이 생겨 REQ-022(회귀 0)를 깨뜨릴 위험이 있다.
+        // SUCCESS가 이미 있으면(정상 happy) 이 블록의 어떤 코드도 실행되지 않아 이후 파이프라인은
+        // 현행과 완전히 동일하다.
+        if (tripleCandidatesRoot != null && outcome.paths().stream().noneMatch(
+                p -> classifier.classify(p.status(), p.response()).kind() == Outcome.Kind.SUCCESS)) {
+            GateApplyResult gateResult = applyTriplePromotionGate(endpoint, tables, shape, happy,
+                    requiredSeeds, seedResource, readPath, hasPathParam, mutableFields, fieldConstraints,
+                    conditionBounds, stringCandidates, conjunctions, interFieldTuples, realBounds,
+                    realInterFieldTuples, joinGuards, orchestrator, outcome);
+            outcome = gateResult.outcome();
+            happy = gateResult.happy();
+            requiredSeeds = gateResult.requiredSeeds();
+            baseInput = happy.body();
+        }
 
         // ---- B2: 외부 stub 합성→재탐색 루프 (REQ-008, REQ-014) ----
         // 1차 invoke에서 외부 호출이 WireMock unmatched(404)면, 인덱싱한 응답 형상으로 minimal valid
@@ -1194,6 +1286,152 @@ public class EndpointExplorationRunner {
             } catch (Exception e) {
                 log.warn("pass-1 seed restore failed for {}: {}", row.table(), e.getMessage());
             }
+        }
+    }
+
+    /**
+     * {@link #applyTriplePromotionGate}의 반환값 — 게이트가 채택하지 않으면 입력과 동일한 값이 그대로
+     * 되돌아온다. 패키지 가시성 — {@code TriplePromotionIT}(REQ-019)가 {@code run()} 전체를 부팅하지
+     * 않고 게이트 본체만 직접 호출·검증한다({@code TrialCaptureOffIT}의 직접-생성자 호출 관례와 동일).
+     */
+    record GateApplyResult(ExplorationOutcome outcome, SynthesizedInput happy,
+                           List<RequiredSeed> requiredSeeds) {
+    }
+
+    /** REQ-021 테스트 훅 — run() 없이 게이트를 직접 호출한 뒤 관측 필드를 확인한다. */
+    int tripleTrialCountForTest() {
+        return tripleTrialCount;
+    }
+
+    boolean tripleAdoptedForTest() {
+        return tripleAdopted;
+    }
+
+    Map<String, Integer> tripleRejectedReasonsForTest() {
+        return Map.copyOf(tripleRejectedReasons);
+    }
+
+    List<String> tripleStalePathsForTest() {
+        return List.copyOf(tripleStalePaths);
+    }
+
+    /**
+     * REQ-018/019/020/035 게이트 본체. base happy invoke가 FAILURE로 판정된 endpoint에서만
+     * {@code run()}이 호출한다({@link #tripleCandidatesRoot}가 null이 아니고 첫 explore 결과에
+     * SUCCESS가 없을 때). {@link TriplePromotionGate#attempt}로 T1 재검증→trial 1회 재확인까지
+     * 위임하고, 이 메서드는 그 판정에 따른 <b>영속</b> DB/스텁 적용과 확정 run(캡처-on 재explore)만
+     * 담당한다:
+     * <ul>
+     *   <li>{@code NO_CANDIDATE} — 아무 것도 하지 않고 원본 {@code outcome/happy/requiredSeeds}를
+     *       그대로 반환한다(REQ-022 회귀 0).</li>
+     *   <li>{@code STALE} — {@code staleTriples}에 표면화하고 원본을 그대로 반환한다(REQ-020/035).
+     *       trial 재확인이 실제로 발화했다면 그 과정에서 지워진 기존 happy 시드를
+     *       {@link #reinsertSeeds}로 best-effort 복원한다.</li>
+     *   <li>{@code ADOPTED} — 후보의 seed.sql/stubs.json을 영속 적용하고 candidate body로 확정
+     *       run(재explore)한다. 그 결과에 SUCCESS가 있으면 채택(REQ-018, {@code tripleAdopted=true})하고
+     *       새 outcome/happy/requiredSeeds를 반환한다. SUCCESS가 없으면(비결정 의심) 폐기하고
+     *       DB/스텁 상태를 원복한 뒤 원본을 그대로 반환한다(REQ-019).</li>
+     * </ul>
+     * REQ-017: trial 재확인+확정 run 구간 전체를 정적 락({@link #TRIPLE_GATE_LOCK})으로 감싸 병렬
+     * 탐색과 겹치지 않게 한다.
+     */
+    GateApplyResult applyTriplePromotionGate(
+            Endpoint endpoint, List<TableSchema> tables, BodyShape shape,
+            SynthesizedInput priorHappy, List<RequiredSeed> priorSeeds,
+            boolean seedResource, boolean readPath, boolean hasPathParam,
+            List<BodyShape.BodyField> mutableFields,
+            Map<String, List<FieldConstraint>> fieldConstraints,
+            Map<String, Set<Long>> conditionBounds, Map<String, Set<String>> stringCandidates,
+            List<ConstraintExtractor.Conjunction> conjunctions,
+            List<Map<String, Long>> interFieldTuples, Map<String, Set<Double>> realBounds,
+            List<Map<String, Double>> realInterFieldTuples,
+            List<ConstraintExtractor.JoinGuard> joinGuards,
+            ExplorationOrchestrator orchestrator, ExplorationOutcome priorOutcome) {
+        GateApplyResult unchanged = new GateApplyResult(priorOutcome, priorHappy, priorSeeds);
+        TRIPLE_GATE_LOCK.lock();
+        try {
+            TriplePromotionGate.GateVerdict verdict;
+            try {
+                TrialRunner trialRunner = new TrialRunner(
+                        connection, dbType, httpCapture, classifier, sut, this::invokeTrial);
+                verdict = TriplePromotionGate.attempt(
+                        tripleCandidatesRoot, endpoint, tables, dbType, shape, trialRunner, priorSeeds);
+            } catch (Exception e) {
+                log.warn("triple promotion gate failed for {} (현행 경로로 회귀): {}",
+                        endpoint.id(), e.toString(), e);
+                return unchanged;
+            }
+            if (verdict.kind() == TriplePromotionGate.Kind.NO_CANDIDATE) {
+                return unchanged;
+            }
+            tripleTrialCount++;
+            if (verdict.kind() == TriplePromotionGate.Kind.STALE) {
+                tripleStalePaths.add(verdict.relPath());
+                log.warn("triple stale for {} (REQ-020/035): {} ({})",
+                        endpoint.id(), verdict.relPath(), verdict.reason());
+                reinsertSeeds(priorHappy);   // trial이 지웠을 수 있는 기존 happy 시드 best-effort 복원
+                return unchanged;
+            }
+
+            // ---- ADOPTED: 영속 적용 + 확정 run(캡처-on 재explore, REQ-018) ----
+            TriplePromotionGate.CandidateMaterials materials = verdict.materials();
+            SynthesizedInput candidateHappy = new SynthesizedInput(materials.body(), materials.seedRows());
+            UUID stubId = null;
+            try {
+                List<RequiredSeed> candidateSeeds = insertSeeds(candidateHappy, endpoint, seedResource, tables);
+                if (materials.stubMapping() != null && httpCapture != null) {
+                    com.github.tomakehurst.wiremock.stubbing.StubMapping mapping =
+                            com.github.tomakehurst.wiremock.stubbing.StubMapping.buildFrom(
+                                    materials.stubMapping().toString());
+                    httpCapture.registerStub(mapping);
+                    stubId = mapping.getId();
+                }
+                coverage.baselineCut();
+                ExecutionDataStore priorCumulative = cumulativeCoverage;
+                cumulativeCoverage = new ExecutionDataStore();
+                EndpointInvoker confirmInvoker = buildInvoker(endpoint, readPath, hasPathParam, candidateHappy);
+                EndpointTarget confirmTarget = new EndpointTarget(endpoint, candidateHappy.body(), mutableFields,
+                        tables, confirmInvoker, literalCandidates, fieldConstraints, conditionBounds,
+                        stringCandidates, enumConstants, conjunctions, interFieldTuples, realBounds,
+                        realInterFieldTuples, joinGuards);
+                ExplorationOutcome confirmOutcome = orchestrator.explore(confirmTarget);
+                boolean confirmed = confirmOutcome.paths().stream().anyMatch(
+                        p -> classifier.classify(p.status(), p.response()).kind() == Outcome.Kind.SUCCESS);
+                if (confirmed) {
+                    tripleAdopted = true;
+                    log.info("triple adopted for {} (REQ-018): {}", endpoint.id(), verdict.candidateDir());
+                    return new GateApplyResult(confirmOutcome, candidateHappy, candidateSeeds);
+                }
+                // REQ-019: 확정 run이 trial과 상이(비결정 의심) — 폐기 + 원복.
+                if (stubId != null) {
+                    httpCapture.removeStub(stubId);
+                    stubId = null;
+                }
+                deleteSeeds(candidateHappy);
+                reinsertSeeds(priorHappy);
+                cumulativeCoverage = priorCumulative;
+                tripleRejectedReasons.merge("confirm-run-mismatch", 1, Integer::sum);
+                log.warn("triple rejected for {} (REQ-019, 확정 run이 trial과 상이): {}",
+                        endpoint.id(), verdict.candidateDir());
+                return unchanged;
+            } catch (Exception e) {
+                if (stubId != null) {
+                    httpCapture.removeStub(stubId);
+                }
+                log.warn("triple adoption failed for {} (원복, 현행 경로로 회귀): {}",
+                        endpoint.id(), e.toString(), e);
+                try {
+                    deleteSeeds(candidateHappy);   // best-effort: 부분 삽입분(있다면) 정리
+                } catch (Exception cleanupEx) {
+                    log.warn("triple candidate seed cleanup failed for {}: {}",
+                            endpoint.id(), cleanupEx.toString());
+                }
+                reinsertSeeds(priorHappy);   // best-effort
+                tripleRejectedReasons.merge("adoption-error", 1, Integer::sum);
+                return unchanged;
+            }
+        } finally {
+            TRIPLE_GATE_LOCK.unlock();
         }
     }
 
@@ -3053,9 +3291,12 @@ public class EndpointExplorationRunner {
                 .anyMatch(p -> p.outcome() == Outcome.Kind.SUCCESS);
         String noHappyPathReason = (hasFailure && !hasSuccess)
                 ? "all responses error-enveloped" : null;
+        // REQ-021: trial 게이트 관측 필드(발화 안 하면 전부 기본값 — 0/false/빈 컬렉션, REQ-022 회귀 0).
         return new ExplorationReport.EndpointExploration(
                 endpoint.id(), total, covered.size(), missed,
-                outcome.pathsByEngine(), solverRelevantMissed, drops, noHappyPathReason);
+                outcome.pathsByEngine(), solverRelevantMissed, drops, noHappyPathReason,
+                tripleTrialCount, tripleAdopted, Map.copyOf(tripleRejectedReasons),
+                List.copyOf(tripleStalePaths));
     }
 
     /**

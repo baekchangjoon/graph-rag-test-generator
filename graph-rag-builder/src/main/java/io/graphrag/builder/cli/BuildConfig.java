@@ -64,7 +64,15 @@ public record BuildConfig(
          * (순차 8_000ms, 병렬 30_000ms). --sql-await-ms 로 설정한다.
          * 병렬 4 워커 동시 부하에서 OTLP BSP export 지연이 증가하므로 병렬 모드에는 큰 값이 필요하다.
          */
-        long sqlAwaitMs) {
+        long sqlAwaitMs,
+        /**
+         * REQ-018/019/020/035: {@code --triple-candidates <dir>}(nullable). 지정 시 non-attach
+         * explore 루프가 base happy invoke FAILURE인 endpoint에서 이 루트 아래
+         * {@code <endpointId>/promoted/cand-NN}을 재확인·소비한다(design spec §3.2). attach 모드는
+         * REQ-023/024 이중 opt-in 미구현이라 이 값을 항상 무시한다(BuilderCli.explore가 attach 시
+         * null로 넘김).
+         */
+        Path tripleCandidatesRoot) {
 
     public BuildConfig {
         sutEnv = sutEnv == null ? Map.of() : sutEnv;
@@ -81,6 +89,25 @@ public record BuildConfig(
         if (flushThreads < 0) throw new IllegalArgumentException("--flush-threads must be >= 0, got: " + flushThreads);
         if (execAwaitMs < 0) throw new IllegalArgumentException("--exec-await-ms must be >= 0, got: " + execAwaitMs);
         if (sqlAwaitMs < 0) throw new IllegalArgumentException("--sql-await-ms must be >= 0, got: " + sqlAwaitMs);
+    }
+
+    /** tripleCandidatesRoot를 생략하는 호환 생성자(REQ-018 게이트 비활성 — 기존 canonical 32-arg 호출부 호환). */
+    public BuildConfig(Path sutSrc, Path sutResources, Path sutJar, Path out,
+                       String sutId, String commitSha, DbConfig dbConfig,
+                       int budgetRequests, Path manualPathsDir, Path externalStubsDir,
+                       Map<String, String> sutEnv, Path incrementalBase, List<String> changedFiles,
+                       AuthConfig authConfig, boolean withRedis, boolean withKafka, String sutJavaHome,
+                       BuilderCli.AttachConfig attach, io.graphrag.model.RequestHeaders requestHeaders,
+                       List<String> endpointSelectors, String traceMode,
+                       ClassifierConfig classifierConfig, boolean noIncremental, boolean reflectInstantiate,
+                       LlmOptions llm, SourceRoots sourceRoots, int parallelism, String coverageBackend,
+                       String sutPkg, int flushThreads, long execAwaitMs, long sqlAwaitMs) {
+        this(sutSrc, sutResources, sutJar, out, sutId, commitSha, dbConfig,
+                budgetRequests, manualPathsDir, externalStubsDir, sutEnv, incrementalBase, changedFiles,
+                authConfig, withRedis, withKafka, sutJavaHome, attach, requestHeaders,
+                endpointSelectors, traceMode, classifierConfig, noIncremental, reflectInstantiate,
+                llm, sourceRoots, parallelism, coverageBackend, sutPkg, flushThreads, execAwaitMs,
+                sqlAwaitMs, null);
     }
 
     /** parallel/pjacoco 옵션을 생략하는 편의 생성자 (llm+sourceRoots까지 받는 26-arg 호출부 호환 — 나머지 기본값). */
