@@ -3,6 +3,7 @@ package io.graphrag.builder.provenance;
 import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
 import io.graphrag.builder.provenance.ProvenanceReport.Reason;
+import io.graphrag.builder.provenance.ProvenanceReport.UnguardedField;
 import io.graphrag.builder.provenance.ProvenanceReport.Unresolved;
 import io.graphrag.builder.provenance.ProvenanceReport.ValueRef;
 import io.graphrag.model.Endpoint;
@@ -37,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -81,8 +83,12 @@ import java.util.Set;
  *   <li>UNKNOWN + MULTI_IMPL — 피연산자가 되는 호출의 선언 타입이 인터페이스이고, 모델 내 그 인터페이스의
  *       구현체가 2개 이상이면 {@link Origin#UNKNOWN}으로 태깅하고 {@link Unresolved}(location,
  *       {@link Reason#MULTI_IMPL}, targetType=인터페이스 FQN)를 리포트의 unresolved 배열에 표면화한다.</li>
+ *   <li>unguarded 필드 탐지(REQ-001) — {@code @RequestBody} 파라미터 타입을 재귀 전개(record
+ *       canonical accessor 또는 JavaBean getFoo/isFoo, List는 대표원소로 계속 전개, Map은 동적 키라
+ *       leaf로 처리 — INPUT 태깅과 동일한 dot-path 관례)해 얻은 전체 필드 dot-path 중, 가드
+ *       피연산자(Origin.INPUT)의 jsonPath로 한 번도 참조되지 않은 필드를 {@link UnguardedField}로
+ *       수집한다. semanticHint는 필드명(소문자) 기반 결정적 규칙 — {@link #semanticHint} 참고.</li>
  * </ul>
- * unguarded 필드 탐지는 후속 task 범위(항상 빈 리스트).
  *
  * <p>메서드 조회는 1-hop 선례({@code ConstraintExtractor.reachableMethods})와 동일하게
  * {@code CtModel} 전체를 타입명·메서드명으로 선형 탐색한다(재사용이 아니라 일반화 재구현 — Spoon
@@ -200,7 +206,151 @@ public class ProvenanceIndexer {
             }
         }
 
-        return new ProvenanceReport(endpoint.id(), guards, List.of(), unresolved);
+        List<UnguardedField> unguarded = collectUnguardedFields(handler, guards, model);
+        return new ProvenanceReport(endpoint.id(), guards, unguarded, unresolved);
+    }
+
+    // ---- unguarded 필드 탐지(REQ-001) ----
+
+    /**
+     * {@code handler}의 {@code @RequestBody} 파라미터 타입을 재귀 전개해 얻은 전체 필드 dot-path 중,
+     * {@code guards}의 어떤 피연산자(Origin.INPUT)의 jsonPath로도 참조되지 않은 필드를 반환한다.
+     * {@code @RequestBody} 파라미터가 없으면(예: body 없는 GET) 빈 리스트.
+     */
+    private List<UnguardedField> collectUnguardedFields(CtMethod<?> handler, List<GuardFact> guards, CtModel model) {
+        CtParameter<?> bodyParam = findRequestBodyParam(handler);
+        if (bodyParam == null) {
+            return List.of();
+        }
+        Set<String> referencedInputPaths = new LinkedHashSet<>();
+        for (GuardFact guard : guards) {
+            for (ValueRef operand : guard.operands()) {
+                if (operand.origin() == Origin.INPUT && operand.jsonPath() != null) {
+                    referencedInputPaths.add(operand.jsonPath());
+                }
+            }
+        }
+        List<UnguardedField> out = new ArrayList<>();
+        collectFieldPaths(bodyParam.getType(), "", model, referencedInputPaths, out, new LinkedHashSet<>());
+        return out;
+    }
+
+    /** {@code @RequestBody}가 붙은 핸들러 파라미터(없으면 null — 요청 바디가 없는 핸들러). */
+    private static CtParameter<?> findRequestBodyParam(CtMethod<?> handler) {
+        for (CtParameter<?> param : handler.getParameters()) {
+            boolean isRequestBody = param.getAnnotations().stream()
+                    .anyMatch(a -> "RequestBody".equals(a.getAnnotationType().getSimpleName()));
+            if (isRequestBody) {
+                return param;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code type}을 재귀 전개해 leaf 필드 dot-path를 모은다. record는 canonical accessor(record
+     * component), 일반 클래스는 JavaBean getFoo/isFoo 관례를 따른다. List/Collection은 대표원소
+     * 규약(REQ-034와 동일 — bracket 없이 부모 경로를 그대로 이어감)으로 원소 타입을 계속 전개하고,
+     * Map은 키가 동적이라 정적으로 전개할 수 없으므로 그 필드 자체를 leaf로 처리한다. 라이브러리
+     * 타입(String/long 등, 모델에서 소스를 찾을 수 없는 타입)도 leaf. {@code visitedTypeFqns}는
+     * 자기참조 타입의 무한 재귀를 막는다(리프에 도달하면 제거해 형제 경로에서 같은 타입 재사용 허용).
+     */
+    private void collectFieldPaths(CtTypeReference<?> type, String path, CtModel model,
+                                   Set<String> referencedInputPaths, List<UnguardedField> out,
+                                   Set<String> visitedTypeFqns) {
+        if (type == null) {
+            return;
+        }
+        String simpleName = type.getSimpleName();
+        if (LIST_LIKE_TYPES.contains(simpleName)) {
+            if (!type.getActualTypeArguments().isEmpty()) {
+                collectFieldPaths(type.getActualTypeArguments().get(0), path, model,
+                        referencedInputPaths, out, visitedTypeFqns);
+            }
+            return;
+        }
+        if (MAP_LIKE_TYPES.contains(simpleName)) {
+            addLeafIfUnguarded(path, type, referencedInputPaths, out);
+            return;
+        }
+        CtType<?> declared = resolveType(model, type.getQualifiedName());
+        if (declared == null) {
+            addLeafIfUnguarded(path, type, referencedInputPaths, out);
+            return;
+        }
+        String fqn = declared.getQualifiedName().replace('$', '.');
+        if (!visitedTypeFqns.add(fqn)) {
+            return; // 자기참조 타입 순환 종료
+        }
+        if (declared instanceof CtRecord record) {
+            for (var component : record.getRecordComponents()) {
+                String childPath = path.isEmpty() ? component.getSimpleName() : path + "." + component.getSimpleName();
+                collectFieldPaths(component.getType(), childPath, model, referencedInputPaths, out, visitedTypeFqns);
+            }
+        } else {
+            for (CtMethod<?> m : declared.getMethods()) {
+                String field = fieldNameForGetter(m.getSimpleName());
+                if (field == null || !m.getParameters().isEmpty()) {
+                    continue;
+                }
+                String childPath = path.isEmpty() ? field : path + "." + field;
+                collectFieldPaths(m.getType(), childPath, model, referencedInputPaths, out, visitedTypeFqns);
+            }
+        }
+        visitedTypeFqns.remove(fqn);
+    }
+
+    /** {@code getFoo}/{@code isFoo} → {@code foo}(JavaBean 관례). 어느 쪽도 아니면 null. */
+    private static String fieldNameForGetter(String methodName) {
+        if (methodName.startsWith("get") && methodName.length() > 3) {
+            return decapitalize(methodName.substring(3));
+        }
+        if (methodName.startsWith("is") && methodName.length() > 2 && Character.isUpperCase(methodName.charAt(2))) {
+            return decapitalize(methodName.substring(2));
+        }
+        return null;
+    }
+
+    private static void addLeafIfUnguarded(String path, CtTypeReference<?> type,
+                                           Set<String> referencedInputPaths, List<UnguardedField> out) {
+        if (path.isEmpty() || referencedInputPaths.contains(path)) {
+            return;
+        }
+        String javaType = type == null ? null : type.getSimpleName();
+        String leafName = path.contains(".") ? path.substring(path.lastIndexOf('.') + 1) : path;
+        out.add(new UnguardedField(path, javaType, semanticHint(leafName, javaType)));
+    }
+
+    /**
+     * 필드명(대소문자 무시) 기반 결정적 semanticHint 규칙(REQ-001):
+     * <ol>
+     *   <li>"email" 포함 → "email"</li>
+     *   <li>"phone" 또는 "tel" 포함 → "phone"</li>
+     *   <li>"name"과 일치하거나 "name"으로 끝남 → "person-name"</li>
+     *   <li>"note"/"memo"/"comment"/"description" 포함 → "free-text"</li>
+     *   <li>그 외 String 타입 → "free-text"</li>
+     *   <li>그 외(비-String) → "none"</li>
+     * </ol>
+     */
+    private static String semanticHint(String fieldName, String javaType) {
+        String lower = fieldName.toLowerCase(Locale.ROOT);
+        if (lower.contains("email")) {
+            return "email";
+        }
+        if (lower.contains("phone") || lower.contains("tel")) {
+            return "phone";
+        }
+        if (lower.equals("name") || lower.endsWith("name")) {
+            return "person-name";
+        }
+        if (lower.contains("note") || lower.contains("memo") || lower.contains("comment")
+                || lower.contains("description")) {
+            return "free-text";
+        }
+        if ("String".equals(javaType)) {
+            return "free-text";
+        }
+        return "none";
     }
 
     // ---- 메서드 조회 ----

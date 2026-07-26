@@ -52,6 +52,28 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-001: 가드에 참조되지 않는 필드는 unguarded + semanticHint로 태깅")
+    void req001_unguardedFieldTagged() {
+        // basic fixture: req.getAmount()만 가드에 쓰이고 req.getUserId()는 어디서도 참조되지 않는다
+        // — userId는 unguarded + (String이고 email/phone/name/note류에 매칭되지 않으므로) "free-text".
+        ProvenanceReport report = analyzeFixture(
+                "basic",
+                "io.graphrag.fixture.basic.BasicController",
+                "create",
+                3);
+
+        assertThat(report.unguarded())
+                .as("userId는 가드에 참조되지 않으므로 unguarded + javaType=String + semanticHint=free-text로 태깅되어야 한다")
+                .anyMatch(u -> "userId".equals(u.jsonPath())
+                        && "String".equals(u.javaType())
+                        && "free-text".equals(u.semanticHint()));
+
+        assertThat(report.unguarded())
+                .as("amount는 가드에 참조되므로 unguarded에 나타나면 안 된다")
+                .noneMatch(u -> "amount".equals(u.jsonPath()));
+    }
+
+    @Test
     @DisplayName("EXISTS 가드(Optional.orElseThrow) + record accessor INPUT 태깅")
     void existsGuardWithRecordAccessorTagged() {
         // record 기반 DTO(CreateTransferRequest.fromAccountId())를 쓰는 TransferController/
