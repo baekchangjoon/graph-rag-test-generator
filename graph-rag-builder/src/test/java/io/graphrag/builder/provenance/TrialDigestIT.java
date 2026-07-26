@@ -198,4 +198,84 @@ class TrialDigestIT {
             assertThat(outcome.digest()).isNull();
         }
     }
+
+    /**
+     * REQ-013 ③ 회귀: {@code Json.mapper().writerWithDefaultPrettyPrinter()}가 실제로 산출하는 "빈
+     * stub" 표기는 {@code "{ }"}(공백 포함)이지 {@code "{}"}가 아니다 — {@code BuilderCli.stubsJsonContent}가
+     * 그대로 이 표기를 쓴다. 실측: {@code StubMapping.buildFrom("{ }")}는 예외를 던지지 않고
+     * {@code request.method=ANY}(모든 요청에 매칭)·{@code response.status=200}인 **캐치올 매핑**을
+     * 반환한다 — 문자열 정확 일치({@code content.equals("{}")})로 skip을 판정하면 이 표기를 "내용
+     * 있는 stub"으로 오판해 이 캐치올을 등록하고, 그 trial 동안 SUT의 모든 outbound 호출(무관한 실제
+     * 외부 의존성 포함)이 이 stub에 가로채여 빈 200을 받게 된다(조용한 오염). 빈 stub 판정은
+     * {@link com.fasterxml.jackson.databind.JsonNode#isEmpty()}(파싱 후 필드 수)로 해야 표기
+     * 방식(공백)에 안전하다.
+     */
+    @Test
+    @DisplayName("REQ-013: 실제 pretty-printer 빈 stub 표기(\"{ }\", 공백 포함)는 stub 없음으로 skip되어 캐치올이 등록되지 않는다")
+    void req013_prettyPrintedEmptyStubIsSkippedWithoutRegisteringCatchAll() throws Exception {
+        Path candDir = Files.createDirectories(tempDir.resolve("cand-stub-empty-" + DB_SEQ.incrementAndGet()));
+        ObjectNode body = Json.mapper().createObjectNode();
+        body.put("amount", 500);
+        Files.writeString(candDir.resolve("body.json"), body.toString());
+        Files.writeString(candDir.resolve("seed.sql"), "INSERT INTO accounts (id, balance) VALUES ('acc-1', 600);");
+        // BuilderCli.stubsJsonContent()가 stub 없을 때 실제로 산출하는 표기(공백 포함).
+        Files.writeString(candDir.resolve("stubs.json"),
+                Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(Json.mapper().createObjectNode()));
+
+        try (Connection connection = newH2Connection();
+             io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer()) {
+            httpCapture.start(null, null);
+            java.net.http.HttpClient http = java.net.http.HttpClient.newHttpClient();
+            // stub 등록/제거 window(③~finally) *안에서* 관측해야 한다 — runCandidate가 반환할
+            // 시점에는 finally의 removeStub이 이미 실행돼 캐치올이 있었더라도 이미 제거된 뒤다.
+            int[] probeStatusDuringInvoke = new int[1];
+            TrialRunner.TrialInvoker fakeInvoker = (endpoint, body2) -> {
+                java.net.http.HttpRequest probe = java.net.http.HttpRequest.newBuilder(
+                        java.net.URI.create(httpCapture.baseUrl() + "/probe-unmapped-path")).GET().build();
+                probeStatusDuringInvoke[0] =
+                        http.send(probe, java.net.http.HttpResponse.BodyHandlers.discarding()).statusCode();
+                return new InvocationOutcome(200, Json.mapper().readTree("{\"ok\":true}"), Set.of(), 0, 0);
+            };
+            TrialRunner runner = new TrialRunner(connection, DbConfig.Type.POSTGRES, httpCapture,
+                    new StatusOnlyClassifier(), new FixedLogSutHandle(""), fakeInvoker);
+
+            TrialRunner.TrialOutcome outcome = runner.runCandidate(ENDPOINT, candDir, List.of(),
+                    new ProvenanceReport("post-api-transfers", List.of(), List.of(), List.of()));
+            assertThat(outcome.promoted()).isTrue();
+
+            // 캐치올이 등록되지 않았다면 임의의 미매핑 경로는 WireMock 기본 응답(404)을 반환해야 한다.
+            // (캐치올이 잘못 등록됐다면 invoke 도중 이 경로도 200을 받았을 것 — 실제 회귀 감지 지점.)
+            assertThat(probeStatusDuringInvoke[0])
+                    .as("빈 stub 표기가 캐치올로 오등록됐다면 invoke 중 미매핑 경로도 200을 받았을 것이다")
+                    .isEqualTo(404);
+        }
+    }
+
+    /** REQ-013 ③: 실제 요청/응답을 가진 stub은 예외 없이 등록·정리(removeStub)된다. */
+    @Test
+    @DisplayName("REQ-013: 비어있지 않은 stub은 예외 없이 등록되고 trial 종료 시 정리된다")
+    void req013_nonEmptyStubRegisteredAndCleanedUpWithoutException() throws Exception {
+        Path candDir = Files.createDirectories(tempDir.resolve("cand-stub-nonempty-" + DB_SEQ.incrementAndGet()));
+        ObjectNode body = Json.mapper().createObjectNode();
+        body.put("amount", 500);
+        Files.writeString(candDir.resolve("body.json"), body.toString());
+        Files.writeString(candDir.resolve("seed.sql"), "INSERT INTO accounts (id, balance) VALUES ('acc-1', 600);");
+        Files.writeString(candDir.resolve("stubs.json"),
+                "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                        + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":\"CLEAR\"}}}");
+
+        try (Connection connection = newH2Connection();
+             io.graphrag.builder.env.HttpCaptureServer httpCapture = new io.graphrag.builder.env.HttpCaptureServer()) {
+            httpCapture.start(null, null);
+            TrialRunner.TrialInvoker fakeInvoker = (endpoint, body2) -> new InvocationOutcome(
+                    200, Json.mapper().readTree("{\"ok\":true}"), Set.of(), 0, 0);
+            TrialRunner runner = new TrialRunner(connection, DbConfig.Type.POSTGRES, httpCapture,
+                    new StatusOnlyClassifier(), new FixedLogSutHandle(""), fakeInvoker);
+
+            TrialRunner.TrialOutcome outcome = runner.runCandidate(ENDPOINT, candDir, List.of(),
+                    new ProvenanceReport("post-api-transfers", List.of(), List.of(), List.of()));
+
+            assertThat(outcome.promoted()).isTrue();
+        }
+    }
 }
