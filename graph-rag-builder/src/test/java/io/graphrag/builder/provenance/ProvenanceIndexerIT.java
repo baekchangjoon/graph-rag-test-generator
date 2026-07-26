@@ -200,6 +200,28 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-034: List 인덱스가 0이 아니면 대표원소 규약으로 수렴하지 않고 UNKNOWN으로 남는다")
+    void req034_nonZeroIndexNotTaggedAsRepresentativeElement() {
+        // fixture: if (req.items().get(1).qty() <= 0) — downstream InputMutator.applyToBody가
+        // 대표원소(arr.get(0))만 변이하므로, get(1)을 "items.qty"로 태깅하면 provenance와 실제
+        // 변이 대상이 어긋난다. 그러므로 get(1) 피연산자는 UNKNOWN으로 강등되어야 한다.
+        ProvenanceReport report = analyzeFixture(
+                "nested",
+                "io.graphrag.fixture.nested.NestedController",
+                "createSecondItem",
+                3);
+
+        assertThat(report.guards())
+                .as("req.items().get(1).qty() 피연산자는 \"items.qty\"로 태깅되면 안 된다")
+                .allMatch(g -> g.operands().stream().noneMatch(v -> "items.qty".equals(v.jsonPath())));
+
+        assertThat(report.guards())
+                .as("req.items().get(1).qty() 피연산자는 UNKNOWN으로 남아야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.UNKNOWN && "int".equals(v.javaType())));
+    }
+
+    @Test
     void recursionDoesNotHangOnMutualRecursion() {
         // methodA()↔methodB() 상호 재귀가 방문 집합으로 자연 종료하는지(무한루프 없이) 확인.
         // 테스트 자체가 유한 시간 내 반환되면 통과(타임아웃되면 실패).

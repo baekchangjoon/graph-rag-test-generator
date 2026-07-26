@@ -725,10 +725,15 @@ public class ProvenanceIndexer {
      * getter 관례를 따르지 않는 메서드를 경유하면 empty.
      *
      * <p>REQ-034 — DTO 중첩 재귀 전개: 체인 중간에 {@code List.get(index)}/{@code Map.get(key)}
-     * 호출이 끼어 있어도 계속 재귀한다. List는 대표원소(첫 원소) 규약으로 세그먼트를 추가하지 않고
-     * (bracket 없이 부모 경로 그대로 이어감, 예: {@code items.get(0).qty()} → "items.qty"), Map은
-     * 리터럴 키를 그대로 세그먼트로 추가한다(예: {@code configs.get("region")} → "configs.region").
-     * Map 키가 리터럴이 아니면(정적으로 알 수 없음) empty로 강등한다.
+     * 호출이 끼어 있어도 계속 재귀한다. List는 인덱스 인자가 **리터럴 정수 0일 때만** 대표원소(첫
+     * 원소) 규약으로 세그먼트를 추가하지 않고 수렴한다(bracket 없이 부모 경로 그대로 이어감, 예:
+     * {@code items.get(0).qty()} → "items.qty"). Map은 키 인자가 문자열 리터럴이면 그대로 세그먼트로
+     * 추가한다(예: {@code configs.get("region")} → "configs.region"). List 인덱스가 0이 아닌
+     * 리터럴이거나 변수(예: {@code get(1)}, {@code get(i)})이면, 또는 Map 키가 리터럴이 아니면
+     * — 어느 원소/키를 가리키는지 정적으로 대표원소 규약으로 수렴시킬 수 없으므로 — empty로
+     * 강등한다(대칭적 처리: downstream {@code InputMutator.applyToBody}가 대표원소 {@code
+     * arr.get(0)}만 변이하므로, 그 밖의 인덱스를 대표원소 경로로 태깅하면 provenance와 실제 변이
+     * 대상이 어긋난다).
      */
     private Optional<List<String>> getterSegments(CtExpression<?> expr, Set<CtParameter<?>> handlerParams,
                                                    CtModel model) {
@@ -759,12 +764,15 @@ public class ProvenanceIndexer {
     }
 
     /**
-     * {@code inv}가 List 원소(대표원소 규약) 또는 Map 키 접근({@code .get(...)}, 단일 인자)이면
-     * 채택 여부를 바깥쪽 {@code Optional}로, 추가할 세그먼트(Map 키만 존재, List는 empty — 세그먼트
-     * 없이 부모 경로를 그대로 이어감)를 안쪽 {@code Optional}로 반환한다. {@code .get(...)}이 아니거나
-     * 대상이 List/Map 어느 쪽도 아니면(예: 일반 사용자 정의 {@code get()} 메서드) empty(채택 안 함).
-     * Map인데 키 인자가 문자열 리터럴이 아니면(동적 키라 정적으로 dot-path를 알 수 없음) empty(채택
-     * 안 함 — 호출부에서 {@link #getterFieldName} 경로로 폴백해 결국 UNKNOWN으로 강등된다).
+     * {@code inv}가 List 대표원소(인덱스 리터럴 0) 또는 Map 리터럴 키 접근({@code .get(...)}, 단일
+     * 인자)이면 채택 여부를 바깥쪽 {@code Optional}로, 추가할 세그먼트(Map 키만 존재, List는 empty —
+     * 세그먼트 없이 부모 경로를 그대로 이어감)를 안쪽 {@code Optional}로 반환한다. {@code .get(...)}이
+     * 아니거나 대상이 List/Map 어느 쪽도 아니면(예: 일반 사용자 정의 {@code get()} 메서드) empty(채택
+     * 안 함). List인데 인덱스 인자가 리터럴 정수 0이 아니면(예: {@code get(1)}, {@code get(i)}) —
+     * downstream {@code InputMutator.applyToBody}가 대표원소 {@code arr.get(0)}만 변이하므로, 그 밖의
+     * 인덱스를 대표원소 경로로 태깅하면 provenance와 실제 변이 대상이 어긋난다 — empty(채택 안 함).
+     * Map인데 키 인자가 문자열 리터럴이 아니면(동적 키라 정적으로 dot-path를 알 수 없음) 마찬가지로
+     * empty(채택 안 함 — 호출부에서 {@link #getterFieldName} 경로로 폴백해 결국 UNKNOWN으로 강등된다).
      */
     private static Optional<Optional<String>> collectionElementSegment(CtInvocation<?> inv) {
         if (!"get".equals(inv.getExecutable().getSimpleName()) || inv.getArguments().size() != 1) {
@@ -774,15 +782,20 @@ public class ProvenanceIndexer {
         if (targetType == null) {
             return Optional.empty();
         }
+        CtExpression<?> indexOrKey = inv.getArguments().get(0);
         String simpleName = targetType.getSimpleName();
         if (LIST_LIKE_TYPES.contains(simpleName)) {
-            return Optional.of(Optional.empty());
+            return isLiteralZero(indexOrKey) ? Optional.of(Optional.empty()) : Optional.empty();
         }
         if (MAP_LIKE_TYPES.contains(simpleName)) {
-            String key = literalStringArg(inv.getArguments().get(0));
+            String key = literalStringArg(indexOrKey);
             return key == null ? Optional.empty() : Optional.of(Optional.of(key));
         }
         return Optional.empty();
+    }
+
+    private static boolean isLiteralZero(CtExpression<?> arg) {
+        return arg instanceof CtLiteral<?> literal && literal.getValue() instanceof Integer i && i == 0;
     }
 
     private static String literalStringArg(CtExpression<?> arg) {
