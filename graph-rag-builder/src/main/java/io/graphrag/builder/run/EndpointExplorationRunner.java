@@ -2497,6 +2497,51 @@ public class EndpointExplorationRunner {
     }
 
     /**
+     * 캡처-off no-op scope trial invoke(REQ-015/031, Task 11). {@code synthesize-triple} T2(추후
+     * task)의 후보 재발행 전용 진입점 — {@code doSend}와 동일한 HTTP 전송 로직(URL/헤더/바디 조립)을
+     * 재사용하되, {@code sqlCapture.begin()}을 호출하지 않아 SQL 캡처 scope를 열지 않고, 요청별
+     * JaCoCo dump({@code coverage.baselineCut}/{@code requestDelta})도 수행하지 않으며,
+     * {@code cumulativeCoverage}·{@code httpCapture}/egress 어디에도 결과를 병합하지 않는다
+     * (no-op capture scope) — trial 구간의 흔적이 확정 run의 graph.json/리포트 산출물에 전혀 남지
+     * 않는다. {@link EndpointInvoker} 함수형 인터페이스는 변경하지 않는다 — TrialRunner(추후 task)가
+     * 이 메서드를 러너에서 직접 호출한다.
+     */
+    public InvocationOutcome invokeTrial(Endpoint endpoint, JsonNode input) throws Exception {
+        HttpClient http = HttpClient.newHttpClient();
+        String authHeaderValue = (authProvider != null && endpoint.authRequired())
+                ? authConfig.headerValue(authProvider.token()) : null;
+        String url = sut.baseUri() + buildPathAndQuery(endpoint, input);
+        boolean form = endpoint.params().stream().anyMatch(p -> p.kind() == ParamKind.FORM);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", form ? "application/x-www-form-urlencoded" : "application/json");
+        if (authHeaderValue != null) {
+            builder.header(authConfig.headerName(), authHeaderValue);
+        }
+        // 캡처-off: SQL/coverage scope를 열지 않으므로 상관 헤더(traceparent/baggage)를 주입하지 않는다.
+        // 사용자 지정 커스텀 헤더는 그대로 적용한다(상관 헤더 이름은 무의미해 제외).
+        Map<String, String> userHeaders = extraHeaders.resolved(Instant.now());
+        for (Map.Entry<String, String> h : userHeaders.entrySet()) {
+            if (!CORRELATION_HEADERS.contains(h.getKey().toLowerCase(java.util.Locale.ROOT))) {
+                builder.header(h.getKey(), h.getValue());
+            }
+        }
+        String method = endpoint.httpMethod();
+        if (method.equals("GET") || method.equals("DELETE")) {
+            builder.method(method, HttpRequest.BodyPublishers.noBody());
+        } else if (form) {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(formEncode(bodyOnly(endpoint, input))));
+        } else {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(
+                    Json.mapper().writeValueAsString(bodyOnly(endpoint, input))));
+        }
+        HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        // 캡처-off: sqlCapture.begin() 미호출(SQL scope 미개설), coverage.baselineCut/requestDelta
+        // 미호출(dump 스킵), cumulativeCoverage 미병합, httpCapture/egress 미수집.
+        return new InvocationOutcome(response.statusCode(), parseJsonOrNull(response.body()), Set.of(), 0, 0);
+    }
+
+    /**
      * HTTP 요청 1회 전송 + 요청 단위 커버리지 수집. authHeaderValue!=null이면 그 값을 auth 헤더로 설정,
      * null이면 미설정. 부정-인증 패스(무효 토큰)도 이 코어를 재사용한다(per-request probe가 거부 arm을 크레딧).
      *

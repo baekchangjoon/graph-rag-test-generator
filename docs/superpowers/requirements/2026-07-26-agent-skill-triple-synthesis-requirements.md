@@ -296,7 +296,7 @@
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green |
 | REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#REQ-013 | E2E | 🔴 planned |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT#REQ-014 | integration | 🔴 planned |
-| REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🔴 planned |
+| REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#REQ-016 | E2E | 🔴 planned |
 | REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#REQ-017 | integration | 🔴 planned |
 | REQ-018 | promoted 완주 경로 | TriplePromotionE2E#REQ-018 | E2E | 🔴 planned |
@@ -305,7 +305,7 @@
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#REQ-035 | integration | 🔴 planned |
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🔴 planned |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
-| REQ-031 | 저장 레이아웃·CLI 계약 | TripleStoreLayoutIT#REQ-031 | integration | 🔴 planned |
+| REQ-031 | 저장 레이아웃·CLI 계약 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green[^triple-store-cli-defer] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#REQ-023 | integration | 🔴 planned |
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#REQ-024 | integration | 🔴 planned |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#REQ-025 | integration | 🔴 planned |
@@ -354,7 +354,16 @@ reject되므로 실질적으로 커버되지만, 완전한 응답 DTO 형상 대
 
 [^unguarded-fix]: 코드리뷰에서 Critical로 지적: 최초 커밋은 `ProvenanceIndexer.analyze()`가 `unguarded`를 항상 빈 리스트로 반환하는 상태(후속 task 범위로 표시돼 있었음)에서 REQ-001을 🟢로 표기 — REQ-001 수용기준의 "unguarded의 free-text 필드(semanticHint)가 golden과 일치" 부분이 실제로는 미충족이었다. Task 9(갭 마커)가 이 출력을 소비하는 설계라 연기하지 않고 즉시 구현: `@RequestBody` 파라미터 타입을 재귀 전개(record canonical accessor/JavaBean getFoo·isFoo, List는 대표원소로 계속 전개, Map은 동적 키라 leaf 처리 — 기존 INPUT dot-path 관례 재사용)해 가드에 한 번도 참조되지 않은 필드를 `UnguardedField`로 수집하고, 필드명 기반 결정적 규칙(`ProvenanceIndexer#semanticHint` — email/phone·tel/name/note·memo·comment·description/그 외 String→free-text/비-String→none)으로 semanticHint를 부여했다. `ProvenanceIndexerIT#req001_unguardedFieldTagged`(basic fixture, userId 미참조 확인)로 회귀 테스트를 추가하고, golden에 실산출 기준 unguarded 2건(`note`, `items.sku` — 둘 다 String이고 다른 규칙에 매칭되지 않아 free-text)을 반영했다. 클래스 Javadoc의 "unguarded 필드 탐지는 후속 task 범위" 문구는 제거했다.
 
-Coverage: 15/35 green (43%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
+[^triple-store-cli-defer]: Task 11은 `TripleStore`(레이아웃 로더 + `promote`/`fail` 이동 + 순번
+증번)와 `EndpointExplorationRunner.invokeTrial`(캡처-off no-op scope)만 구현한다 — REQ-031 설명의
+저장 레이아웃·순번 증번·base/ 무결성 안전망(승격 전 base/ 존재·파일 구성 일치 확인, 불일치 시 reject)은
+`TripleStoreLayoutIT`로 완전히 검증됐다. **남은 갭(후속 task로 이연):** `--triple-store <dir>`
+(기본 `.graphrag/triples/`) / `--triple-candidates <dir>` CLI 플래그 배선과, e2e fixture용
+`promoted/` 사본을 graph-rag repo `e2e/` 리소스로 커밋하는 작업은 `TrialRunner`(REQ-013/014/016~020
+등)가 BuilderCli에 배선되는 시점까지 남겨둔다 — 이 task의 선언 파일 범위(TripleStore/
+EndpointExplorationRunner)에 CLI 서브커맨드 변경은 포함되지 않는다.
+
+Coverage: 17/35 green (49%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 
