@@ -203,12 +203,21 @@
   - Given 동일 SUT·동일 설정, When off/미발화 빌드 vs 현행 main 빌드 비교, Then 정규화 diff가 차이 0을 보고한다(신규 필드 기본값 제외 목록 명시).
 - 검증 레벨: E2E black-box
 
-### REQ-031 — 삼중 저장 레이아웃·CLI 계약
+### REQ-031 — 삼중 저장 레이아웃·순번 증번
 - 유형: Functional / 우선순위: Must
-- 설명: 삼중 저장은 `<triple-store 루트>/<endpointId>/{cand-NN | promoted/cand-NN | failed/cand-NN}` 레이아웃을 따른다. 루트는 `--triple-store <dir>`(기본: SUT 캠페인 `.graphrag/triples/`), 소비는 `--triple-candidates <dir>`. 순번 충돌 시 덮어쓰지 않고 다음 가용 순번으로 자동 증번한다. fixture용 promoted는 graph-rag repo `e2e/` 리소스로 커밋하며 e2e 스크립트가 상대 경로로 전달한다.
+- 설명: 삼중 저장은 `<triple-store 루트>/<endpointId>/{cand-NN | base/cand-NN | promoted/cand-NN | failed/cand-NN}` 레이아웃을 따른다. `candidates(endpointId)`는 top-level 대기 후보만 순번순으로 로드하고(base/promoted/failed 제외), `promote`/`fail`은 각각 promoted/failed로 이동한다. 순번 충돌 시 덮어쓰지 않고 다음 가용 순번으로 자동 증번한다. CLI에서 이 저장소를 노출하는 방법(플래그·기본 경로·e2e fixture 배치)은 REQ-036 소관이며, 이 REQ는 `TripleStore`의 저장 레이아웃·이동·증번 메커니즘 자체로 한정한다.
 - 수용기준:
-  - Given synthesize→trial→승격 수행(대상 promoted/cand-01 기존재 포함), When 산출 구조 검사, Then 위 레이아웃이 준수되고 기존 디렉토리는 보존되며 신규 승격은 cand-02로 증번된다.
+  - Given promoted/cand-01이 기존재하는 endpoint에 신규 후보(cand-01)를 승격, When 산출 구조 검사, Then 위 레이아웃이 준수되고 기존 promoted/cand-01은 보존되며 신규 승격은 cand-02로 증번된다.
 - 검증 레벨: integration
+
+### REQ-036 — 삼중 저장 CLI 계약 + e2e fixture 경로
+- 유형: Functional / 우선순위: Must
+- 설명: `TripleStore`(REQ-031)를 CLI로 노출한다 — 생성/소비 루트는 `--triple-store <dir>`(기본: SUT 캠페인 `.graphrag/triples/`), trial이 읽는 대기 후보 디렉토리는 `--triple-candidates <dir>`로 지정한다. e2e fixture용 `promoted/` 사본은 graph-rag repo `e2e/` 리소스로 커밋하고, e2e 스크립트가 그 경로를 `--triple-store`에 상대 경로로 전달한다. `TrialRunner`(REQ-013/014/016~020 등)가 BuilderCli 서브커맨드에 배선되는 시점에 함께 구현한다.
+- 수용기준:
+  - Given `--triple-store`/`--triple-candidates` 미지정, When CLI 실행, Then 기본 경로(`.graphrag/triples/`)가 적용된다.
+  - Given e2e 스크립트가 커밋된 `e2e/` fixture 경로를 `--triple-store`로 전달, When synthesize→trial→승격 파이프라인 실행, Then `TripleStore`가 그 경로를 루트로 레이아웃(REQ-031)을 그대로 따른다.
+- 검증 레벨: integration
+- 담당: Task 12/18 (TrialRunner/BuilderCli 배선과 함께)
 
 ### attach 안전 경계
 
@@ -305,7 +314,8 @@
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#REQ-035 | integration | 🔴 planned |
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🔴 planned |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
-| REQ-031 | 저장 레이아웃·CLI 계약 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green[^triple-store-cli-defer] |
+| REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
+| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#REQ-023 | integration | 🔴 planned |
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#REQ-024 | integration | 🔴 planned |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#REQ-025 | integration | 🔴 planned |
@@ -354,16 +364,17 @@ reject되므로 실질적으로 커버되지만, 완전한 응답 DTO 형상 대
 
 [^unguarded-fix]: 코드리뷰에서 Critical로 지적: 최초 커밋은 `ProvenanceIndexer.analyze()`가 `unguarded`를 항상 빈 리스트로 반환하는 상태(후속 task 범위로 표시돼 있었음)에서 REQ-001을 🟢로 표기 — REQ-001 수용기준의 "unguarded의 free-text 필드(semanticHint)가 golden과 일치" 부분이 실제로는 미충족이었다. Task 9(갭 마커)가 이 출력을 소비하는 설계라 연기하지 않고 즉시 구현: `@RequestBody` 파라미터 타입을 재귀 전개(record canonical accessor/JavaBean getFoo·isFoo, List는 대표원소로 계속 전개, Map은 동적 키라 leaf 처리 — 기존 INPUT dot-path 관례 재사용)해 가드에 한 번도 참조되지 않은 필드를 `UnguardedField`로 수집하고, 필드명 기반 결정적 규칙(`ProvenanceIndexer#semanticHint` — email/phone·tel/name/note·memo·comment·description/그 외 String→free-text/비-String→none)으로 semanticHint를 부여했다. `ProvenanceIndexerIT#req001_unguardedFieldTagged`(basic fixture, userId 미참조 확인)로 회귀 테스트를 추가하고, golden에 실산출 기준 unguarded 2건(`note`, `items.sku` — 둘 다 String이고 다른 규칙에 매칭되지 않아 free-text)을 반영했다. 클래스 Javadoc의 "unguarded 필드 탐지는 후속 task 범위" 문구는 제거했다.
 
-[^triple-store-cli-defer]: Task 11은 `TripleStore`(레이아웃 로더 + `promote`/`fail` 이동 + 순번
-증번)와 `EndpointExplorationRunner.invokeTrial`(캡처-off no-op scope)만 구현한다 — REQ-031 설명의
-저장 레이아웃·순번 증번·base/ 무결성 안전망(승격 전 base/ 존재·파일 구성 일치 확인, 불일치 시 reject)은
-`TripleStoreLayoutIT`로 완전히 검증됐다. **남은 갭(후속 task로 이연):** `--triple-store <dir>`
-(기본 `.graphrag/triples/`) / `--triple-candidates <dir>` CLI 플래그 배선과, e2e fixture용
-`promoted/` 사본을 graph-rag repo `e2e/` 리소스로 커밋하는 작업은 `TrialRunner`(REQ-013/014/016~020
-등)가 BuilderCli에 배선되는 시점까지 남겨둔다 — 이 task의 선언 파일 범위(TripleStore/
-EndpointExplorationRunner)에 CLI 서브커맨드 변경은 포함되지 않는다.
+[^req036-split]: Task 11 코드리뷰에서 Important로 지적: 원래 REQ-031("삼중 저장 레이아웃·CLI
+계약")이 저장 레이아웃(층/순번 증번, `TripleStore`)과 CLI 계약(`--triple-store`/
+`--triple-candidates` 플래그, e2e `promoted/` fixture 경로)을 한 REQ-ID에 묶은 채 수용기준은
+전자만 검증해, Task 11에서 REQ-031을 🟢로 표기하면 CLI 계약까지 완료된 것처럼 커버리지가
+과대 표기되는 문제가 있었다. **조치:** REQ-031을 저장 레이아웃·순번 증번으로 범위를 좁혀
+`TripleStoreLayoutIT`로 완전히 검증된 것만 🟢로 남기고, CLI 계약·e2e fixture 경로는 신규
+**REQ-036**으로 분리해 `TrialRunner`(REQ-013/014/016~020 등)가 BuilderCli에 배선되는 시점
+(Task 12/18)까지 🔴 planned로 이연했다. Task 11의 선언 파일 범위(TripleStore/
+EndpointExplorationRunner)에는 애초에 CLI 서브커맨드 변경이 포함되지 않았다.
 
-Coverage: 17/35 green (49%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 33 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외)
+Coverage: 17/36 green (47%), 1 partial(🟡 REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
 
 ## design spec E2E ↔ REQ 매핑
 
@@ -371,7 +382,7 @@ Coverage: 17/35 green (49%), 1 partial(🟡 REQ-032) — target 100% (대상: Mu
 |---|---|
 | E2E-A1 | REQ-001, REQ-034 (+REQ-002~004·032: 별도 integration 테스트, E2E-A1과 동일 golden 소스 재사용) |
 | E2E-A2 | REQ-005~008, REQ-033 |
-| E2E-A3 | REQ-013, REQ-018, REQ-031 |
+| E2E-A3 | REQ-013, REQ-018, REQ-031, REQ-036 |
 | E2E-A4 | REQ-009~012 |
 | E2E-A5 | REQ-014, REQ-016, REQ-022 |
 | E2E-A6 | REQ-020, REQ-035 |

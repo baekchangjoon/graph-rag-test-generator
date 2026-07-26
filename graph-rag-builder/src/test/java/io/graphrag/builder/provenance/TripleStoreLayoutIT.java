@@ -139,6 +139,22 @@ class TripleStoreLayoutIT {
         assertThat(Files.exists(candDir)).isTrue();
     }
 
+    @Test
+    @DisplayName("REQ-031: candDir이 root 바로 아래 <endpointId>/cand-NN이 아니면(경로 오용) promote/fail은 IllegalArgumentException으로 거부")
+    void promoteAndFailRejectPathsOutsideExpectedLayout() throws IOException {
+        Path candDir = createCandidate(root, "ep-7", "cand-01");
+        // base/cand-01은 CAND_DIR 정규식("cand-NN")은 통과하지만 root/<endpointId>/cand-NN보다
+        // 한 단계 더 깊다 — 실수로 base/promoted/failed 경로를 넘기는 오용을 재현한다.
+        Path misusedPath = candDir.getParent().resolve("base").resolve("cand-01");
+
+        TripleStore store = new TripleStore(root);
+        assertThatThrownBy(() -> store.promote(misusedPath)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> store.fail(misusedPath, "digest")).isInstanceOf(IllegalArgumentException.class);
+        // 거부됐으므로 아무 것도 이동하지 않는다 — 정상 candDir/misusedPath 모두 그대로.
+        assertThat(Files.exists(candDir)).isTrue();
+        assertThat(Files.exists(misusedPath)).isTrue();
+    }
+
     private static Path createCandidate(Path root, String endpointId, String candName) throws IOException {
         Path endpointDir = root.resolve(endpointId);
         Path candDir = Files.createDirectories(endpointDir.resolve(candName));
