@@ -490,7 +490,9 @@ public class ProvenanceIndexer {
         }
         if (CLIENT_LIB_TYPES.contains(declaringTypeRef.getSimpleName())
                 && CLIENT_LIB_METHODS.contains(executable.getSimpleName())) {
-            return Optional.of(directClientCallSite(executable.getSimpleName(), inv.getArguments()));
+            String fallback = declaringTypeRef.getQualifiedName().replace('$', '.')
+                    + "#" + executable.getSimpleName();
+            return Optional.of(clientCallSiteOrFallback(executable.getSimpleName(), inv.getArguments(), fallback));
         }
         CtType<?> declaringType = resolveType(model, declaringTypeRef.getQualifiedName());
         if (declaringType != null && isExternalClientType(declaringType)) {
@@ -513,31 +515,40 @@ public class ProvenanceIndexer {
     /**
      * 래핑 클라이언트 클래스({@code declaringType}) 안의 {@code methodName} 메서드 본문에서 첫
      * {@link #CLIENT_LIB_METHODS} 호출을 찾아 callSite를 추출한다. 본문이 없거나(예: {@code @FeignClient}
-     * 인터페이스 메서드) 그런 호출을 찾지 못하면(예: WebClient의 유동적 빌더 체인) 클라이언트클래스#
-     * 메서드로 폴백한다(클래스 상단 doc에 명시된 대로 — 이 task 범위에서는 폴백까지만 보장).
+     * 인터페이스 메서드) 그런 호출을 찾지 못하거나, 찾았어도 그 호출의 URL 인자에서 path literal을
+     * 추출할 수 없으면(예: 변수·{@code UriComponentsBuilder}로 구성된 URL) 클라이언트클래스#메서드로
+     * 폴백한다(클래스 상단 doc에 명시된 대로 — 이 task 범위에서는 폴백까지만 보장).
      */
     private String wrappedClientCallSite(CtType<?> declaringType, String methodName) {
+        String fallback = declaringType.getQualifiedName().replace('$', '.') + "#" + methodName;
         for (CtMethod<?> method : declaringType.getMethods()) {
             if (!method.getSimpleName().equals(methodName) || method.getBody() == null) {
                 continue;
             }
             for (CtInvocation<?> inner : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 if (CLIENT_LIB_METHODS.contains(inner.getExecutable().getSimpleName())) {
-                    return directClientCallSite(inner.getExecutable().getSimpleName(), inner.getArguments());
+                    return clientCallSiteOrFallback(inner.getExecutable().getSimpleName(), inner.getArguments(), fallback);
                 }
             }
         }
-        return declaringType.getQualifiedName().replace('$', '.') + "#" + methodName;
+        return fallback;
     }
 
-    /** RestTemplate/WebClient 직접 호출의 인자에서 `"<HTTP메서드> <pathLiteral>"`을 합성(추출 실패 시 메서드명만). */
-    private String directClientCallSite(String methodName, List<CtExpression<?>> args) {
+    /**
+     * RestTemplate/WebClient 호출의 인자에서 {@code "<HTTP메서드> <pathLiteral>"}을 합성한다. URL
+     * 인자가 정적 문자열 리터럴(concat 포함)이 아니어서 path를 추출할 수 없으면(예: 메서드 파라미터로
+     * 받은 변수, {@code UriComponentsBuilder} 체인 등) bare 메서드명을 반환하지 않고 {@code fallback}
+     * (클라이언트클래스#메서드)을 그대로 반환한다 — "추출 가능한 범위까지, 불가하면 클라이언트클래스#
+     * 메서드 폴백"이라는 계약(클래스 상단 doc)을 지키기 위함. bare 메서드명은 fallback과 구분되지 않는
+     * 문자열이라 추적성을 잃으므로 반환하지 않는다.
+     */
+    private static String clientCallSiteOrFallback(String methodName, List<CtExpression<?>> args, String fallback) {
         if (args.isEmpty()) {
-            return methodName;
+            return fallback;
         }
         String pathLiteral = pathLiteralOf(args.get(0));
         if (pathLiteral == null) {
-            return methodName;
+            return fallback;
         }
         String httpMethod = httpMethodOf(methodName, args);
         return httpMethod.isEmpty() ? pathLiteral : httpMethod + " " + pathLiteral;
