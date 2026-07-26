@@ -174,6 +174,54 @@ class TripleGateIT {
         assertThat(result.reasons()).anyMatch(r -> r.contains("priority"));
     }
 
+    @Test
+    @DisplayName("REQ-011(fix): stub jsonBody의 마커 위치를 객체(중첩 구조)로 대체한 후보는 reject된다 — "
+            + "마커는 '값 치환'이지 '구조 대체'가 아니다")
+    void req011_stubJsonBodyMarkerReplacedWithObjectRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String seed = "INSERT INTO orders (id) VALUES ('seed-orders');";
+        String baseStub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":\"" + GAP
+                + "{type:String, semanticHint:none, guard:none}\"}}}";
+        String candStub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":{\"nested\":\"escape\"}}}}";
+
+        Path base = writeArtifacts("base", body, seed, baseStub);
+        Path cand = writeArtifacts("cand", body, seed, candStub);
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("orders"), BodyShape.empty());
+
+        assertThat(result.accepted())
+                .as("stub jsonBody 마커 위치를 객체로 대체하면 reject되어야 한다")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-011(fix): stub jsonBody의 마커 위치를 정상 스칼라 값으로 채운 후보는 통과한다")
+    void req011_stubJsonBodyMarkerFilledWithScalarAccepted() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String seed = "INSERT INTO orders (id) VALUES ('seed-orders');";
+        String baseStub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":\"" + GAP
+                + "{type:String, semanticHint:none, guard:none}\"}}}";
+        String candStub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":\"CLEAR\"}}}";
+
+        Path base = writeArtifacts("base", body, seed, baseStub);
+        Path cand = writeArtifacts("cand", body, seed, candStub);
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("orders"), BodyShape.empty());
+
+        assertThat(result.accepted())
+                .as("stub jsonBody 마커를 스칼라 값으로 채운 정상 후보는 통과해야 한다: " + result.reasons())
+                .isTrue();
+    }
+
     // ---- REQ-012: PII 휴리스틱 차단 ----
 
     @Test

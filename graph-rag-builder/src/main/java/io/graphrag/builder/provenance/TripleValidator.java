@@ -107,9 +107,13 @@ public final class TripleValidator {
     // ---- REQ-009: body/stubs JSON 마커-diff ----
 
     /**
-     * base와 candidate JSON 트리를 재귀 비교한다. base의 리프가 갭 마커 문자열이면 해당 위치는 어떤
-     * 값으로 바뀌어도 허용하고(candidate의 스칼라 값들을 PII 스캔 대상으로 수집), 그 외 위치는 완전히
-     * 동일해야 한다(키 추가/삭제, 배열 크기 변경, 스칼라 값 변경 모두 reject).
+     * base와 candidate JSON 트리를 재귀 비교한다. base의 리프가 갭 마커 문자열이면 해당 위치는 스칼라
+     * (문자열/숫자/불리언) 값으로 바뀌는 것만 허용하고(candidate의 스칼라 값을 PII 스캔 대상으로 수집),
+     * 그 외 위치는 완전히 동일해야 한다(키 추가/삭제, 배열 크기 변경, 스칼라 값 변경 모두 reject).
+     *
+     * <p><b>마커 위치의 스칼라 강제(REQ-011):</b> 마커는 "값 치환" 계약이지 "구조 대체"가 아니다 — 후보가
+     * 마커 자리를 객체·배열(예: stub {@code jsonBody}의 마커를 중첩 객체로 대체)로 바꾸면, 그 서브트리는
+     * body/stub 스키마가 전혀 모르는 임의 필드를 몰래 들여오는 경로가 되므로 reject한다.
      */
     private static void diffJson(JsonNode base, JsonNode cand, String path, List<String> reasons,
                                   List<String> markerFilledValues) {
@@ -118,6 +122,11 @@ public final class TripleValidator {
             return;
         }
         if (isMarkerNode(base)) {
+            if (cand.isObject() || cand.isArray()) {
+                reasons.add("마커 계약 위반(REQ-011, 마커 위치가 스칼라가 아닌 구조로 대체됨) at " + path
+                        + ": " + cand.getNodeType());
+                return;
+            }
             collectScalarValues(cand, markerFilledValues);
             return;
         }

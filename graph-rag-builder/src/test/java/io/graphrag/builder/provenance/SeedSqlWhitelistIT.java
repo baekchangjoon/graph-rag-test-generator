@@ -140,4 +140,67 @@ class SeedSqlWhitelistIT {
         assertThat(whitelist.validate("DROP TABLE orders;", Set.of("orders"), DbConfig.Type.POSTGRES).accepted())
                 .as("DDL(DROP TABLE) 단문은 reject되어야 한다").isFalse();
     }
+
+    // ---- 리뷰 Critical 1: VALUES 절 표현식 종류 제한 (닫힌 리터럴 집합만 허용) ----
+
+    @Test
+    @DisplayName("REQ-010(fix): VALUES 절의 서브쿼리((SELECT ...))는 임의 데이터 유출 경로이므로 reject된다")
+    void req010_subqueryInValuesRejected() {
+        String seedSql = "INSERT INTO orders (id, secret) VALUES "
+                + "('x', (SELECT password FROM admin_users LIMIT 1));";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("마커 위치라도 서브쿼리로의 대체는 '값 치환'이 아니므로 reject되어야 한다")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix): VALUES 절의 함수 호출(예: LOAD_FILE(...))은 reject된다")
+    void req010_functionCallInValuesRejected() {
+        String seedSql = "INSERT INTO orders (id, secret) VALUES ('x', LOAD_FILE('/etc/passwd'));";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("함수 호출로의 대체는 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix): VALUES 절의 컬럼 참조(다른 컬럼 값을 그대로 노출)는 reject된다")
+    void req010_columnReferenceInValuesRejected() {
+        String seedSql = "INSERT INTO orders (id, note) VALUES ('a', other_col);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("컬럼 참조로의 대체는 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix): 정상 리터럴(음수·NULL·불리언 포함)은 통과한다")
+    void req010_ordinaryLiteralsIncludingNegativeAndNullAccepted() {
+        String seedSql = "INSERT INTO orders (id, amt, note, flag) VALUES ('a', -5, NULL, true);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("문자열/음수/NULL/불리언 리터럴만 있는 정상 INSERT는 통과해야 한다: " + result.reasons())
+                .isTrue();
+    }
+
+    // ---- 리뷰 Important 3: VALUES 절이 없는 INSERT(INSERT ... SELECT) reject ----
+
+    @Test
+    @DisplayName("REQ-010(fix): VALUES 절 없이 SELECT로 값을 채우는 INSERT ... SELECT는 reject된다")
+    void req010_insertSelectWithoutValuesClauseRejected() {
+        String seedSql = "INSERT INTO orders (id) SELECT id FROM staging;";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("INSERT ... SELECT(VALUES 없음)는 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
 }
