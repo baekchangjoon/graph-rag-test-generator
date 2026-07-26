@@ -523,6 +523,7 @@ public class EndpointExplorationRunner {
         // 현행과 완전히 동일하다.
         if (tripleCandidatesRoot != null && outcome.paths().stream().noneMatch(
                 p -> classifier.classify(p.status(), p.response()).kind() == Outcome.Kind.SUCCESS)) {
+            SynthesizedInput happyBeforeGate = happy;
             GateApplyResult gateResult = applyTriplePromotionGate(endpoint, tables, shape, happy,
                     requiredSeeds, seedResource, readPath, hasPathParam, mutableFields, fieldConstraints,
                     conditionBounds, stringCandidates, conjunctions, interFieldTuples, realBounds,
@@ -531,6 +532,18 @@ public class EndpointExplorationRunner {
             happy = gateResult.happy();
             requiredSeeds = gateResult.requiredSeeds();
             baseInput = happy.body();
+            // Critical fix(REQ-018 리뷰): ADOPT로 happy/baseInput이 바뀌었으면 target/invoker도
+            // 재생성해야 한다 — 그렇지 않으면 아래 B2 재탐색 루프가 stale target(옛 baseInput을
+            // 감싼 invoker)으로 orchestrator.explore(target)을 호출해, 게이트가 이미 삭제한 원본
+            // happy 시드 대신 candidate seed만 남은 DB에 거부된 원본 body를 재발행하게 된다
+            // (tripleAdopted=true 보고와 실제 하위 탐색 입력 불일치). SQL 2-pass 루프(아래, 611행
+            // 부근)가 매 pass마다 target2를 새로 만드는 것과 동일한 관례를 여기서도 지킨다.
+            TargetRebuildResult rebuilt = rebuildTargetIfHappyChanged(happyBeforeGate, happy, endpoint,
+                    readPath, hasPathParam, mutableFields, tables, literalCandidates, fieldConstraints,
+                    conditionBounds, stringCandidates, conjunctions, interFieldTuples, realBounds,
+                    realInterFieldTuples, joinGuards, invoker, target);
+            invoker = rebuilt.invoker();
+            target = rebuilt.target();
         }
 
         // ---- B2: 외부 stub 합성→재탐색 루프 (REQ-008, REQ-014) ----
@@ -1298,6 +1311,42 @@ public class EndpointExplorationRunner {
                            List<RequiredSeed> requiredSeeds) {
     }
 
+    /** {@link #rebuildTargetIfHappyChanged}의 반환값. */
+    record TargetRebuildResult(EndpointInvoker invoker, EndpointTarget target) {
+    }
+
+    /**
+     * Critical fix(REQ-018 리뷰): {@link #applyTriplePromotionGate} 호출 전후로 {@code happy}가
+     * 바뀌었으면(참조 불일치 — ADOPTED) {@code invoker}/{@code target}을 candidate body 기준으로
+     * 재생성해 반환한다. 바뀌지 않았으면(NO_CANDIDATE/STALE/REQ-022 미발화) 전달받은 값을 그대로
+     * 반환한다(재할당·재구성 비용 없음 — 회귀 0).
+     *
+     * <p>이 재생성이 없으면 {@code run()}의 B2 외부 stub 재탐색 루프가 stale {@code target}(옛
+     * baseInput을 감싼 invoker)으로 {@code orchestrator.explore(target)}을 호출해, 게이트가 이미
+     * 삭제한 원본 happy 시드 대신 candidate seed만 남은 DB에 거부된 원본 body를 재발행하게 된다
+     * ({@code tripleAdopted=true} 보고와 실제 하위 탐색 입력이 불일치하는 사고).
+     */
+    TargetRebuildResult rebuildTargetIfHappyChanged(
+            SynthesizedInput happyBeforeGate, SynthesizedInput happyAfterGate, Endpoint endpoint,
+            boolean readPath, boolean hasPathParam, List<BodyShape.BodyField> mutableFields,
+            List<TableSchema> tables, List<String> literalCandidates,
+            Map<String, List<FieldConstraint>> fieldConstraints,
+            Map<String, Set<Long>> conditionBounds, Map<String, Set<String>> stringCandidates,
+            List<ConstraintExtractor.Conjunction> conjunctions,
+            List<Map<String, Long>> interFieldTuples, Map<String, Set<Double>> realBounds,
+            List<Map<String, Double>> realInterFieldTuples,
+            List<ConstraintExtractor.JoinGuard> joinGuards,
+            EndpointInvoker currentInvoker, EndpointTarget currentTarget) {
+        if (happyAfterGate == happyBeforeGate) {
+            return new TargetRebuildResult(currentInvoker, currentTarget);
+        }
+        EndpointInvoker invoker = buildInvoker(endpoint, readPath, hasPathParam, happyAfterGate);
+        EndpointTarget target = new EndpointTarget(endpoint, happyAfterGate.body(), mutableFields, tables,
+                invoker, literalCandidates, fieldConstraints, conditionBounds, stringCandidates,
+                enumConstants, conjunctions, interFieldTuples, realBounds, realInterFieldTuples, joinGuards);
+        return new TargetRebuildResult(invoker, target);
+    }
+
     /** REQ-021 테스트 훅 — run() 없이 게이트를 직접 호출한 뒤 관측 필드를 확인한다. */
     int tripleTrialCountForTest() {
         return tripleTrialCount;
@@ -1313,6 +1362,16 @@ public class EndpointExplorationRunner {
 
     List<String> tripleStalePathsForTest() {
         return List.copyOf(tripleStalePaths);
+    }
+
+    /** REQ-019 테스트 훅 — 확정 explore 도중 예외 시 cumulativeCoverage 원복을 참조-동일성으로 단언한다. */
+    ExecutionDataStore cumulativeCoverageForTest() {
+        return cumulativeCoverage;
+    }
+
+    /** REQ-019 테스트 훅 — 원복 대상 식별을 위한 마커 스토어 주입. */
+    void setCumulativeCoverageForTest(ExecutionDataStore store) {
+        this.cumulativeCoverage = store;
     }
 
     /**
@@ -1376,6 +1435,11 @@ public class EndpointExplorationRunner {
             // ---- ADOPTED: 영속 적용 + 확정 run(캡처-on 재explore, REQ-018) ----
             TriplePromotionGate.CandidateMaterials materials = verdict.materials();
             SynthesizedInput candidateHappy = new SynthesizedInput(materials.body(), materials.seedRows());
+            // Important fix(REQ-019 리뷰): try 진입 전(예외 발생 가능 구간 밖)에 캡처해 catch에서도
+            // 보이게 한다 — try 안 지역변수였다면 확정 explore 이전에 던지는 예외(예: insertSeeds
+            // 부분 실패, StubMapping.buildFrom 파싱 실패) 경로에서 cumulativeCoverage가 빈 상태로
+            // 남아 리포트 커버리지가 과소 보고됐다.
+            ExecutionDataStore priorCumulative = cumulativeCoverage;
             UUID stubId = null;
             try {
                 List<RequiredSeed> candidateSeeds = insertSeeds(candidateHappy, endpoint, seedResource, tables);
@@ -1387,7 +1451,6 @@ public class EndpointExplorationRunner {
                     stubId = mapping.getId();
                 }
                 coverage.baselineCut();
-                ExecutionDataStore priorCumulative = cumulativeCoverage;
                 cumulativeCoverage = new ExecutionDataStore();
                 EndpointInvoker confirmInvoker = buildInvoker(endpoint, readPath, hasPathParam, candidateHappy);
                 EndpointTarget confirmTarget = new EndpointTarget(endpoint, candidateHappy.body(), mutableFields,
@@ -1427,12 +1490,19 @@ public class EndpointExplorationRunner {
                             endpoint.id(), cleanupEx.toString());
                 }
                 reinsertSeeds(priorHappy);   // best-effort
+                cumulativeCoverage = priorCumulative;   // Important fix: 예외 경로에서도 원본 커버리지 복원
                 tripleRejectedReasons.merge("adoption-error", 1, Integer::sum);
                 return unchanged;
             }
         } finally {
             TRIPLE_GATE_LOCK.unlock();
         }
+    }
+
+    /** REQ-018 테스트 훅 — run()이 게이트 호출 전에 만드는 "stale" invoker를 테스트에서 동일하게 재현한다. */
+    EndpointInvoker buildInvokerForTest(Endpoint endpoint, boolean readPath,
+                                        boolean hasPathParam, SynthesizedInput happy) {
+        return buildInvoker(endpoint, readPath, hasPathParam, happy);
     }
 
     private EndpointInvoker buildInvoker(Endpoint endpoint, boolean readPath,
