@@ -60,6 +60,20 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
                 mappedGuardId, suggestion);
     }
 
+    /**
+     * invoke 이전 단계(② seed.sql INSERT, ③ stub 등록)에서 던져진 예외를 기록하는 다이제스트(trial
+     * CLI 루프의 후보 단위 격리 — 이 후보만 실패 처리하고 다음 후보로 진행하기 위한 최소 산출물).
+     * HTTP 응답이 아예 없었으므로 {@code status=-1}(sentinel), {@code outcomeKind="ERROR"}(SUCCESS/
+     * FAILURE 밖 실행 오류 표시)로 표기하고, mappedGuard/toolSuggestion은 응답/판정이 없어 계산
+     * 불가하므로 {@code null}이다. {@code stackExcerpt}에 예외의 전체 스택트레이스를 담는다.
+     */
+    public static FailureDigest forError(String context, Throwable cause) {
+        java.io.StringWriter sw = new java.io.StringWriter();
+        cause.printStackTrace(new java.io.PrintWriter(sw));
+        String logExcerpt = (context == null ? "" : context + ": ") + cause;
+        return new FailureDigest(-1, "ERROR", null, logExcerpt, sw.toString(), null, null);
+    }
+
     static GuardFact mapToGuard(String stackExcerpt, JsonNode responseBody, String logExcerpt,
             ProvenanceReport report) {
         if (report == null || report.guards() == null) {

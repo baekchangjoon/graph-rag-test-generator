@@ -208,4 +208,98 @@ class TrialCliE2E {
         // TripleStore가 보는 관점에서도 대기 후보가 더는 없어야 한다(전부 failed로 소비됨).
         assertThat(new TripleStore(tripleStore).candidates("post-api-transfers")).isEmpty();
     }
+
+    /**
+     * REQ-016 명목 시나리오: 후보 수(3) &gt; budget(2) — {@code attempts >= budget} 분기를 실제로
+     * 타야 한다(이전 테스트는 후보 소진만 검증해 이 분기를 커버하지 못했다). 미시도 후보는 원위치
+     * 보존(재시도 대상)이 계약이다({@code BuilderCli.runTrial} Javadoc "예산 소진 semantics" 참고) —
+     * promoted/failed 어느 쪽으로도 이동하지 않고 digest-final에도 포함되지 않는다.
+     */
+    @Test
+    @DisplayName("REQ-016: budget < 후보 수이면 예산만큼만 시도하고, 미시도 후보는 원위치 보존·digest-final 미포함으로 exit 3을 반환한다")
+    void req016_budgetSmallerThanCandidateCountLeavesUntriedCandidateInPlace() throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+        }
+        Path tripleStore = tempDir.resolve("triples");
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        Path happySeeds = writeHappySeeds();
+
+        Path cand01 = writeCandidate(endpointDir, "cand-01",
+                "{\"accountId\":\"acc-1\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-1', 10);");   // 잔액 부족 -> 422
+        Path cand02 = writeCandidate(endpointDir, "cand-02",
+                "{\"accountId\":\"acc-2\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-2', 20);");   // 잔액 부족 -> 422
+        Path cand03 = writeCandidate(endpointDir, "cand-03",
+                "{\"accountId\":\"acc-3\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-3', 30);");   // budget 밖 — 시도조차 안 됨
+
+        java.util.Map<String, String> options = new java.util.HashMap<>(baseOptions(tripleStore, happySeeds));
+        options.put("--trial-budget", "2");   // 후보 3개 중 2개만 시도 가능
+
+        int exitCode = BuilderCli.runTrial(options);
+
+        assertThat(exitCode).as("시도한 후보가 전부 실패하면 exit 3이어야 한다").isEqualTo(3);
+        assertThat(endpointDir.resolve("promoted")).doesNotExist();
+        assertThat(endpointDir.resolve("failed").resolve("cand-01")).as("시도①은 failed로 이동").isDirectory();
+        assertThat(endpointDir.resolve("failed").resolve("cand-02")).as("시도②는 failed로 이동").isDirectory();
+        assertThat(endpointDir.resolve("failed").resolve("cand-03"))
+                .as("budget 밖(3번째)은 failed로 이동하면 안 된다").doesNotExist();
+        assertThat(cand03)
+                .as("미시도 후보는 원위치(top-level cand-03)에 그대로 남아 재시도 가능해야 한다")
+                .isDirectory();
+        assertThat(new TripleStore(tripleStore).candidates("post-api-transfers"))
+                .as("TripleStore 관점에서도 미시도 후보(cand-03)는 여전히 대기 목록에 있어야 한다")
+                .extracting(p -> p.getFileName().toString())
+                .containsExactly("cand-03");
+
+        Path finalDigest = endpointDir.resolve("failed").resolve("digest-final.json");
+        var digests = Json.mapper().readTree(finalDigest.toFile());
+        assertThat(digests).as("digest-final에는 실제로 시도한 2건만 기록되어야 한다(미시도 후보 제외)").hasSize(2);
+    }
+
+    /**
+     * REQ-013 예외 격리(구현 리뷰 Important 3): 후보의 seed.sql이 다중 INSERT 중 후반 문장에서 실패
+     * (PK 중복)하면 — ① 그 후보가 이미 삽입한 앞쪽 행은 finally에서 정리되고(누수 없음), ②
+     * {@code runTrial} 루프는 그 후보만 failed 처리한 뒤 중단 없이 다음 후보로 진행해야 한다.
+     */
+    @Test
+    @DisplayName("REQ-013: 다중 INSERT 중 두 번째가 실패하는 후보는 첫 행이 정리되고 failed로 격리되며, 루프는 다음 후보로 계속된다")
+    void req013_midSeedExceptionIsolatesCandidateAndCleansUpPartialInsert() throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+        }
+        Path tripleStore = tempDir.resolve("triples");
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        Path happySeeds = writeHappySeeds();
+
+        // cand-01: 두 번째 INSERT가 같은 PK('acc-x')를 재사용해 제약 위반으로 예외를 던진다.
+        Path cand01 = writeCandidate(endpointDir, "cand-01",
+                "{\"accountId\":\"acc-x\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-x', 10);\n"
+                        + "INSERT INTO accounts (id, balance) VALUES ('acc-x', 20);");
+        // cand-02: 정상 성공 후보 — 루프가 cand-01의 예외 이후에도 이어져야 도달한다.
+        Path cand02 = writeCandidate(endpointDir, "cand-02",
+                "{\"accountId\":\"acc-2\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-2', 600);");
+
+        int exitCode = BuilderCli.runTrial(baseOptions(tripleStore, happySeeds));
+
+        assertThat(exitCode).as("cand-01 예외 이후에도 cand-02가 성공하면 exit 0이어야 한다").isEqualTo(0);
+        assertThat(cand01).doesNotExist();
+        assertThat(endpointDir.resolve("failed").resolve("cand-01"))
+                .as("mid-seed 예외 후보는 failed로 격리되어야 한다(루프 중단 아님)").isDirectory();
+        assertThat(endpointDir.resolve("promoted").resolve("cand-02"))
+                .as("cand-01 예외에도 불구하고 루프가 계속돼 cand-02가 promoted로 이동해야 한다").isDirectory();
+
+        try (Statement st = sutConnection.createStatement();
+             ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM accounts WHERE id = 'acc-x'")) {
+            rs.next();
+            assertThat(rs.getInt(1))
+                    .as("두 번째 INSERT가 실패해도 첫 번째로 성공한 행('acc-x')은 finally에서 정리되어 "
+                            + "잔여가 없어야 한다(부분 삽입 누수 없음)")
+                    .isEqualTo(0);
+        }
+    }
 }

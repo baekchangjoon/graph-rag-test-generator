@@ -24,7 +24,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import java.sql.ResultSet;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * REQ-014: {@link TrialRunner} 실패 경로가 산출하는 {@link FailureDigest}의 가드 역매핑(mappedGuard)을
@@ -276,6 +279,48 @@ class TrialDigestIT {
                     new ProvenanceReport("post-api-transfers", List.of(), List.of(), List.of()));
 
             assertThat(outcome.promoted()).isTrue();
+        }
+    }
+
+    /**
+     * REQ-013 예외 안전(구현 리뷰 Important 3, {@link TrialRunner} 단위): seed.sql의 두 번째 INSERT가
+     * PK 중복으로 실패하면 {@code runCandidate}는 그 예외를 그대로 전파하되(호출자 CLI 루프가 후보
+     * 단위로 격리할 몫), 첫 번째로 성공한 INSERT는 finally에서 정리되어 잔여가 없어야 한다 — insert
+     * 호출을 try 블록 밖에 두면(수정 전 구현) 부분 삽입분이 finally 정리 대상에서 아예 빠진다.
+     */
+    @Test
+    @DisplayName("REQ-013: 두 번째 INSERT가 PK 중복으로 실패하면 예외가 전파되지만 첫 행은 finally에서 정리된다")
+    void req013_secondInsertFailureStillCleansUpFirstInsertedRow() throws Exception {
+        Path candDir = Files.createDirectories(tempDir.resolve("cand-mid-fail-" + DB_SEQ.incrementAndGet()));
+        ObjectNode body = Json.mapper().createObjectNode();
+        body.put("amount", 500);
+        Files.writeString(candDir.resolve("body.json"), body.toString());
+        // 두 번째 문장이 같은 PK('acc-dup')를 재사용해 제약 위반으로 던진다.
+        Files.writeString(candDir.resolve("seed.sql"),
+                "INSERT INTO accounts (id, balance) VALUES ('acc-dup', 10);\n"
+                        + "INSERT INTO accounts (id, balance) VALUES ('acc-dup', 20);");
+        Files.writeString(candDir.resolve("stubs.json"), "{}");
+
+        try (Connection connection = newH2Connection()) {
+            // invoke까지 도달하면 안 되므로 fakeInvoker가 호출되면 테스트 실패로 간주.
+            TrialRunner.TrialInvoker fakeInvoker = (endpoint, b) -> {
+                throw new AssertionError("seed.sql 실패 시 invoke까지 도달하면 안 된다");
+            };
+            TrialRunner runner = new TrialRunner(connection, DbConfig.Type.POSTGRES, null,
+                    new StatusOnlyClassifier(), new FixedLogSutHandle(""), fakeInvoker);
+
+            assertThatThrownBy(() -> runner.runCandidate(ENDPOINT, candDir, List.of(),
+                    new ProvenanceReport("post-api-transfers", List.of(), List.of(), List.of())))
+                    .as("두 번째 INSERT의 PK 중복 예외는 호출자에게 그대로 전파되어야 한다(CLI 루프가 격리)")
+                    .isInstanceOf(Exception.class);
+
+            try (Statement st = connection.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM accounts WHERE id = 'acc-dup'")) {
+                rs.next();
+                assertThat(rs.getInt(1))
+                        .as("첫 번째로 성공한 INSERT는 예외 발생에도 finally에서 정리되어 잔여가 없어야 한다")
+                        .isEqualTo(0);
+            }
         }
     }
 }

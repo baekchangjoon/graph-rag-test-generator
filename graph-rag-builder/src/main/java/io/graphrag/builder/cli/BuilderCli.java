@@ -1316,8 +1316,16 @@ public final class BuilderCli {
      * {@link io.graphrag.builder.provenance.TrialRunner}의 4단계 시퀀스(happy 시드 정리→후보
      * seed.sql INSERT→stub 등록→invoke)로 적용되고, 판정이 성공이면 그 후보를 {@code promoted/}로
      * 옮기고 즉시 0을 반환한다. {@code --trial-budget}(기본 8)회 시도 안에 성공이 없으면(후보
-     * 소진 포함) 시도한 모든 후보를 {@code failed/}로 옮기고 endpoint 디렉토리에 최종 다이제스트
+     * 소진 포함) **시도한** 후보만 {@code failed/}로 옮기고 endpoint 디렉토리에 최종 다이제스트
      * 보고서({@code failed/digest-final.json})를 남긴 뒤 3을 반환한다.
+     *
+     * <p><b>예산 소진 semantics(REQ-016):</b> budget이 대기 후보 수보다 적어 일부를 시도조차 못 하면,
+     * <b>미시도 후보는 원래 위치(top-level {@code cand-NN})에 그대로 남는다</b> — 다음 trial 실행에서
+     * 예산이 재충전된 채로 이어서 시도할 수 있게 하기 위함(promoted/failed 어느 쪽으로도 이동하지
+     * 않고, {@code digest-final.json}에도 포함되지 않는다 — 그 보고서는 "이번 실행에서 실제로 시도한
+     * 것"만의 기록이다). 이는 {@link TripleStore#candidates}가 사전에 스냅샷한 목록을 순회하다
+     * budget 도달 시 단순히 {@code break}하는 구현의 직접적 귀결이며, 의도된 계약이다(재시도를 위해
+     * 후보를 보존 — 실패로 낙인찍지 않음).
      *
      * <p>usage: {@code trial --endpoint <id> --http-method <M> --path </x> --sut-base-url <url>
      * --jdbc-url <url> --db-user <u> --db-password <p> --db-type postgres|mysql|mariadb
@@ -1373,20 +1381,36 @@ public final class BuilderCli {
             int attempts = 0;
             for (Path candDir : candidates) {
                 if (attempts >= budget) {
+                    // 예산 소진 — 남은 후보는 원위치 보존(재시도 대상). 클래스 Javadoc "예산 소진 semantics" 참고.
                     break;
                 }
                 attempts++;
-                TrialRunner.TrialOutcome outcome = trialRunner.runCandidate(endpoint, candDir, happySeeds, report);
-                if (outcome.promoted()) {
-                    Path promoted = store.promote(candDir);
-                    log.info("trial: {} promoted -> {} (status {})", candDir, promoted, outcome.status());
-                    return 0;
+                FailureDigest digest;
+                int status;
+                try {
+                    TrialRunner.TrialOutcome outcome =
+                            trialRunner.runCandidate(endpoint, candDir, happySeeds, report);
+                    if (outcome.promoted()) {
+                        Path promoted = store.promote(candDir);
+                        log.info("trial: {} promoted -> {} (status {})", candDir, promoted, outcome.status());
+                        return 0;
+                    }
+                    digest = outcome.digest();
+                    status = outcome.status();
+                } catch (Exception e) {
+                    // 후보 단위 격리: seed INSERT 도중 실패·malformed stubs.json 등 invoke 이전
+                    // 단계의 예외는 이 후보만 failed 처리하고 다음 후보로 진행한다(루프 전체 중단 금지).
+                    // TrialRunner.runCandidate의 finally가 이미 부분 삽입분/등록 stub을 정리했다.
+                    log.warn("trial: {} threw before/during invoke (candidate 격리, 다음 후보로 진행): {}",
+                            candDir, e.toString(), e);
+                    digest = FailureDigest.forError(candDir.toString(), e);
+                    status = -1;
                 }
-                digests.add(outcome.digest());
-                String digestJson = outcome.digest() == null ? ""
-                        : Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(outcome.digest());
+                digests.add(digest);
+                String digestJson = digest == null ? ""
+                        : Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(digest);
                 store.fail(candDir, digestJson);
-                log.warn("trial: {} failed (status {})", candDir, outcome.status());
+                log.warn("trial: {} failed (status {})", candDir, status);
             }
             Path finalReport = Files.createDirectories(candidatesRoot.resolve(endpointId).resolve("failed"))
                     .resolve("digest-final.json");
@@ -1403,9 +1427,10 @@ public final class BuilderCli {
      * 않음, {@link #stop()}은 no-op). 로그 슬라이스는 {@code --sut-log-file}로 지정한 파일을 매 호출 시
      * 전체 재로드해 byte 오프셋으로 자른다(REQ-014 stackExcerpt 근거). 파일 미지정 시 로그 구간은 항상
      * 빈 문자열(FailureDigest는 여전히 raw 응답/상태로 산출되고, mappedGuard는 로그 기반 스택 매칭 없이
-     * literal-fallback만 시도한다).
+     * literal-fallback만 시도한다). 패키지 가시성 — {@code LogFileSutHandleTest}(byte-오프셋 슬라이싱
+     * 회귀)가 직접 생성해 검증한다.
      */
-    private static final class LogFileSutHandle implements SutHandle {
+    static final class LogFileSutHandle implements SutHandle {
         private final String baseUri;
         private final Path logFile;
 
