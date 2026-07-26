@@ -49,7 +49,19 @@ import java.util.Set;
  *       부호 있는 상수 포함)만 허용한다 — 서브쿼리({@code (SELECT ...)}), 함수 호출(예:
  *       {@code LOAD_FILE(...)}), 컬럼 참조 등은 reject한다. 화이트리스트 테이블 + 마커 위치라는 조건만으로는
  *       "값 치환"과 "임의 SQL 표현식 대체"를 구분하지 못하므로 표현식 종류 자체를 제한한다.</li>
+ *   <li>upsert/returning 절({@code ON CONFLICT ... DO UPDATE}, {@code ON DUPLICATE KEY UPDATE},
+ *       {@code INSERT ... SET}, {@code RETURNING})이 있으면 절 자체를 reject한다 — 이 절들의 내부
+ *       표현식은 JSqlParser가 {@code Insert.getValues()}와 별도 필드({@code getConflictAction()},
+ *       {@code getDuplicateUpdateSets()}, {@code getSetUpdateSets()}, {@code getReturningClause()})로
+ *       파싱하므로 VALUES 절 리터럴 검사망 밖에 있다 — 그 안에 서브쿼리를 숨기면(예:
+ *       {@code ON CONFLICT (id) DO UPDATE SET secret = (SELECT password FROM admin_users LIMIT 1)})
+ *       단일 INSERT + 화이트리스트 테이블 + VALUES 리터럴-only 조건을 모두 만족하면서 임의 서브쿼리가
+ *       실행된다. seed 목적상 upsert/returning은 불필요하므로 절 자체를 통째로 reject한다.</li>
  * </ul>
+ *
+ * <p><b>지원 문법:</b> 단일 {@code INSERT ... VALUES}(닫힌 리터럴)만 지원한다 — upsert
+ * ({@code ON CONFLICT}/{@code ON DUPLICATE KEY UPDATE}/{@code INSERT ... SET})·{@code RETURNING}
+ * 절은 미지원(reject)이다.
  *
  * <p>파서는 {@link DbConfig.Type}에 따라 구성한다 — MySQL/MariaDB는 백슬래시 escape 문자열 리터럴을
  * 허용해야 하므로 {@link Feature#allowBackslashEscapeCharacter}를 켠다(표준 SQL/Postgres는 escape가
@@ -147,6 +159,12 @@ public final class SeedSqlWhitelist {
                     + "(REQ-010 reject): " + line);
             return Optional.empty();
         }
+        if (hasUnsupportedClause(insert)) {
+            reasons.add("seed.sql이 upsert/returning 절(ON CONFLICT/ON DUPLICATE KEY UPDATE/INSERT ... SET/"
+                    + "RETURNING)을 사용함(REQ-010 reject) — 지원 문법은 단일 INSERT ... VALUES(닫힌 리터럴)만: "
+                    + line);
+            return Optional.empty();
+        }
         for (Expression value : insert.getValues().getExpressions()) {
             if (!isClosedLiteral(value)) {
                 reasons.add("seed.sql VALUES 절에 상수 리터럴이 아닌 표현식 감지(REQ-010 reject — 임의 SQL "
@@ -156,6 +174,18 @@ public final class SeedSqlWhitelist {
             }
         }
         return Optional.of(insert);
+    }
+
+    /**
+     * upsert/returning 절이 하나라도 있으면 {@code true} — {@code Insert.getValues()}와 별도 필드로
+     * 파싱되므로 {@link #isClosedLiteral}의 VALUES 검사가 미치지 못한다(재리뷰에서 실증된 우회 벡터).
+     * seed.sql은 단일 {@code INSERT ... VALUES}만 지원하므로 이 절들은 존재 자체를 reject한다.
+     */
+    private static boolean hasUnsupportedClause(Insert insert) {
+        return insert.getConflictAction() != null
+                || (insert.getDuplicateUpdateSets() != null && !insert.getDuplicateUpdateSets().isEmpty())
+                || (insert.getSetUpdateSets() != null && !insert.getSetUpdateSets().isEmpty())
+                || insert.getReturningClause() != null;
     }
 
     /**

@@ -203,4 +203,58 @@ class SeedSqlWhitelistIT {
         assertThat(result.accepted()).as("INSERT ... SELECT(VALUES 없음)는 reject되어야 한다").isFalse();
         assertThat(result.reasons()).isNotEmpty();
     }
+
+    // ---- 재리뷰 Critical 잔여: upsert/RETURNING 절 내부 표현식은 VALUES 검사망 밖 — 절 자체를 reject ----
+
+    @Test
+    @DisplayName("REQ-010(fix2): Postgres ON CONFLICT ... DO UPDATE 절 내부 서브쿼리는 reject된다 "
+            + "(VALUES 리터럴 검사만으로는 무방비 — isClosedLiteral이 getValues()만 보고 conflictAction은 안 봄)")
+    void req010_postgresOnConflictDoUpdateSubqueryRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES ('a') ON CONFLICT (id) DO UPDATE SET secret = "
+                + "(SELECT password FROM admin_users LIMIT 1);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("ON CONFLICT ... DO UPDATE 절은 지원하지 않으므로(seed 목적상 불필요) reject되어야 한다")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix2): MySQL ON DUPLICATE KEY UPDATE 절 내부 서브쿼리는 reject된다")
+    void req010_mysqlOnDuplicateKeyUpdateSubqueryRejected() {
+        String seedSql = "INSERT INTO orders (id, secret) VALUES ('a','x') ON DUPLICATE KEY UPDATE secret = "
+                + "(SELECT password FROM admin_users LIMIT 1);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.MYSQL);
+
+        assertThat(result.accepted())
+                .as("ON DUPLICATE KEY UPDATE 절은 지원하지 않으므로 reject되어야 한다")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix2): RETURNING 절 내부 서브쿼리는 reject된다")
+    void req010_returningClauseSubqueryRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES ('a') RETURNING (SELECT password FROM admin_users LIMIT 1);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("RETURNING 절은 지원하지 않으므로 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix2): upsert/RETURNING 절이 전혀 없는 정상 INSERT는 여전히 통과한다(무회귀 확인)")
+    void req010_plainInsertWithoutUpsertOrReturningStillAccepted() {
+        String seedSql = "INSERT INTO orders (id, note) VALUES ('a', 'hello');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("upsert/RETURNING 절이 없는 정상 INSERT는 통과해야 한다(회귀 없음): " + result.reasons())
+                .isTrue();
+    }
 }
