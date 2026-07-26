@@ -1250,6 +1250,12 @@ public final class BuilderCli {
      * {@link TripleSynthesizer#synthesize}를 직접 호출하는 경로를 쓸 수 있다(현재 CLI는 tables=[],
      * oracle=empty로 호출 — guard가 결정하는 값은 스키마 없이도 대부분 결정되고, 결정 불가한 자리는
      * 갭 마커로 표기되므로 안전하다).
+     *
+     * <p><b>base/ 사본(REQ-009 마커-diff용, T1):</b> {@code cand-NN}과 동일한 도구 생성 내용을
+     * {@code base/cand-NN}에도 그대로 저장한다 — 에이전트가 {@code cand-NN}의 갭 마커를 채운 뒤,
+     * {@link io.graphrag.builder.provenance.TripleValidator}가 이 미변경 사본과 diff해 마커 외
+     * 변경을 reject한다(REQ-009). 저장 레이아웃의 완전한 정식화(promoted/failed 이동 등)는
+     * Task 11({@code TripleStore})의 범위이며, 여기서는 base 보존만 최소 배선한다.
      */
     private static void runSynthesizeTriple(Map<String, String> o) throws Exception {
         Path reportPath = Path.of(required(o, "--report"));
@@ -1262,12 +1268,17 @@ public final class BuilderCli {
         Path endpointDir = tripleStore.resolve(report.endpointId());
         for (int i = 0; i < candidates.size(); i++) {
             TripleCandidate candidate = candidates.get(i);
-            Path candDir = Files.createDirectories(endpointDir.resolve(String.format("cand-%02d", i + 1)));
-            Files.writeString(candDir.resolve("body.json"),
-                    Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(candidate.body()));
-            Files.writeString(candDir.resolve("seed.sql"),
-                    String.join(System.lineSeparator(), candidate.seedSqlStatements()));
-            Files.writeString(candDir.resolve("stubs.json"), stubsJsonContent(candidate.stubMappings()));
+            String candName = String.format("cand-%02d", i + 1);
+            Path candDir = Files.createDirectories(endpointDir.resolve(candName));
+            Path baseDir = Files.createDirectories(endpointDir.resolve("base").resolve(candName));
+            String bodyJson = Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(candidate.body());
+            String seedSql = String.join(System.lineSeparator(), candidate.seedSqlStatements());
+            String stubsJson = stubsJsonContent(candidate.stubMappings());
+            for (Path dir : List.of(candDir, baseDir)) {
+                Files.writeString(dir.resolve("body.json"), bodyJson);
+                Files.writeString(dir.resolve("seed.sql"), seedSql);
+                Files.writeString(dir.resolve("stubs.json"), stubsJson);
+            }
             Files.writeString(candDir.resolve("notes.md"), candidate.notes());
         }
         log.info("synthesize-triple: {} candidate(s) for {} -> {}",

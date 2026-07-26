@@ -1,0 +1,143 @@
+package io.graphrag.builder.provenance;
+
+import io.graphrag.builder.env.DbConfig;
+import io.graphrag.builder.provenance.SeedSqlWhitelist.WhitelistResult;
+import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.ForeignKey;
+import io.graphrag.model.TableSchema;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * {@link SeedSqlWhitelist} 검증(REQ-010) — JSqlParser 기반 seed.sql 화이트리스트.
+ * 정규식 기반 검사는 쓰지 않는다(기존 {@code testlib}의 {@code SqlTableParser}는 이 보안 게이트에
+ * 재사용하지 않음 — REQ-010 명시).
+ */
+class SeedSqlWhitelistIT {
+
+    private final SeedSqlWhitelist whitelist = new SeedSqlWhitelist();
+
+    @Test
+    @DisplayName("REQ-010: 우회 시도 1 — 세미콜론+주석 뒤 두 번째 문장(DELETE)은 화이트리스트 밖 문장으로 reject")
+    void req010_semicolonCommentSecondStatementRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES ('a'); -- x\nDELETE FROM orders;";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("세미콜론+주석으로 숨긴 두 번째 문장은 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010: 우회 시도 2 — block-comment 내부에 숨긴 다중 문장(DELETE)은 reject")
+    void req010_blockCommentMultiStatementRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES ('a') /* c */; DELETE FROM orders;";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("block-comment로 은닉한 다중 문장은 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010: 우회 시도 3 — 문자열 리터럴 속 DELETE 키워드는 데이터일 뿐이므로 통과한다")
+    void req010_deleteKeywordInsideStringLiteralPasses() {
+        String seedSql = "INSERT INTO orders (id, note) VALUES ('a', 'DELETE FROM x');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("문자열 리터럴 안의 'DELETE FROM x'는 SQL 문장이 아니라 데이터이므로 통과해야 한다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-010: 화이트리스트 밖 테이블을 대상으로 한 INSERT는 reject된다")
+    void req010_nonWhitelistedTableRejected() {
+        String seedSql = "INSERT INTO secret_admin_table (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("화이트리스트(DB_READ+FK 전이 폐포) 밖 테이블은 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).anyMatch(r -> r.contains("secret_admin_table"));
+    }
+
+    @Test
+    @DisplayName("REQ-010: FK 전이 폐포 — DB_READ 집합 밖이지만 FK로 참조되는 부모 테이블(accounts) INSERT는 통과한다")
+    void req010_fkTransitiveParentTableIsWhitelisted() {
+        TableSchema transfers = new TableSchema(
+                "transfers",
+                List.of(new ColumnSchema("id", "VARCHAR", false, true),
+                        new ColumnSchema("account_id", "VARCHAR", false, false)),
+                List.of(new ForeignKey("account_id", "accounts", "id")),
+                List.of());
+        TableSchema accounts = new TableSchema(
+                "accounts",
+                List.of(new ColumnSchema("id", "VARCHAR", false, true)),
+                List.of(),
+                List.of());
+
+        Set<String> transitive = SeedSqlWhitelist.transitiveWhitelist(Set.of("transfers"), List.of(transfers, accounts));
+        assertThat(transitive)
+                .as("DB_READ 테이블(transfers) + FK 전이 참조 부모(accounts)가 모두 화이트리스트에 있어야 한다")
+                .containsExactlyInAnyOrder("transfers", "accounts");
+
+        String seedSql = "INSERT INTO accounts (id) VALUES ('acc-1');\n"
+                + "INSERT INTO transfers (id, account_id) VALUES ('t-1', 'acc-1');";
+
+        WhitelistResult result = whitelist.validate(seedSql, transitive, DbConfig.Type.POSTGRES);
+        assertThat(result.accepted())
+                .as("FK 전이 참조 부모 테이블(accounts)과 DB_READ 테이블(transfers) 모두 통과해야 한다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-010: 방언별 대표 INSERT 3건 — Postgres(double-quote)/MySQL(backtick+backslash escape)/"
+            + "MariaDB(backtick)가 각각 올바르게 판정된다")
+    void req010_dialectSpecificInsertsJudgedCorrectly() {
+        WhitelistResult postgres = whitelist.validate(
+                "INSERT INTO \"orders\" (\"id\") VALUES ('a');", Set.of("orders"), DbConfig.Type.POSTGRES);
+        assertThat(postgres.accepted()).as("Postgres 이중따옴표 인용 식별자는 통과해야 한다").isTrue();
+
+        WhitelistResult mysql = whitelist.validate(
+                "INSERT INTO `orders` (`id`, `note`) VALUES ('a', 'it\\'s fine');",
+                Set.of("orders"), DbConfig.Type.MYSQL);
+        assertThat(mysql.accepted())
+                .as("MySQL 백틱 인용 식별자 + 백슬래시 escape 문자열 리터럴은 통과해야 한다")
+                .isTrue();
+
+        WhitelistResult mariadb = whitelist.validate(
+                "INSERT INTO `orders` (`id`) VALUES ('a');", Set.of("orders"), DbConfig.Type.MARIADB);
+        assertThat(mariadb.accepted()).as("MariaDB 백틱 인용 식별자는 통과해야 한다").isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-010/jsql-defer 해소: 갭 마커(REQ-007) 리터럴이 포함된 seed.sql이 실제 JSqlParser로 "
+            + "예외 없이 단일 INSERT로 파싱된다 — Task 9 각주의 구조 검증 대체물을 실제 파서 검증으로 갈음")
+    void req010_gapMarkerLiteralParsesAsInsertWithoutException() {
+        String seedSql = "INSERT INTO orders (id, risk_score) VALUES "
+                + "('a', '" + TripleSynthesizer.GAP_MARKER_PREFIX + "{type:long, semanticHint:none, guard:none}');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("갭 마커를 포함한 seed.sql도 예외 없이 단일 INSERT로 파싱되어 화이트리스트를 통과해야 한다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-010: DDL/UPDATE/DELETE 단문은 INSERT가 아니므로 reject된다")
+    void req010_nonInsertStatementsRejected() {
+        assertThat(whitelist.validate("DELETE FROM orders;", Set.of("orders"), DbConfig.Type.POSTGRES).accepted())
+                .as("DELETE 단문은 reject되어야 한다").isFalse();
+        assertThat(whitelist.validate("UPDATE orders SET id='x';", Set.of("orders"), DbConfig.Type.POSTGRES).accepted())
+                .as("UPDATE 단문은 reject되어야 한다").isFalse();
+        assertThat(whitelist.validate("DROP TABLE orders;", Set.of("orders"), DbConfig.Type.POSTGRES).accepted())
+                .as("DDL(DROP TABLE) 단문은 reject되어야 한다").isFalse();
+    }
+}

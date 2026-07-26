@@ -27,6 +27,7 @@ instancio = "5.4.1"
 anthropicJava = "2.34.0"
 awsSdk = "2.28.16"
 pjacoco = "1.4.0"
+jsqlparser = "5.3"
 
 [libraries]
 anthropic-java = { module = "com.anthropic:anthropic-java", version.ref = "anthropicJava" }
@@ -68,6 +69,7 @@ logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "lo
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
 instancio-core = { module = "org.instancio:instancio-core", version.ref = "instancio" }
 pjacoco-agent = { module = "io.pjacoco:pjacoco-agent", version.ref = "pjacoco" }
+jsqlparser = { module = "com.github.jsqlparser:jsqlparser", version.ref = "jsqlparser" }
 
 [plugins]
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
