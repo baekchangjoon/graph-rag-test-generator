@@ -35,6 +35,8 @@ import io.graphrag.builder.index.WsIndexResult;
 import io.graphrag.builder.oracle.ClassifierConfig;
 import io.graphrag.builder.provenance.ProvenanceIndexer;
 import io.graphrag.builder.provenance.ProvenanceReport;
+import io.graphrag.builder.provenance.TripleCandidate;
+import io.graphrag.builder.provenance.TripleSynthesizer;
 import io.graphrag.builder.capture.TraceParent;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
@@ -105,6 +107,10 @@ public final class BuilderCli {
         }
         if (args.length > 0 && args[0].equals("provenance")) {
             runProvenance(parseArgs(args));
+            return;
+        }
+        if (args.length > 0 && args[0].equals("synthesize-triple")) {
+            runSynthesizeTriple(parseArgs(args));
             return;
         }
         Map<String, String> options = parseArgs(args);
@@ -1232,6 +1238,52 @@ public final class BuilderCli {
                 Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(report));
         log.info("provenance report for {}: {} guard(s), {} unresolved(s) -> {}",
                 endpoint.id(), report.guards().size(), report.unresolved().size(), outPath);
+    }
+
+    /**
+     * synthesize-triple 서브커맨드: provenance 리포트(REQ-001 산출물)를 읽어 {@link TripleSynthesizer}로
+     * 후보 트리플(body.json/seed.sql/stubs.json/notes.md)을 산출한다(REQ-005/007/008/033). usage:
+     * {@code synthesize-triple --report <provenance-report.json> --triple-store <dir>}.
+     *
+     * <p>이 CLI는 provenance 리포트만으로 동작하는 최소 배선이다 — 물리 스키마(seed FK 부모 채움)나
+     * body 형상 검증이 필요하면 상위 오케스트레이션(에이전트 스킬)이 그래프 자산에서 별도로 채워
+     * {@link TripleSynthesizer#synthesize}를 직접 호출하는 경로를 쓸 수 있다(현재 CLI는 tables=[],
+     * oracle=empty로 호출 — guard가 결정하는 값은 스키마 없이도 대부분 결정되고, 결정 불가한 자리는
+     * 갭 마커로 표기되므로 안전하다).
+     */
+    private static void runSynthesizeTriple(Map<String, String> o) throws Exception {
+        Path reportPath = Path.of(required(o, "--report"));
+        Path tripleStore = Path.of(required(o, "--triple-store"));
+
+        ProvenanceReport report = Json.mapper().readValue(reportPath.toFile(), ProvenanceReport.class);
+        List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), io.graphrag.builder.oracle.InputCandidates.empty());
+
+        Path endpointDir = tripleStore.resolve(report.endpointId());
+        for (int i = 0; i < candidates.size(); i++) {
+            TripleCandidate candidate = candidates.get(i);
+            Path candDir = Files.createDirectories(endpointDir.resolve(String.format("cand-%02d", i + 1)));
+            Files.writeString(candDir.resolve("body.json"),
+                    Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(candidate.body()));
+            Files.writeString(candDir.resolve("seed.sql"),
+                    String.join(System.lineSeparator(), candidate.seedSqlStatements()));
+            Files.writeString(candDir.resolve("stubs.json"), stubsJsonContent(candidate.stubMappings()));
+            Files.writeString(candDir.resolve("notes.md"), candidate.notes());
+        }
+        log.info("synthesize-triple: {} candidate(s) for {} -> {}",
+                candidates.size(), report.endpointId(), endpointDir);
+    }
+
+    /**
+     * stubs.json 내용: WireMock {@code StubMapping.buildFrom}은 파일당 단일 mapping 객체를 기대한다
+     * (기존 {@code HttpCaptureServer.loadStubs} 규약, REQ-008). 후보에 stub이 없으면 빈 객체, 정확히
+     * 1개면 그 mapping 그대로, 2개 이상(현재 라우팅에서는 발생하지 않지만 방어적으로)이면 첫 번째만
+     * 채택하고 나머지는 notes.md의 trace로만 남는다(단일-파일-단일-mapping 규약 유지).
+     */
+    private static String stubsJsonContent(List<com.fasterxml.jackson.databind.node.ObjectNode> stubMappings)
+            throws Exception {
+        Object toWrite = stubMappings.isEmpty() ? Json.mapper().createObjectNode() : stubMappings.get(0);
+        return Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(toWrite);
     }
 
     /** --sut-src + (optional) --sut-resources → SourceRoots. 멀티 루트 + --incremental-base 조합은 거부. */

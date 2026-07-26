@@ -6,6 +6,7 @@ import io.graphrag.builder.index.JsonPaths;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
+import io.graphrag.builder.provenance.ProvenanceReport.UnguardedField;
 import io.graphrag.builder.provenance.ProvenanceReport.ValueRef;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ForeignKey;
@@ -14,6 +15,7 @@ import io.graphrag.model.TableSchema;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,10 +43,29 @@ import java.util.Set;
  *       매핑된 FK는 부모 테이블 행도 재귀적으로 합성한다({@link #fillTable}).</li>
  * </ul>
  *
- * <p><b>이 task(8)의 명시적 확장 지점(후속 task 범위):</b> 갭 마커 문법(REQ-007), 후보 cap·우선순위
- * 정렬(REQ-033), stubs.json의 WireMock mapping 스키마 엄격 검증(REQ-008), {@code &&}/{@code ||} 등
- * 결합 논리 가드의 다중 피연산자 라우팅, {@link InputCandidates} DERIVED 해 배치. 현재는 단일
- * {@link TripleCandidate}만 반환한다 — cap/정렬은 Task 9에서 도입.
+ * <p><b>갭 마커(REQ-007):</b> 결정적으로 도출 불가한 위치만 표기한다 — {@code unguarded} 필드는
+ * body(JSON 문자열 값), NOT NULL이지만 어떤 가드도 값을 결정하지 못한 numeric 컬럼은 seed.sql(작은따옴표
+ * 문자열 리터럴, 컬럼 타입 무관 — SQL 파싱 유지), 만족 리터럴을 찾지 못한 EXTERNAL_RESPONSE는
+ * stubs.json의 {@code response.jsonBody} 값. 문법: {@code __AGENT_FILL__{type:<T>, semanticHint:<H>,
+ * guard:<G>}} — 미상 필드는 {@code none}.
+ *
+ * <p><b>stubs.json = WireMock mapping 스키마(REQ-008):</b> {@code {"request":{"method","urlPath"},
+ * "response":{"status","jsonBody"}}} — {@code HttpCaptureServer.loadStubs}가 쓰는
+ * {@code StubMapping.buildFrom(json)}으로 그대로 로드 가능하다. {@code callSite}가
+ * {@code "<HTTP메서드> <path>"} 형식이 아니면(class#method 폴백 등) stub을 만들지 않고 notes에 사유를
+ * 남긴다.
+ *
+ * <p><b>후보 cap·정렬(REQ-033):</b> {@code unguarded} 필드마다 갭 마커(미결정) 옵션에 더해
+ * {@link InputCandidates}가 제공하는 결정값 옵션들을 더한 뒤 필드별 옵션의 cross product로 후보
+ * 조합을 만들고, "결정 필드 수 내림차순 → 정규화 문자열 사전순"으로 정렬해 상위 {@link #CANDIDATE_CAP}개만
+ * 반환한다(cand-01=최우선). {@code unguarded}가 없거나 오라클 후보가 없으면 조합은 정확히 1개(기존
+ * Task 8 동작과 하위호환).
+ *
+ * <p><b>남은 확장 지점(Task 9+ 백로그):</b> {@code &&}/{@code ||} 등 결합 논리 가드의 다중 피연산자
+ * 라우팅. {@link InputCandidates} DERIVED 해 배치(REQ-032 잔여 절반)는 {@code ProvenanceIndexer}가
+ * DERIVED {@link ValueRef}의 {@code jsonPath}를 의도적으로 비워두므로(REQ-001 unguarded 오탐 방지)
+ * 이 클래스만으로는 오라클 해를 어느 body 필드에 배치할지 결정적으로 복원할 수 없다 — ValueRef 스키마
+ * 확장 없이는 미해결.
  * <b>동일 테이블 다중 행(예: from/to 계좌처럼 같은 테이블을 서로 다른 행으로 참조하는 경우)은 현재
  * 테이블당 한 행으로 병합되어 구분되지 않는다 — Task 9+ 백로그(REQ-006 범위에서는 구조 일반화 보류).</b>
  */
@@ -52,6 +73,22 @@ public final class TripleSynthesizer {
 
     /** 비교 가드 boundary 만족값의 결정적 앵커(수치). 브리프 예시("GE면 col=input=100")를 그대로 채택. */
     private static final long NUMERIC_ANCHOR = 100L;
+
+    /** EP당 후보 cap(REQ-033 기본값). */
+    private static final int CANDIDATE_CAP = 4;
+
+    /** 필드별 오라클 후보값 중 조합에 포함할 최대 개수(조합 폭발 방지 — 어차피 최종 cap 이내만 살아남는다). */
+    private static final int MAX_OPTIONS_PER_FIELD = CANDIDATE_CAP;
+
+    /** 전체 조합 수 안전 상한. 초과 시 오라클 변주를 포기하고 갭 마커 단일 조합으로 폴백한다(회귀·성능 안전판). */
+    private static final long SAFE_COMBO_LIMIT = 4096L;
+
+    /** 갭 마커 접두. body/stubs jsonBody는 이 문자열을 JSON 문자열 값으로, seed.sql은 작은따옴표 리터럴로 담는다. */
+    private static final String GAP_MARKER_PREFIX = "__AGENT_FILL__";
+
+    /** EXTERNAL_RESPONSE callSite가 {@code "<HTTP메서드> <path>"} 형식인지 판정할 때 허용하는 메서드 집합. */
+    private static final Set<String> HTTP_METHODS =
+            Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS");
 
     private static final Set<String> NUMERIC_JAVA_TYPES = Set.of(
             "byte", "short", "int", "long", "float", "double",
@@ -88,15 +125,16 @@ public final class TripleSynthesizer {
     }
 
     /**
-     * 리포트로부터 후보 트리플 목록을 합성한다. 현재는 결정적 단일 후보(cand-01 상당)만 반환한다 —
-     * 후보 cap(기본 4)·우선순위 정렬(REQ-033)은 Task 9에서 이 메서드 위에 얹는다.
+     * 리포트로부터 후보 트리플 목록을 합성한다(cap 이내, cand-01=최우선 순서 — REQ-033). guard가 결정한
+     * 값은 모든 후보에서 동일하고, {@code unguarded} 필드만 갭 마커/오라클 결정값으로 조합에 따라 달라진다.
      *
      * @param report 분석 대상 엔드포인트의 provenance 리포트(가드/unguarded/unresolved)
      * @param shape  {@code @RequestBody} 타입의 필드 구조 (현재 라우팅은 가드 피연산자의 jsonPath만
      *               사용하므로 직접 참조하지 않지만, unguarded 필드의 body 배치를 추가할 후속 task의
      *               확장 지점으로 시그니처에 유지한다)
      * @param tables seed 대상 물리 스키마 목록(FK 부모 탐색 포함)
-     * @param oracle DERIVED 출처 값 해(현재 미사용 — DERIVED 배치는 후속 task 확장 지점)
+     * @param oracle unguarded 필드의 결정값 후보(REQ-033 조합 생성에 소비). DERIVED 배치(REQ-032 잔여)는
+     *               클래스 Javadoc의 "남은 확장 지점" 참조 — 아직 미해결.
      */
     public List<TripleCandidate> synthesize(ProvenanceReport report, BodyShape shape,
                                             List<TableSchema> tables, InputCandidates oracle) {
@@ -126,15 +164,155 @@ public final class TripleSynthesizer {
             }
         }
 
-        if (oracle != null && !oracle.numeric().isEmpty()) {
-            // DERIVED 출처 배치의 확장 지점: 현재는 오라클 해를 소비하지 않고 존재만 기록한다.
-            notes.add("InputCandidates 오라클 " + oracle.numeric().size()
-                    + "개 필드 해 보유 — DERIVED 배치는 후속 task 확장 지점");
-        }
-
         List<String> seedSqlStatements = finalizeSeedRows(rowsByTable, tablesByName, notes);
 
-        return List.of(new TripleCandidate(body, seedSqlStatements, stubMappings, String.join("\n", notes)));
+        if (oracle != null && (!oracle.numeric().isEmpty() || !oracle.strings().isEmpty())) {
+            notes.add("InputCandidates 오라클 " + (oracle.numeric().size() + oracle.strings().size())
+                    + "개 필드 후보 보유 — unguarded 필드 조합에 소비(REQ-032 잔여 DERIVED 배치는 미해결, 클래스 Javadoc 참조)");
+        }
+
+        return buildCandidates(body, seedSqlStatements, stubMappings, notes, report.unguarded(), oracle);
+    }
+
+    /**
+     * {@code unguarded} 필드별 옵션(갭 마커 + 오라클 결정값)의 cross product로 후보 조합을 만들고,
+     * "결정 필드 수 내림차순 → 정규화 키 사전순"으로 정렬해 상위 {@link #CANDIDATE_CAP}개를 반환한다
+     * (REQ-033). {@code unguarded}가 비었거나 오라클 후보가 전혀 없으면 조합은 정확히 1개
+     * (Task 8과 동일한 단일 후보 동작 — 기존 테스트 하위호환).
+     */
+    private List<TripleCandidate> buildCandidates(ObjectNode baseBody, List<String> seedSqlStatements,
+                                                  List<ObjectNode> stubMappings, List<String> baseNotes,
+                                                  List<UnguardedField> unguarded, InputCandidates oracle) {
+        List<List<FieldOption>> perFieldOptions = new ArrayList<>();
+        for (UnguardedField field : unguarded) {
+            perFieldOptions.add(optionsFor(field, oracle));
+        }
+
+        List<List<FieldOption>> combos = crossProductWithSafetyCap(perFieldOptions, baseNotes);
+
+        List<List<FieldOption>> ranked = new ArrayList<>(combos);
+        ranked.sort(Comparator
+                .comparingInt(TripleSynthesizer::decidedCount).reversed()
+                .thenComparing(TripleSynthesizer::comboSortKey));
+
+        List<TripleCandidate> out = new ArrayList<>();
+        int limit = Math.min(CANDIDATE_CAP, ranked.size());
+        for (int i = 0; i < limit; i++) {
+            List<FieldOption> combo = ranked.get(i);
+            ObjectNode body = baseBody.deepCopy();
+            List<String> notes = new ArrayList<>(baseNotes);
+            for (int f = 0; f < unguarded.size(); f++) {
+                UnguardedField field = unguarded.get(f);
+                FieldOption option = combo.get(f);
+                putBodyValue(body, field.jsonPath(), option.value());
+                notes.add((option.decided() ? "unguarded(" + field.jsonPath() + ") -> 오라클 결정값 " + option.value()
+                        : "unguarded(" + field.jsonPath() + ") -> 갭 마커(도출 불가, semanticHint="
+                                + (field.semanticHint() == null ? "none" : field.semanticHint()) + ")"));
+            }
+            notes.add(0, "cand-" + String.format("%02d", i + 1) + ": 결정 필드 " + decidedCount(combo) + "/"
+                    + unguarded.size() + "(unguarded 기준)");
+            out.add(new TripleCandidate(body, seedSqlStatements, stubMappings, String.join("\n", notes)));
+        }
+        return out;
+    }
+
+    /** 후보 조합의 필드별 배정 하나: {@code decided}=true면 오라클 결정값, false면 갭 마커. */
+    private record FieldOption(Object value, boolean decided) {
+    }
+
+    private static int decidedCount(List<FieldOption> combo) {
+        int n = 0;
+        for (FieldOption o : combo) {
+            if (o.decided()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** 결정 필드 수가 같은 조합끼리의 결정적 tie-break 키(값들을 필드 순서대로 이어붙인 사전순 문자열). */
+    private static String comboSortKey(List<FieldOption> combo) {
+        StringBuilder sb = new StringBuilder();
+        for (FieldOption o : combo) {
+            sb.append(String.valueOf(o.value())).append(';');
+        }
+        return sb.toString();
+    }
+
+    /** unguarded 필드 하나의 옵션 목록: 항상 갭 마커 1개 + 오라클 결정값(있으면, 필드명은 jsonPath의 마지막 세그먼트). */
+    private List<FieldOption> optionsFor(UnguardedField field, InputCandidates oracle) {
+        List<FieldOption> options = new ArrayList<>();
+        options.add(new FieldOption(gapMarker(field.javaType(), field.semanticHint(), "none"), false));
+        if (oracle == null) {
+            return options;
+        }
+        String key = simpleFieldName(field.jsonPath());
+        List<Object> decided = new ArrayList<>();
+        Set<Long> numeric = oracle.numeric().get(key);
+        if (numeric != null) {
+            decided.addAll(new java.util.TreeSet<>(numeric));
+        }
+        Set<String> strings = oracle.strings().get(key);
+        if (strings != null) {
+            decided.addAll(new java.util.TreeSet<>(strings));
+        }
+        int limit = Math.min(decided.size(), MAX_OPTIONS_PER_FIELD);
+        for (int i = 0; i < limit; i++) {
+            options.add(new FieldOption(decided.get(i), true));
+        }
+        return options;
+    }
+
+    private static String simpleFieldName(String jsonPath) {
+        int dot = jsonPath.lastIndexOf('.');
+        return dot < 0 ? jsonPath : jsonPath.substring(dot + 1);
+    }
+
+    /**
+     * 필드별 옵션 목록의 cross product. 전체 조합 수가 {@link #SAFE_COMBO_LIMIT}를 넘으면(오라클 후보가
+     * 많은 필드가 다수인 병리적 케이스) 조합 폭발을 막기 위해 오라클 변주를 포기하고 필드마다 갭 마커
+     * 단일 옵션으로 폴백한다(notes에 사유 기록) — 안전판, REQ-033 정상 케이스는 영향 없음.
+     */
+    private static List<List<FieldOption>> crossProductWithSafetyCap(List<List<FieldOption>> perFieldOptions,
+                                                                      List<String> notes) {
+        long total = 1L;
+        boolean overflow = false;
+        for (List<FieldOption> options : perFieldOptions) {
+            total *= options.size();
+            if (total > SAFE_COMBO_LIMIT) {
+                overflow = true;
+                break;
+            }
+        }
+        List<List<FieldOption>> effective = perFieldOptions;
+        if (overflow) {
+            notes.add("unguarded 조합 수가 안전 상한(" + SAFE_COMBO_LIMIT + ")을 초과 — 오라클 변주 생략, 갭 마커 단일 조합으로 폴백");
+            effective = new ArrayList<>();
+            for (List<FieldOption> options : perFieldOptions) {
+                effective.add(List.of(options.get(0)));   // index 0 = 항상 갭 마커(옵션 생성 순서 불변식)
+            }
+        }
+        List<List<FieldOption>> combos = new ArrayList<>();
+        combos.add(new ArrayList<>());
+        for (List<FieldOption> fieldOptions : effective) {
+            List<List<FieldOption>> next = new ArrayList<>();
+            for (List<FieldOption> combo : combos) {
+                for (FieldOption option : fieldOptions) {
+                    List<FieldOption> extended = new ArrayList<>(combo);
+                    extended.add(option);
+                    next.add(extended);
+                }
+            }
+            combos = next;
+        }
+        return combos;
+    }
+
+    /** 갭 마커 문자열: {@code __AGENT_FILL__{type:<T>, semanticHint:<H>, guard:<G>}} (REQ-007). */
+    private static String gapMarker(String type, String semanticHint, String guard) {
+        return GAP_MARKER_PREFIX + "{type:" + (type == null || type.isBlank() ? "Object" : type)
+                + ", semanticHint:" + (semanticHint == null || semanticHint.isBlank() ? "none" : semanticHint)
+                + ", guard:" + (guard == null || guard.isBlank() ? "none" : guard) + "}";
     }
 
     /** 리포트 전체에서 DB_READ 테이블이 정확히 하나뿐이면 그 테이블명을 반환(EXISTS의 table 미기재 시 폴백). */
@@ -229,9 +407,10 @@ public final class TripleSynthesizer {
 
     /**
      * {@code !x.equals(y)} 패턴(리터럴 vs EXTERNAL_RESPONSE)의 부정 등가 가드: happy path는 등가이므로
-     * stubField에 리터럴 값을 그대로 채운 최소 stub mapping을 만든다. WireMock mapping 스키마의
-     * 엄격한 정합(REQ-008)은 Task 9 범위 — 여기서는 request.method/urlPath + response.status/jsonBody의
-     * 최소 형태만 만든다.
+     * stubField에 만족값(리터럴이 있으면 그 값, 없으면 갭 마커)을 채운 WireMock mapping을 만든다(REQ-008).
+     * {@code callSite}가 {@code "<HTTP메서드> <path>"} 형식이 아니면(class#method 폴백 등 미해결
+     * 위치) stub을 만들지 않고 notes에 사유를 남긴다 — 형식을 알 수 없는 request.method/urlPath로 잘못된
+     * mapping을 만드는 것보다 안전하다.
      */
     private void routeNegatedEqualityGuard(GuardFact guard, List<ObjectNode> stubMappings, List<String> notes) {
         ValueRef literalRef = null;
@@ -244,27 +423,49 @@ public final class TripleSynthesizer {
                 externalRef = v;
             }
         }
-        if (literalRef == null || externalRef == null || externalRef.callSite() == null
-                || externalRef.stubField() == null) {
+        if (externalRef == null || externalRef.callSite() == null || externalRef.stubField() == null) {
             notes.add("op '!' at " + guard.at() + " — EXTERNAL_RESPONSE 부정 등가 패턴이 아님, stub 라우팅 skip(확장 지점)");
             return;
         }
-        String[] parts = externalRef.callSite().split(" ", 2);
+        String callSite = externalRef.callSite();
+        int sp = httpCallSiteSplit(callSite);
+        if (sp < 0) {
+            notes.add("op '!' at " + guard.at() + " — callSite '" + callSite
+                    + "' 가 '<HTTP메서드> <path>' 형식이 아님(class#method 폴백으로 추정), stub 생성 불가");
+            return;
+        }
         ObjectNode stub = Json.mapper().createObjectNode();
         ObjectNode request = stub.putObject("request");
-        if (parts.length == 2) {
-            request.put("method", parts[0]);
-            request.put("urlPath", parts[1]);
-        } else {
-            request.put("urlPath", externalRef.callSite());
-        }
+        request.put("method", callSite.substring(0, sp));
+        request.put("urlPath", callSite.substring(sp + 1));
         ObjectNode response = stub.putObject("response");
         response.put("status", 200);
-        response.putObject("jsonBody").put(externalRef.stubField(), literalRef.literal());
-        stubMappings.add(stub);
-        notes.add("EXTERNAL_RESPONSE(" + externalRef.callSite() + ") at " + guard.at() + " -> stub."
-                + externalRef.stubField() + "=" + literalRef.literal()
-                + " (WireMock mapping 스키마 엄격 검증은 REQ-008/Task 9)");
+        ObjectNode jsonBody = response.putObject("jsonBody");
+        if (literalRef != null && literalRef.literal() != null) {
+            jsonBody.put(externalRef.stubField(), literalRef.literal());
+            stubMappings.add(stub);
+            notes.add("EXTERNAL_RESPONSE(" + callSite + ") at " + guard.at() + " -> stub."
+                    + externalRef.stubField() + "=" + literalRef.literal() + " (WireMock mapping 스키마, REQ-008)");
+        } else {
+            jsonBody.put(externalRef.stubField(), gapMarker(externalRef.javaType(), "none", "none"));
+            stubMappings.add(stub);
+            notes.add("EXTERNAL_RESPONSE(" + callSite + ") at " + guard.at()
+                    + " — 만족 리터럴 미해결, stub." + externalRef.stubField() + " = 갭 마커(REQ-007)");
+        }
+    }
+
+    /**
+     * callSite가 {@code "<HTTP메서드> <path>"} 형식이면 공백 인덱스를, 아니면(class#method 폴백 등)
+     * -1을 반환한다. 첫 토큰이 {@link #HTTP_METHODS}에 속하고 나머지가 {@code "/"}로 시작해야 유효하다.
+     */
+    private static int httpCallSiteSplit(String callSite) {
+        int sp = callSite.indexOf(' ');
+        if (sp <= 0 || sp == callSite.length() - 1) {
+            return -1;
+        }
+        String method = callSite.substring(0, sp);
+        String path = callSite.substring(sp + 1);
+        return HTTP_METHODS.contains(method) && path.startsWith("/") ? sp : -1;
     }
 
     // ---- seed 행 마무리(PK 기본값·FK 부모 재귀·NOT NULL 기본값) ----
@@ -315,7 +516,7 @@ public final class TripleSynthesizer {
             }
             ForeignKey fk = findForeignKey(column.name(), schema);
             if (fk == null) {
-                row.put(column.name(), defaultValueFor(column));
+                row.put(column.name(), defaultValueFor(column, tableName, notes));
                 continue;
             }
             if (!tablesByName.containsKey(fk.referencedTable())) {
@@ -379,7 +580,12 @@ public final class TripleSynthesizer {
         return "'" + v.toString().replace("'", "''") + "'";
     }
 
-    private static Object defaultValueFor(ColumnSchema column) {
+    /**
+     * NOT NULL·FK가 아닌 컬럼의 기본값. 문자열/불리언/날짜형은 구조적으로 결정 가능한 값(NOT NULL
+     * 제약만 만족하면 되는 padding)이므로 그대로 둔다. 그 외(주로 numeric)는 어떤 가드도 값을 정하지
+     * 못한 "UNKNOWN 출처"이므로 임의값(예: 1)을 침묵 삽입하지 않고 갭 마커로 표기한다(REQ-007).
+     */
+    private static Object defaultValueFor(ColumnSchema column, String tableName, List<String> notes) {
         String type = column.jdbcType() == null ? "" : column.jdbcType().toUpperCase();
         if (type.contains("BOOL")) {
             return true;
@@ -390,7 +596,26 @@ public final class TripleSynthesizer {
         if (type.contains("DATE") || type.contains("TIME")) {
             return "2037-01-01"; // seed 문자열 리터럴(방언 무관 최소 표기) — 정밀 타입 변환은 후속 task
         }
-        return 1;
+        notes.add("gap-marker: " + tableName + "." + column.name()
+                + " (NOT NULL numeric, 어떤 가드도 결정하지 못함) -> __AGENT_FILL__(REQ-007)");
+        return gapMarker(numericMarkerType(type), "none", "none");
+    }
+
+    /** jdbcType(대문자) → 갭 마커의 {@code type} 라벨(java 원시형 이름 근사). 미분류 숫자형은 안전하게 long. */
+    private static String numericMarkerType(String upperJdbcType) {
+        if (upperJdbcType.contains("BIGINT")) {
+            return "long";
+        }
+        if (upperJdbcType.contains("DECIMAL") || upperJdbcType.contains("NUMERIC")) {
+            return "BigDecimal";
+        }
+        if (upperJdbcType.contains("DOUBLE") || upperJdbcType.contains("FLOAT") || upperJdbcType.contains("REAL")) {
+            return "double";
+        }
+        if (upperJdbcType.contains("INT")) {
+            return "int";
+        }
+        return "long";
     }
 
     // ---- 값 합성 유틸 ----

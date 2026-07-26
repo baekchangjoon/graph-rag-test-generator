@@ -1,10 +1,12 @@
 package io.graphrag.builder.provenance;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
+import io.graphrag.builder.provenance.ProvenanceReport.UnguardedField;
 import io.graphrag.builder.provenance.ProvenanceReport.ValueRef;
 import io.graphrag.model.ColumnSchema;
 import io.graphrag.model.ForeignKey;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -167,6 +170,158 @@ class TripleSynthesizerIT {
                 .contains("unresolved-fk: transfers.account_id -> accounts.id");
     }
 
+    @Test
+    @DisplayName("REQ-007: 갭 마커 — 가드 없는 free-text 필드는 body에 JSON 문자열 마커, "
+            + "가드가 결정 못한 NOT NULL numeric 컬럼은 seed.sql에 작은따옴표 리터럴 마커, "
+            + "결정 가능한 값(PK)에는 마커가 없다")
+    void req007_gapMarkersOnlyAtUndecidablePositions() {
+        TableSchema orders = new TableSchema(
+                "orders",
+                List.of(
+                        new ColumnSchema("id", "VARCHAR", false, true),
+                        new ColumnSchema("risk_score", "BIGINT", false, false)),
+                List.of(),
+                List.of());
+        GuardFact existsGuard = new GuardFact("Fixture.java:1", "EXISTS",
+                List.of(new ValueRef(Origin.INPUT, "orderId", "orders", null, null, null,
+                        "String", null, null)));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(existsGuard),
+                List.of(new UnguardedField("note", "String", "free-text")), List.of());
+
+        TripleSynthesizer synthesizer = new TripleSynthesizer();
+        List<TripleCandidate> candidates = synthesizer.synthesize(
+                report, BodyShape.empty(), List.of(orders), InputCandidates.empty());
+        assertThat(candidates).as("오라클 후보가 없으므로 조합은 정확히 1개여야 한다").hasSize(1);
+        TripleCandidate candidate = candidates.get(0);
+
+        assertThat(candidate.body().get("note").asText())
+                .as("가드 없는 free-text unguarded 필드는 body에 JSON 문자열 갭 마커로 표기되어야 한다")
+                .isEqualTo("__AGENT_FILL__{type:String, semanticHint:free-text, guard:none}");
+
+        String ordersInsert = candidate.seedSqlStatements().stream()
+                .filter(sql -> sql.startsWith("INSERT INTO orders"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("orders seed INSERT가 생성되어야 한다"));
+        assertThat(isWellFormedSingleStatementInsert(ordersInsert))
+                .as("seed.sql은 마커를 포함해도 파싱 가능한 단일 INSERT 문장이어야 한다: " + ordersInsert)
+                .isTrue();
+
+        Map<String, String> row = parseInsertColumnsToValues(ordersInsert);
+        assertThat(row.get("risk_score"))
+                .as("어떤 가드도 결정하지 못한 NOT NULL numeric 컬럼은 작은따옴표 문자열 리터럴 갭 마커여야 한다"
+                        + "(컬럼 타입 무관 — SQL 파싱 유지)")
+                .isEqualTo("'__AGENT_FILL__{type:long, semanticHint:none, guard:none}'");
+        assertThat(row.get("id"))
+                .as("EXISTS 가드로 결정 가능한 PK 값에는 마커가 없어야 한다")
+                .doesNotContain("__AGENT_FILL__");
+    }
+
+    @Test
+    @DisplayName("REQ-008: stubs.json = WireMock mapping 스키마 — 기존 StubMapping.buildFrom으로 예외 없이 로드된다")
+    void req008_stubMappingLoadableByExistingLoader() throws Exception {
+        GuardFact negatedEquality = new GuardFact("Controller.java:37", "!",
+                List.of(
+                        new ValueRef(Origin.UNKNOWN, null, null, null, null, null, "String", null, "CLEAR"),
+                        new ValueRef(Origin.EXTERNAL_RESPONSE, null, null, null,
+                                "POST /fraud/check", "status", "String", null, null)));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(negatedEquality), List.of(), List.of());
+
+        TripleSynthesizer synthesizer = new TripleSynthesizer();
+        TripleCandidate candidate = synthesizer.synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.stubMappings()).as("EXTERNAL_RESPONSE 부정 등가 가드는 stub mapping 1개를 만들어야 한다")
+                .hasSize(1);
+        ObjectNode stub = candidate.stubMappings().get(0);
+        String json = Json.mapper().writeValueAsString(stub);
+
+        StubMapping mapping = StubMapping.buildFrom(json);   // 예외 없이 로드되어야 함(REQ-008)
+        assertThat(mapping.getRequest().getMethod().getName()).isEqualTo("POST");
+        assertThat(mapping.getRequest().getUrlPath()).isEqualTo("/fraud/check");
+        assertThat(mapping.getResponse().getStatus()).isEqualTo(200);
+        assertThat(mapping.getResponse().getJsonBody().get("status").asText()).isEqualTo("CLEAR");
+    }
+
+    @Test
+    @DisplayName("REQ-008: callSite가 '<HTTP메서드> <path>' 형식이 아니면(class#method 폴백) stub을 만들지 않고 사유를 notes에 남긴다")
+    void req008_nonHttpCallSiteSkipsStubCreationWithNote() {
+        GuardFact negatedEquality = new GuardFact("Controller.java:37", "!",
+                List.of(
+                        new ValueRef(Origin.UNKNOWN, null, null, null, null, null, "String", null, "CLEAR"),
+                        new ValueRef(Origin.EXTERNAL_RESPONSE, null, null, null,
+                                "TransferService#checkFraud", "status", "String", null, null)));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(negatedEquality), List.of(), List.of());
+
+        TripleSynthesizer synthesizer = new TripleSynthesizer();
+        TripleCandidate candidate = synthesizer.synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.stubMappings())
+                .as("class#method 폴백 형식 callSite는 stub을 만들면 안 된다")
+                .isEmpty();
+        assertThat(candidate.notes())
+                .as("stub 생성 불가 사유가 notes에 남아야 한다")
+                .contains("TransferService#checkFraud")
+                .contains("stub 생성 불가");
+    }
+
+    @Test
+    @DisplayName("REQ-033: 후보 수 cap(기본 4)과 우선순위 정렬 — 오라클 후보가 cap을 넘으면 상위 4개만, "
+            + "cand-01은 정렬 기준(결정 필드 수 내림차순→사전순)의 최상위 조합이어야 한다")
+    void req033_candidateCapAndDeterministicPriorityOrder() {
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(),
+                List.of(new UnguardedField("status", "String", "enum-ish")), List.of());
+        // 5개의 결정 후보(+갭 마커 1개 = 총 6 조합) > cap(4) — REQ-033가 요구하는 "cap을 초과할 만큼
+        // 후보 조합이 가능한 리포트" 시나리오.
+        InputCandidates oracle = new InputCandidates(
+                Map.of(), Map.of("status", new java.util.TreeSet<>(List.of("E", "C", "A", "D", "B"))));
+
+        TripleSynthesizer synthesizer = new TripleSynthesizer();
+        List<TripleCandidate> candidates = synthesizer.synthesize(
+                report, BodyShape.empty(), List.of(), oracle);
+
+        assertThat(candidates).as("cap(기본 4)을 넘지 않아야 한다").hasSize(4);
+        List<String> statuses = candidates.stream()
+                .map(c -> c.body().get("status").asText())
+                .toList();
+        assertThat(statuses)
+                .as("모든 결정 후보(5개)가 갭 마커 후보(decidedCount=0)보다 우선순위가 높으므로, "
+                        + "cap 이내 4개는 전부 오라클 결정값이어야 하고 사전순으로 A,B,C,D여야 한다(cand-01=A)")
+                .containsExactly("A", "B", "C", "D");
+        assertThat(candidates.get(0).notes())
+                .as("cand-01의 notes에는 순번·결정 필드 수 trace가 남아야 한다")
+                .contains("cand-01");
+    }
+
+    /**
+     * {@code "INSERT INTO t (c1, c2) VALUES (v1, v2);"} 형태가 구조적으로 파싱 가능한 단일 문장인지
+     * 검증(괄호 균형·세미콜론 종결·따옴표 짝 맞음). 이 모듈은 JSqlParser 의존성이 없으므로(REQ-010/T1
+     * 범위에서 도입) 실제 SQL 파서 대신 구조 검증으로 "SQL 파싱 유지"를 확인한다.
+     */
+    private static boolean isWellFormedSingleStatementInsert(String sql) {
+        if (!sql.startsWith("INSERT INTO ") || !sql.endsWith(");")) {
+            return false;
+        }
+        int depth = 0;
+        boolean inQuote = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'') {
+                inQuote = !inQuote;
+            } else if (!inQuote && c == '(') {
+                depth++;
+            } else if (!inQuote && c == ')') {
+                depth--;
+                if (depth < 0) {
+                    return false;
+                }
+            } else if (!inQuote && c == ';' && i != sql.length() - 1) {
+                return false;   // 다중 문장 금지
+            }
+        }
+        return depth == 0 && !inQuote;
+    }
+
     /** table을 명시적으로 지정한 단일 EXISTS 가드(jsonPath="transferId")짜리 최소 리포트(FK 픽스처 전용). */
     private static ProvenanceReport existsGuardReport(String table) {
         GuardFact existsGuard = new GuardFact("Fixture.java:1", "EXISTS",
@@ -193,11 +348,37 @@ class TripleSynthesizerIT {
         String columnsPart = insertSql.substring(insertSql.indexOf('(') + 1, insertSql.indexOf(')'));
         String[] columns = columnsPart.split(",\\s*");
         int valuesOpen = insertSql.indexOf("VALUES (") + "VALUES (".length();
-        String[] values = insertSql.substring(valuesOpen, insertSql.lastIndexOf(')')).split(",\\s*");
+        String valuesPart = insertSql.substring(valuesOpen, insertSql.lastIndexOf(')'));
+        List<String> values = splitTopLevelCommaRespectingQuotes(valuesPart);
         Map<String, String> row = new LinkedHashMap<>();
         for (int i = 0; i < columns.length; i++) {
-            row.put(columns[i].trim(), values[i].trim());
+            row.put(columns[i].trim(), values.get(i).trim());
         }
         return row;
+    }
+
+    /**
+     * 최상위(따옴표 밖) 콤마로만 분리한다 — 갭 마커(REQ-007)처럼 값 문자열 안에 콤마가 포함된 리터럴을
+     * (naive split(",")로는 오분할되는 문제) 올바르게 하나의 값으로 유지하기 위함. 이스케이프된 따옴표
+     * ('')는 이 테스트 전용 파서 범위에서 다루지 않는다(현재 값들은 내부에 따옴표를 포함하지 않음).
+     */
+    private static List<String> splitTopLevelCommaRespectingQuotes(String valuesPart) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuote = false;
+        for (int i = 0; i < valuesPart.length(); i++) {
+            char c = valuesPart.charAt(i);
+            if (c == '\'') {
+                inQuote = !inQuote;
+                current.append(c);
+            } else if (c == ',' && !inQuote) {
+                parts.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        parts.add(current.toString());
+        return parts;
     }
 }
