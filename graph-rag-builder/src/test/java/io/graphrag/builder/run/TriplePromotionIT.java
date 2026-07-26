@@ -4,6 +4,8 @@ import com.sun.net.httpserver.HttpServer;
 import io.graphrag.builder.cli.BuilderCli;
 import io.graphrag.builder.env.DbConfig;
 import io.graphrag.builder.env.SutHandle;
+import io.graphrag.builder.explore.EndpointInvoker;
+import io.graphrag.builder.explore.EndpointTarget;
 import io.graphrag.builder.explore.ExplorationOrchestrator;
 import io.graphrag.builder.explore.ExplorationOutcome;
 import io.graphrag.builder.explore.HeuristicExplorer;
@@ -55,6 +57,8 @@ class TriplePromotionIT {
     private static int port;
     private static final AtomicInteger callCount = new AtomicInteger();
     private static volatile java.util.function.IntSupplier statusSupplier;
+    /** 가장 최근 수신 요청의 raw body — REQ-018 리뷰 fix(stale target) 회귀 검증용. */
+    private static volatile String lastRequestBody;
     private static final AtomicInteger DB_SEQ = new AtomicInteger();
 
     @TempDir
@@ -67,6 +71,7 @@ class TriplePromotionIT {
         server.createContext("/api/transfers", exchange -> {
             int n = callCount.incrementAndGet();
             int status = statusSupplier != null ? statusSupplier.getAsInt() : 200;
+            lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             byte[] body = ("{\"call\":" + n + "}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, body.length);
@@ -88,6 +93,14 @@ class TriplePromotionIT {
     void reset() {
         callCount.set(0);
         statusSupplier = null;
+        lastRequestBody = null;
+    }
+
+    /** 로컬호스트의 확실히 닫힌 포트 — 연결 즉시 거부(ECONNREFUSED)를 유도해 확정 explore를 실패시킨다. */
+    private static int closedPort() throws IOException {
+        try (java.net.ServerSocket s = new java.net.ServerSocket(0)) {
+            return s.getLocalPort();
+        }
     }
 
     private static SutHandle fakeSut() {
@@ -219,6 +232,151 @@ class TriplePromotionIT {
             assertThat(runner.tripleAdoptedForTest()).isFalse();
             assertThat(runner.tripleRejectedReasonsForTest()).isEmpty();
             assertThat(runner.tripleStalePathsForTest()).isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("REQ-018 Critical fix: ADOPT 후 target/invoker를 재생성해야 B2 재탐색이 채택된 body로 SUT를 재발행한다")
+    void req018_rebuildTargetAfterAdoptSoSubsequentReexploreUsesAdoptedBody() throws Exception {
+        Path tripleRoot = tempDir.resolve("triples-req018");
+        Path endpointDir = Files.createDirectories(tripleRoot.resolve("post-api-transfers"));
+        String candidateBody = "{\"accountId\":\"ACC-ADOPTED\"}";
+        String seed = "INSERT INTO accounts (id, balance) VALUES ('ACC-ADOPTED', 500);";
+        writeCandidate(endpointDir.resolve("promoted").resolve("cand-01"), candidateBody, seed, "{}");
+        writeCandidate(endpointDir.resolve("base").resolve("cand-01"), candidateBody, seed, "{}");
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(reportWithDbReadTable("accounts")));
+
+        statusSupplier = () -> 200;   // trial + 확정 run 모두 성공 → ADOPT
+
+        Endpoint endpoint = new Endpoint("post-api-transfers", "POST", "/api/transfers", "T", "t", List.of(), false);
+        SynthesizedInput priorHappy = new SynthesizedInput(
+                Json.mapper().readTree("{\"accountId\":\"ORIGINAL-REJECTED\"}"), List.of());
+        ExplorationOutcome priorOutcome = new ExplorationOutcome(List.of(), Set.of(), java.util.Map.of());
+        StatusOnlyClassifier classifier = new StatusOnlyClassifier();
+        ExplorationOrchestrator orchestrator =
+                new ExplorationOrchestrator(List.of(new HeuristicExplorer(classifier)), 1, classifier);
+
+        try (Connection connection = newH2Connection()) {
+            EndpointExplorationRunner runner = newRunner(connection, emptyBootJar(), tripleRoot);
+
+            // run()이 게이트 호출 전에 이미 만들어 둔 "stale" invoker/target — 거부된 원본 body를 감싼다.
+            EndpointInvoker staleInvoker = runner.buildInvokerForTest(endpoint, false, false, priorHappy);
+            EndpointTarget staleTarget =
+                    new EndpointTarget(endpoint, priorHappy.body(), List.of(), List.of(), staleInvoker);
+
+            EndpointExplorationRunner.GateApplyResult result = runner.applyTriplePromotionGate(
+                    endpoint, List.of(), BodyShape.empty(), priorHappy, List.of(),
+                    false, false, false, List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    orchestrator, priorOutcome);
+
+            assertThat(runner.tripleAdoptedForTest()).as("trial+확정 run 모두 성공하므로 채택돼야 한다").isTrue();
+            assertThat(result.happy()).as("happy가 candidate로 교체돼야 한다").isNotSameAs(priorHappy);
+
+            EndpointExplorationRunner.TargetRebuildResult rebuilt = runner.rebuildTargetIfHappyChanged(
+                    priorHappy, result.happy(), endpoint, false, false, List.of(), List.of(),
+                    List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    staleInvoker, staleTarget);
+
+            assertThat(rebuilt.target()).as("happy 참조가 바뀌었으므로 target도 재생성돼야 한다")
+                    .isNotSameAs(staleTarget);
+            assertThat(rebuilt.target().baseInput().get("accountId").asText())
+                    .as("재생성된 target은 채택된 candidate body를 반영해야 한다")
+                    .isEqualTo("ACC-ADOPTED");
+
+            // 핵심 회귀: 재생성된 target으로 B2 루프와 동일하게 재explore하면 SUT가 채택된 body를 관측한다.
+            lastRequestBody = null;
+            ExplorationOutcome reExplored = orchestrator.explore(rebuilt.target());
+            assertThat(reExplored.paths()).isNotEmpty();
+            assertThat(lastRequestBody)
+                    .as("재탐색이 재생성된 target을 썼다면 채택된 body(ACC-ADOPTED)가 재발행돼야 한다")
+                    .contains("ACC-ADOPTED");
+
+            // 대조군: 재생성 없이 stale target을 그대로 썼다면(수정 전 버그) 거부된 원본 body가 재발행된다.
+            lastRequestBody = null;
+            orchestrator.explore(staleTarget);
+            assertThat(lastRequestBody)
+                    .as("대조군 — stale target은 여전히 원본(거부된) body를 보낸다: 이것이 수정 전 버그의 실제 증상이다")
+                    .contains("ORIGINAL-REJECTED");
+
+            // no-op 분기: happy가 안 바뀌면(NO_CANDIDATE/STALE) 재생성 없이 기존 참조를 그대로 반환한다.
+            EndpointExplorationRunner.TargetRebuildResult unchanged = runner.rebuildTargetIfHappyChanged(
+                    priorHappy, priorHappy, endpoint, false, false, List.of(), List.of(),
+                    List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    staleInvoker, staleTarget);
+            assertThat(unchanged.target()).isSameAs(staleTarget);
+            assertThat(unchanged.invoker()).isSameAs(staleInvoker);
+        }
+    }
+
+    @Test
+    @DisplayName("REQ-019 Important fix: 확정 explore 도중 예외가 나면 cumulativeCoverage가 게이트 이전 상태로 원복된다")
+    void req019_exceptionDuringConfirmExploreRestoresCumulativeCoverage() throws Exception {
+        Path tripleRoot = tempDir.resolve("triples-req019-cov");
+        Path endpointDir = Files.createDirectories(tripleRoot.resolve("post-api-transfers"));
+        String body = "{\"accountId\":\"ACC-1\"}";
+        String seed = "INSERT INTO accounts (id, balance) VALUES ('ACC-1', 500);";
+        writeCandidate(endpointDir.resolve("promoted").resolve("cand-01"), body, seed, "{}");
+        writeCandidate(endpointDir.resolve("base").resolve("cand-01"), body, seed, "{}");
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(reportWithDbReadTable("accounts")));
+
+        // trial(1번째 HTTP 시도)은 정상 포트로 보내 성공시키고, 확정 run(2번째 시도)만 닫힌 포트로 보내
+        // 연결 거부(예외)를 유발한다 — "확정 explore 시작 후(coverage 리셋 이후) 예외" 경로를 결정적으로 재현.
+        int deadPort = closedPort();
+        AtomicInteger baseUriCalls = new AtomicInteger();
+        SutHandle flakySut = new SutHandle() {
+            @Override public String baseUri() {
+                return baseUriCalls.incrementAndGet() == 1
+                        ? "http://localhost:" + port : "http://localhost:" + deadPort;
+            }
+            @Override public String readLog() { return ""; }
+            @Override public long logOffset() { return 0; }
+            @Override public String readLogFrom(long offset) { return ""; }
+            @Override public String readLogRange(long start, long end) { return ""; }
+            @Override public void stop() { }
+        };
+        statusSupplier = () -> 200;   // trial(정상 포트 경유)은 성공 판정
+
+        Endpoint endpoint = new Endpoint("post-api-transfers", "POST", "/api/transfers", "T", "t", List.of(), false);
+        SynthesizedInput priorHappy = new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
+        ExplorationOutcome priorOutcome = new ExplorationOutcome(List.of(), Set.of(), java.util.Map.of());
+        StatusOnlyClassifier classifier = new StatusOnlyClassifier();
+        ExplorationOrchestrator orchestrator =
+                new ExplorationOrchestrator(List.of(new HeuristicExplorer(classifier)), 1, classifier);
+
+        try (Connection connection = newH2Connection()) {
+            EndpointExplorationRunner runner = new EndpointExplorationRunner(
+                    flakySut, connection, DbConfig.Type.POSTGRES,
+                    new FakeCoverageProbe(), new io.graphrag.builder.coverage.BranchCoverageAnalyzer(emptyBootJar()),
+                    0, /* httpCapture */ null, List.of(), List.of(),
+                    /* authProvider */ null, /* authConfig */ null,
+                    java.util.Map.of(), java.util.Map.of(),
+                    RequestHeaders.empty(), new FakeSqlCaptureBackend(), /* kafkaCapture */ null,
+                    new StatusOnlyClassifier(), List.of(), /* egressCollector */ null,
+                    java.util.Map.of(), /* traceParent */ null, /* errorContract */ null, tripleRoot);
+
+            org.jacoco.core.data.ExecutionDataStore marker = new org.jacoco.core.data.ExecutionDataStore();
+            runner.setCumulativeCoverageForTest(marker);
+
+            EndpointExplorationRunner.GateApplyResult result = runner.applyTriplePromotionGate(
+                    endpoint, List.of(), BodyShape.empty(), priorHappy, List.of(),
+                    false, false, false, List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    orchestrator, priorOutcome);
+
+            assertThat(result.outcome()).as("확정 explore 예외 시 원본 outcome으로 회귀해야 한다").isSameAs(priorOutcome);
+            assertThat(runner.tripleAdoptedForTest()).isFalse();
+            assertThat(runner.tripleRejectedReasonsForTest())
+                    .as("확정 run 진입 전 단계(insertSeeds/coverage.baselineCut 이후) 예외는 adoption-error로 기록된다")
+                    .containsEntry("adoption-error", 1);
+            assertThat(runner.cumulativeCoverageForTest())
+                    .as("확정 explore 도중 예외가 나도 cumulativeCoverage는 게이트 이전 마커로 원복돼야 한다"
+                            + "(수정 전에는 catch 블록에서 priorCumulative가 스코프 밖이라 빈 상태로 남았다)")
+                    .isSameAs(marker);
         }
     }
 
