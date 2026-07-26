@@ -42,4 +42,17 @@ public class NestedController {
         }
         return "OK";
     }
+
+    /**
+     * 대표원소(인덱스 0) 규약의 경계 케이스: {@code get(1)}은 downstream
+     * {@code InputMutator.applyToBody}의 대표원소 변이 대상(항상 {@code arr.get(0)})과 어긋나므로
+     * "items.qty"로 태깅되면 안 되고 UNKNOWN으로 남아야 한다.
+     */
+    @PostMapping("/second-item")
+    public String createSecondItem(@RequestBody CreateRequest req) {
+        if (req.items().get(1).qty() <= 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "invalid second item");
+        }
+        return "OK";
+    }
 }
