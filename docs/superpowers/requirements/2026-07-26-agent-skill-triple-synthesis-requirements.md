@@ -51,7 +51,7 @@
 - 유형: Functional / 우선순위: Must
 - 설명: 요청 DTO의 List/Map/중첩 객체 필드까지 재귀 전개해 중첩 필드의 jsonPath(dot-path)와 origin을 태깅한다.
 - 수용기준:
-  - Given 중첩 DTO(List 원소 객체의 필드가 가드에 쓰이는 형태 — fixture EP 중 1개에 포함, 선행: REQ-028), When `provenance` 실행, Then 중첩 필드가 dot-path로 식별되고 origin이 올바르게 태깅된다(golden 일치).
+  - Given 중첩 DTO(List 원소 객체의 필드가 가드에 쓰이는 형태 — fixture EP 중 1개에 포함, 선행: REQ-028), When `provenance` 실행, Then 중첩 필드가 dot-path(**컬렉션 대표원소 규약, bracket 없이 `items.qty`** — 기존 `JsonPaths`/`InputMutator` element[0] 규약과 합치)로 식별되고 origin이 올바르게 태깅된다(golden 일치).
 - 검증 레벨: integration
 
 ### C2 — synthesize-triple CLI
@@ -102,9 +102,9 @@
 
 ### REQ-010 — seed.sql 화이트리스트(JSqlParser)
 - 유형: Functional / 우선순위: Must
-- 설명: seed.sql은 JSqlParser(신규 의존성)로 검증한다 — INSERT만, provenance가 지목한 테이블 한정, DDL·UPDATE·DELETE·다중 스테이트먼트 reject. 정규식 검사는 사용하지 않는다(기존 `testlib`의 regex 기반 `SqlTableParser`는 이 보안 게이트에 재사용하지 않는다). 지원 방언(Postgres/MySQL/MariaDB — `DbConfig.Type`)별 INSERT 파싱 차이를 단위 테스트로 고정한다.
+- 설명: seed.sql은 JSqlParser(신규 의존성)로 검증한다 — INSERT만, 허용 테이블 = **provenance가 지목한 DB_READ 테이블 + `TableSchema.foreignKeys()` 전이 참조 부모 테이블**(FK 제약 시드 성립용, 전이 폐포는 스키마 기준 결정적), DDL·UPDATE·DELETE·다중 스테이트먼트 reject. 정규식 검사는 사용하지 않는다(기존 `testlib`의 regex 기반 `SqlTableParser`는 이 보안 게이트에 재사용하지 않는다). 파서는 `DbConfig.Type`(Postgres/MySQL/MariaDB)에 맞게 구성하고 방언별 INSERT 파싱 차이를 단위 테스트로 고정한다.
 - 수용기준:
-  - Given 우회 시도 3종(세미콜론+주석 뒤 두 번째 문장, block-comment 내 DELETE, 문자열 리터럴 속 DELETE 키워드)과 비지목 테이블 INSERT, When 검증, Then 앞 2종과 비지목 테이블은 reject, 리터럴 속 키워드 INSERT는 통과한다. And 3개 방언의 대표 INSERT(인용부호·escape 차이 포함)가 각각 올바르게 판정된다.
+  - Given 우회 시도 3종(세미콜론+주석 뒤 두 번째 문장, block-comment 내 DELETE, 문자열 리터럴 속 DELETE 키워드)과 비허용 테이블 INSERT, When 검증, Then 앞 2종과 비허용 테이블은 reject, 리터럴 속 키워드 INSERT는 통과한다. And FK 부모 테이블(DB_READ 집합 밖이지만 전이 참조) INSERT는 통과한다. And 3개 방언의 대표 INSERT(인용부호·escape 차이 포함)가 각각 올바르게 판정된다.
 - 검증 레벨: integration
 
 ### REQ-011 — 스키마 검증
@@ -191,7 +191,7 @@
 
 ### REQ-021 — 관측 필드 기록
 - 유형: Functional / 우선순위: Must
-- 설명: `EndpointExploration` 레코드에 신규 필드를 기록한다 — `trialCount`(int), `tripleAdopted`(boolean), `tripleRejected`(Map<String,Integer> — reject 사유별 건수), `staleTriples`(List<String> — 후보 경로/ID). 기존 JSON 하위호환은 기존 레코드 확장 관례(오버로드 생성자)로 유지한다.
+- 설명: `EndpointExploration` 레코드에 신규 필드를 기록한다 — `trialCount`(int), `tripleAdopted`(boolean), `tripleRejected`(Map<String,Integer> — reject 사유별 건수), `staleTriples`(List<String> — 원소 포맷 `<endpointId>/promoted/cand-NN`, 스토어 루트 기준 상대 경로). 기존 JSON 하위호환은 기존 레코드 확장 관례(오버로드 생성자)로 유지한다.
 - 수용기준:
   - Given trial이 발화한 빌드, When exploration-report.json 검사, Then 위 타입/구조로 발화·채택·거부·stale이 구분 확인된다. 기존 리포트 JSON은 계속 파싱된다.
 - 검증 레벨: integration
@@ -205,9 +205,9 @@
 
 ### REQ-031 — 삼중 저장 레이아웃·CLI 계약
 - 유형: Functional / 우선순위: Must
-- 설명: 삼중 저장은 `<triple-store 루트>/<endpointId>/{cand-NN | promoted/cand-NN | failed/cand-NN}` 레이아웃을 따른다. 루트는 `--triple-store <dir>`(기본: SUT 캠페인 `.graphrag/triples/`), 소비는 `--triple-candidates <dir>`. fixture용 promoted는 graph-rag repo `e2e/` 리소스로 커밋하며 e2e 스크립트가 상대 경로로 전달한다.
+- 설명: 삼중 저장은 `<triple-store 루트>/<endpointId>/{cand-NN | promoted/cand-NN | failed/cand-NN}` 레이아웃을 따른다. 루트는 `--triple-store <dir>`(기본: SUT 캠페인 `.graphrag/triples/`), 소비는 `--triple-candidates <dir>`. 순번 충돌 시 덮어쓰지 않고 다음 가용 순번으로 자동 증번한다. fixture용 promoted는 graph-rag repo `e2e/` 리소스로 커밋하며 e2e 스크립트가 상대 경로로 전달한다.
 - 수용기준:
-  - Given synthesize→trial→승격 수행, When 산출 구조 검사, Then 위 레이아웃·순번 규칙(덮어쓰기 없음)·플래그 계약이 준수된다.
+  - Given synthesize→trial→승격 수행(대상 promoted/cand-01 기존재 포함), When 산출 구조 검사, Then 위 레이아웃이 준수되고 기존 디렉토리는 보존되며 신규 승격은 cand-02로 증번된다.
 - 검증 레벨: integration
 
 ### attach 안전 경계
@@ -251,7 +251,7 @@
 
 ### REQ-028 — fixture 착륙·outer red 고정
 - 유형: Functional / 우선순위: Must
-- 설명: wip 브랜치의 fixture EP 4종(**fulfillment/transfers/invoices/quotas**, b60b9a3)을 본 브랜치로 착륙시키고 transfers를 삼중 전부 필요 형태(+중첩 DTO 필드 1개 — REQ-034용)로 보강하며, **현행 합성으로 대상 EP가 2xx 미도달임을 동일-jar A/B로 고정**한다(outer red 전제). fixture 기반 REQ 전체의 선행 의존이다.
+- 설명: wip 브랜치의 fixture EP 4종(**fulfillment/transfers/invoices/quotas** — java만 cherry-pick, 리소스는 String-자연키 스키마로 직접 작성)을 본 브랜치로 착륙시키고 transfers를 삼중 전부 필요 형태(+중첩 DTO 필드 1개 — REQ-034용)로 보강하며, **트리플 미적용 현행 빌드에서 대상 EP가 2xx 미도달임을 E2E로 고정**한다(outer red 전제 — 트리플 도입 후에는 `GRB_TRIAL=off`가 같은 조건의 A/B 대조군 역할). fixture 기반 REQ 전체의 선행 의존이다.
 - 수용기준:
   - Given 착륙·보강된 fixture, When 현행(트리플 미적용) 빌드, Then 대상 EP에 2xx ExploredPath가 없음이 E2E로 고정된다.
 - 검증 레벨: E2E black-box
@@ -303,7 +303,7 @@
 | REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#REQ-019 | integration | 🔴 planned |
 | REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#REQ-020 | E2E | 🔴 planned |
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#REQ-035 | integration | 🔴 planned |
-| REQ-021 | 관측 필드 기록(타입 명시) | ExplorationReportIT#REQ-021 | integration | 🔴 planned |
+| REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🔴 planned |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
 | REQ-031 | 저장 레이아웃·CLI 계약 | TripleStoreLayoutIT#REQ-031 | integration | 🔴 planned |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#REQ-023 | integration | 🔴 planned |

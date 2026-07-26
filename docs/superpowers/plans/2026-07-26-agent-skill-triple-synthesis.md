@@ -31,9 +31,9 @@
 **REQ-IDs:** REQ-028
 
 **Files:**
-- Cherry-pick 대상(원본: `origin/worktree-feat-llm-body-resynthesis` 커밋 b60b9a3):
-  `samples/order-service/src/main/java/io/graphrag/sample/orders/{Account.java, AccountRepository.java, FulfillmentController.java, InvoiceController.java, QuotaController.java, TransferController.java}`, `samples/order-service/src/main/resources/application.yml`(추가분), `samples/order-service/src/main/resources/data.sql`(추가분)
-- Modify: `samples/order-service/src/main/java/io/graphrag/sample/orders/TransferController.java` (보강)
+- Cherry-pick 대상(원본: **브랜치 tip** `origin/worktree-feat-llm-body-resynthesis` — java 6종만; 리소스는 그 브랜치 것이 숫자-id 스키마·미완(48ffaa5 "미완" 커밋)이라 **가져오지 않고 직접 작성**):
+  `samples/order-service/src/main/java/io/graphrag/sample/orders/{Account.java, AccountRepository.java, FulfillmentController.java, InvoiceController.java, QuotaController.java, TransferController.java}`
+- Modify: `samples/order-service/src/main/java/io/graphrag/sample/orders/TransferController.java` (보강), `samples/order-service/src/main/java/io/graphrag/sample/orders/Account.java` (**@Id를 String 자연키로 전환**·@Table/@Column 오버라이드), `AccountRepository.java` (`JpaRepository<Account, String>`), `samples/order-service/src/main/resources/application.yml` (키 3종 직접 추가), `samples/order-service/src/main/resources/data.sql` (accounts 시드 직접 작성 — 파일 없으면 생성)
 - Create: `samples/order-service/src/main/java/io/graphrag/sample/orders/FraudClient.java`
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/cli/FixtureBaselineE2E.java`
 
@@ -42,7 +42,9 @@
 - Produces: `Account` 엔티티 — `@Table(name = "fund_accounts")` + `@Column(name = "balance_amount") long balance` (REQ-004 오버라이드 검증용).
 - Produces: `FraudClient` — `RestTemplate`로 `${external.fraud.url}/fraud/check` POST, 응답 DTO `FraudResult(String status)`.
 
-- [ ] **Step 1: fixture cherry-pick**
+- [ ] **Step 0: 원본 검증** — `git rev-parse origin/worktree-feat-llm-body-resynthesis` 성공 + `git ls-tree origin/worktree-feat-llm-body-resynthesis --name-only samples/order-service/src/main/java/io/graphrag/sample/orders/ | grep TransferController` 존재 확인. 실패 시 STOP·보고.
+
+- [ ] **Step 1: java fixture만 cherry-pick (리소스 제외)**
 
 ```bash
 git checkout origin/worktree-feat-llm-body-resynthesis -- \
@@ -52,9 +54,11 @@ git checkout origin/worktree-feat-llm-body-resynthesis -- \
   samples/order-service/src/main/java/io/graphrag/sample/orders/InvoiceController.java \
   samples/order-service/src/main/java/io/graphrag/sample/orders/QuotaController.java \
   samples/order-service/src/main/java/io/graphrag/sample/orders/TransferController.java
-git diff origin/worktree-feat-llm-body-resynthesis~20..b60b9a3 -- samples/order-service/src/main/resources/ | git apply --3way || true
 ```
-(리소스 파일은 충돌 시 수동 병합 — `application.yml`의 신규 키·`data.sql`의 accounts 시드만 가져온다.)
+
+리소스는 직접 작성한다(브랜치 것은 숫자-id·미완이라 새 스키마와 불일치):
+- `application.yml` 추가 키: `spring.jpa.defer-datasource-initialization: true`, `spring.sql.init.mode: always`, `external.fraud.url: ${EXTERNAL_FRAUD_URL:http://localhost:9999}` (기존 `EXTERNAL_INVENTORY_URL` 관례와 동일 — yml에만 기본값).
+- `data.sql`(없으면 생성): `INSERT INTO fund_accounts (id, balance_amount) VALUES ('ACC-BASE', 1000000);` (String 자연키 스키마).
 
 - [ ] **Step 2: TransferController 보강** — 아래 형태로 수정(404/422/409/201 + 중첩 items 가드 + note):
 
@@ -73,20 +77,24 @@ public ResponseEntity<?> create(@RequestBody CreateTransferRequest req) {
     if (!"CLEAR".equals(fraud.status())) {
         throw new ResponseStatusException(HttpStatus.CONFLICT, "fraud check failed");
     }
-    return ResponseEntity.status(201).body(Map.of("id", UUID.randomUUID().toString(), "note", req.note()));
+    return ResponseEntity.status(201).body(Map.of("id", "TRF-" + req.fromAccountId(), "note", req.note()));   // 결정적 id (Random 금지)
 }
 public record CreateTransferRequest(String fromAccountId, long amount, String note, List<TransferItem> items) {}
 public record TransferItem(String sku, int qty) {}
 ```
 
-`Account`에 `@Table(name = "fund_accounts")`·`@Column(name = "balance_amount")`가 없으면 추가한다. `FraudClient`는 `@Component` + `RestTemplate` + `@Value("${external.fraud.url:http://localhost:9999}")`. `application.yml`에 `external.fraud.url: ${EXTERNAL_FRAUD_URL:http://localhost:9999}` 추가(탐색 환경이 env로 WireMock 주입 — 기존 `EXTERNAL_INVENTORY_URL` 관례와 동일).
+`Account`는 **`@Id private String id;`(자연키 — `@GeneratedValue` 제거)** + `@Table(name = "fund_accounts")` + `@Column(name = "balance_amount") private long balance;`로 수정하고, `AccountRepository`는 `JpaRepository<Account, String>`으로 바꾼다(브랜치 원본은 Long IDENTITY — String 자연키로 전환해야 `findById(req.fromAccountId())`가 컴파일된다). 이 엔티티를 참조하는 cherry-pick된 다른 컨트롤러(fulfillment/invoices/quotas)가 Long id를 전제하면 함께 String으로 정합화한다. `FraudClient`는 기존 `InventoryClient` 관례와 동일하게 **생성자 주입 + `@Value("${external.fraud.url:}")` 빈 문자열 기본값**(실제 기본 URL은 application.yml 한 곳에만).
 
-- [ ] **Step 3: outer red E2E 작성** — `FixtureBaselineE2E`(기존 `BuilderIntegrationTest` 부팅 패턴 재사용):
+- [ ] **Step 3: outer red E2E 작성** — `FixtureBaselineE2E`. **`buildOrderServiceGraph()`는 신설 헬퍼**다
+  (기존에 없음): `BuilderIntegrationTest`의 부팅 계약을 그대로 따라 작성한다 — `BuilderCli.build(BuildConfig...)`
+  호출, `-Dsut.jar`/`-Dsut.src` 시스템 프로퍼티 필수, Docker(Testcontainers) 필요 시 기존 `@Tag`/
+  `@EnabledIfSystemProperty` 가드 동일 적용, `EXTERNAL_FRAUD_URL`은 분석 WireMock으로 주입(기존
+  `EXTERNAL_INVENTORY_URL` 배선과 동일 지점):
 
 ```java
 @Test @DisplayName("REQ-028: 현행 합성으로 transfers 깊은-happy 2xx 미도달 (outer red 전제)")
 void req028_currentSynthesisCannotReachDeepHappy() throws Exception {
-    GraphAsset graph = buildOrderServiceGraph();   // 기존 헬퍼: 트리플 미적용 현행 빌드
+    GraphAsset graph = buildOrderServiceGraph();   // 신설 헬퍼: BuilderIntegrationTest 부팅 계약 재사용, 트리플 미적용 현행 빌드
     List<ExploredPath> transferPaths = graph.paths().stream()
             .filter(p -> p.endpointId().equals("post-api-transfers")).toList();
     assertThat(transferPaths).noneMatch(p -> p.expectedStatus() / 100 == 2
@@ -145,7 +153,7 @@ public record ProvenanceReport(String endpointId, List<GuardFact> guards,
 
 **Interfaces:**
 - Consumes: `SharedSpoonModel.build(SourceRoots)` → `CtModel`(기존), `ConstraintExtractor.reachableMethods`(1-hop 선례 — 코드 참조용, 직접 재사용하지 않고 일반화 재구현), Task 2의 `ProvenanceReport`.
-- Produces: `public ProvenanceReport analyze(CtModel model, Endpoint endpoint, int maxDepth)` — 핸들러 `CtMethod`에서 시작해 호출 그래프를 DFS(방문 집합·depth cap). `throw`/`ResponseStatusException`으로 이어지는 `CtIf` 조건식을 GuardFact로 수집. 핸들러 파라미터(@RequestBody 필드 getter 체인)에서 데이터플로 도달하는 피연산자는 `Origin.INPUT` + jsonPath(dot-path).
+- Produces: `public ProvenanceReport analyze(CtModel model, Endpoint endpoint, int maxDepth)` — 핸들러 `CtMethod`에서 시작해 호출 그래프를 DFS(방문 집합·depth cap). 가드 인식 2형태: ① `throw`/`ResponseStatusException`/4xx·5xx `ResponseEntity` 반환으로 이어지는 `CtIf` 조건식, ② **`Optional.orElseThrow(람다)`/`orElseGet` 패턴 — 람다 본문이 `ResponseStatusException`(또는 CtThrow)이면 그 수신 표현식(예: `findById(x)`)을 존재(EXISTS) 가드로 수집**(fixture·`OrderController`의 실제 관례). 핸들러 파라미터(@RequestBody 필드 getter 체인)에서 데이터플로 도달하는 피연산자는 `Origin.INPUT` + jsonPath(dot-path).
 
 - [ ] **Step 1: 실패 테스트** — 미니 fixture 소스(테스트 리소스 디렉토리 `src/test/resources/provenance-fixtures/basic/`에 컨트롤러+서비스 2클래스)로:
 
@@ -205,8 +213,8 @@ void req004_jpaOverrides() {
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/provenance/ProvenanceIndexerIT.java` (추가)
 
 **Interfaces:**
-- Consumes: `ResponseDtoIndexer`가 인덱싱하는 외부 callSite(HTTP 클라이언트 반환 DTO) — callSite id 규칙 재사용.
-- Produces: RestTemplate/WebClient/Feign 반환값 getter 체인 → `Origin.EXTERNAL_RESPONSE` + callSite/stubField. 출처값의 산술/문자열 파생(`CtBinaryOperator`로 INPUT/DB_READ 피연산자를 감싼 식) → `Origin.DERIVED`(concolic 위임 표시는 javaType 유지로 충분 — C2가 판단). 인터페이스 다구현체: 호출 대상 선언 타입이 인터페이스이고 모델 내 구현체가 2개 이상이면 UNKNOWN + `Unresolved(location, MULTI_IMPL, targetType)`.
+- Consumes: `ResponseDtoIndexer`가 인덱싱하는 외부 callSite(HTTP 클라이언트 반환 DTO) — `ExternalCallSite(httpMethod, pathLiteral, responseShape)`에는 id 필드가 없으므로 **callSite 키는 `httpMethod + " " + pathLiteral` 합성 문자열**(예: `"POST /fraud/check"`)로 정의하고 `ValueRef.callSite`에 그 키를 넣는다(Task 2 스키마 주석에도 명시).
+- Produces: RestTemplate/WebClient/Feign 반환값 accessor 체인(record면 `status()` — Task 1 `FraudResult.status()` 형태) → `Origin.EXTERNAL_RESPONSE` + callSite/stubField. 출처값의 산술/문자열 파생(`CtBinaryOperator`로 INPUT/DB_READ 피연산자를 감싼 식) → `Origin.DERIVED`(concolic 위임 표시는 javaType 유지로 충분 — C2가 판단). 인터페이스 다구현체: 호출 대상 선언 타입이 인터페이스이고 모델 내 구현체가 2개 이상이면 UNKNOWN + `Unresolved(location, MULTI_IMPL, targetType)`.
 
 - [ ] **Step 1: 실패 테스트 3건** — external fixture(`fraudClient.check(...).getStatus()` 비교 → EXTERNAL_RESPONSE + stubField="status"), derived fixture(`req.getScore()*2 == 84` → DERIVED), multi-impl fixture(구현체 2개 인터페이스 → UNKNOWN + unresolved `MULTI_IMPL`). 각각 `@DisplayName("REQ-003: …")`/`("REQ-032: …")`.
 - [ ] **Step 2:** FAIL → **Step 3:** 구현 → **Step 4:** green → **Step 5:** Commit `feat(provenance): EXTERNAL/DERIVED/UNKNOWN 태깅 [REQ-003/032]`
@@ -229,11 +237,11 @@ void req034_nestedDtoRecursion() {
     ProvenanceReport report = analyzeFixture("nested", 3);
     // fixture: if (req.getItems().get(0).getQty() <= 0) throw 422
     assertThat(report.guards()).anyMatch(g -> g.operands().stream().anyMatch(v ->
-            v.origin() == Origin.INPUT && v.jsonPath().equals("items[0].qty")));
+            v.origin() == Origin.INPUT && v.jsonPath().equals("items.qty")));
 }
 ```
 
-- [ ] **Step 2:** FAIL → **Step 3:** 구현 — getter 체인 → dot-path 변환기에 List 인덱스 접근(`get(0)`/first-element 대표)·Map 키 접근을 추가. 기존 `JsonPaths` dot-path 규약과 동일 표기 사용. → **Step 4:** green → **Step 5:** Commit `feat(provenance): DTO 중첩 재귀 전개 [REQ-034]`
+- [ ] **Step 2:** FAIL → **Step 3:** 구현 — getter 체인 → dot-path 변환. **표기 규약: 컬렉션은 대표원소(첫 원소) 규약으로 bracket 없이 `items.qty`** — 기존 `JsonPaths`는 `a.b.c`만 지원(bracket 미지원)하고 `BodyShape`도 컬렉션을 리프로 emit하므로, 기존 규약을 유지하고 컬렉션 원소 필드는 `컬렉션명.필드명`으로 평탄화한다(변이 적용 시 `InputMutator.applyToBody`의 element[0] 대표 변이 규약과 합치). Map 키 접근도 동일하게 `맵명.키명`. → **Step 4:** green → **Step 5:** Commit `feat(provenance): DTO 중첩 재귀 전개 [REQ-034]`
 
 ---
 
@@ -301,7 +309,7 @@ public List<TripleCandidate> synthesize(ProvenanceReport report, BodyShape shape
 **REQ-IDs:** REQ-009, REQ-010, REQ-011, REQ-012
 
 **Files:**
-- Modify: `gradle/libs.versions.toml` + `graph-rag-builder/build.gradle.kts` — JSqlParser 의존성 추가 (`com.github.jsqlparser:jsqlparser:5.1`)
+- Modify: `gradle/libs.versions.toml` + `graph-rag-builder/build.gradle.kts` — JSqlParser 의존성 추가 (`com.github.jsqlparser:jsqlparser:5.3` — 착수 시점 최신 안정판 확인 후 고정)
 - Create: `graph-rag-builder/src/main/java/io/graphrag/builder/provenance/TripleValidator.java`
 - Create: `graph-rag-builder/src/main/java/io/graphrag/builder/provenance/SeedSqlWhitelist.java`
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/provenance/{TripleGateIT.java, SeedSqlWhitelistIT.java}`, `graph-rag-builder/src/test/java/io/graphrag/builder/cli/TripleGateE2E.java`
@@ -315,7 +323,7 @@ public ValidationResult validate(Path candidateDir, Path toolBaseDir, Provenance
 ```
 
 - 마커-diff: base(도구 생성본, `--triple-store`에 함께 보존되는 `base/` 사본)와 후보를 비교 — body/stubs: JSON 트리 재귀 비교, 마커였던 노드만 값 변경 허용; seed.sql: JSqlParser로 양쪽 파싱→(table, column→value) 맵 비교, 마커(`'__AGENT_FILL__…'`)였던 컬럼만 변경 허용.
-- 화이트리스트: `CCJSqlParserUtil.parse` 결과가 `Insert`가 아니면 reject; `Statements` 2개 이상 reject; 테이블이 report의 DB_READ 테이블 집합 밖이면 reject.
+- 화이트리스트: `CCJSqlParserUtil.parse` 결과가 `Insert`가 아니면 reject; `Statements` 2개 이상 reject; 허용 테이블 = **report의 DB_READ 테이블 집합 + 그 테이블들이 `TableSchema.foreignKeys()`로 전이 참조하는 부모 테이블**(FK NOT NULL 제약 시드에 부모 행이 필요 — 전이 폐포는 스키마 기준 결정적) — 그 밖이면 reject. 파서는 `DbConfig.Type`(POSTGRES/MYSQL/MARIADB)에 따라 방언 인용부호(backtick vs double-quote)·escape를 처리하도록 구성한다.
 - PII: 마커 위치에 채워진 값만 스캔 — 패턴: `01\d-?\d{3,4}-?\d{4}`(휴대전화), `\d{6}-?[1-4]\d{6}`(주민번호), `@(gmail|naver|daum|kakao)\.com`(실도메인 이메일; example.com류 허용). 히트→`needsHumanReview=true`(승격 차단).
 
 - [ ] **Step 1: 실패 테스트** — REQ-009(비마커 body 변경/비마커 seed 값 변경 reject, 마커만 채움 통과), REQ-010(우회 3종: `INSERT ...; -- x\nDELETE ...` reject / `/* DELETE */` 포함 다중문 reject / `VALUES ('DELETE FROM x')` 통과 + 비지목 테이블 reject + Postgres/MySQL/MariaDB 대표 INSERT 3건 판정), REQ-011(BodyShape 외 필드·mapping 외 키 reject), REQ-012(휴대전화 히트→needsHumanReview, `probe@example.com` 통과). 각 `@DisplayName("REQ-0xx: …")`.
@@ -333,7 +341,7 @@ public ValidationResult validate(Path candidateDir, Path toolBaseDir, Provenance
 - Test: `graph-rag-builder/src/test/java/io/graphrag/builder/provenance/TripleStoreLayoutIT.java`, `graph-rag-builder/src/test/java/io/graphrag/builder/run/TrialCaptureOffIT.java`
 
 **Interfaces:**
-- Produces: `TripleStore.candidates(endpointId) → List<Path>` / `promote(candDir)` / `fail(candDir, digest)` — `<root>/<endpointId>/{cand-NN|promoted/cand-NN|failed/cand-NN}` 순번 유지·덮어쓰기 금지. `EndpointInvoker` 경로에 `invokeTrial(JsonNode body)` — 기존 `doSend` 코어 재사용하되 `sqlCapture.begin()` 미호출·coverage dump 미수행 분기.
+- Produces: `TripleStore.candidates(endpointId) → List<Path>` / `promote(candDir)` / `fail(candDir, digest)` — `<root>/<endpointId>/{cand-NN|promoted/cand-NN|failed/cand-NN}`. 순번 충돌 시 **덮어쓰지 않고 다음 가용 순번으로 자동 증번**(promoted/cand-(max+1)). trial invoke는 **`EndpointExplorationRunner`에 신설하는 trial 경로 메서드**(예: `invokeTrial(JsonNode body)`)로 둔다 — 기존 `doSend` 코어를 재사용하되 `sqlCapture.begin()` 미호출·coverage dump 미수행 분기(no-op scope). **`EndpointInvoker` 함수형 인터페이스는 변경하지 않는다**(TrialRunner가 러너의 trial 메서드를 직접 사용).
 
 - [ ] **Step 1: 실패 테스트** — REQ-031(promote 시 순번 보존·중복 순번 없음·이동 후 원본 부재), REQ-015(trial invoke 후 cumulativeCoverage/캡처 교환에 미반영 — 기존 fake 인프라(`OutcomeGatingTest` 패턴) 재사용). **Step 2:** FAIL → **Step 3:** 구현 → **Step 4:** green → **Step 5:** 매트릭스 REQ-031/015 🟢 + Commit `feat(trial): TripleStore + 캡처-off no-op scope [REQ-031/015]`
 
@@ -357,7 +365,7 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
                             String mappedGuard, ObjectNode toolSuggestion) {}
 ```
 
-- 시퀀스(REQ-013): ① 기존 happy 시드 정리(현행 `resetSeeds` reverse-DELETE 경로 재사용) → ② 후보 seed.sql INSERT(삽입 (table, pk) 추적) → ③ stubs 등록(`HttpCaptureServer.registerStub(StubMapping.buildFrom(...))`, 종료 시 `removeStub`) → ④ `invokeTrial(body)` → 판정.
+- 시퀀스(REQ-013): ① 기존 happy 시드 정리(현행 `resetSeeds` reverse-DELETE 경로 재사용) → ② 후보 seed.sql INSERT(삽입 (table, pk) 추적) → ③ stubs 등록(`HttpCaptureServer.registerStub(StubMapping.buildFrom(...))`, 종료 시 `removeStub`) → ④ `invokeTrial(body)` → 판정은 **기존 `ResponseClassifier.classify(status, body)` 재사용**(엔벨로프 인지 — `ErrorEnvelopeClassifier` 설정 시 그대로 적용).
 - 역매핑(REQ-014): SUT 로그 구간(기존 `logOffset`/`readLogRange`)에서 스택 프레임 `at <fqn>.<method>(<File>:<line>)`을 정규식 추출→report 가드 위치와 대조; 실패 시 응답/로그 메시지 문자열과 가드 메시지(throw 인자 리터럴) 부분일치 매칭; 둘 다 실패면 `mappedGuard=null`. toolSuggestion: mappedGuard의 op가 NUMERIC 비교면 경계 만족 패치(`{"seed.sql": {"column": "...", "value": ...}}`) 산출.
 - 예산(REQ-016): trial CLI가 후보 목록을 순회하며 budget 소진 시 전체 `failed/` 이동 + 최종 digest 저장 + exit code 3(비-promoted).
 
@@ -374,7 +382,7 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
 - Test: `shared-model/src/test/java/io/graphrag/model/EndpointExplorationTest.java` (추가)
 
 **Interfaces:**
-- Produces: `EndpointExploration`에 필드 추가 — `int trialCount, boolean tripleAdopted, Map<String,Integer> tripleRejected, List<String> staleTriples`. 기존 8-인자 canonical → 12-인자 canonical + **8-인자 backward-compat 생성자**(신규 필드 0/false/빈 컬렉션) — 기존 6/7-인자 생성자 체인 관례 유지(파일 내 기존 패턴 그대로).
+- Produces: `EndpointExploration`에 필드 추가 — `int trialCount, boolean tripleAdopted, Map<String,Integer> tripleRejected, List<String> staleTriples`. `staleTriples` 원소 포맷: **`<endpointId>/promoted/cand-NN`**(스토어 루트 기준 상대 경로 — 후보 유일 식별). 기존 8-인자 canonical → 12-인자 canonical + **8-인자 backward-compat 생성자**(신규 필드 0/false/빈 컬렉션) — 기존 6/7-인자 생성자 체인 관례 유지(파일 내 기존 패턴 그대로).
 
 - [ ] **Step 1: 실패 테스트** — 신규 필드 round-trip + 구 JSON(신규 필드 부재) 역직렬화 호환(`@DisplayName("REQ-021: …")`). **Step 2:** FAIL → **Step 3:** 구현 → **Step 4:** `./gradlew :shared-model:test :graph-rag-builder:compileJava` green(기존 호출자 무수정 컴파일 확인) → **Step 5:** 매트릭스 REQ-021 🟢 + Commit `feat(model): EndpointExploration trial 관측 필드 [REQ-021]`
 
@@ -387,9 +395,9 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
 **Files:**
 - Modify: `graph-rag-builder/src/main/java/io/graphrag/builder/run/EndpointExplorationRunner.java` — base happy invoke FAILURE 시: `--triple-candidates`의 promoted 존재→T1 검증→trial 1회 재확인→성공 시 그 삼중을 base로 채택(시드/스텁 적용 상태에서 현행 explore 진행), 실패 시 staleTriples 기록+현행 회귀
 - Modify: `graph-rag-builder/src/main/java/io/graphrag/builder/cli/BuilderCli.java` — `--triple-candidates` 파싱, 인덱싱에 없는 endpointId 감지(REQ-035), trial 구간 직렬화(fan-out 경로에서 trial 적용 endpoint는 직렬 큐로 처리)
-- Test: `graph-rag-builder/src/test/java/io/graphrag/builder/run/TriplePromotionIT.java`, `graph-rag-builder/src/test/java/io/graphrag/builder/run/ParallelTrialRegressionIT.java`
+- Test: `graph-rag-builder/src/test/java/io/graphrag/builder/run/TriplePromotionIT.java`(REQ-019/035), `graph-rag-builder/src/test/java/io/graphrag/builder/cli/TriplePromotionE2E.java`(REQ-020 — 매트릭스와 동일 클래스, Task 18의 REQ-018 메서드와 공존), `graph-rag-builder/src/test/java/io/graphrag/builder/run/ParallelTrialRegressionIT.java`(REQ-017)
 
-- [ ] **Step 1: 실패 테스트** — REQ-019(trial 성공→확정 run 상이 시 후보 미채택+사유), REQ-020(불일치 promoted→staleTriples 기록+산출 동일), REQ-035(미존재 endpointId→trial 없이 stale 기록), REQ-017(parallelism 2 구성에서 산출 동일 — 기존 fan-out 테스트 패턴). **Step 2:** FAIL → **Step 3:** 구현 → **Step 4:** green → **Step 5:** 매트릭스 REQ-017/019/020/035 🟢 + Commit `feat(run): explore 게이트 통합 [REQ-018/019/020/035/017]`
+- [ ] **Step 1: 실패 테스트** — REQ-019(trial 성공→확정 run 상이 시 후보 미채택+사유), REQ-020(불일치 promoted→staleTriples 기록(`<endpointId>/promoted/cand-NN` 포맷)+산출 동일 — E2E 레벨), REQ-035(미존재 endpointId→trial 없이 stale 기록), REQ-017(parallelism 2 구성에서 산출 동일 — 기존 fan-out 테스트 패턴). **Step 2:** FAIL → **Step 3:** 구현 → **Step 4:** green → **Step 5:** 매트릭스 REQ-017/019/020/035 🟢 + Commit `feat(run): explore 게이트 통합 [REQ-018/019/020/035/017]`
 
 ---
 
@@ -459,6 +467,6 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
 
 ## 완료 정의 (plan 레벨)
 
-1. 요구사항명세 추적 매트릭스: CI 대상 REQ 전부 🟢, REQ-027/029/030은 실증 기록으로 🟢.
+1. 요구사항명세 추적 매트릭스: CI 대상 REQ 전부 🟢. **REQ-027/029/030(manual)은 Task 19 완료 시점에 🟡(절차 준비)로 종결하며, 🟢 전환은 이 plan 범위 밖의 후속 실증 세션에서 수행한다**(요구사항명세의 "manual·CI 게이트 제외" 규정과 합치).
 2. 전 회귀 스윕 green: `./gradlew check` + `e2e/run-e2e.sh`(order-service) + petclinic 정적/실측 스윕 + parallelism>1 구성. 컨테이너·프로세스 누수 게이트 통과.
 3. PR 전 게이트: spec-compliance 리뷰 → code-quality 리뷰(`pr-review-toolkit:code-reviewer`) → 문서 동기화 확인.
