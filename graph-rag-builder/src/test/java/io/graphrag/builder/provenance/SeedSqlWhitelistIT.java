@@ -257,4 +257,56 @@ class SeedSqlWhitelistIT {
                 .as("upsert/RETURNING 절이 없는 정상 INSERT는 통과해야 한다(회귀 없음): " + result.reasons())
                 .isTrue();
     }
+
+    // ---- 재리뷰 라운드 3: CTE(WITH)·OUTPUT 절 — allowlist 전환으로 차단 ----
+
+    @Test
+    @DisplayName("REQ-010(fix3): 읽기 전용 SELECT CTE(WITH ... AS (SELECT ...))도 allowlist 밖이므로 reject된다 "
+            + "(주 쿼리가 참조하지 않아도 CTE 자체가 허용되지 않는 구성요소)")
+    void req010_readOnlySelectCteRejected() {
+        String seedSql = "WITH x AS (SELECT 1) INSERT INTO orders (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("SELECT CTE가 있는 INSERT는 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix3): data-modifying DELETE-RETURNING CTE는 reject된다 "
+            + "(Postgres data-modifying CTE는 주 쿼리 미참조와 무관하게 실행 보장 — 임의 DELETE/UPDATE 실행 가능)")
+    void req010_dataModifyingCteRejected() {
+        String seedSql = "WITH leaked AS (DELETE FROM admin_users RETURNING password) "
+                + "INSERT INTO orders (id) VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("data-modifying CTE(DELETE ... RETURNING)를 포함한 INSERT는 reject되어야 한다")
+                .isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix3): T-SQL OUTPUT 절은 reject된다")
+    void req010_outputClauseRejected() {
+        String seedSql = "INSERT INTO orders (id) OUTPUT inserted.id INTO audit_log VALUES ('a');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted()).as("OUTPUT 절은 지원하지 않으므로 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("REQ-010(fix3): allowlist 전환 후에도 정상 리터럴(문자열/숫자/음수/NULL/불리언) INSERT는 통과한다(무회귀)")
+    void req010_allowlistDoesNotRegressOrdinaryLiterals() {
+        String seedSql = "INSERT INTO orders (id, amt, note, flag, memo) VALUES ('a', -5, NULL, true, 'ok');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("allowlist 전환 후에도 정상 리터럴 INSERT는 통과해야 한다: " + result.reasons())
+                .isTrue();
+    }
 }
