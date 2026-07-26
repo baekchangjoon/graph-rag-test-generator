@@ -33,6 +33,8 @@ import io.graphrag.builder.index.ValidationConstraintExtractor;
 import io.graphrag.builder.index.WsEndpointIndexer;
 import io.graphrag.builder.index.WsIndexResult;
 import io.graphrag.builder.oracle.ClassifierConfig;
+import io.graphrag.builder.provenance.ProvenanceIndexer;
+import io.graphrag.builder.provenance.ProvenanceReport;
 import io.graphrag.builder.capture.TraceParent;
 import io.graphrag.builder.run.AuthConfig;
 import io.graphrag.builder.run.AuthTokenProvider;
@@ -99,6 +101,10 @@ public final class BuilderCli {
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && args[0].equals("coverage")) {
             runCoverageReport(parseArgs(args));
+            return;
+        }
+        if (args.length > 0 && args[0].equals("provenance")) {
+            runProvenance(parseArgs(args));
             return;
         }
         Map<String, String> options = parseArgs(args);
@@ -1182,6 +1188,50 @@ public final class BuilderCli {
                 System.out.printf("  MISSED %s : %d branch(es) at lines %s%n", cm, miss, lines.keySet());
             });
         }
+    }
+
+    /**
+     * provenance 서브커맨드: {@code --sut-src}/{@code --endpoint} 정적 인덱싱 경로(build()와 동일 배선)만
+     * 재사용해 SUT 부팅 없이 단일 엔드포인트의 provenance 리포트를 산출한다. usage:
+     * {@code provenance --sut-src <dir> --endpoint 'POST /api/transfers' [--provenance-depth 3] --out <file>}
+     */
+    private static void runProvenance(Map<String, String> o) throws Exception {
+        SourceRoots sourceRoots = buildSourceRoots(o);
+        String endpointSpec = required(o, "--endpoint");
+        int maxDepth = Integer.parseInt(o.getOrDefault("--provenance-depth", "3"));
+        Path outPath = Path.of(required(o, "--out"));
+
+        Path sutResources = o.containsKey("--sut-resources") ? Path.of(o.get("--sut-resources")) : null;
+        List<Path> resourceDirs = SutSrcResolver.resourceDirs(sourceRoots, sutResources);
+        StaticIndexBundle bundle = indexStatically(sourceRoots, resourceDirs, null);
+        IndexResult index = bundle.index();
+
+        Set<String> matchedIds = EndpointSelector.resolve(List.of(endpointSpec),
+                index.endpoints(), bundle.ws().endpoints(), bundle.kafka().consumers());
+        List<Endpoint> matches = index.endpoints().stream()
+                .filter(e -> matchedIds.contains(e.id()))
+                .toList();
+        if (matches.size() != 1) {
+            throw new IllegalArgumentException(
+                    "--endpoint '" + endpointSpec + "' must resolve to exactly one HTTP endpoint "
+                            + "for provenance, got " + matches.size());
+        }
+        Endpoint endpoint = matches.get(0);
+
+        Set<String> mapperFqns = bundle.mappers().stream()
+                .map(MapperStatement::namespace)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        spoon.reflect.CtModel model = SharedSpoonModel.build(sourceRoots);
+        ProvenanceReport report = new ProvenanceIndexer(mapperFqns).analyze(model, endpoint, maxDepth);
+
+        Path parent = outPath.toAbsolutePath().normalize().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        Files.writeString(outPath,
+                Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(report));
+        log.info("provenance report for {}: {} guard(s), {} unresolved(s) -> {}",
+                endpoint.id(), report.guards().size(), report.unresolved().size(), outPath);
     }
 
     /** --sut-src + (optional) --sut-resources → SourceRoots. 멀티 루트 + --incremental-base 조합은 거부. */

@@ -90,6 +90,27 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-004: findById를 재선언하지 않는 순정 JpaRepository도 DB_READ로 태깅(noClasspath 상속 메서드 회귀)")
+    void req004_inheritedRepositoryMethodNotRedeclared() {
+        // 실 SUT(order-service.TransferController/AccountRepository) 관례를 그대로 미러링: 리포지토리가
+        // findById를 재선언하지 않으면 noClasspath에서 executable.getDeclaringType()/getType()(반환
+        // 타입) 모두 해소되지 않는다 — 리시버(accountRepository) 정적 타입의 JpaRepository<Entity, Id>
+        // 제네릭 인자로 엔티티 타입을 역산해도 DB_READ로 태깅되어야 한다.
+        ProvenanceReport report = analyzeFixture(
+                "jpa-inherited",
+                "io.graphrag.fixture.jpainherited.JpaInheritedController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("account.getBalance() 피연산자는 findById가 재선언되지 않아도 DB_READ + "
+                        + "table=fund_accounts + column=balance_amount로 태깅되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.DB_READ
+                        && "fund_accounts".equals(v.table()) && "balance_amount".equals(v.column())));
+    }
+
+    @Test
     @DisplayName("REQ-001: RestTemplate 래핑 클라이언트 응답의 accessor 체인이 EXTERNAL_RESPONSE로 태깅")
     void req001_externalResponseTagged() {
         // 실제 SUT(FraudClient/TransferController) 관례를 미러링: fraudClient.check(...)를 로컬
