@@ -203,14 +203,14 @@ concolic 해를 어느 body 필드에 배치할지 결정하는 근거다(해가
 ### `synthesize-triple` — 후보 삼중 합성
 
 ```
-synthesize-triple --report <provenance-report.json> --triple-store <dir>
+synthesize-triple --report <provenance-report.json> [--triple-store <dir>]
                   [--sut-jar <boot.jar>] [--sut-src <dir> [--sut-resources <dir>]]
 ```
 
 | 플래그 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `--report` | 예 | — | `provenance`가 만든 리포트 경로 |
-| `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉터리 |
+| `--triple-store` | 아니오 | `.graphrag/triples` | 후보 트리플을 쓸 루트 디렉터리 |
 | `--sut-jar` | 아니오 | — | 입력 오라클용 SUT 부트 jar(ASM+Z3 concolic). `DERIVED` 파생 루트에 배치할 해를 여기서 도출한다 |
 | `--sut-src` | 아니오 | — | 입력 오라클용 SUT 소스 루트(소스 리터럴 오라클). `build`와 동일한 멀티 루트 glob 문법 |
 | `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | `--sut-src`를 줄 때만 의미 있음 |
@@ -295,13 +295,18 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
 게이트(REQ-023)가 활성화되지 않는다 — attach 환경에서 이 게이트를 실제로 거치려면 `build
 --attach ... --triple-candidates <dir>` 경로를 써야 한다(아래 참조).
 
-### `build`가 이 저장소를 소비하는 방법 — `--triple-candidates`
+### `build`가 이 저장소를 소비하는 방법 — `--triple-store` / `--triple-candidates`
 
-`build` 서브커맨드에 `--triple-candidates <dir>`를 주면, base happy invoke가 실패한 엔드포인트에
-한해 그 디렉터리의 `promoted/` 후보를 T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore)
-순으로 소비한다. 확정 run이 성공하면 그 삼중을 채택해 graph.json에 2xx `ExploredPath`가 생성되고,
-이후 파이프라인(생성 테스트 등)은 다른 엔드포인트와 동일하게 진행된다. 미지정 시(기본값) 이
-게이트 자체가 비활성이라 현행 동작과 완전히 동일하다.
+`build` 서브커맨드도 삼중 저장소 루트를 `synthesize-triple`/`trial`과 **같은 규칙**으로 해석한다:
+`--triple-candidates <dir>`가 있으면 그것, 없으면 `--triple-store <dir>`, 둘 다 없으면
+`.graphrag/triples`. 그 루트에서 base happy invoke가 실패한 엔드포인트에 한해 `promoted/` 후보를
+T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore) 순으로 소비한다. 확정 run이 성공하면
+그 삼중을 채택해 graph.json에 2xx `ExploredPath`가 생성되고, 이후 파이프라인(생성 테스트 등)은
+다른 엔드포인트와 동일하게 진행된다.
+
+플래그를 하나도 주지 않으면 기본 경로를 보는데, 거기에 `promoted/` 후보가 없으면 게이트가 즉시
+`NO_CANDIDATE`로 빠져 DB·HTTP를 전혀 건드리지 않는다 — 즉 삼중을 쓰지 않는 프로젝트의 관측 동작은
+종전과 같다. 차이는 관례 경로에 삼중이 실제로 놓여 있으면 플래그 없이도 소비된다는 점이다.
 
 - **ablation 스위치**: `GRB_TRIAL=off`(대소문자 무시, env var 또는 테스트 전용 시스템 프로퍼티)를
   주면 `--triple-candidates`가 있어도 게이트가 호출되지 않는다(`trialCount=0`) — 회귀 비교용 A/B

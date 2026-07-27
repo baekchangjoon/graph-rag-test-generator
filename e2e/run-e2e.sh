@@ -49,7 +49,7 @@ rm -rf "$OUT"
   --budget-requests 60 \
   --external-stubs $E2E/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}},EXTERNAL_FRAUD_URL={{wiremock}} \
-  --triple-candidates $E2E/triples \
+  --triple-store $E2E/triples \
   --sut-compose $E2E/docker-compose.yml \
   --auth-login-path /api/auth/login \
   --auth-user admin \

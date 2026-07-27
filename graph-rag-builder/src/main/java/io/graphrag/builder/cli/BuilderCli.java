@@ -89,6 +89,7 @@ import java.util.AbstractMap;
  *       [--sut-resources <dir>] [--sut-id id] [--commit-sha sha]
  *       [--db-image <image>] [--budget-requests 60] [--manual-paths <dir>]
  *       [--external-stubs <dir>] [--sut-env KEY={{wiremock}}[,KEY2=V2]]
+ *       [--triple-store <dir> | --triple-candidates <dir>]   (기본: .graphrag/triples — REQ-036)
  *       [--incremental-base <prev-graph-dir> --changed-files <list-file>]
  *       [--auth-login-path /api/auth/login --auth-user admin --auth-pass password]
  *       [--auth-token-field token --auth-header Authorization --auth-scheme Bearer]
@@ -106,6 +107,32 @@ import java.util.AbstractMap;
 public final class BuilderCli {
 
     private static final Logger log = LoggerFactory.getLogger(BuilderCli.class);
+
+    /**
+     * 삼중 저장소 루트의 기본 경로(REQ-036) — {@code --triple-store}/{@code --triple-candidates}를
+     * 어느 서브커맨드에서도 생략하면 SUT 캠페인 관례 위치인 이 상대 경로가 적용된다.
+     */
+    static final String DEFAULT_TRIPLE_STORE = ".graphrag/triples";
+
+    /**
+     * 삼중 저장소 **생성/소비 루트**(REQ-036): {@code --triple-store}, 미지정 시
+     * {@link #DEFAULT_TRIPLE_STORE}. {@code build}/{@code synthesize-triple}/{@code trial} 세
+     * 서브커맨드가 모두 이 해석을 공유한다(플래그 의미가 서브커맨드마다 갈라지지 않게 하는 단일 소스).
+     */
+    static Path tripleStoreRoot(Map<String, String> options) {
+        return Path.of(options.getOrDefault("--triple-store", DEFAULT_TRIPLE_STORE));
+    }
+
+    /**
+     * trial이 읽는 **대기 후보 디렉토리**(REQ-036): {@code --triple-candidates}가 있으면 그것,
+     * 없으면 {@link #tripleStoreRoot}(= {@code --triple-store} 또는 기본 경로). 즉 후보 루트를
+     * 저장 루트와 다르게 두고 싶을 때만 별도 플래그를 쓴다.
+     */
+    static Path tripleCandidatesRoot(Map<String, String> options) {
+        return options.containsKey("--triple-candidates")
+                ? Path.of(options.get("--triple-candidates"))
+                : tripleStoreRoot(options);
+    }
 
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && args[0].equals("coverage")) {
@@ -235,9 +262,12 @@ public final class BuilderCli {
                 Long.parseLong(options.getOrDefault("--exec-await-ms", "0")),
                 // F1b: OTLP entry-span await 타임아웃 ms (0 = 모드별 기본: 순차 8_000ms, 병렬 30_000ms)
                 Long.parseLong(options.getOrDefault("--sql-await-ms", "0")),
-                // REQ-018/019/020/035: promoted triple 소비 게이트 루트(미지정 시 게이트 비활성)
-                options.containsKey("--triple-candidates")
-                        ? Path.of(options.get("--triple-candidates")) : null);
+                // REQ-018/019/020/035 + REQ-036: promoted triple 소비 게이트 루트. --triple-candidates가
+                // 있으면 그것, 없으면 --triple-store, 둘 다 없으면 기본 경로(.graphrag/triples). 기본 경로에
+                // 아무것도 없으면 TriplePromotionGate가 NO_CANDIDATE로 즉시 빠지므로(부작용 0) 예전
+                // "플래그 없으면 null=게이트 비활성"과 관측 동작이 같다 — 차이는 관례 위치에 실제로 삼중이
+                // 놓여 있으면 플래그 없이도 소비된다는 것(REQ-036 기본 경로 계약).
+                tripleCandidatesRoot(options));
 
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
@@ -1326,8 +1356,9 @@ public final class BuilderCli {
     /**
      * synthesize-triple 서브커맨드: provenance 리포트(REQ-001 산출물)를 읽어 {@link TripleSynthesizer}로
      * 후보 트리플(body.json/seed.sql/stubs.json/notes.md)을 산출한다(REQ-005/007/008/032/033). usage:
-     * {@code synthesize-triple --report <provenance-report.json> --triple-store <dir>
+     * {@code synthesize-triple --report <provenance-report.json> [--triple-store <dir>]
      * [--sut-jar <boot.jar>] [--sut-src <dir> [--sut-resources <dir>]]}.
+     * {@code --triple-store}를 생략하면 {@link #DEFAULT_TRIPLE_STORE}가 적용된다(REQ-036).
      *
      * <p><b>입력 오라클(REQ-032):</b> {@code --sut-jar}(ASM+Z3 concolic) / {@code --sut-src}(소스 리터럴)를
      * 주면 build 경로와 동일한 조합({@code StaticLiteralOracle} ∪ {@code ConcolicOracle}, {@code
@@ -1358,7 +1389,7 @@ public final class BuilderCli {
      */
     private static void runSynthesizeTriple(Map<String, String> o) throws Exception {
         Path reportPath = Path.of(required(o, "--report"));
-        Path tripleStore = Path.of(required(o, "--triple-store"));
+        Path tripleStore = tripleStoreRoot(o);   // REQ-036: 미지정 시 기본 경로(.graphrag/triples)
 
         ProvenanceReport report = Json.mapper().readValue(reportPath.toFile(), ProvenanceReport.class);
         SynthesisOracle oracle = resolveSynthesisOracle(o);
@@ -1488,19 +1519,20 @@ public final class BuilderCli {
      * REQ-011의 body 필드 스키마 검증만은 이 경로에서 skip된다(마커-diff·화이트리스트·PII·stub
      * 스키마 검증은 전부 적용된다 — build 경로는 실제 BodyShape로 이 갭이 없다).
      *
-     * <p><b>REQ-036 부분 배선(각주):</b> {@code --triple-store}/{@code --triple-candidates}의 기본
-     * 경로({@code .graphrag/triples})와 두 플래그의 분리(생성 루트 vs trial이 읽는 후보 디렉토리)만
-     * 이 task에서 배선한다. 미배선(향후 task 소관): (a) SUT가 실제로 쓰는 외부 stub WireMock에
-     * attach하는 방법 — 이 CLI는 자체 {@code HttpCaptureServer}를 기동하지 않으므로 stub 등록(③)은
-     * 항상 skip된다, (b) {@code --graph}로 그래프 자산에서 Endpoint/happy 시드를 자동 로드하는 경로
-     * (REQ-018 T3 파이프라인 통합 소관) — 이 CLI는 {@code --http-method}/{@code --path}로 Endpoint를
-     * 직접 명시받고, happy 시드는 별도 JSON 파일로 받는다. e2e fixture {@code promoted/} 커밋 경로는
-     * Task 18 소관.
+     * <p><b>REQ-036 저장 CLI 계약:</b> {@code --triple-store}/{@code --triple-candidates}의 기본
+     * 경로({@code .graphrag/triples})와 두 플래그의 분리(생성 루트 vs trial이 읽는 후보 디렉토리).
+     * 저장 루트 해석은 {@link #tripleStoreRoot}/{@link #tripleCandidatesRoot}
+     * 단일 소스를 쓴다(REQ-036 — 세 서브커맨드 공통, 미지정 시 {@link #DEFAULT_TRIPLE_STORE}).
+     *
+     * <p>범위 밖(REQ-036 문면에 없음): (a) SUT가 실제로 쓰는 외부 stub WireMock에 attach하는 방법 —
+     * 이 CLI는 자체 {@code HttpCaptureServer}를 기동하지 않으므로 stub 등록(③)은 항상 skip된다
+     * (attach egress 라우팅은 Phase C), (b) {@code --graph}로 그래프 자산에서 Endpoint/happy 시드를
+     * 자동 로드하는 경로(REQ-018 T3 파이프라인 통합 소관) — 이 CLI는 {@code --http-method}/{@code --path}로
+     * Endpoint를 직접 명시받고, happy 시드는 별도 JSON 파일로 받는다.
      */
     static int runTrial(Map<String, String> o) throws Exception {
-        Path tripleStoreRoot = Path.of(o.getOrDefault("--triple-store", ".graphrag/triples"));
-        Path candidatesRoot = o.containsKey("--triple-candidates")
-                ? Path.of(o.get("--triple-candidates")) : tripleStoreRoot;
+        Path tripleStoreRoot = tripleStoreRoot(o);        // REQ-036 단일 소스
+        Path candidatesRoot = tripleCandidatesRoot(o);    // REQ-036 단일 소스
         String endpointId = required(o, "--endpoint");
         Endpoint endpoint = new Endpoint(
                 endpointId, required(o, "--http-method"), required(o, "--path"),

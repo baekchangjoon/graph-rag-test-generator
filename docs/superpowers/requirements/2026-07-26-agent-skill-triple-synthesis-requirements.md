@@ -332,7 +332,7 @@
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🟢 green |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🟢 green[^grb-trial-wired] |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
-| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | run-e2e.sh(`--triple-candidates e2e/triples`) + TriplePromotionE2E#req018 | integration | 🟡[^req036-split][^req036-task18-partial] |
+| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | TripleStoreCliContractTest#REQ-036(기본 경로·플래그 우선순위 4케이스), run-e2e.sh(`--triple-store e2e/triples` — 실행 로그로 fixture 소비 확인) + TriplePromotionE2E#req018, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(단일 `--triple-store` 루트 synthesize→trial) | integration | 🟢 green[^req036-split][^req036-task18-partial][^req036-done] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#req023_* (4케이스: 0개/allow만/confirm만/2개) | integration | 🟢 green |
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#req024_reverseDeleteFailureBlocksPromotionAndReportsRemainingRow | integration | 🟢 green |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#req025_attachModeSkipsStubRegistrationEvenWithNonEmptyStub | integration | 🟢 green |
@@ -494,6 +494,14 @@ Given/When/Then 충족). **여전히 미배선(🟡 유지 사유):** (a) attach
 Endpoint/happy 시드를 자동 로드하는 경로 — 둘 다 이 task의 선언 파일 범위(triple fixture 배치 +
 `run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이며 별도 후속 task로 남긴다.
 
+[^req036-done]: **해소됨(Phase A 후속 작업 2/3).** `[^req036-task12-partial]`/`[^req036-task18-partial]`이 남긴 잔여를 수용기준 문면 기준으로 재판정하고 미충족분만 채웠다.
+
+**수용기준 ①(기본 경로) — 미충족이었고, 구현했다.** 재확인 결과 기본 경로 `.graphrag/triples`는 `BuilderCli.runTrial`에만 있었다. `runSynthesizeTriple`은 `required(o, "--triple-store")`로 **하드 필수**였고(생략하면 기본 경로가 적용되는 게 아니라 실패), `build`의 `--triple-candidates`는 미지정 시 `null`(게이트 비활성)이라 기본 경로 개념 자체가 없었다. 즉 "CLI 실행 시 기본 경로가 적용된다"는 세 서브커맨드 중 하나에서만 참이었다. **조치:** 상수 `BuilderCli.DEFAULT_TRIPLE_STORE`와 해석 함수 `tripleStoreRoot(options)`/`tripleCandidatesRoot(options)`를 단일 소스로 두고 `build`/`synthesize-triple`/`trial` 셋 다 그것만 쓰게 했다(`--triple-candidates` > `--triple-store` > 기본 경로). `build`에서 루트가 항상 non-null이 되지만, 그 경로에 `promoted/` 후보가 없으면 `TriplePromotionGate.attempt`가 즉시 `NO_CANDIDATE`로 빠져 DB/HTTP 부작용이 0이므로 삼중을 안 쓰는 프로젝트의 관측 동작은 종전과 동일하다 — 달라지는 것은 "관례 경로에 삼중이 실제로 있으면 플래그 없이도 소비된다"는 점뿐이고, 이것이 수용기준이 요구한 계약이다. 검증: `TripleStoreCliContractTest`(4케이스 — 둘 다 생략/`--triple-store`만/두 플래그 병행/`--triple-candidates`만). 기본 경로가 **상대 경로**라 CLI를 실제 실행하면 작업 디렉토리에 디렉토리를 만들어 저장소를 오염시키므로, 해석 함수를 직접 검증하는 순수 단위 테스트로 두었다(부작용 0·결정적).
+
+**수용기준 ②(e2e fixture 경로를 `--triple-store`로 전달) — 표기와 실제가 달랐고, 바로잡았다.** `[^req036-task18-partial]`은 이 기준을 충족했다고 적었으나 실제 `e2e/run-e2e.sh`는 `--triple-candidates $E2E/triples`를 넘기고 있었다 — 수용기준 문면은 `--triple-store`다. **조치:** 스크립트를 `--triple-store $E2E/triples`로 바꾸고(위 ①의 해석 규칙 덕분에 후보 루트도 같은 경로로 수렴), `e2e/run-e2e.sh`를 실제로 실행해 커밋된 fixture가 그 루트에서 소비되는 것을 로그로 확인했다: `triple adopted for post-api-transfers (REQ-018): <repo>/e2e/triples/post-api-transfers/promoted/cand-01`. 즉 `TripleStore`가 그 경로를 루트로 REQ-031 레이아웃(`<endpointId>/{base,promoted}/cand-NN` + `provenance-report.json`)을 그대로 따른다. **범위 명시:** 파이프라인의 `synthesize→trial` 절반을 **커밋된 fixture 경로에 대고** 돌리지는 않는다 — `synthesize-triple`은 그 루트에 `cand-NN`을 쓰므로 커밋된 fixture를 더럽히기 때문이다(의도적). 그 절반은 `TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag`가 run-scoped 루트 하나(`--triple-store`)로 `synthesize-triple → trial`을 완주해 동일 레이아웃을 검증한다.
+
+**잔여 항목 재판정(범위 밖 — 이 REQ의 미충족이 아님).** (a) **attach 모드 외부 stub WireMock 라우팅**은 이 명세의 `Phase C: attach egress 라우팅`(🔵 out-of-scope) 소관이므로 REQ-036 분모에서 제외한다. (b) **`trial --graph` 자동 로드**는 REQ-036 설명·수용기준 어디에도 문면이 없다(`[^req036-task12-partial]` 자신이 "REQ-018 T3 파이프라인 통합 소관"이라고 적고 있다) — REQ-036이 규정하는 것은 `--triple-store`/`--triple-candidates` 플래그·기본 경로·e2e fixture 배치까지이므로 범위 밖으로 명시한다. 두 항목 모두 여전히 미구현이지만 REQ-036의 충족 여부와는 무관하다.
+
 [^nested-list-schema-fix]: Task 18 선결 문제로 지적된 갭 — `TripleValidator.schemaViolationsForBody`의
 `allowed` 집합은 `BodyShape.fields()`의 최상위 필드명만 담는데(`BodyShapeExtractor.flatten()`이
 `List<DTO>` 컬렉션 필드를 원소 타입까지 전개하지 않고 top-level 리프 하나로 남기기 때문),
@@ -537,18 +545,18 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 33/37 green (89%), 4 partial(🟡 REQ-036, REQ-027, REQ-029, REQ-030) — target
+Coverage: 34/37 green (92%), 3 partial(🟡 REQ-027, REQ-029, REQ-030 — 전부 manual Should) — target
 100% (대상: Must 34 + 미연기 Should 3(REQ-029/030/037 중 REQ-037 포함). Won't/Phase B·C: 🔵 분모 제외).
 
-> **⚠️ 완료 정의 미충족(명시):** 이 명세의 완료 정의는 "**Must 100% green**"인데, **Must인
-> REQ-036이 🟡**로 남아 있다 — 따라서 현재 상태는 완료 정의를 **충족하지 못한다**.
-> 구체적으로 **REQ-036**은 attach 외부 stub WireMock 라우팅과 `trial --graph` 자동 로드가
-> 미배선(`[^req036-task18-partial]` 참조)이다. (**REQ-032는 Phase A 후속 작업 1/3에서 🟡→🟢으로
-> 해소** — `ValueRef.derivedFrom` 스키마 확장 + `TripleSynthesizer` 채움 슬롯 통합, `[^derived-half]`
-> 참조.) 이 항목은 "부분 진전"이지 "충족"이 아니므로 Must 분자에 포함하지 않는다. 이 갭을
-> 해소하지 않은 채 Phase A를 "완료"로 선언하면 안 되며, 두 REQ를 후속 task로 처리하거나 명시적으로
-> Should로 강등(그 근거를 이 문서에 기록)해야 한다. manual REQ-027/029/030(🟡)은 Should이므로 Must
-> 완료 정의와는 별개다.
+> **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
+> green**"은 **충족됐다** — Must 34개가 전부 🟢이다. Phase A 후속 작업이 마지막 두 Must를 해소했다:
+> **REQ-032**(1/3, `ValueRef.derivedFrom` 스키마 확장 + `TripleSynthesizer` 채움 슬롯 통합 + CLI 오라클
+> 배선, `[^derived-half]`/`[^req032-level]` 참조)와 **REQ-036**(2/3, `.graphrag/triples` 기본 경로를
+> 세 서브커맨드 단일 소스로 통일 + `run-e2e.sh`를 `--triple-store`로 정정, `[^req036-done]` 참조).
+> **남은 🟡는 REQ-027/029/030 3건이며 전부 manual Should**다 — 절차서는 작성돼 있고 실증 세션 실행만
+> 남았다(`[^task19-manual-procedures]`). 따라서 "대상 37개 100% green"이라는 더 넓은 목표는 아직
+> 충족되지 않았고, Phase A를 "전부 완료"로 선언하려면 그 3건의 manual 실증이 필요하다. Must 기준
+> 완료와 전체 기준 완료를 구분해 읽어야 한다.
 
 Task 15가
 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢
