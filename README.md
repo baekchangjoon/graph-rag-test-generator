@@ -181,6 +181,13 @@ git diff --name-only main > changed.txt
 ./gradlew :graph-rag-builder:run --args="trial --endpoint post-api-x --http-method POST --path /api/x \
   --sut-base-url http://localhost:8080 --jdbc-url <jdbc-url> --db-type postgres \
   --triple-store <dir>/triples"
+# ⚠️ trial 단독 CLI는 attach 이중 opt-in 게이트(REQ-023)와 T1 마커-diff 검증을 거치지 않고
+#   --jdbc-url이 가리키는 DB에 즉시 seed INSERT/DELETE를 실행한다. 실 DB·공유 DB의 URL을 이
+#   --jdbc-url에 직접 넘기지 말 것 — 분석용 일회성 DB(Testcontainers 등)에만 쓴다. 실 SUT에
+#   attach해 안전하게 시도하려면 아래 build 경로(둘 다 있어야 seed 적용)를 쓴다 — 상세 경계는
+#   docs/03 "attach 모드에서의 안전 경계" 참조.
+#   build --attach ... --triple-candidates <dir>/triples \
+#     --attach-allow-seed --confirm-non-production
 # build가 promoted 후보를 소비하려면 --triple-candidates <dir>/triples 를 추가한다
 # (GRB_TRIAL=off 로 이 게이트를 끄면 현행과 정규화-동등, 회귀 0).
 ```
