@@ -181,10 +181,8 @@ public final class TripleValidator {
     // ---- REQ-009: seed.sql 마커-diff(JSqlParser 정규화 비교) ----
 
     private void diffSeedSql(String baseSql, String candSql, List<String> reasons, List<String> markerFilledValues) {
-        LinkedHashMap<String, LinkedHashMap<String, LiteralValue>> baseRows =
-                extractRows(baseSql, "base", reasons);
-        LinkedHashMap<String, LinkedHashMap<String, LiteralValue>> candRows =
-                extractRows(candSql, "candidate", reasons);
+        LinkedHashMap<String, List<SeedRow>> baseRows = extractRows(baseSql, "base", reasons);
+        LinkedHashMap<String, List<SeedRow>> candRows = extractRows(candSql, "candidate", reasons);
 
         if (!baseRows.keySet().equals(candRows.keySet())) {
             reasons.add("마커 계약 위반(REQ-009, seed.sql 테이블 집합 변경): base=" + baseRows.keySet()
@@ -192,33 +190,57 @@ public final class TripleValidator {
             return;
         }
         for (String table : baseRows.keySet()) {
-            LinkedHashMap<String, LiteralValue> baseRow = baseRows.get(table);
-            LinkedHashMap<String, LiteralValue> candRow = candRows.get(table);
-            if (!baseRow.keySet().equals(candRow.keySet())) {
-                reasons.add("마커 계약 위반(REQ-009, seed.sql 컬럼 집합 변경) at " + table + ": base="
-                        + baseRow.keySet() + " candidate=" + candRow.keySet());
+            List<SeedRow> baseTableRows = baseRows.get(table);
+            List<SeedRow> candTableRows = candRows.get(table);
+            // C4 리뷰 Critical 1: 테이블당 마지막 행만 보관하면, base와 동일한 행 앞에 임의 행을 끼운
+            // 후보가 검증을 그대로 통과하면서 그 행을 실 DB에 영속 삽입할 수 있었다(PII 스캔도 우회).
+            // 행 수와 순서까지 동일성을 요구한다 — 행 순서는 역-DELETE 순서(child→parent)도 결정한다.
+            if (baseTableRows.size() != candTableRows.size()) {
+                reasons.add("마커 계약 위반(REQ-009, seed.sql 행 수 변경) at " + table + ": base="
+                        + baseTableRows.size() + "행 candidate=" + candTableRows.size() + "행");
                 continue;
             }
-            for (String column : baseRow.keySet()) {
-                LiteralValue baseVal = baseRow.get(column);
-                LiteralValue candVal = candRow.get(column);
-                if (baseVal.value().equals(candVal.value())) {
-                    continue;
-                }
-                if (baseVal.marker()) {
-                    markerFilledValues.add(candVal.value());
-                } else {
-                    reasons.add("마커 계약 위반(REQ-009, seed.sql 비-마커 컬럼 값 변경) at " + table + "." + column
-                            + ": " + baseVal.value() + " -> " + candVal.value());
-                }
+            for (int rowIndex = 0; rowIndex < baseTableRows.size(); rowIndex++) {
+                diffSeedRow(table, rowIndex, baseTableRows.get(rowIndex), candTableRows.get(rowIndex),
+                        reasons, markerFilledValues);
             }
         }
     }
 
-    /** seed.sql 각 줄을 파싱해 {@code table -> (column -> 리터럴)} 맵으로 변환한다. 파싱 실패 줄은 skip(사유는 이미 기록됨). */
-    private LinkedHashMap<String, LinkedHashMap<String, LiteralValue>> extractRows(
-            String sql, String label, List<String> reasons) {
-        LinkedHashMap<String, LinkedHashMap<String, LiteralValue>> rows = new LinkedHashMap<>();
+    /**
+     * 한 (table, rowIndex) 행을 비교한다. 컬럼은 <b>순서까지 포함한 리스트</b>로 비교한다(C4 리뷰
+     * Critical 2): {@code Set.equals}는 순서를 무시하지만 {@link TrialRunner}의 정리 DELETE와 SQL
+     * 텍스트의 값 배치는 컬럼 순서에 의존하므로, 순서 변경은 "동일한 행"이 아니다.
+     */
+    private static void diffSeedRow(String table, int rowIndex, SeedRow baseRow, SeedRow candRow,
+                                     List<String> reasons, List<String> markerFilledValues) {
+        if (!baseRow.columns().equals(candRow.columns())) {
+            reasons.add("마커 계약 위반(REQ-009, seed.sql 컬럼 목록(순서 포함) 변경) at " + table
+                    + "[행 " + rowIndex + "]: base=" + baseRow.columns() + " candidate=" + candRow.columns());
+            return;
+        }
+        for (int i = 0; i < baseRow.columns().size(); i++) {
+            LiteralValue baseVal = baseRow.values().get(i);
+            LiteralValue candVal = candRow.values().get(i);
+            if (baseVal.value().equals(candVal.value())) {
+                continue;
+            }
+            if (baseVal.marker()) {
+                markerFilledValues.add(candVal.value());
+            } else {
+                reasons.add("마커 계약 위반(REQ-009, seed.sql 비-마커 컬럼 값 변경) at " + table
+                        + "[행 " + rowIndex + "]." + baseRow.columns().get(i)
+                        + ": " + baseVal.value() + " -> " + candVal.value());
+            }
+        }
+    }
+
+    /**
+     * seed.sql 각 줄을 파싱해 {@code table -> [행...]}으로 변환한다(테이블당 <b>여러 행</b>을 등장
+     * 순서대로 보존). 파싱 실패 줄은 skip(사유는 이미 {@code reasons}에 기록됐다).
+     */
+    private LinkedHashMap<String, List<SeedRow>> extractRows(String sql, String label, List<String> reasons) {
+        LinkedHashMap<String, List<SeedRow>> rows = new LinkedHashMap<>();
         for (String line : SeedSqlWhitelist.nonBlankLines(sql)) {
             Optional<Insert> maybeInsert = whitelist.parseSingleInsert(line, dialect, reasons);
             if (maybeInsert.isEmpty()) {
@@ -233,13 +255,19 @@ public final class TripleValidator {
                 reasons.add("seed.sql INSERT 컬럼/값 개수 불일치(" + label + "): " + line);
                 continue;
             }
-            LinkedHashMap<String, LiteralValue> row = new LinkedHashMap<>();
+            List<String> columnNames = new ArrayList<>();
+            List<LiteralValue> literals = new ArrayList<>();
             for (int i = 0; i < columns.size(); i++) {
-                row.put(columns.get(i).getUnquotedColumnName(), toLiteralValue(values.get(i)));
+                columnNames.add(columns.get(i).getUnquotedColumnName());
+                literals.add(toLiteralValue(values.get(i)));
             }
-            rows.put(table, row);
+            rows.computeIfAbsent(table, t -> new ArrayList<>()).add(new SeedRow(columnNames, literals));
         }
         return rows;
+    }
+
+    /** seed.sql INSERT 한 줄 = 컬럼 목록(순서 보존) + 같은 순서의 리터럴 값. */
+    private record SeedRow(List<String> columns, List<LiteralValue> values) {
     }
 
     /** {@code (정규화 문자열, 마커 여부)}. 문자열 리터럴은 따옴표 제거값을, 그 외(숫자 등)는 {@code toString()}을 쓴다. */

@@ -11,7 +11,12 @@ import io.graphrag.model.Endpoint;
 import io.graphrag.model.Json;
 import io.graphrag.model.Outcome;
 import io.graphrag.model.RequiredSeed;
+import net.sf.jsqlparser.expression.BooleanValue;
+import net.sf.jsqlparser.expression.DoubleValue;
 import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.LongValue;
+import net.sf.jsqlparser.expression.SignedExpression;
+import net.sf.jsqlparser.expression.StringValue;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.statement.insert.Insert;
 import org.slf4j.Logger;
@@ -20,12 +25,20 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * T2 trial 실행기(REQ-013/014/016). 후보 1개를 실 SUT에 적용해 판정하고, 실패 시
@@ -89,8 +102,41 @@ public final class TrialRunner {
         private static final StubRegistration NONE = new StubRegistration(null, false);
     }
 
-    private record InsertedRow(String table, String pkColumn, String pkLiteralSql) {
+    /**
+     * 실행 가능한 후보 seed INSERT 하나와 <b>그 행을 되돌리는 DELETE</b>의 완성된 계획(C4 리뷰
+     * Critical 2/3 fix). {@code deleteSql}의 테이블·컬럼 식별자는 후보 텍스트가 아니라 <b>DB 카탈로그가
+     * 보고한 실제 식별자</b>이고 안전 식별자 정규식({@link #SAFE_IDENTIFIER})을 통과한 것뿐이며, 키
+     * 값은 리터럴 문자열 결합이 아니라 {@link PreparedStatement} 파라미터로 바인딩된다.
+     */
+    private record SeedStatement(String insertSql, String deleteSql, List<Object> keyValues,
+                                 List<Integer> keyJdbcTypes, String description) {
     }
+
+    /** DB 카탈로그에서 읽은 한 테이블의 사실 — 실제 식별자 표기, PK 컬럼(KEY_SEQ 순), 컬럼→JDBC 타입. */
+    private record TableFacts(String tableName, List<String> primaryKeyColumns,
+                              Map<String, String> columnNames, Map<String, Integer> columnJdbcTypes) {
+    }
+
+    /** 정리 키를 스키마 사실로 결정할 수 없어 후보를 <b>DB 쓰기 전에</b> 차단할 때 던진다(fail-closed). */
+    private static final class SeedPlanRejectedException extends Exception {
+        private final transient List<String> reasons;
+
+        private SeedPlanRejectedException(List<String> reasons) {
+            super(String.join("; ", reasons));
+            this.reasons = List.copyOf(reasons);
+        }
+
+        private List<String> reasons() {
+            return reasons;
+        }
+    }
+
+    /**
+     * DELETE 문에 그대로 넣어도 안전한 식별자 형태. DB 카탈로그가 보고한 이름이라도 이 형태를 벗어나면
+     * (예: 인용 식별자 안에 숨긴 {@code "; DROP TABLE ...; --}) 차단한다 — 식별자는 파라미터로 바인딩할
+     * 수 없으므로, 화이트리스트 형태 + 방언별 인용을 함께 요구한다.
+     */
+    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_$]*");
 
     private final Connection connection;
     private final DbConfig.Type dbType;
@@ -101,6 +147,8 @@ public final class TrialRunner {
     private final boolean attachMode;                    // REQ-023/024/025 — attach 안전 게이트 활성 여부
     private final boolean attachAllowSeedFlag;            // --attach-allow-seed 존재 여부
     private final boolean confirmNonProductionFlag;       // --confirm-non-production 존재 여부
+    /** lower(table) → 카탈로그 사실(빈 Optional = 미상/모호/안전하지 않음). 커넥션 단위로 1회만 조회. */
+    private final Map<String, Optional<TableFacts>> tableFactsCache = new HashMap<>();
 
     public TrialRunner(Connection connection, DbConfig.Type dbType, HttpCaptureServer httpCapture,
                        ResponseClassifier classifier, SutHandle sut, TrialInvoker invoker) {
@@ -135,12 +183,23 @@ public final class TrialRunner {
             log.warn("attach seed gate closed for {} (REQ-023, candidate skipped): {}", endpoint.id(), reason);
             return new TrialOutcome(false, -2, FailureDigest.forAttachSeedGateClosed(reason), false);
         }
+        // C4 리뷰 Critical 2/3 fail-closed: 어떤 INSERT든 "되돌리는 DELETE"를 스키마 사실만으로 완성할
+        // 수 없으면 DB를 전혀 건드리지 않고(happy 시드 정리 포함) 즉시 차단한다 — 잘못된 키로 나가는
+        // DELETE는 attach 실 DB에서 조건에 맞는 모든 행을 지울 수 있으므로 "일단 넣고 본다"가 성립하지 않는다.
+        List<SeedStatement> seedPlan;
+        try {
+            seedPlan = planCandidateSeed(candDir.resolve("seed.sql"));
+        } catch (SeedPlanRejectedException e) {
+            log.warn("candidate seed rejected before any DB write for {} (cleanup key unresolvable): {}",
+                    endpoint.id(), e.reasons());
+            return new TrialOutcome(false, -4, FailureDigest.forSeedCleanupUnresolvable(e.reasons()), false);
+        }
         resetHappySeeds(happySeeds);
         // ②/③ 모두 try 안에서 수행한다 — 다중 INSERT 중 후반 statement가 던지거나 stubs.json이
         // malformed여도 finally가 반드시 실행돼야 한다(부분 삽입분 누수 방지). inserted는 try 밖에서
         // 선언해 finally에서 보이게 하고, insertCandidateSeed는 이 리스트에 "직접" append하므로
         // 도중에 던져도 그 시점까지 성공한 행은 리스트에 남아 정리 대상이 된다.
-        List<InsertedRow> inserted = new ArrayList<>();
+        List<SeedStatement> inserted = new ArrayList<>();
         UUID stubId = null;
         StubRegistration stubRegistration = StubRegistration.NONE;
         TrialOutcome outcome;
@@ -148,9 +207,9 @@ public final class TrialRunner {
         // 블록 이후에도 읽을 수 있게 한다 — try 안에서 예외가 던져지면 이 지점 이후 코드는 실행되지
         // 않고 그대로 전파되므로(REQ-013 기존 회귀와 동일), REQ-024 승격 차단은 "예외 없이 정상
         // 완료됐지만 cleanup만 실패한" 경우에만 적용된다.
-        List<InsertedRow> remainingRows = new ArrayList<>();
+        List<SeedStatement> remainingRows = new ArrayList<>();
         try {
-            insertCandidateSeed(candDir.resolve("seed.sql"), inserted);
+            insertCandidateSeed(seedPlan, inserted);
             stubRegistration = registerCandidateStub(candDir.resolve("stubs.json"));
             stubId = stubRegistration.stubId();
             JsonNode body = Json.mapper().readTree(candDir.resolve("body.json").toFile());
@@ -176,9 +235,7 @@ public final class TrialRunner {
         // REQ-024: attach에서 역-DELETE가 하나라도 실패하면(전형적으로 invoke 중 SUT가 만든 FK 자식
         // 행) 원래 판정과 무관하게 승격을 차단하고 잔존 행을 보고한다.
         if (attachMode && !remainingRows.isEmpty()) {
-            List<String> rowDescriptions = remainingRows.stream()
-                    .map(r -> r.table() + "." + r.pkColumn() + "=" + r.pkLiteralSql())
-                    .toList();
+            List<String> rowDescriptions = remainingRows.stream().map(SeedStatement::description).toList();
             log.warn("attach cleanup left row(s) behind for {} (REQ-024, promotion blocked): {}",
                     endpoint.id(), rowDescriptions);
             return new TrialOutcome(false, outcome.status(),
@@ -224,55 +281,259 @@ public final class TrialRunner {
     }
 
     /**
-     * ② 후보 {@code seed.sql}을 줄 단위로 실행하고 삽입한 (table, pk컬럼, pk 리터럴)을 {@code inserted}에
-     * 직접 append한다(반환값이 아니라 파라미터 리스트를 채우는 이유 — Important 3 fix: 여러 INSERT
-     * 문장 중 후반 문장이 {@code st.execute}에서 던지면 이 메서드 자체는 예외로 끝나지만, 이미
-     * append된 앞쪽 성공 행은 호출자({@link #runCandidate})의 {@code inserted} 참조에 그대로 남아
-     * finally의 {@link #deleteInsertedRows}가 부분 삽입분까지 정리할 수 있다). 이 시점의 seed.sql은
-     * 이미 T1 게이트({@link TripleValidator}, allowlist·마커-diff)를 통과했다는 전제이므로 파싱된
-     * 원문을 그대로 실행한다.
+     * ②-pre 후보 {@code seed.sql}을 줄 단위로 파싱해 <b>실행 전에</b> "이 INSERT를 되돌리는 DELETE"까지
+     * 완성한 계획을 만든다(C4 리뷰 Critical 2/3 fix). 한 줄이라도 계획을 완성할 수 없으면
+     * {@link SeedPlanRejectedException}을 던져 <b>DB를 전혀 건드리지 않고</b> 후보를 차단한다(fail-closed).
+     *
+     * <p>계획 수립이 실패하는 조건(전부 "정리 키를 스키마 사실로 결정할 수 없음"):
+     * <ul>
+     *   <li>allowlist 밖 문장(파싱 실패·다중 문장·INSERT 아님·컬럼 목록 없음·비-리터럴 VALUES 등,
+     *       {@link SeedSqlWhitelist#parseSingleInsert} 판정 그대로).</li>
+     *   <li>스키마 한정 테이블명({@code schema.table}).</li>
+     *   <li>DB 카탈로그에 그 이름의 테이블이 없거나 대소문자 무시 매칭이 <b>모호</b>(2개 이상).</li>
+     *   <li>PK가 없는 테이블, 또는 PK 컬럼 중 하나라도 INSERT의 컬럼 목록에 없음.</li>
+     *   <li>INSERT의 컬럼이 그 테이블의 실제 컬럼이 아님(스키마 대조 실패).</li>
+     *   <li>테이블/컬럼 식별자가 {@link #SAFE_IDENTIFIER}를 벗어남(인용 식별자에 숨긴 문장 등).</li>
+     *   <li>PK 위치의 값이 NULL이거나 닫힌 리터럴이 아님(키로 바인딩 불가).</li>
+     * </ul>
      */
-    private void insertCandidateSeed(Path seedSqlFile, List<InsertedRow> inserted) throws Exception {
+    private List<SeedStatement> planCandidateSeed(Path seedSqlFile) throws SeedPlanRejectedException {
         if (!Files.exists(seedSqlFile)) {
-            return;
+            return List.of();
         }
-        String content = Files.readString(seedSqlFile);
+        String content;
+        try {
+            content = Files.readString(seedSqlFile);
+        } catch (java.io.IOException e) {
+            throw new SeedPlanRejectedException(List.of("seed.sql 읽기 실패: " + e));
+        }
+        List<SeedStatement> plan = new ArrayList<>();
+        List<String> reasons = new ArrayList<>();
         SeedSqlWhitelist parser = new SeedSqlWhitelist();
         for (String line : SeedSqlWhitelist.nonBlankLines(content)) {
-            List<String> ignoredReasons = new ArrayList<>();
-            Optional<Insert> parsed = parser.parseSingleInsert(line, dbType, ignoredReasons);
+            List<String> parseReasons = new ArrayList<>();
+            Optional<Insert> parsed = parser.parseSingleInsert(line, dbType, parseReasons);
             if (parsed.isEmpty()) {
-                continue;   // 방어적 skip — T1 게이트를 통과한 후보 전제이므로 정상 경로에서는 발생하지 않음
+                reasons.addAll(parseReasons);
+                continue;
             }
+            try {
+                plan.add(planStatement(line, parsed.get()));
+            } catch (SeedPlanRejectedException e) {
+                reasons.addAll(e.reasons());
+            } catch (SQLException e) {
+                reasons.add("DB 카탈로그 조회 실패(" + line + "): " + e);
+            }
+        }
+        if (!reasons.isEmpty()) {
+            throw new SeedPlanRejectedException(reasons);
+        }
+        return plan;
+    }
+
+    private SeedStatement planStatement(String line, Insert insert)
+            throws SeedPlanRejectedException, SQLException {
+        if (insert.getTable().getSchemaName() != null) {
+            throw new SeedPlanRejectedException(List.of(
+                    "스키마 한정 테이블명은 정리 대상 해석 불가: " + insert.getTable().getFullyQualifiedName()));
+        }
+        String rawTable = insert.getTable().getUnquotedName();
+        TableFacts facts = tableFacts(rawTable).orElseThrow(() -> new SeedPlanRejectedException(List.of(
+                "DB 카탈로그에서 테이블을 유일하게 해석할 수 없거나 안전하지 않은 식별자: " + rawTable)));
+        if (facts.primaryKeyColumns().isEmpty()) {
+            throw new SeedPlanRejectedException(List.of(
+                    "PK 미상 테이블은 정리(역-DELETE) 불가: " + facts.tableName()));
+        }
+        List<Column> columns = insert.getColumns();
+        List<? extends Expression> values = insert.getValues().getExpressions();
+        if (columns.size() != values.size()) {
+            throw new SeedPlanRejectedException(List.of("INSERT 컬럼/값 개수 불일치: " + line));
+        }
+        Map<String, Expression> byColumn = new LinkedHashMap<>();
+        for (int i = 0; i < columns.size(); i++) {
+            String rawColumn = columns.get(i).getUnquotedColumnName().toLowerCase(Locale.ROOT);
+            if (!facts.columnNames().containsKey(rawColumn)) {
+                throw new SeedPlanRejectedException(List.of("스키마에 없는 컬럼: "
+                        + facts.tableName() + "." + columns.get(i).getUnquotedColumnName()));
+            }
+            byColumn.put(rawColumn, values.get(i));
+        }
+
+        List<String> keyPredicates = new ArrayList<>();
+        List<Object> keyValues = new ArrayList<>();
+        List<Integer> keyJdbcTypes = new ArrayList<>();
+        List<String> keyDescriptions = new ArrayList<>();
+        for (String pkColumn : facts.primaryKeyColumns()) {
+            String key = pkColumn.toLowerCase(Locale.ROOT);
+            Expression expr = byColumn.get(key);
+            if (expr == null) {
+                throw new SeedPlanRejectedException(List.of("PK 컬럼이 INSERT 컬럼 목록에 없어 정리 불가: "
+                        + facts.tableName() + "." + pkColumn));
+            }
+            Object value = closedLiteralValue(expr).orElseThrow(() -> new SeedPlanRejectedException(List.of(
+                    "PK 위치 값이 바인딩 가능한 리터럴이 아님: " + facts.tableName() + "." + pkColumn + " = " + expr)));
+            keyPredicates.add(quoteIdentifier(pkColumn) + " = ?");
+            keyValues.add(value);
+            keyJdbcTypes.add(facts.columnJdbcTypes().get(key));
+            keyDescriptions.add(facts.tableName() + "." + pkColumn + "=" + value);
+        }
+        String deleteSql = "DELETE FROM " + quoteIdentifier(facts.tableName())
+                + " WHERE " + String.join(" AND ", keyPredicates);
+        return new SeedStatement(line, deleteSql, keyValues, keyJdbcTypes, String.join(", ", keyDescriptions));
+    }
+
+    /**
+     * 후보 텍스트가 아니라 <b>DB 카탈로그</b>에서 테이블 사실을 읽는다(대소문자 무시 매칭, 결과가
+     * 유일하지 않으면 미상 처리). 반환된 식별자는 전부 {@link #SAFE_IDENTIFIER}를 통과한 것뿐이다.
+     */
+    private Optional<TableFacts> tableFacts(String rawTableName) throws SQLException {
+        String key = rawTableName.toLowerCase(Locale.ROOT);
+        Optional<TableFacts> cached = tableFactsCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        Optional<TableFacts> resolved = resolveTableFacts(rawTableName);
+        tableFactsCache.put(key, resolved);
+        return resolved;
+    }
+
+    private Optional<TableFacts> resolveTableFacts(String rawTableName) throws SQLException {
+        DatabaseMetaData meta = connection.getMetaData();
+        List<String[]> matches = new ArrayList<>();   // {catalog, schema, name}
+        // types=null로 조회한 뒤 직접 거른다 — 드라이버마다 기본 테이블 타입 표기가 다르다
+        // ("TABLE" vs H2 2.x의 "BASE TABLE"). SYSTEM */VIEW는 seed 대상이 아니므로 제외한다.
+        try (ResultSet rs = meta.getTables(null, null, "%", null)) {
+            while (rs.next()) {
+                String type = rs.getString("TABLE_TYPE");
+                String name = rs.getString("TABLE_NAME");
+                if (name == null || type == null) {
+                    continue;
+                }
+                String upperType = type.toUpperCase(Locale.ROOT);
+                if (!upperType.endsWith("TABLE") || upperType.startsWith("SYSTEM")) {
+                    continue;
+                }
+                if (name.equalsIgnoreCase(rawTableName)) {
+                    matches.add(new String[]{rs.getString("TABLE_CAT"), rs.getString("TABLE_SCHEM"), name});
+                }
+            }
+        }
+        if (matches.size() != 1) {
+            return Optional.empty();   // 미상 또는 동일명 다중 스키마(모호) — fail-closed
+        }
+        String catalog = matches.get(0)[0];
+        String schema = matches.get(0)[1];
+        String tableName = matches.get(0)[2];
+        if (!SAFE_IDENTIFIER.matcher(tableName).matches()) {
+            return Optional.empty();
+        }
+
+        Map<Short, String> pkBySeq = new java.util.TreeMap<>();
+        try (ResultSet rs = meta.getPrimaryKeys(catalog, schema, tableName)) {
+            while (rs.next()) {
+                pkBySeq.put(rs.getShort("KEY_SEQ"), rs.getString("COLUMN_NAME"));
+            }
+        }
+        Map<String, String> columnNames = new LinkedHashMap<>();
+        Map<String, Integer> columnJdbcTypes = new LinkedHashMap<>();
+        try (ResultSet rs = meta.getColumns(catalog, schema, tableName, "%")) {
+            while (rs.next()) {
+                String column = rs.getString("COLUMN_NAME");
+                if (column == null || !SAFE_IDENTIFIER.matcher(column).matches()) {
+                    continue;   // 안전하지 않은 컬럼 식별자는 아예 알려진 컬럼으로 취급하지 않는다
+                }
+                columnNames.put(column.toLowerCase(Locale.ROOT), column);
+                columnJdbcTypes.put(column.toLowerCase(Locale.ROOT), rs.getInt("DATA_TYPE"));
+            }
+        }
+        List<String> primaryKeyColumns = new ArrayList<>();
+        for (String pk : pkBySeq.values()) {
+            if (pk == null || !SAFE_IDENTIFIER.matcher(pk).matches()) {
+                return Optional.empty();
+            }
+            primaryKeyColumns.add(pk);
+        }
+        return Optional.of(new TableFacts(tableName, primaryKeyColumns, columnNames, columnJdbcTypes));
+    }
+
+    /** 방언별 식별자 인용. 인자는 이미 {@link #SAFE_IDENTIFIER}를 통과한 이름이라 인용 문자가 없다. */
+    private String quoteIdentifier(String identifier) {
+        return dbType == DbConfig.Type.MYSQL || dbType == DbConfig.Type.MARIADB
+                ? "`" + identifier + "`"
+                : "\"" + identifier + "\"";
+    }
+
+    /** 닫힌 리터럴 표현식을 바인딩 가능한 Java 값으로. NULL·비-리터럴은 빈 Optional(키로 쓸 수 없음). */
+    private static Optional<Object> closedLiteralValue(Expression expr) {
+        if (expr instanceof SignedExpression signed) {
+            Optional<Object> inner = closedLiteralValue(signed.getExpression());
+            if (signed.getSign() != '-') {
+                return inner;
+            }
+            if (inner.orElse(null) instanceof Long value) {
+                return Optional.of(-value);
+            }
+            if (inner.orElse(null) instanceof Double value) {
+                return Optional.of(-value);
+            }
+            return Optional.empty();
+        }
+        if (expr instanceof StringValue value) {
+            return Optional.of(value.getValue());
+        }
+        if (expr instanceof LongValue value) {
+            return Optional.of(value.getValue());
+        }
+        if (expr instanceof DoubleValue value) {
+            return Optional.of(value.getValue());
+        }
+        if (expr instanceof BooleanValue value) {
+            return Optional.of(value.getValue());
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * ② 계획된 후보 seed INSERT를 순서대로 실행하고, 성공한 문장을 {@code inserted}에 직접 append한다
+     * (반환값이 아니라 파라미터 리스트를 채우는 이유 — Important 3 fix: 여러 INSERT 중 후반 문장이
+     * 던지면 이 메서드 자체는 예외로 끝나지만, 이미 append된 앞쪽 성공 행은 호출자({@link #runCandidate})의
+     * {@code inserted} 참조에 그대로 남아 finally의 {@link #deleteInsertedRows}가 부분 삽입분까지
+     * 정리할 수 있다). INSERT 문장 자체는 allowlist({@link SeedSqlWhitelist}: 단일 INSERT + 닫힌
+     * 리터럴 VALUES)를 통과한 원문을 그대로 실행한다 — 되돌리는 DELETE는 이미
+     * {@link #planCandidateSeed}가 스키마 사실로 완성해 뒀다.
+     */
+    private void insertCandidateSeed(List<SeedStatement> plan, List<SeedStatement> inserted) throws Exception {
+        for (SeedStatement statement : plan) {
             try (Statement st = connection.createStatement()) {
-                st.execute(line);   // 실패 시(예: PK 충돌) 여기서 던져 이 줄 이후는 실행되지 않는다.
+                st.execute(statement.insertSql());   // 실패 시(예: PK 충돌) 던져 이후 문장은 실행되지 않는다.
             }
-            Insert insert = parsed.get();
-            String table = insert.getTable().getUnquotedName();
-            List<Column> columns = insert.getColumns();
-            if (columns != null && !columns.isEmpty() && insert.getValues() != null
-                    && !insert.getValues().getExpressions().isEmpty()) {
-                Expression firstValue = insert.getValues().getExpressions().get(0);
-                inserted.add(new InsertedRow(table, columns.get(0).getUnquotedColumnName(), firstValue.toString()));
-            }
+            inserted.add(statement);
         }
     }
 
     /**
-     * 후보가 삽입한 행을 역순으로 삭제한다(다음 trial 시도와 상태가 겹치지 않도록). best-effort —
-     * 개별 행 삭제 실패는 로그만 남기고 계속 진행한다. 삭제에 실패한 행은 반환값에 담아 호출자가
-     * (attach 모드에서는 REQ-024 승격 차단으로) 판단할 수 있게 한다. 비-attach 경로는 이 반환값을
-     * 사용하지 않으므로(기존과 동일하게 로그만으로 관측) 회귀가 없다.
+     * 후보가 삽입한 행을 역순으로 삭제한다(다음 trial 시도와 상태가 겹치지 않도록). 삭제 키는
+     * {@link #planCandidateSeed}가 <b>DB 스키마의 PK 사실</b>로 결정해 둔 것이고 값은
+     * {@link PreparedStatement} 파라미터로 바인딩된다 — 후보 텍스트가 DELETE의 SQL 구조에 영향을 주지
+     * 않는다. best-effort — 개별 행 삭제 실패는 로그만 남기고 계속 진행하며, 실패한 행은 반환값에
+     * 담아 호출자가 (attach 모드에서는 REQ-024 승격 차단으로) 판단할 수 있게 한다.
      */
-    private List<InsertedRow> deleteInsertedRows(List<InsertedRow> rows) {
-        List<InsertedRow> remaining = new ArrayList<>();
+    private List<SeedStatement> deleteInsertedRows(List<SeedStatement> rows) {
+        List<SeedStatement> remaining = new ArrayList<>();
         for (int i = rows.size() - 1; i >= 0; i--) {
-            InsertedRow r = rows.get(i);
-            try (Statement st = connection.createStatement()) {
-                st.execute("DELETE FROM " + r.table() + " WHERE " + r.pkColumn() + " = " + r.pkLiteralSql());
+            SeedStatement r = rows.get(i);
+            try (PreparedStatement ps = connection.prepareStatement(r.deleteSql())) {
+                for (int p = 0; p < r.keyValues().size(); p++) {
+                    Integer jdbcType = r.keyJdbcTypes().get(p);
+                    if (jdbcType == null) {
+                        ps.setObject(p + 1, r.keyValues().get(p));
+                    } else {
+                        ps.setObject(p + 1, r.keyValues().get(p), jdbcType);
+                    }
+                }
+                ps.executeUpdate();
             } catch (Exception e) {
-                log.warn("trial candidate seed cleanup failed: {}.{}={}",
-                        r.table(), r.pkColumn(), r.pkLiteralSql(), e);
+                log.warn("trial candidate seed cleanup failed: {}", r.description(), e);
                 remaining.add(r);
             }
         }
