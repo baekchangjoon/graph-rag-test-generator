@@ -204,12 +204,24 @@ concolic 해를 어느 body 필드에 배치할지 결정하는 근거다(해가
 
 ```
 synthesize-triple --report <provenance-report.json> --triple-store <dir>
+                  [--sut-jar <boot.jar>] [--sut-src <dir> [--sut-resources <dir>]]
 ```
 
 | 플래그 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `--report` | 예 | — | `provenance`가 만든 리포트 경로 |
 | `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉터리 |
+| `--sut-jar` | 아니오 | — | 입력 오라클용 SUT 부트 jar(ASM+Z3 concolic). `DERIVED` 파생 루트에 배치할 해를 여기서 도출한다 |
+| `--sut-src` | 아니오 | — | 입력 오라클용 SUT 소스 루트(소스 리터럴 오라클). `build`와 동일한 멀티 루트 glob 문법 |
+| `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | `--sut-src`를 줄 때만 의미 있음 |
+
+**입력 오라클(선택).** `--sut-jar`/`--sut-src`를 주면 `build`와 같은 조합(소스 리터럴 오라클 ∪
+ASM+Z3 concolic, `GRB_ORACLE=static`이면 concolic 제외)으로 입력 후보를 만들어 합성에 넘긴다.
+그러면 `DERIVED` 피연산자의 파생 루트 필드에 concolic 해가 결정값으로 배치된다 — 예를 들어
+`score * 2 == 84` 가드는 소스에 리터럴로 없는 `body.score = 42`를 만든다. 해가 없는 자리
+(비선형·다변수 등)는 갭 마커로 남는다. 두 플래그를 모두 생략하면 오라클 없이 동작하며(가드가
+직접 결정하는 값은 그대로 배치된다), 그 사실을 각 후보의 `notes.md`에 `input-oracle: none` 줄로
+남겨 결정값이 조용히 갭 마커로 축소된 것을 감추지 않는다.
 
 후보와 함께 **입력 리포트를 `<triple-store>/<endpointId>/provenance-report.json`으로 복사한다** —
 후속 `trial`이 `--provenance-report` 없이 읽는 규약 위치다. 그래서 `provenance --out`을 어느 경로로
@@ -371,8 +383,8 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
   파생) 피연산자의 concolic 해 배치는 **해소됐다** — `ValueRef.derivedFrom`(파생 루트 입력 필드
   목록)을 근거로 `TripleSynthesizer`가 `unguarded` 필드와 동일한 채움 슬롯으로 취급해, 오라클 해가
   있으면 결정값(예: `score*2==84` → `body.score=42`)을, 없으면(비선형·다변수 등) 갭 마커를 배치한다.
-  다만 `synthesize-triple` **CLI 자체는 아직 `oracle=empty`로 호출**하므로 이 경로는 오라클을
-  주입하는 상위 오케스트레이션(에이전트 스킬)에서만 발현된다(CLI 오라클 플래그 배선은 후속).
+  `synthesize-triple` CLI도 `--sut-jar`/`--sut-src`로 오라클을 구성하므로 CLI 경로만으로 재현된다
+  (플래그를 생략하면 오라클 없이 동작하고 그 사실이 `notes.md`에 남는다).
   (2) 저장 CLI 계약(`--triple-store`/
   `--triple-candidates` 기본 경로, e2e fixture 경로)은 배선됐지만, attach 모드에서 실 SUT가
   참조하는 외부 stub WireMock에 attach하는 경로와 `trial`이 `--graph`로 그래프 자산에서

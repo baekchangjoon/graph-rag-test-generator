@@ -26,12 +26,17 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
 기본 4개로 cap되고 우선순위 정렬은 결정적이다(`cand-01`이 최우선). 모든 결정값의 근거는
 `notes.md`에 자동 생성된다.
 
+`DERIVED`(산술·문자열 파생, 예: `score * 2`) 피연산자도 결정적 코드가 처리한다 — 리포트의
+`derivedFrom`(그 파생식이 읽는 입력 필드 목록)에 대해 입력 오라클의 해를 body에 배치한다.
+오라클을 붙이려면 아래 `--sut-jar`/`--sut-src`를 주면 된다. 해가 없는 자리는 갭 마커로 남는다.
+
 ## CLI 실행법
 
 ```
 ./gradlew -q :graph-rag-builder:run --args="synthesize-triple \
   --report <OUT_DIR>/provenance-report.json \
-  --triple-store <TRIPLE_STORE_DIR>"
+  --triple-store <TRIPLE_STORE_DIR> \
+  --sut-jar <SUT_BOOT_JAR>"
 ```
 
 플래그(실제 `BuilderCli` 소스 기준):
@@ -40,6 +45,15 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
 |---|---|---|---|
 | `--report` | 예 | — | provenance-analysis(C1)가 만든 `provenance-report.json` 경로 |
 | `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉토리(기본 위치는 SUT 캠페인의 `.graphrag/triples`) |
+| `--sut-jar` | 아니오 | — | 입력 오라클용 SUT 부트 jar(ASM+Z3 concolic). `DERIVED` 파생 루트의 해를 여기서 도출한다 |
+| `--sut-src` | 아니오 | — | 입력 오라클용 SUT 소스 루트(소스 리터럴 오라클). `build`와 동일한 멀티 루트 glob 문법 |
+| `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | `--sut-src`를 줄 때만 의미 있음 |
+
+**오라클 플래그를 줄지 판단하는 법.** 리포트에 `origin: "DERIVED"` 피연산자가 있으면 `--sut-jar`를
+줘라 — 소스에 리터럴로 없는 해(예: `score * 2 == 84` → `body.score = 42`)까지 결정값으로 채워져
+네가 손으로 채울 마커가 줄어든다. 플래그를 생략하면 오라클 없이 동작하고, 각 후보의 `notes.md`
+첫/끝 줄에 `input-oracle: none`이 남는다 — 그 줄이 보이면 "결정될 수 있었던 값이 마커로 남았을
+수 있다"는 신호이므로, 부트 jar가 있으면 플래그를 붙여 다시 돌리는 편이 낫다.
 
 ## 산출 레이아웃
 
