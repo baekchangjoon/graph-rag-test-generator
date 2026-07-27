@@ -316,9 +316,9 @@
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
 | REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split][^req036-task12-partial] |
-| REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#REQ-023 | integration | 🔴 planned |
-| REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#REQ-024 | integration | 🔴 planned |
-| REQ-025 | attach 스텁 skip | AttachStubSkipIT#REQ-025 | integration | 🔴 planned |
+| REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#req023_* (4케이스: 0개/allow만/confirm만/2개) | integration | 🟢 green |
+| REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#req024_reverseDeleteFailureBlocksPromotionAndReportsRemainingRow | integration | 🟢 green |
+| REQ-025 | attach 스텁 skip | AttachStubSkipIT#req025_attachModeSkipsStubRegistrationEvenWithNonEmptyStub | integration | 🟢 green |
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🔴 planned |
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🔴 planned |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
@@ -399,7 +399,7 @@ REQ-018 수용기준이 요구하는 **완주 E2E**("전체 빌드+생성+TC 실
 경로를 검증하는 REQ-018 전용 메서드를 추가해 완성한다(브리핑에 명시된 "Task 18의 REQ-018 메서드와
 공존"). 따라서 🟡(빌더 부분 완료, 완주 E2E 미완)로 표기한다.
 
-Coverage: 25/36 green (69%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외)
+Coverage: 28/36 green (78%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3).
 
 ## design spec E2E ↔ REQ 매핑
 

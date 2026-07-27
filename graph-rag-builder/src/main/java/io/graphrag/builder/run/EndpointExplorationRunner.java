@@ -229,10 +229,16 @@ public class EndpointExplorationRunner {
     private final ErrorContractDescriptor errorContract;
     /**
      * REQ-018/019/020/035: {@code --triple-candidates} 루트(nullable). null이면 게이트
-     * 코드 경로 자체를 타지 않는다(REQ-022 회귀 0 — ablation과 동등). attach 모드는 BuilderCli가
-     * 이 값을 항상 null로 전달한다(REQ-023/024 이중 opt-in 미구현 — attach seed 안전 경계 §8).
+     * 코드 경로 자체를 타지 않는다(REQ-022 회귀 0 — ablation과 동등). Task 15부터 attach 모드도 이
+     * 값을 그대로 전달받는다 — attach 안전(REQ-023/024/025)은 {@link #attachMode}/
+     * {@link #attachAllowSeedFlag}/{@link #confirmNonProductionFlag}를 통해 {@link TrialRunner}
+     * 자체가 판정한다(이중 opt-in 미충족이면 seed 미적용).
      */
     private final Path tripleCandidatesRoot;
+    /** REQ-023/024/025 — 호출자가 기존 환경 기술자(AttachedComposeEnvironment 사용 여부)로 판정해 넘긴다. */
+    private final boolean attachMode;
+    private final boolean attachAllowSeedFlag;
+    private final boolean confirmNonProductionFlag;
 
     /**
      * REQ-017: trial 게이트 구간(T1 재검증→trial 재확인→확정 run)은 endpoint 단위 직렬 실행이어야
@@ -402,6 +408,42 @@ public class EndpointExplorationRunner {
                                      io.graphrag.builder.capture.TraceParent traceParent,
                                      ErrorContractDescriptor errorContract,
                                      Path tripleCandidatesRoot) {
+        this(sut, connection, dbType, coverage, analyzer, budgetRequests, httpCapture,
+                responseDtoFieldSets, literalCandidates, authProvider, authConfig,
+                enumConstants, enumColumns, extraHeaders, sqlCapture, kafkaCapture,
+                classifier, callSites, egressCollector, stringLiteralsByDto, traceParent,
+                errorContract, tripleCandidatesRoot, false, false, false);
+    }
+
+    /**
+     * REQ-023/024/025 attach 안전 게이트를 아는 canonical 생성자(Task 15). {@code attachMode}는
+     * 호출자(BuilderCli)가 기존 환경 기술자({@code AttachedComposeEnvironment} 사용 여부)로 판정해
+     * 넘긴다. attachMode=false면 나머지 두 플래그는 무시되고 위 6-arg 생략 오버로드와 완전히
+     * 동일하게 동작한다(회귀 0).
+     */
+    public EndpointExplorationRunner(SutHandle sut, Connection connection,
+                                     DbConfig.Type dbType,
+                                     CoverageProbe coverage, BranchCoverageAnalyzer analyzer,
+                                     int budgetRequests,
+                                     io.graphrag.builder.env.HttpCaptureServer httpCapture,
+                                     List<Set<String>> responseDtoFieldSets,
+                                     List<String> literalCandidates,
+                                     AuthTokenProvider authProvider,
+                                     AuthConfig authConfig,
+                                     Map<String, List<String>> enumConstants,
+                                     Map<String, List<String>> enumColumns,
+                                     RequestHeaders extraHeaders,
+                                     SqlCaptureBackend sqlCapture,
+                                     KafkaCaptureReceiver kafkaCapture,
+                                     ResponseClassifier classifier,
+                                     List<io.graphrag.builder.index.ExternalCallSite> callSites,
+                                     io.graphrag.builder.capture.egress.EgressCollector egressCollector,
+                                     Map<String, Map<String, List<String>>> stringLiteralsByDto,
+                                     io.graphrag.builder.capture.TraceParent traceParent,
+                                     ErrorContractDescriptor errorContract,
+                                     Path tripleCandidatesRoot,
+                                     boolean attachMode, boolean attachAllowSeedFlag,
+                                     boolean confirmNonProductionFlag) {
         if ((authProvider == null) != (authConfig == null)) {
             throw new IllegalArgumentException("authProvider and authConfig must be set together");
         }
@@ -433,6 +475,9 @@ public class EndpointExplorationRunner {
                 : new io.graphrag.builder.capture.TraceParent("local-" + System.nanoTime());
         this.errorContract = errorContract;
         this.tripleCandidatesRoot = tripleCandidatesRoot;
+        this.attachMode = attachMode;
+        this.attachAllowSeedFlag = attachAllowSeedFlag;
+        this.confirmNonProductionFlag = confirmNonProductionFlag;
     }
 
     public EndpointResult run(Endpoint endpoint, BodyShape shape, List<TableSchema> tables,
@@ -1412,7 +1457,8 @@ public class EndpointExplorationRunner {
             TriplePromotionGate.GateVerdict verdict;
             try {
                 TrialRunner trialRunner = new TrialRunner(
-                        connection, dbType, httpCapture, classifier, sut, this::invokeTrial);
+                        connection, dbType, httpCapture, classifier, sut, this::invokeTrial,
+                        attachMode, attachAllowSeedFlag, confirmNonProductionFlag);
                 verdict = TriplePromotionGate.attempt(
                         tripleCandidatesRoot, endpoint, tables, dbType, shape, trialRunner, priorSeeds);
             } catch (Exception e) {
