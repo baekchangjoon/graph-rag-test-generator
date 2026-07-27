@@ -69,6 +69,30 @@
 - **#5는 petclinic 무변·order-service에서 실증**: petclinic엔 enum 상태 전이 가드가 없어 APP-AGGREGATE는
   그대로지만, order-service `BookingController.advance`(200/409/410)로 다중 전이 arm 캡처를 결정적으로 검증.
 
+## Phase A — 에이전트 스킬 기반 삼중 합성 [🟡 절차 준비, 실측 예정]
+
+`provenance`/`synthesize-triple`/`trial` CLI 3종 + 에이전트 스킬 3종으로 다중 가드(입력 검증 →
+DB 상태 비교 → 외부 응답 검증) 순차 조건 때문에 못 열던 **깊은 happy path**를 여는 기능이다
+(설계: `docs/superpowers/specs/2026-07-26-agent-skill-triple-synthesis-design.md`, CLI/스킬
+사용법: [docs/03](03-graph-rag-builder.md) "삼중 합성" 절).
+
+petclinic의 잔여 145/253(57.3%)은 이 표(위 "추이" 표)의 마지막 상태다 — 잔여 108개 분기가
+"비선형·interprocedural·집계·상태 의존 가드"(`docs/25-input-discovery-theory.md` §9)로 정체돼
+있었고, 삼중 합성이 그중 다중 가드 순차 조건에 해당하는 부분을 얼마나 여는지가 이 절이 채울
+자리다.
+
+| 항목 | 값 |
+|---|---|
+| baseline(A, 이 절 작성 시점) | 145/253 (57.3%) |
+| Phase A 적용 후(B) | **미실측** — 아래 절차서로 후속 세션에서 실행 |
+| Δ | — |
+| 판정 | 🟡 절차 준비 완료, 실증 미실행 |
+
+**실측 절차**: [수동 실증 절차서 — E2E-B2](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md#e2e-b2--petclinic-커버리지-실측-req-029)에
+동일-jar A/B 실행 커맨드·판정 기준(순증 시 green, 순증 없으면 원인 분석 첨부 시에만 green)·
+기록 양식이 고정돼 있다. 실행 후 이 표를 실측치로 갱신하고 요구사항명세 REQ-029를 🟡 → 🟢로
+전환한다(무조건 기록만으로는 green 처리하지 않는다 — 위 절차서 "판정 기준" 참조).
+
 ## 작업 #4 — float inter-field (구현 완료)
 
 | 작업 | 상태 | 비고 |
