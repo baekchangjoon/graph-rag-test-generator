@@ -528,8 +528,9 @@ public final class TrialRunner {
      * 던지면 이 메서드 자체는 예외로 끝나지만, 이미 append된 앞쪽 성공 행은 호출자({@link #runCandidate})의
      * {@code inserted} 참조에 그대로 남아 finally의 {@link #deleteInsertedRows}가 부분 삽입분까지
      * 정리할 수 있다). INSERT 문장 자체는 allowlist({@link SeedSqlWhitelist}: 단일 INSERT + 닫힌
-     * 리터럴 VALUES)를 통과한 원문을 그대로 실행한다 — 되돌리는 DELETE는 이미
-     * {@link #planCandidateSeed}가 스키마 사실로 완성해 뒀다.
+     * 리터럴 VALUES)를 통과한 파싱 결과에서 재생성한 SQL을 카탈로그 식별자 + PreparedStatement
+     * 바인딩으로 실행한다 — 후보 파일의 원문 문자열은 실행하지 않는다(방언 실행형 주석 우회 차단).
+     * 되돌리는 DELETE는 이미 {@link #planCandidateSeed}가 스키마 사실로 완성해 뒀다.
      *
      * <p><b>N1 리뷰 Critical fix:</b> 실행되는 것은 후보 파일의 <b>원문 줄이 아니라</b>
      * {@link #planStatement}가 파싱 결과(컬럼 목록 + 닫힌 리터럴)에서 재생성한 파라미터화 INSERT다.
