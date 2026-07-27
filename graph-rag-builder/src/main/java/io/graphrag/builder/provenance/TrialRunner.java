@@ -492,18 +492,24 @@ public final class TrialRunner {
                 : "\"" + identifier + "\"";
     }
 
-    /** 닫힌 리터럴 표현식을 바인딩 가능한 Java 값으로. NULL·비-리터럴은 빈 Optional(키로 쓸 수 없음). */
+    /**
+     * 닫힌 리터럴 표현식을 바인딩 가능한 Java 값으로. NULL·비-리터럴은 빈 Optional(키로 쓸 수 없음).
+     * 판정 집합은 {@link SeedSqlWhitelist}의 {@code isClosedLiteral}과 일치한다(Phase A 후속 Important 1) —
+     * 단항 부호는 수치 리터럴({@code Long}/{@code Double})에만 붙일 수 있고, 부호 문자도 {@code +}/{@code -}만
+     * 허용한다({@code ~} 등 다른 단항 연산자는 fail-closed로 거부).
+     */
     private static Optional<Object> closedLiteralValue(Expression expr) {
         if (expr instanceof SignedExpression signed) {
-            Optional<Object> inner = closedLiteralValue(signed.getExpression());
-            if (signed.getSign() != '-') {
-                return inner;
+            char sign = signed.getSign();
+            if (sign != '+' && sign != '-') {
+                return Optional.empty();
             }
-            if (inner.orElse(null) instanceof Long value) {
-                return Optional.of(-value);
+            Object inner = closedLiteralValue(signed.getExpression()).orElse(null);
+            if (inner instanceof Long value) {
+                return Optional.of(sign == '-' ? -value : value);
             }
-            if (inner.orElse(null) instanceof Double value) {
-                return Optional.of(-value);
+            if (inner instanceof Double value) {
+                return Optional.of(sign == '-' ? -value : value);
             }
             return Optional.empty();
         }

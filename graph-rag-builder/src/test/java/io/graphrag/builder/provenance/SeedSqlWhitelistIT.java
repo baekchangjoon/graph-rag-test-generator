@@ -191,6 +191,45 @@ class SeedSqlWhitelistIT {
                 .isTrue();
     }
 
+    // ---- Phase A 후속 Important 1: isClosedLiteral ↔ TrialRunner.closedLiteralValue 판정 집합 일치 ----
+
+    @Test
+    @DisplayName("REQ-010(followup): 부호가 붙을 수 있는 리터럴만 부호를 허용한다 — -5/+3/NULL/'x'/TRUE는 통과")
+    void req010_signedNumericAndPlainLiteralsAccepted() {
+        String seedSql = "INSERT INTO orders (id, amt, qty, note, flag) "
+                + "VALUES ('x', -5, +3, NULL, TRUE);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("부호 있는 수치 리터럴과 맨 리터럴(문자열/NULL/불리언)은 통과해야 한다: " + result.reasons())
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-010(followup): 부호가 감싼 문자열 리터럴(-'x')은 바인딩 가능한 값이 아니므로 reject된다")
+    void req010_signedStringLiteralRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES (-'x');";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("-'x'는 TrialRunner.closedLiteralValue가 값을 낼 수 없는 조합이므로 게이트에서도 reject해야 한다")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("REQ-010(followup): 부호가 감싼 NULL(+NULL)은 바인딩 가능한 값이 아니므로 reject된다")
+    void req010_signedNullLiteralRejected() {
+        String seedSql = "INSERT INTO orders (id) VALUES (+NULL);";
+
+        WhitelistResult result = whitelist.validate(seedSql, Set.of("orders"), DbConfig.Type.POSTGRES);
+
+        assertThat(result.accepted())
+                .as("+NULL은 TrialRunner.closedLiteralValue가 값을 낼 수 없는 조합이므로 게이트에서도 reject해야 한다")
+                .isFalse();
+    }
+
     // ---- 리뷰 Important 3: VALUES 절이 없는 INSERT(INSERT ... SELECT) reject ----
 
     @Test
