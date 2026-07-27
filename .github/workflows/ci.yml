@@ -36,6 +36,11 @@ jobs:
             args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.BuilderCollectionIntegrationTest' --tests 'io.graphrag.builder.cli.OtelKafkaBuildIntegrationTest'"
           - name: it-rest
             args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.capture.*' --tests 'io.graphrag.builder.coverage.*'"
+          # 삼중 합성(triple synthesis) 수용 E2E — 이 세 클래스는 풀-SUT를 띄우는 integration 태그라
+          # 위 it-cli-* 샤드의 --tests 목록에 없으면 CI에서 아예 실행되지 않는다(REQ-018/020/022/028의
+          # 수용 테스트가 CI 미실행 상태였던 원인). 무거운 OTEL 샤드와 분리해 독립 러너에서 돌린다.
+          - name: it-triple
+            args: ":graph-rag-builder:test -PincludeTags=integration --tests 'io.graphrag.builder.cli.TriplePromotionE2E' --tests 'io.graphrag.builder.cli.TrialAblationE2E' --tests 'io.graphrag.builder.cli.FixtureBaselineE2E'"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

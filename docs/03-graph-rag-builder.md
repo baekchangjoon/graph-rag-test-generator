@@ -369,8 +369,8 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
   (3) `TripleValidator`의 중첩 리스트 dot-path 스키마 검증은 **top-level 필드 접두사 일치**까지만
   확인한다 — known top-level 필드 아래의 중첩 필드명 자체(예: `items.anyRandomField`)는 무검증이다
   (근본 해결에는 `BodyShapeExtractor`의 컬렉션 원소 타입 전개가 필요, 후속 과제). (4) 삼중 합성으로
-  처음 2xx에 도달한 엔드포인트의 negative-validation 파생 시나리오는 FK 존재-가드에 필요한 시드
-  추적이 안 돼 있어 기대 4xx 대신 404로 실패할 수 있다(기존 `EndpointExplorationRunner`/
-  test-generator 시드 추적의 구조적 갭 — 삼중 합성 파이프라인 자체의 결함은 아님, 별도 후속
-  트래킹). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
+  처음 2xx에 도달한 엔드포인트의 파생 시나리오(happy body 변이)가 FK 존재-가드에 필요한 시드를
+  물려받지 못해 기대 4xx 대신 404로 실패하던 갭(REQ-037)은 **해소됐다** — 같은 endpoint의 2xx
+  시나리오가 존재를 증명한 키 값에 대해 파생 시나리오가 부모 행 시드를 상속한다
+  (`Generator.provenExistingKeyValues` → `FixtureComposer`). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   REQ-032/REQ-036/REQ-037 각주 참조.

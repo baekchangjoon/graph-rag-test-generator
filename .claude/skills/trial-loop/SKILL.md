@@ -21,6 +21,40 @@ description: Repeatedly drives the graph-rag-builder `trial` CLI subcommand (T2)
   만들고 갭 마커를 채워라(마커가 그대로 남아 있으면 trial이 무의미한 값으로 실패한다).
 - **있으면**: 그대로 아래 루프를 진행한다.
 
+## ⚠️ 이 CLI는 **실 DB에 쓴다** — 실행 전에 반드시 읽어라
+
+`trial` CLI는 `--jdbc-url`이 가리키는 **실제 데이터베이스에 직접 INSERT/DELETE를 수행한다.**
+후보 `seed.sql`의 행을 넣고, 판정 후 그 행을 되돌리는 DELETE를 실행한다.
+
+- **비-운영 DB에만 붙여라.** 이 CLI에는 `build --attach` 경로의 이중 opt-in 가드
+  (`--attach-allow-seed` + `--confirm-non-production`, REQ-023)가 **없다** — 주어진 JDBC URL에
+  아무 조건 없이 쓴다. 운영/공유 DB URL을 넘기지 마라.
+- **정리 DELETE는 스키마의 PK로만 나간다.** 후보가 컬럼 순서를 바꾸거나 인용 식별자에 문장을
+  숨겨도 그것이 DELETE 문에 반영되지 않는다(키는 DB 카탈로그의 PK, 값은 PreparedStatement
+  바인딩). 대신 **정리 키를 스키마 사실로 결정할 수 없는 후보는 시도 자체가 차단된다**(PK 없는
+  테이블, 컬럼 목록 없는 `INSERT INTO t VALUES (...)`, 안전하지 않은 식별자 등) — 그 후보는
+  DB를 전혀 건드리지 않고 `SEED_CLEANUP_UNRESOLVABLE` 다이제스트와 함께 `failed/`로 간다.
+- **정리 DELETE가 실패하면 행이 남는다.** 이 CLI 경로(비-attach)는 REQ-024의 승격 차단을 적용하지
+  않으므로, cleanup 실패는 로그로만 관측된다 — 로그에 `trial candidate seed cleanup failed`가
+  보이면 남은 행을 직접 확인하라.
+- **동시 실행 금지.** 아래 "직렬화 유의" 참조 — 이 CLI에는 직렬화 락이 없다.
+
+## T1 검증 게이트는 이 CLI에도 적용된다
+
+각 후보는 `runCandidate` 이전에 **T1 검증 게이트**(`TripleValidator`)를 통과해야 한다 —
+마커-diff(REQ-009, 마커 외 변경 reject), `seed.sql` 화이트리스트(REQ-010), WireMock stub 스키마
+(REQ-011), PII 휴리스틱 차단(REQ-012). 거부된 후보는 **DB/HTTP를 전혀 건드리지 않고**
+`T1_REJECTED` 다이제스트와 함께 `failed/`로 이동한다.
+
+그래서 **provenance 리포트가 필수**다(화이트리스트 허용 테이블 집합의 유일한 출처):
+`--provenance-report`를 주거나, 저장 레이아웃 규약 위치
+`<triple-candidates>/<endpointId>/provenance-report.json`에 파일이 있어야 한다. 없으면 CLI는
+후보를 하나도 시험하지 않고 즉시 실패한다(fail-closed).
+
+**이 경로에 남는 유일한 T1 갭:** 이 CLI에는 그래프 자산이 없어 `BodyShape`를 `empty()`로 넘기므로,
+REQ-011 중 **body 필드 스키마 검증만** skip된다(마커-diff·화이트리스트·PII·stub 스키마 검증은 전부
+적용). body에 SUT DTO에 없는 필드가 있는지는 통합 `build` 경로(실제 `BodyShape` 보유)가 잡는다.
+
 ## 결정적 코드가 하는 일 (에이전트가 재구현하지 말 것)
 
 `trial` CLI 서브커맨드(T2) 1회 호출은 대기 중인 후보들(`cand-NN`)을 순번대로, `--trial-budget`

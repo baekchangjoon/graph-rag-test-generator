@@ -282,7 +282,7 @@
 - 검증 레벨: manual
 
 ### REQ-037 — negative-validation 파생 TC의 FK 시드 누락 (생성 TC 404)
-- 유형: Functional / 우선순위: Should / **상태: 🔵 out-of-scope(Phase A 분모 제외)**
+- 유형: Functional / 우선순위: Should / **상태: 🟢 green(최종 fix wave에서 해소 — `[^req037-fixed]`)**
 - 설명: `EndpointExplorationRunner`/`NegativeValidationSynthesizer`/test-generator 경로에서
   negative-validation(제약 위반 mutation) 파생 시나리오에 seed INSERT가 부착되지 않아, FK 의존
   엔드포인트(예: `xxxId` 필드가 부모 테이블 존재 가드에 걸리는 엔드포인트)의 생성 TC가 (기대하는
@@ -305,7 +305,7 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🟢 done[^unguarded-fix] |
+| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🟢 done[^unguarded-fix][^c4-readjudication] |
 | REQ-002 | 깊이 cap·순환 종료 | ProvenanceIndexerIT#REQ-002 | integration | 🟢 done |
 | REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
@@ -316,11 +316,11 @@
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
-| REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009, TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed] |
-| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010 | integration | 🟢 green |
-| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done] |
-| REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green |
-| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert | E2E | 🟢 green |
+| REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009(다중 행/행 순서/컬럼 순서 회귀 5건 포함), TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed][^c4-readjudication] |
+| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected | integration | 🟢 green[^c4-readjudication] |
+| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
+| REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green[^c4-readjudication] |
+| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication] |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
@@ -341,7 +341,7 @@
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
-| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | (후속 task/버그 트래킹) | E2E black-box | 🔵 out-of-scope[^req037-discovered-by-task18] |
+| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
@@ -535,8 +535,20 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 31/36 green (86%), 5 partial(🟡 REQ-032, REQ-036, REQ-027, REQ-029, REQ-030) — target
-100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C 및 신설 REQ-037: 🔵 분모 제외). Task 15가
+Coverage: 32/37 green (86%), 5 partial(🟡 REQ-032, REQ-036, REQ-027, REQ-029, REQ-030) — target
+100% (대상: Must 34 + 미연기 Should 3(REQ-029/030/037 중 REQ-037 포함). Won't/Phase B·C: 🔵 분모 제외).
+
+> **⚠️ 완료 정의 미충족(명시):** 이 명세의 완료 정의는 "**Must 100% green**"인데, **Must인
+> REQ-032와 REQ-036이 🟡**로 남아 있다 — 따라서 현재 상태는 완료 정의를 **충족하지 못한다**.
+> 구체적으로 (a) **REQ-032**는 DERIVED 태깅만 완료되고 concolic 해의 body 배치·"못 푸는 파생은 갭
+> 마커" 처리가 미구현(`ValueRef` 스키마 확장 필요, `[^derived-half]` 참조), (b) **REQ-036**은
+> attach 외부 stub WireMock 라우팅과 `trial --graph` 자동 로드가 미배선(`[^req036-task18-partial]`
+> 참조)이다. 두 항목은 "부분 진전"이지 "충족"이 아니므로 Must 분자에 포함하지 않는다. 이 갭을
+> 해소하지 않은 채 Phase A를 "완료"로 선언하면 안 되며, 두 REQ를 후속 task로 처리하거나 명시적으로
+> Should로 강등(그 근거를 이 문서에 기록)해야 한다. manual REQ-027/029/030(🟡)은 Should이므로 Must
+> 완료 정의와는 별개다.
+
+Task 15가
 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢
 전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경)
 했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다. Task 18이 이 과정에서
@@ -545,13 +557,10 @@ REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전
 "완료 정의"의 "CI 대상 REQ 전부 🟢" 요건은 이 3개 manual REQ를 제외하므로 이 전환으로 plan
 완료 정의가 충족된다. 🟢 전환은 이 plan 범위 밖의 후속 실증 세션에서 절차서 실행 후 수행한다).
 
-**REQ-037(알려진 잔여 이슈, PR 게이트 주의):** `e2e/run-e2e.sh` 전체 실행 시 `TransfersPostTest`의
-negative-validation 파생 변이 2건(`s422e422_1`/`s422e422_2`)이 404로 실패한다(`tests=85 failures=2`) —
-REQ-018 자체(2xx ExploredPath + 그 생성 TC green)는 GREEN이며 코디네이터 리뷰로 Approved 처리됐다
-(이 diff의 회귀가 아님). `EndpointExplorationRunner`/test-generator의 negative-validation 시드
-추적 구조적 갭(REQ-037, 위 REQ-018 각주 참조)으로 전체 e2e 스위트는 100% green이 아니지만, 이는
-삼중 합성 파이프라인(T1/T2/T3) 자체의 결함이 아니라 이 task가 처음 노출시킨 별도의 기존
-서브시스템 결함이므로 Phase A 완료 정의(REQ-018)와 분리해 REQ-037로 후속 트래킹한다.
+**REQ-037(해소됨 — 최종 fix wave):** 이전 상태였던 "`e2e/run-e2e.sh` 전체 실행 시
+`TransfersPostTest`의 파생 변이 2건(`s422e422_1`/`s422e422_2`)이 404로 실패(`tests=85 failures=2`)"는
+**해소됐다** — 현재 `e2e/run-e2e.sh`는 `tests=85 skipped=0 failures=0 errors=0`이다. 상세는
+`[^req037-fixed]` 참조.
 
 [^grb-trial-wired]: `GRB_TRIAL=off` 스위치는 Task 14(게이트 배선)까지 문서(design spec/plan)에만
 명시되고 실제로는 `EndpointExplorationRunner`에 배선돼 있지 않았다(다른 `GRB_*` ablation 스위치 —
@@ -592,3 +601,62 @@ opt-in)이 이 CLI 경로에서는 애초에 활성화되지 않는다 — attac
 | E2E-B2 | REQ-029 |
 | E2E-B3 | REQ-030 |
 | (선행 전제) | REQ-028 |
+
+[^c4-readjudication]: **최종 whole-branch 리뷰(C4, 판정 Not ready) 이후 재판정.** 리뷰는 REQ-009/012의
+"🟢"가 실제로는 무력화돼 있고 REQ-001/011/013의 "🟢"도 그 위에 서 있다고 지적했다. 확인된 결함과
+이 fix wave의 조치·재판정은 다음과 같다.
+
+- **결함 C4-1 (REQ-009/012 무력화):** `TripleValidator.extractRows`가 `rows.put(table, row)`로
+  **테이블당 마지막 INSERT 한 행만** 보관했다. 후보가 base와 동일한 행 *앞에* 자기 행을 끼워 넣으면
+  테이블 집합·컬럼 집합·값 비교를 모두 통과하면서 그 행이 `TrialRunner`로 실행되고 ADOPT 시 영속
+  삽입됐으며, `markerFilledValues`에도 들어가지 않아 PII 스캔(REQ-012)까지 우회했다.
+  **조치:** `extractRows`를 `table -> List<SeedRow>`로 바꾸고 테이블별 **행 수와 순서**까지 동일성을
+  요구한다. **재판정: REQ-009/012 🟢 유지** — 회귀 테스트 `TripleGateIT#req009_extraSeedRowInsertedBeforeMatchingRowRejected`,
+  `#req009_extraSeedRowAppendedAfterMatchingRowRejected`, `#req009_seedRowOrderSwapRejected`,
+  `#req009_multipleRowsPerTableUnchangedAccepted`(회귀 0 확인)로 고정했다.
+- **결함 C4-2 (REQ-009/011/013 — 컬럼 순서 + 데이터 손실):** 컬럼 비교가 `Set.equals`라 순서를
+  무시했는데 정리 DELETE는 `columns.get(0)`을 PK로 **가정**했다. 후보가 `(id, balance_amount)`를
+  `(balance_amount, id)`로 뒤집으면 T1을 통과한 뒤 `DELETE ... WHERE balance_amount = 1`이 나가
+  **조건에 맞는 모든 행**이 삭제됐고, DELETE가 성공하므로 REQ-024 잔존행 차단도 발화하지 않았다.
+  **조치:** (a) 컬럼을 **순서 포함 리스트**로 비교(`TripleGateIT#req009_seedColumnOrderSwapRejected`),
+  (b) 정리 키를 후보 텍스트가 아니라 **DB 카탈로그의 PK 사실**로 해석하고 값을 `PreparedStatement`로
+  바인딩하며, PK를 결정할 수 없으면(PK 없는 테이블/모호한 테이블명/PK 컬럼 미포함) **DB 쓰기 전에
+  차단**한다(`SEED_CLEANUP_UNRESOLVABLE`). **재판정: REQ-009/011/013 🟢 유지** — 회귀는
+  `TrialSeedCleanupIT`(5케이스: PK 기준 정리·PK 미상 차단·인용 식별자 차단·컬럼 목록 없는 INSERT
+  차단·통상 후보 회귀 0).
+- **결함 C4-3 (REQ-013 — 독립 CLI가 T1을 통째로 우회):** `BuilderCli.runTrial`이
+  `TripleValidator.validate`를 전혀 호출하지 않았고, 정리 DELETE가 식별자를 문자열 결합했으며,
+  컬럼 목록 없는 `INSERT INTO t VALUES (...)`는 추적 가드를 빠져나가 정리 대상에서 누락됐다.
+  **조치:** (a) `runTrial`이 후보마다 T1을 호출하고 통과한 후보만 시험한다(거부 시 `T1_REJECTED`
+  다이제스트로 `failed/` 격리, DB/HTTP 부작용 0), (b) 정리 DELETE는 파라미터 바인딩 + 카탈로그
+  식별자 + 안전 식별자 정규식만 사용, (c) 컬럼 목록 없는 INSERT를 `SeedSqlWhitelist` allowlist에서
+  reject. **재판정: REQ-013 🟢 유지** — `TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli`,
+  `#missingProvenanceReportFailsClosed`로 고정. 이 변경으로 **provenance 리포트가 이 CLI의 필수
+  입력**이 됐다(화이트리스트 허용 테이블 집합의 유일한 출처) — `--provenance-report` 또는
+  `<candidates-root>/<endpointId>/provenance-report.json`이 없으면 후보를 하나도 시험하지 않고
+  즉시 실패한다.
+- **REQ-001 재판정: 🟢 유지(변경 없음).** 리뷰가 REQ-001을 지목한 것은 C4-1/2가 T1 게이트 전반의
+  신뢰를 흔든 데 따른 연쇄 의심이며, provenance 산출 경로(`ProvenanceIndexer`) 자체의 결함이
+  보고되지는 않았다. 이 fix wave는 그 경로를 건드리지 않았고 `ProvenanceCliE2E#REQ-001`(golden,
+  태그 없음 → CI `unit` 샤드에서 실행됨)이 그대로 green이다. 근거가 없는 강등은 하지 않는다.
+- **REQ-011 잔여 카브아웃(🟢 유지, 명시):** 독립 `trial` CLI에는 그래프 자산이 없어
+  `BodyShape.empty()`가 넘어가므로 **REQ-011 중 body 필드 스키마 검증만 이 CLI 경로에서 skip**된다
+  (마커-diff·seed 화이트리스트·PII·stub 스키마 검증은 전부 적용). 통합 `build` 경로는 실제
+  `BodyShape`를 갖고 있어 이 갭이 없고, REQ-011의 수용 테스트(`TripleGateIT#REQ-011`)도 실제
+  `BodyShape`로 검증한다. `trial-loop/SKILL.md`에 이 카브아웃을 명시했다.
+
+[^req037-fixed]: **최종 fix wave에서 해소.** 근본 원인은 `FixtureComposer.lookupSucceeded`가 "조회
+성공"의 증거를 **그 path 자신의 outcome**에서만 찾은 것이다 — 파생 시나리오(원본 happy body를
+변이해 만든 422 등)는 자기 응답이 FAILURE라 부모 행 시드를 만들지 않았고, 그래서 생성 TC가 시드
+없이 실행돼 기대한 422 대신 404가 났다. 반면 클래스 주석이 선언한 의도는 "404류는 데이터 부재가
+재현 조건(seed 금지), 409류는 존재가 전제(seed 필요)"였으므로 구현이 선언된 의도보다 좁았다.
+**수정:** `Generator.provenExistingKeyValues(endpointId)`가 같은 endpoint의 **2xx(SUCCESS) 시나리오**가
+SELECT 바인딩으로 존재를 증명한 키 값 집합을 계산해 `FixtureComposer.compose`에 넘기고, 파생
+시나리오는 같은 키 값에 대해 그 부모 행 시드를 **상속**한다. 상태코드 기반 휴리스틱(예: "404가
+아니면 시드")을 쓰지 않은 이유는 200-wrapped 에러 엔벨로프(REQ-005, `LookupSucceededOutcomeTest`)를
+깨뜨리기 때문이다 — "형제 시나리오가 그 키의 존재를 증명했는가"는 상태코드와 무관하게 성립하는
+증거라 회귀가 없다. 새 오버로드는 기본값이 빈 집합이라 기존 호출부는 동작이 그대로다.
+**검증:** 단위 `LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue`
+(증거 없으면 시드 안 함 + 증거 있으면 시드함, 양방향) + `e2e/run-e2e.sh` 실행 결과
+`tests=85 skipped=0 failures=0 errors=0`(직전 `failures=2`에서 전환). 생성 코드에서
+`s422e422_1`/`s422e422_2` 모두 `INSERT INTO fund_accounts ... / deferDelete`가 붙은 것을 확인했다.
