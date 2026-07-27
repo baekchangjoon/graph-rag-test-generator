@@ -337,10 +337,10 @@
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#req024_reverseDeleteFailureBlocksPromotionAndReportsRemainingRow | integration | 🟢 green |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#req025_attachModeSkipsStubRegistrationEvenWithNonEmptyStub | integration | 🟢 green |
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🟢 green |
-| REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🔴 planned |
+| REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
-| REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🔴 planned |
-| REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🔴 planned |
+| REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
+| REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | (후속 task/버그 트래킹) | E2E black-box | 🔵 out-of-scope[^req037-discovered-by-task18] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
@@ -535,7 +535,15 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 31/36 green (86%), 2 partial(🟡 REQ-032, REQ-036) — target 100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C 및 신설 REQ-037: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢 전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경) 했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다. Task 18이 이 과정에서 처음 노출시킨 별도 서브시스템 결함은 신규 **REQ-037**(🔵 out-of-scope)로 분리 추적한다(분모 영향 없음).
+Coverage: 31/36 green (86%), 5 partial(🟡 REQ-032, REQ-036, REQ-027, REQ-029, REQ-030) — target
+100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C 및 신설 REQ-037: 🔵 분모 제외). Task 15가
+REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢
+전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경)
+했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다. Task 18이 이 과정에서
+처음 노출시킨 별도 서브시스템 결함은 신규 **REQ-037**(🔵 out-of-scope)로 분리 추적한다(분모 영향
+없음). **Task 19가 REQ-027/029/030을 🔴→🟡 전환**(절차서 작성 완료, 분자 미변경 — plan
+"완료 정의"의 "CI 대상 REQ 전부 🟢" 요건은 이 3개 manual REQ를 제외하므로 이 전환으로 plan
+완료 정의가 충족된다. 🟢 전환은 이 plan 범위 밖의 후속 실증 세션에서 절차서 실행 후 수행한다).
 
 **REQ-037(알려진 잔여 이슈, PR 게이트 주의):** `e2e/run-e2e.sh` 전체 실행 시 `TransfersPostTest`의
 negative-validation 파생 변이 2건(`s422e422_1`/`s422e422_2`)이 404로 실패한다(`tests=85 failures=2`) —
@@ -555,6 +563,20 @@ Task 16이 `EndpointExplorationRunner.tripleGateDisabledByAblation()`을 신설�
 했다. `TrialAblationE2E`가 실제로 STALE을 유발하는 promoted 후보를 배치한 채 `GRB_TRIAL=off`로
 빌드해도 `trialCount=0`(게이트가 아예 호출되지 않음)임을 확인해, "우연히 후보가 없어 동일했다"가
 아니라 스위치 자체가 게이트를 비활성화함을 고정했다.
+
+[^task19-manual-procedures]: Task 19가 REQ-027(E2E-B1)/REQ-029(E2E-B2)/REQ-030(E2E-B3)의 실행
+커맨드·판정 기준·기록 위치를 이 요구사항명세의 수용기준 문구 그대로 고정한 절차서
+`docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md`를 작성했다. 세
+절차 모두 아직 **실행되지 않았다** — 각 절차의 "완료 후 처리"에 명시된 대로, 후속 세션이 그
+절차서를 실제로 수행하고 판정 결과를 기록해야만 이 REQ들이 🟢로 전환된다. 절차서 작성 과정에서
+확인한 구현 세부 사항 하나를 여기 기록한다: 독립 `trial` CLI(`BuilderCli.runTrial`)는
+`TrialRunner`를 6-arg 생성자로 생성해 `attachMode=false`로 고정돼 있어, REQ-023(attach 이중
+opt-in)이 이 CLI 경로에서는 애초에 활성화되지 않는다 — attach 이중 opt-in이 실제로 배선되는
+경로는 `build --attach --triple-candidates <dir> [--attach-allow-seed]
+[--confirm-non-production]` 뿐이다(`EndpointExplorationRunner` → `TriplePromotionGate` →
+`TrialRunner`의 9-arg 생성자). E2E-B3 절차서는 이를 반영해 독립 `trial` CLI가 아니라 `build
+--attach`로 재확인 절차를 구성했다. `docs/coverage-progress.md`의 "Phase A" 절과
+`docs/03-graph-rag-builder.md`의 "삼중 합성" 절도 이 task에서 함께 동기화했다.
 
 ## design spec E2E ↔ REQ 매핑
 

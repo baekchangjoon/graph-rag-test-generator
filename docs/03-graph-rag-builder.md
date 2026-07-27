@@ -158,6 +158,184 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전트·포트 publish를 주입하고
 스택의 up/down을 소유한다. 플래그·생성 override·v1 한계는 [docs/26](26-attach-mode.md) 참조.
 
+## 삼중 합성(provenance / synthesize-triple / trial) — 에이전트 스킬 기반 깊은 happy path 개방
+
+`build`(위 기본 서브커맨드)는 다중 가드(입력 검증 → DB 상태 비교 → 외부 응답 검증)를 모두
+통과해야 하는 **깊은 happy path**를 구조적으로 못 여는 경우가 있다(비선형·interprocedural·집계·
+상태 의존 가드 — `docs/25-input-discovery-theory.md` §9). 이를 열기 위해 **결정적 코드가 재귀
+분석·합성·시험을 수행하고, 코드가 못 정하는 값(자유 텍스트·의미값)만 에이전트가 채우는** 3개
+독립 CLI 서브커맨드와 대응하는 에이전트 스킬 3종을 제공한다. 설계:
+[design spec](superpowers/specs/2026-07-26-agent-skill-triple-synthesis-design.md).
+
+| 순서 | CLI 서브커맨드 | 대응 에이전트 스킬 | 역할 |
+|---|---|---|---|
+| C1 | `provenance` | `.claude/skills/provenance-analysis/SKILL.md` | 엔드포인트 핸들러에서 가드까지 재귀 슬라이스 + 가드 피연산자별 출처(origin) 태깅 |
+| C2 | `synthesize-triple` | `.claude/skills/triple-synthesis/SKILL.md` | 출처별로 `body.json`(INPUT)/`seed.sql`(DB_READ)/`stubs.json`(EXTERNAL_RESPONSE)에 라우팅한 후보 삼중 산출, 결정 불가 값은 갭 마커 |
+| T2(C3가 반복 구동) | `trial` | `.claude/skills/trial-loop/SKILL.md` | 후보 1개를 실제 SUT에 시험(캡처-off 경량 invoke) + 판정, 성공 시 `promoted/`로 이동 |
+
+에이전트는 위 순서(`provenance-analysis` → `triple-synthesis` → `trial-loop`)를 반드시 지킨다 —
+각 스킬이 선행 산출물 부재를 가드로 확인한다. 세 스킬 모두 "결정적 코드가 이미 확정한 값은
+건드리지 말고, 갭 마커(`__AGENT_FILL__{...}`) 위치만 채워라"는 동일한 마커 계약을 따른다(마커
+외 변경은 `TripleValidator`가 기계적으로 reject — 아래 "검증 게이트" 참조).
+
+### `provenance` — 출처 리포트 산출
+
+```
+provenance --sut-src <SUT_SRC_DIR> [--sut-resources <RESOURCES_DIR>] \
+  --endpoint '<METHOD> <PATH>' [--provenance-depth 3] --out <provenance-report.json>
+```
+
+| 플래그 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `--sut-src` | 예 | — | SUT 소스 루트(멀티 루트 glob은 `build`와 동일 문법) |
+| `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | MyBatis mapper XML 등 |
+| `--endpoint` | 예 | — | 대상 엔드포인트 1개 spec. **정확히 1개**로 해소되지 않으면 실패 |
+| `--provenance-depth` | 아니오 | `3` | 재귀 호출 추적 깊이 cap(순환 가드 포함 — 항상 종료) |
+| `--out` | 예 | — | 산출 `provenance-report.json` 경로(상위 디렉터리 자동 생성) |
+
+산출 `provenance-report.json`은 `guards[]`(가드 위치·비교 연산자·피연산자별 origin —
+`INPUT`/`DB_READ`/`EXTERNAL_RESPONSE`/`DERIVED`/`UNKNOWN`), `unresolved[]`(정적 해석 실패 —
+`{location, reason: no-classpath|reflection|proxy|multi-impl|depth-cap, targetType}`),
+`unguarded[]`(가드 미사용 필드 + `semanticHint`)를 담는다.
+
+### `synthesize-triple` — 후보 삼중 합성
+
+```
+synthesize-triple --report <provenance-report.json> --triple-store <dir>
+```
+
+| 플래그 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `--report` | 예 | — | `provenance`가 만든 리포트 경로 |
+| `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉터리 |
+
+관계 가드(`equals/비교(입력, DB값)`)는 입력과 시드 행을 공동 배치해 만족값을 정하고, 리터럴
+경계 가드는 satisfy/경계 로직으로 계산한다. 후보 수는 EP당 최대 4개로 cap되고 우선순위 정렬은
+결정적(`cand-01`이 최우선). 결정 불가한 자리만 아티팩트별 문법의 갭 마커로 남는다:
+
+| 아티팩트 | 마커 문법 |
+|---|---|
+| `body.json` / `stubs.json`(jsonBody) | JSON 문자열 `"__AGENT_FILL__{type, semanticHint, guard}"` |
+| `seed.sql` | 컬럼 타입 무관 작은따옴표 문자열 리터럴 `'__AGENT_FILL__{...}'`(SQL 파싱 유지) |
+
+`stubs.json`은 기존 external-stubs와 동일한 WireMock mapping 스키마(`request.method/urlPath` +
+`response.status/jsonBody`, 헤더가 필요하면 `response.headers`)다.
+
+### 삼중 저장 레이아웃
+
+```
+<triple-store>/<endpointId>/
+  cand-01/ cand-02/ …          # 미승격 후보(순번 — cand-01이 최우선)
+    body.json seed.sql stubs.json notes.md
+  base/cand-01/ …              # synthesize-triple이 만든 원본 그대로의 사본(마커-diff 기준, 편집 금지)
+  promoted/cand-01/ …          # trial 성공 후보
+  failed/cand-01/ …            # trial 예산 소진 후보 + digest-final.json
+```
+
+순번 충돌 시 덮어쓰지 않고 다음 가용 순번으로 자동 증번한다(예: `promoted/cand-01`이 이미 있으면
+신규 승격은 `cand-02`).
+
+### `trial` — 후보 시험·승격 (T2)
+
+```
+trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
+  --sut-base-url <BASE_URL> \
+  --jdbc-url <JDBC_URL> [--db-user <USER>] [--db-password <PASSWORD>] --db-type postgres|mysql|mariadb \
+  [--triple-store <DIR>] [--triple-candidates <DIR>] [--trial-budget 8] \
+  [--happy-seeds <required-seeds.json>] [--provenance-report <provenance-report.json>] \
+  [--sut-log-file <FILE>] \
+  [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
+  [--error-detail-field <field>] [--error-detail-contains <substring>]
+```
+
+| 플래그 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `--endpoint` | 예 | — | endpointId(예: `post-api-transfers`) |
+| `--http-method` / `--path` | 예 | — | 대상 요청 |
+| `--sut-base-url` | 예 | — | 이미 떠 있는 SUT의 base URL |
+| `--jdbc-url` / `--db-user` / `--db-password` / `--db-type` | 예(`--db-user`/`--db-password`만 선택, 기본 빈 문자열) | — | 시드 INSERT 대상 DB |
+| `--triple-store` | 아니오 | `.graphrag/triples` | promote/fail 대상 루트 |
+| `--triple-candidates` | 아니오 | `--triple-store`와 동일 | 시도할 후보를 읽어올 루트(다르게 지정 가능) |
+| `--trial-budget` | 아니오 | `8` | 이번 호출에서 시도할 후보 최대 개수 |
+| `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON) |
+| `--provenance-report` | 아니오 | — | 실패 가드 역매핑(FailureDigest)에 쓸 리포트 |
+| `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
+| `--error-when-present` 등 4종 | 아니오 | (없으면 `StatusOnlyClassifier`) | `build`와 동일한 에러 엔벨로프 분류 플래그 — trial과 확정 run이 **같은 값**을 써야 판정이 일관된다 |
+
+시퀀스: ① 기존 happy 시드 정리(reverse-DELETE) → ② 후보 `seed.sql` INSERT → ③ 스텁 등록
+(**이 독립 CLI 경로에서는 항상 skip** — 자체 `HttpCaptureServer`를 기동하지 않음, `EXTERNAL_RESPONSE`
+가드가 낀 엔드포인트는 이 CLI 단독으로는 검증되지 않는다) → ④ body로 캡처-off 경량 invoke →
+`ResponseClassifier`로 판정. 성공하면 즉시 `promoted/`로 이동해 종료 코드 `0`. 실패하면
+`FailureDigest`(status·응답 바디·SUT 로그 구간·스택 발췌·`mappedGuard`·규칙 수리 가능 시
+`toolSuggestion`)를 산출한다. 예산(`--trial-budget`) 소진 시 **시도한** 후보만 `failed/`로 옮기고
+`failed/digest-final.json`을 남긴 뒤 종료 코드 `3`(미시도 후보는 원래 위치에 남아 다음 호출에서
+예산이 재충전된 채 이어서 시도된다).
+
+**주의**: 이 독립 `trial` CLI는 `attachMode=false`로 고정돼 있어 아래 attach 이중 opt-in
+게이트(REQ-023)가 활성화되지 않는다 — attach 환경에서 이 게이트를 실제로 거치려면 `build
+--attach ... --triple-candidates <dir>` 경로를 써야 한다(아래 참조).
+
+### `build`가 이 저장소를 소비하는 방법 — `--triple-candidates`
+
+`build` 서브커맨드에 `--triple-candidates <dir>`를 주면, base happy invoke가 실패한 엔드포인트에
+한해 그 디렉터리의 `promoted/` 후보를 T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore)
+순으로 소비한다. 확정 run이 성공하면 그 삼중을 채택해 graph.json에 2xx `ExploredPath`가 생성되고,
+이후 파이프라인(생성 테스트 등)은 다른 엔드포인트와 동일하게 진행된다. 미지정 시(기본값) 이
+게이트 자체가 비활성이라 현행 동작과 완전히 동일하다.
+
+- **ablation 스위치**: `GRB_TRIAL=off`(대소문자 무시, env var 또는 테스트 전용 시스템 프로퍼티)를
+  주면 `--triple-candidates`가 있어도 게이트가 호출되지 않는다(`trialCount=0`) — 회귀 비교용 A/B
+  스위치.
+- **stale 처리**: SUT 동작 변경으로 promoted 후보가 trial 재확인에 실패하거나(REQ-020), 인덱싱
+  결과에 없는 endpointId 아래 promoted 후보가 있으면(REQ-035, 제거·개명 감지) 조용히 버리지 않고
+  `staleTriples`로 표면화한 뒤 후보 부재 시와 동일한 현행 경로로 회귀한다.
+
+### 검증 게이트 (T1, `TripleValidator`) — 에이전트 산출물의 결정적 검증
+
+`build --triple-candidates`가 promoted 후보를 소비하기 직전에 항상 거치는 결정적 검증이다(독립
+`trial` CLI 경로에는 이 게이트가 없다 — 위 "주의" 참조):
+
+- **마커 계약 강제**: `body.json`/`stubs.json`은 `base/` 사본과 JSON 키 단위 diff, `seed.sql`은
+  JSqlParser 기반 파서 레벨 정규화 비교 — 마커 아닌 값이 하나라도 바뀌면 사유와 함께 reject.
+- **seed.sql 화이트리스트**: JSqlParser(`com.github.jsqlparser:jsqlparser`)로 `INSERT`만 허용,
+  대상 테이블은 provenance가 지목한 DB_READ 테이블 + FK 전이 참조 부모 테이블로 한정. DDL·
+  UPDATE·DELETE·다중 스테이트먼트는 reject.
+- **스키마 검증**: body는 `BodyShape`과, stub은 WireMock mapping 스키마·응답 형상과 대조해 미지
+  필드를 reject.
+- **PII 휴리스틱**: 한국 휴대전화·주민등록번호 패턴·실도메인 이메일 등을 채운 후보는 승격을
+  차단하고 `needsHumanReview`로 표시한다(경고만 하고 통과시키지 않음).
+
+### attach 모드에서의 안전 경계
+
+[docs/26](26-attach-mode.md)의 `--attach`와 함께 쓸 때는 다음 두 경계가 **기술적 가드**로
+강제된다:
+
+- **seed 적용 이중 opt-in**: `--attach-allow-seed`와 `--confirm-non-production`이 **둘 다** 있어야
+  attach에서 seed.sql이 적용된다. 하나라도 없으면 seed는 적용되지 않고 사유가 보고된다(승격
+  차단이 아니라 그 후보 자체가 stale로 보고됨). 활성 시 삽입 행을 추적해 종료 시 역-DELETE하며,
+  실패하면(잔존 행 발생) 해당 후보의 승격을 차단하고 잔존 행(테이블·PK)을 리포트한다.
+- **EXTERNAL_RESPONSE 스텁은 항상 skip**: attach 모드는 WireMock 라우팅이 없어(Phase C 백로그)
+  스텁 등록 자체를 시도하지 않고 사유를 리포트에 남긴다.
+
+### 스킬 3종 (`.claude/skills/`)
+
+`.claude/skills/{provenance-analysis, triple-synthesis, trial-loop}/SKILL.md`가 위 3개 CLI를
+순서대로 구동하는 절차·마커 계약·PII 금지·값 창작 규율을 담는다(구조 검사: `SkillPackagingTest`).
+에이전트가 재귀 탐색·합성·시험 로직을 재구현하지 않는다 — 그건 위 CLI(결정적 코드)의 몫이고,
+에이전트는 `unresolved`/`UNKNOWN`/갭 마커처럼 도구가 "모른다"고 명시한 자리만 판단·창작한다.
+
+### 관측 필드
+
+`exploration-report.json`의 각 엔드포인트 항목에 다음이 기록된다: `trialCount`(int, 시행 횟수),
+`tripleAdopted`(boolean, 최종 채택 여부), `tripleRejected`(`Map<String,Integer>`, reject 사유별
+건수), `staleTriples`(`List<String>`, 원소 포맷 `<endpointId>/promoted/cand-NN`). 트리플 게이트가
+비활성이거나 발화하지 않으면 이 필드들은 기본값(0/false/빈 컬렉션)만 갖고 나머지 산출물은
+현행과 정규화-동등이다(회귀 0).
+
+**수동/주기 실증(CI 게이트 제외)**: 에이전트 완주 실증, petclinic 실측 A/B, attach 이중 opt-in
+실 환경 재확인은 결정적 CI로 대체할 수 없어 별도 절차서로 관리한다 —
+[docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md).
+
 ## 외부에서 가져오지 않는 데이터
 
 - 운영/스테이징 실 트래픽 로그
@@ -180,3 +358,19 @@ override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전
 - **에러 엔벨로프 SUT (성공 오라클)**: 일부 SUT는 비즈니스 오류를 HTTP 200으로 감싸 반환한다(예: `BizException` 핸들러가 `{"errorServer":"...", "errorCode":"404", "errorDetail":"...BizException..."}` + HTTP 200 응답). 빌더가 HTTP 상태 코드만으로 성공/실패를 판단하면 이 경로를 happy path로 오인해 어설션이 약해지고 진짜 성공 경로에 도달하지 못한다. `--error-when-present <필드>` 플래그를 쓰면 지정 필드가 응답 바디에 존재(non-null, non-empty)할 때 HTTP 200이라도 FAILURE로 분류한다. `--semantic-status-field`는 그 필드 값을 의미론적 상태코드(예: `"404"`)로 회수해 경로의 `semanticStatus`에 기록한다. `--error-detail-field` + `--error-detail-contains`는 에러-계약 경로에 `containsString` 어설션을 생성하게 한다. 동작 데모: `samples/error-envelope-service`, `e2e/run-error-envelope-e2e.sh`.
 
 - **`@Controller` 폼 — 레거시 바인딩 종류**: 평면 스칼라 필드를 넘어 다음 Spring MVC 바인딩 패턴을 커버한다(커버리지 전용, 회귀 0). (1) **다중 커맨드 객체**(`(HelperObj, @Valid Cmd)`): `selectFormCommand`가 첫 후보가 아니라 `@Valid`/`@Validated` 붙은 커맨드를 FORM 커맨드로 선택(없으면 첫 후보 폴백). (2) **중첩 POJO**: 컨버터 없는 바인딩가능 POJO 필드를 `field.sub=v` 평면 점-경로 스칼라로 재귀 전개(`FormBodySynthesizer`; `formEncode`가 비-스칼라를 드롭하므로 중첩 ObjectNode를 두지 않음, 빈-POJO/순환/깊이 가드). (3) **참조 엔티티**(name-`Formatter<E>` / id-`Converter<String,E>` / Spring Data): `ConverterRegistryIndexer`가 전역 컨버티드 타입 + `@InitBinder registerCustomEditor`(컨트롤러-local) + `@Entity`를 수집하고 `classifyFormBindings`가 REFERENCE로 분류, 러너가 백업 테이블(FK `@JoinColumn`→부모 / 정적 `@Table` / `camelToSnake` 우선순위)을 SELECT/seed해 **name 1순위 토큰**으로 reference-aware happy base를 합성하고, name으로 안 열리는 필드(PK 조회 Converter)는 **PK backtrack trial**(`discoveredBy="form-ref-trial"`, budget ≤ `min(req/2,10)`)로 연다. (4) **PropertyEditor**(`@InitBinder`): 그 컨트롤러 핸들러의 필드만 REFERENCE로 스코프(다른 컨트롤러의 동일 타입 필드는 NESTED — 컨트롤러-local 가드). **컬렉션 필드**(`List<Y>`)는 v1 비목표 → 스칼라/skip 폴백. 미해석/후보 실패 시 기존 스칼라/skip 동작으로 폴백(추가 도달만, 회귀 0).
+
+- **삼중 합성(provenance/synthesize-triple/trial) — 알려진 갭(Phase A)**: (1) `DERIVED`(산술·문자열
+  파생) 피연산자는 origin 태깅까지만 완성돼 있고, concolic 해를 실제 body 결정값으로 배치하는
+  합성 로직은 아키텍처상 미해결(다중-DERIVED-가드 리포트에서 배치 대상 필드를 결정적으로 복원할
+  근거 부족) — 해당 갭은 갭 마커로 표면화된다. (2) 저장 CLI 계약(`--triple-store`/
+  `--triple-candidates` 기본 경로, e2e fixture 경로)은 배선됐지만, attach 모드에서 실 SUT가
+  참조하는 외부 stub WireMock에 attach하는 경로와 `trial`이 `--graph`로 그래프 자산에서
+  happy 시드를 자동 로드하는 경로는 아직 없다(현재는 `--happy-seeds` JSON 파일을 직접 줘야 한다).
+  (3) `TripleValidator`의 중첩 리스트 dot-path 스키마 검증은 **top-level 필드 접두사 일치**까지만
+  확인한다 — known top-level 필드 아래의 중첩 필드명 자체(예: `items.anyRandomField`)는 무검증이다
+  (근본 해결에는 `BodyShapeExtractor`의 컬렉션 원소 타입 전개가 필요, 후속 과제). (4) 삼중 합성으로
+  처음 2xx에 도달한 엔드포인트의 negative-validation 파생 시나리오는 FK 존재-가드에 필요한 시드
+  추적이 안 돼 있어 기대 4xx 대신 404로 실패할 수 있다(기존 `EndpointExplorationRunner`/
+  test-generator 시드 추적의 구조적 갭 — 삼중 합성 파이프라인 자체의 결함은 아님, 별도 후속
+  트래킹). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
+  REQ-032/REQ-036/REQ-037 각주 참조.

@@ -170,6 +170,19 @@ git diff --name-only main > changed.txt
 
 # 도구 2 단독
 ./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
+
+# 도구 1 — 삼중 합성(Phase A): 다중 가드 순차 조건이 막던 깊은 happy path를 에이전트 스킬 +
+#   3개 CLI 서브커맨드(provenance/synthesize-triple/trial)로 연다. 사용법·플래그 전체는 docs/03
+#   "삼중 합성" 절, 스킬 절차는 .claude/skills/{provenance-analysis,triple-synthesis,trial-loop}.
+./gradlew :graph-rag-builder:run --args="provenance --sut-src <src> --endpoint 'POST /api/x' \
+  --out <dir>/provenance-report.json"
+./gradlew :graph-rag-builder:run --args="synthesize-triple --report <dir>/provenance-report.json \
+  --triple-store <dir>/triples"
+./gradlew :graph-rag-builder:run --args="trial --endpoint post-api-x --http-method POST --path /api/x \
+  --sut-base-url http://localhost:8080 --jdbc-url <jdbc-url> --db-type postgres \
+  --triple-store <dir>/triples"
+# build가 promoted 후보를 소비하려면 --triple-candidates <dir>/triples 를 추가한다
+# (GRB_TRIAL=off 로 이 게이트를 끄면 현행과 정규화-동등, 회귀 0).
 ```
 
 ## 문서
@@ -233,5 +246,13 @@ git diff --name-only main > changed.txt
   →ledger 동기/비동기 홉의 SQL을 요청 단위로 회수. `samples/legacy-tram`(Boot 2.7·MySQL binlog/CDC)
   에서 R1(B3 전파)·CAP(캡처)·NOISE(노이즈 배제) 3종 수용 기준 라이브 PASS.
   런북 `e2e/run-legacy-tram-sleuth-e2e.sh`. (PR #60·#63)
+- **삼중 합성(agent-skill-triple-synthesis) Phase A** (2026-07-26~27): 다중 가드(입력 검증→DB
+  상태 비교→외부 응답 검증) 순차 조건이 막던 깊은 happy path를 열기 위해 `provenance`/
+  `synthesize-triple`/`trial` CLI 3종 + 에이전트 스킬 3종(`.claude/skills/`) + 결정적 검증
+  게이트(T1: 마커 계약·seed.sql 화이트리스트·스키마·PII)를 도입. order-service fixture EP 4종
+  (fulfillment/transfers/invoices/quotas)으로 CI 회귀화(REQ-018 완주 E2E green). **에이전트
+  완주 실증(E2E-B1)·petclinic 커버리지 실측(E2E-B2)·attach 실 환경 재확인(E2E-B3)은 절차서만
+  준비되고 실행은 후속 세션**(`docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md`,
+  `docs/coverage-progress.md` "Phase A" 절 🟡).
 - 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
   Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
