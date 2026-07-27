@@ -1,6 +1,6 @@
 ---
 name: trial-loop
-description: Repeatedly drives the graph-rag-builder `trial` CLI subcommand (T2) — which applies one candidate's seed rows, WireMock stubs, and body, invokes the endpoint with capture off, and classifies the response into a FailureDigest — applying any toolSuggestion verbatim and only fabricating a new value within the marker contract when the digest offers none (an UNKNOWN failure), until a candidate is promoted or the trial budget is exhausted. Use this third and last — after provenance-analysis and triple-synthesis — to validate and promote a candidate request triple.
+description: Repeatedly drives the graph-rag-builder `trial` CLI subcommand (T2) — which applies one candidate's seed rows and body (stub registration is always skipped on this CLI path), invokes the endpoint with capture off, and classifies the response into a FailureDigest — applying any toolSuggestion verbatim and only fabricating a new value within the marker contract when the digest offers none (an UNKNOWN failure), until a candidate is promoted or the trial budget is exhausted. Use this third and last — after provenance-analysis and triple-synthesis — to validate and promote a candidate request triple.
 ---
 
 # trial-loop (C3)
@@ -25,15 +25,25 @@ description: Repeatedly drives the graph-rag-builder `trial` CLI subcommand (T2)
 
 `trial` CLI 서브커맨드(T2) 1회 호출은 대기 중인 후보들(`cand-NN`)을 순번대로, `--trial-budget`
 한도 안에서 다음 시퀀스로 시도한다: happy 시드 정리 → 후보 `seed.sql` INSERT → 후보
-`stubs.json` 등록 → 후보 `body.json`으로 **캡처-off 경량 invoke**(SQL 캡처 scope 미개설,
-요청별 JaCoCo dump 스킵, 결과가 누적 커버리지/그래프에 병합되지 않는다 — 확정 run 대비
-가벼운 이유가 이 모드다). 응답은 `ResponseClassifier`(엔벨로프 인지)로 판정한다. 실패하면
+`stubs.json` 등록(**표준 CLI 경로에서는 항상 skip** — 아래 참고) → 후보 `body.json`으로
+**캡처-off 경량 invoke**(SQL 캡처 scope 미개설, 요청별 JaCoCo dump 스킵, 결과가 누적
+커버리지/그래프에 병합되지 않는다 — 확정 run 대비 가벼운 이유가 이 모드다). 응답은
+`ResponseClassifier`(엔벨로프 인지)로 판정한다. 실패하면
 `FailureDigest`를 산출한다 — status·outcome kind·응답 바디·SUT 로그 구간·스택 발췌, 그리고
 **실패 가드 역매핑**(스택 프레임 ↔ provenance 가드 위치 자동 대조, 안 되면 응답/로그
 메시지 ↔ 가드 검증 메시지 매칭 휴리스틱, 그래도 안 되면 `mappedGuard: null`). 경계 ±1,
 enum 불일치, 필수 필드 누락처럼 규칙으로 수리 가능한 실패는 `toolSuggestion`(구체적인
 수정 제안)까지 산출한다. 성공하면 그 후보를 즉시 `promoted/`로 옮기고 CLI가 종료 코드
 0으로 끝난다.
+
+**stub 등록(③)은 이 CLI 경로에서 항상 skip된다.** `BuilderCli.runTrial`은 자체
+`HttpCaptureServer`를 기동하지 않고 `TrialRunner`에 `httpCapture=null`을 넘긴다 — 코드가
+`registerCandidateStub`을 무조건 skip하게 만드는 하드코딩이며, 임시 배선 누락이 아니라
+현재 CLI의 실제 동작이다(`runTrial` Javadoc에도 명시). 즉 **`EXTERNAL_RESPONSE` 가드에
+의존하는 엔드포인트는 trial 중 `stubs.json`이 등록되지 않고, 실제 외부 서비스 응답(또는
+SUT의 기본 동작 — 예: 외부 호출 실패 시 재시도/타임아웃/예외)을 그대로 받는다.** 그 결과
+`stubs.json`의 갭 마커를 아무리 정확히 채워도 이 CLI 단독 실행으로는 검증되지 않는다 —
+`EXTERNAL_RESPONSE` 삼중의 실제 검증은 stub 배선이 있는 확정 run/build 경로(T3) 쪽 책임이다.
 
 ## CLI 실행법
 
@@ -47,7 +57,9 @@ enum 불일치, 필수 필드 누락처럼 규칙으로 수리 가능한 실패�
   [--triple-store <DIR>] [--triple-candidates <DIR>] \
   [--trial-budget 8] \
   [--happy-seeds <required-seeds.json>] [--provenance-report <provenance-report.json>] \
-  [--sut-log-file <FILE>]"
+  [--sut-log-file <FILE>] \
+  [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
+  [--error-detail-field <field>] [--error-detail-contains <substring>]"
 ```
 
 플래그(실제 `BuilderCli.runTrial` 소스 기준):
@@ -68,6 +80,17 @@ enum 불일치, 필수 필드 누락처럼 규칙으로 수리 가능한 실패�
 | `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON, `RequiredSeed[]`) |
 | `--provenance-report` | 아니오 | — | 실패 가드 역매핑에 쓸 `provenance-report.json` |
 | `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
+| `--error-when-present` | 아니오 | (없음 → `StatusOnlyClassifier`) | 콤마 구분 필드 목록. 하나라도 주면 `ErrorEnvelopeClassifier` 사용 |
+| `--semantic-status-field` | 아니오 | `errorCode` | 에러 엔벨로프의 상태 필드명(`--error-when-present`와 함께 씀) |
+| `--error-detail-field` | 아니오 | — | 에러 상세 필드명 |
+| `--error-detail-contains` | 아니오 | — | 에러 상세에 포함돼야 하는 부분 문자열 |
+
+**분류 플래그는 확정 run/build와 반드시 맞춰라.** `ClassifierConfig.from(o)`가 이 4개
+옵션을 읽어 `ResponseClassifier`를 만든다 — 생략하면 항상 `StatusOnlyClassifier`(HTTP
+status만으로 성공/실패 판정)로 떨어진다. 이 SUT가 실제로는 200 OK + 에러 바디(에러
+엔벨로프) 계약을 쓴다면, trial 단계에서 이 플래그들을 빠뜨리면 build가 실패로 볼 응답을
+trial은 성공으로 오판(또는 그 반대)할 수 있다 — build 커맨드에 준 것과 동일한 값을
+넘겨야 판정 일관성이 보장된다.
 
 종료 코드: **0** = 어떤 후보가 성공해 즉시 `promoted/`로 이동함(더 시도하지 않고 끝). **3** =
 이번 호출에서 시도한 후보가 전부 실패(예산 소진 포함) — 시도한 후보들은 `failed/`로
@@ -82,8 +105,13 @@ enum 불일치, 필수 필드 누락처럼 규칙으로 수리 가능한 실패�
 2. **0(성공)**이면 그 즉시 끝 — 해당 후보는 이미 `promoted/`로 이동해 있다. 아래 5번으로.
 3. **3(전부 실패)**이면 `<endpointId>/failed/digest-final.json`을 읽고, 각 실패 후보
    (`<endpointId>/failed/cand-NN/`)의 digest를 순서대로 판독한다:
-   - **`toolSuggestion`이 있으면 그대로 적용한다** — 창작하지 말고, 제안이 가리키는
-     파일(`body.json`/`seed.sql`/`stubs.json`)의 해당 값을 제안값으로 정확히 바꾼다.
+   - **`toolSuggestion`이 있으면 그대로 적용한다** — 창작하지 말고 제안값을 정확히 반영한다.
+     **현재 `FailureDigest.suggestPatch`가 제안을 만드는 조건은 좁다**: `mappedGuard`가
+     NUMERIC 비교(`>`/`>=`/`<`/`<=`)이고 그 가드의 피연산자 중 정확히 하나가 `DB_READ`
+     origin(컬럼 식별 가능)일 때만 산출되며, 그때도 항상 `seed.sql`의 해당 컬럼 값만
+     패치한다(`{"seed.sql": {"column": ..., "value": ...}}`). `body.json`/`stubs.json`을
+     가리키는 `toolSuggestion`은 현재 산출되지 않는다 — 이 조건을 벗어나는 실패는 전부
+     아래 "UNKNOWN 실패" 경로(에이전트 창작)로 간다.
    - **`toolSuggestion`이 없는 UNKNOWN 실패일 때만** 에이전트가 새 값을 창작한다 —
      digest의 응답 바디·`mappedGuard`(있다면)·로그 구간·스택 발췌를 근거로 삼는다.
      `mappedGuard: null`(가드 역매핑 실패)이 일반적으로 나올 수 있음을 전제하고, 그럴
@@ -106,8 +134,11 @@ enum 불일치, 필수 필드 누락처럼 규칙으로 수리 가능한 실패�
 
 trial은 SUT DB 전역 상태(시드 INSERT/DELETE)를 만진다. 한 endpoint의 trial-loop이 끝나기
 전에 **같은 SUT를 대상으로 다른 endpoint의 trial-loop을 동시에 시작하지 마라** — endpoint
-단위로 직렬 진행한다(빌더 자체도 parallelism>1이어도 trial/T1 시드 적용·invoke 구간은
-endpoint 단위 직렬 큐로 처리한다).
+단위로 직렬 진행한다. **이 스킬이 호출하는 독립 `trial` CLI 자체에는 직렬화 락이 없다** —
+`EndpointExplorationRunner`의 정적 락(`TRIPLE_GATE_LOCK`, REQ-017)은 통합 `build` 파이프라인
+내부에서 trial 재확인+확정 run 구간을 감싸는 코드이며, `BuilderCli.runTrial`(이 스킬이 쓰는
+독립 CLI 경로)에는 적용되지 않는다. 즉 여러 endpoint의 trial-loop을 동시에 돌리지 않는
+것은 **전적으로 에이전트(이 스킬을 수행하는 주체)의 책임**이다.
 
 ## PII 금지
 
