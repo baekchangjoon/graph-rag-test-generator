@@ -196,7 +196,9 @@ provenance --sut-src <SUT_SRC_DIR> [--sut-resources <RESOURCES_DIR>] \
 산출 `provenance-report.json`은 `guards[]`(가드 위치·비교 연산자·피연산자별 origin —
 `INPUT`/`DB_READ`/`EXTERNAL_RESPONSE`/`DERIVED`/`UNKNOWN`), `unresolved[]`(정적 해석 실패 —
 `{location, reason: no-classpath|reflection|proxy|multi-impl|depth-cap, targetType}`),
-`unguarded[]`(가드 미사용 필드 + `semanticHint`)를 담는다.
+`unguarded[]`(가드 미사용 필드 + `semanticHint`)를 담는다. `DERIVED` 피연산자(예: `score * 2`)는
+그 파생식이 읽는 입력 리프의 dot-path 목록을 `derivedFrom`에 함께 담는다 — `synthesize-triple`이
+concolic 해를 어느 body 필드에 배치할지 결정하는 근거다(해가 없으면 그 자리는 갭 마커).
 
 ### `synthesize-triple` — 후보 삼중 합성
 
@@ -366,9 +368,12 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
 - **`@Controller` 폼 — 레거시 바인딩 종류**: 평면 스칼라 필드를 넘어 다음 Spring MVC 바인딩 패턴을 커버한다(커버리지 전용, 회귀 0). (1) **다중 커맨드 객체**(`(HelperObj, @Valid Cmd)`): `selectFormCommand`가 첫 후보가 아니라 `@Valid`/`@Validated` 붙은 커맨드를 FORM 커맨드로 선택(없으면 첫 후보 폴백). (2) **중첩 POJO**: 컨버터 없는 바인딩가능 POJO 필드를 `field.sub=v` 평면 점-경로 스칼라로 재귀 전개(`FormBodySynthesizer`; `formEncode`가 비-스칼라를 드롭하므로 중첩 ObjectNode를 두지 않음, 빈-POJO/순환/깊이 가드). (3) **참조 엔티티**(name-`Formatter<E>` / id-`Converter<String,E>` / Spring Data): `ConverterRegistryIndexer`가 전역 컨버티드 타입 + `@InitBinder registerCustomEditor`(컨트롤러-local) + `@Entity`를 수집하고 `classifyFormBindings`가 REFERENCE로 분류, 러너가 백업 테이블(FK `@JoinColumn`→부모 / 정적 `@Table` / `camelToSnake` 우선순위)을 SELECT/seed해 **name 1순위 토큰**으로 reference-aware happy base를 합성하고, name으로 안 열리는 필드(PK 조회 Converter)는 **PK backtrack trial**(`discoveredBy="form-ref-trial"`, budget ≤ `min(req/2,10)`)로 연다. (4) **PropertyEditor**(`@InitBinder`): 그 컨트롤러 핸들러의 필드만 REFERENCE로 스코프(다른 컨트롤러의 동일 타입 필드는 NESTED — 컨트롤러-local 가드). **컬렉션 필드**(`List<Y>`)는 v1 비목표 → 스칼라/skip 폴백. 미해석/후보 실패 시 기존 스칼라/skip 동작으로 폴백(추가 도달만, 회귀 0).
 
 - **삼중 합성(provenance/synthesize-triple/trial) — 알려진 갭(Phase A)**: (1) `DERIVED`(산술·문자열
-  파생) 피연산자는 origin 태깅까지만 완성돼 있고, concolic 해를 실제 body 결정값으로 배치하는
-  합성 로직은 아키텍처상 미해결(다중-DERIVED-가드 리포트에서 배치 대상 필드를 결정적으로 복원할
-  근거 부족) — 해당 갭은 갭 마커로 표면화된다. (2) 저장 CLI 계약(`--triple-store`/
+  파생) 피연산자의 concolic 해 배치는 **해소됐다** — `ValueRef.derivedFrom`(파생 루트 입력 필드
+  목록)을 근거로 `TripleSynthesizer`가 `unguarded` 필드와 동일한 채움 슬롯으로 취급해, 오라클 해가
+  있으면 결정값(예: `score*2==84` → `body.score=42`)을, 없으면(비선형·다변수 등) 갭 마커를 배치한다.
+  다만 `synthesize-triple` **CLI 자체는 아직 `oracle=empty`로 호출**하므로 이 경로는 오라클을
+  주입하는 상위 오케스트레이션(에이전트 스킬)에서만 발현된다(CLI 오라클 플래그 배선은 후속).
+  (2) 저장 CLI 계약(`--triple-store`/
   `--triple-candidates` 기본 경로, e2e fixture 경로)은 배선됐지만, attach 모드에서 실 SUT가
   참조하는 외부 stub WireMock에 attach하는 경로와 `trial`이 `--graph`로 그래프 자산에서
   happy 시드를 자동 로드하는 경로는 아직 없다(현재는 `--happy-seeds` JSON 파일을 직접 줘야 한다).

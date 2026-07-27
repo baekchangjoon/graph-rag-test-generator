@@ -174,7 +174,7 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-032: INPUT을 감싼 산술 파생식이 DERIVED로 태깅(concolic 해 배치는 C2 범위)")
+    @DisplayName("REQ-032: INPUT을 감싼 산술 파생식이 DERIVED + derivedFrom(파생 루트 INPUT 필드)으로 태깅")
     void req032_derivedTagged() {
         ProvenanceReport report = analyzeFixture(
                 "derived",
@@ -186,6 +186,29 @@ class ProvenanceIndexerIT {
                 .as("req.getScore() * 2 전체가 하나의 리프로 DERIVED + javaType 유지로 태깅되어야 한다")
                 .anyMatch(g -> g.operands().stream().anyMatch(v ->
                         v.origin() == Origin.DERIVED && v.javaType() != null));
+
+        assertThat(report.guards())
+                .as("DERIVED 피연산자는 concolic 채널 위임 표시로 파생 루트 INPUT 필드 경로(score)를 "
+                        + "derivedFrom에 담아야 한다 — 합성(C2)이 오라클 해를 배치할 body 필드의 근거")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.DERIVED && List.of("score").equals(v.derivedFrom())));
+    }
+
+    @Test
+    @DisplayName("REQ-032: 다변수 파생식은 모든 파생 루트 INPUT 필드를 derivedFrom에 담는다(단락 없이 양변 분류)")
+    void req032_multiRootDerivedCollectsEveryInputRoot() {
+        ProvenanceReport report = analyzeFixture(
+                "derived",
+                "io.graphrag.fixture.derived.DerivedController",
+                "createNonlinear",
+                3);
+
+        assertThat(report.guards())
+                .as("req.getScore() * req.getFactor()는 좌변만 보고 멈추면 factor가 누락된다 — "
+                        + "derivedFrom은 score와 factor를 모두 담아야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.DERIVED && v.derivedFrom() != null
+                                && v.derivedFrom().containsAll(List.of("score", "factor"))));
     }
 
     @Test

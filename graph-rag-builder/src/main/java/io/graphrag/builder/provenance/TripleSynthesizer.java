@@ -55,17 +55,21 @@ import java.util.Set;
  * {@code "<HTTP메서드> <path>"} 형식이 아니면(class#method 폴백 등) stub을 만들지 않고 notes에 사유를
  * 남긴다.
  *
- * <p><b>후보 cap·정렬(REQ-033):</b> {@code unguarded} 필드마다 갭 마커(미결정) 옵션에 더해
- * {@link InputCandidates}가 제공하는 결정값 옵션들을 더한 뒤 필드별 옵션의 cross product로 후보
- * 조합을 만들고, "결정 필드 수 내림차순 → 정규화 문자열 사전순"으로 정렬해 상위 {@link #CANDIDATE_CAP}개만
- * 반환한다(cand-01=최우선). {@code unguarded}가 없거나 오라클 후보가 없으면 조합은 정확히 1개(기존
- * Task 8 동작과 하위호환).
+ * <p><b>DERIVED concolic 해 배치(REQ-032):</b> 가드 피연산자가 {@link Origin#DERIVED}(예:
+ * {@code score * 2 == 84})이면 그 피연산자 자신은 body의 어느 한 필드가 아니므로 직접 배치할 수 없다.
+ * 대신 {@link ValueRef#derivedFrom}(그 파생식이 읽는 INPUT 리프의 dot-path 목록 — {@code
+ * ProvenanceIndexer}가 태깅)의 각 필드를 아래 {@code unguarded}와 동일한 <b>채움 슬롯</b>으로 취급해,
+ * {@link InputCandidates}에 그 필드의 concolic 해가 있으면 결정값으로, 없으면(비선형·다변수 등 오라클이
+ * 못 푸는 파생) UNKNOWN과 동일한 갭 마커로 배치한다.
+ *
+ * <p><b>후보 cap·정렬(REQ-033):</b> 채움 슬롯({@code unguarded} 필드 + 위 DERIVED 파생 루트 필드)마다
+ * 갭 마커(미결정) 옵션에 더해 {@link InputCandidates}가 제공하는 결정값 옵션들을 더한 뒤 슬롯별 옵션의
+ * cross product로 후보 조합을 만들고, "결정 필드 수 내림차순 → 정규화 문자열 사전순"으로 정렬해 상위
+ * {@link #CANDIDATE_CAP}개만 반환한다(cand-01=최우선). 슬롯이 없거나 오라클 후보가 없으면 조합은 정확히
+ * 1개(기존 Task 8 동작과 하위호환).
  *
  * <p><b>남은 확장 지점(Task 9+ 백로그):</b> {@code &&}/{@code ||} 등 결합 논리 가드의 다중 피연산자
- * 라우팅. {@link InputCandidates} DERIVED 해 배치(REQ-032 잔여 절반)는 {@code ProvenanceIndexer}가
- * DERIVED {@link ValueRef}의 {@code jsonPath}를 의도적으로 비워두므로(REQ-001 unguarded 오탐 방지)
- * 이 클래스만으로는 오라클 해를 어느 body 필드에 배치할지 결정적으로 복원할 수 없다 — ValueRef 스키마
- * 확장 없이는 미해결.
+ * 라우팅.
  * <b>동일 테이블 다중 행(예: from/to 계좌처럼 같은 테이블을 서로 다른 행으로 참조하는 경우)은 현재
  * 테이블당 한 행으로 병합되어 구분되지 않는다 — Task 9+ 백로그(REQ-006 범위에서는 구조 일반화 보류).</b>
  */
@@ -137,8 +141,8 @@ public final class TripleSynthesizer {
      *               사용하므로 직접 참조하지 않지만, unguarded 필드의 body 배치를 추가할 후속 task의
      *               확장 지점으로 시그니처에 유지한다)
      * @param tables seed 대상 물리 스키마 목록(FK 부모 탐색 포함)
-     * @param oracle unguarded 필드의 결정값 후보(REQ-033 조합 생성에 소비). DERIVED 배치(REQ-032 잔여)는
-     *               클래스 Javadoc의 "남은 확장 지점" 참조 — 아직 미해결.
+     * @param oracle 채움 슬롯(unguarded 필드 + DERIVED 파생 루트 필드)의 결정값 후보 — REQ-033 조합
+     *               생성과 REQ-032 DERIVED concolic 해 배치에 소비된다. null이면 전부 갭 마커.
      */
     public List<TripleCandidate> synthesize(ProvenanceReport report, BodyShape shape,
                                             List<TableSchema> tables, InputCandidates oracle) {
@@ -170,26 +174,76 @@ public final class TripleSynthesizer {
 
         List<String> seedSqlStatements = finalizeSeedRows(rowsByTable, tablesByName, notes);
 
-        if (oracle != null && (!oracle.numeric().isEmpty() || !oracle.strings().isEmpty())) {
-            notes.add("InputCandidates 오라클 " + (oracle.numeric().size() + oracle.strings().size())
-                    + "개 필드 후보 보유 — unguarded 필드 조합에 소비(REQ-032 잔여 DERIVED 배치는 미해결, 클래스 Javadoc 참조)");
+        if (oracle != null && (!oracle.numeric().isEmpty() || !oracle.strings().isEmpty()
+                || !oracle.reals().isEmpty())) {
+            notes.add("InputCandidates 오라클 "
+                    + (oracle.numeric().size() + oracle.strings().size() + oracle.reals().size())
+                    + "개 필드 후보 보유 — 채움 슬롯(unguarded + DERIVED 파생 루트) 조합에 소비(REQ-032/REQ-033)");
         }
 
-        return buildCandidates(body, seedSqlStatements, stubMappings, notes, report.unguarded(), oracle);
+        return buildCandidates(body, seedSqlStatements, stubMappings, notes,
+                fillSlots(report, body, notes), oracle);
     }
 
     /**
-     * {@code unguarded} 필드별 옵션(갭 마커 + 오라클 결정값)의 cross product로 후보 조합을 만들고,
-     * "결정 필드 수 내림차순 → 정규화 키 사전순"으로 정렬해 상위 {@link #CANDIDATE_CAP}개를 반환한다
-     * (REQ-033). {@code unguarded}가 비었거나 오라클 후보가 전혀 없으면 조합은 정확히 1개
-     * (Task 8과 동일한 단일 후보 동작 — 기존 테스트 하위호환).
+     * 후보 조합에서 값이 달라지는 "채움 슬롯" 목록: {@code unguarded} 필드(REQ-001/REQ-007) +
+     * DERIVED 피연산자의 파생 루트 INPUT 필드(REQ-032). 가드 라우팅이 이미 {@code body}에 결정값을
+     * 배치한 경로와, 앞서 등록된 슬롯과 중복되는 경로는 제외한다(같은 필드에 두 값을 쓰지 않는다).
+     */
+    private static List<FillSlot> fillSlots(ProvenanceReport report, ObjectNode body, List<String> notes) {
+        List<FillSlot> slots = new ArrayList<>();
+        Set<String> claimed = new LinkedHashSet<>();
+        for (UnguardedField field : report.unguarded()) {
+            if (claimed.add(field.jsonPath())) {
+                slots.add(new FillSlot("unguarded", field.jsonPath(), field.javaType(),
+                        field.semanticHint(), "none"));
+            }
+        }
+        for (GuardFact guard : report.guards()) {
+            for (ValueRef v : guard.operands()) {
+                if (v.origin() != Origin.DERIVED || v.derivedFrom() == null) {
+                    continue;
+                }
+                for (String rootPath : v.derivedFrom()) {
+                    if (bodyHasPath(body, rootPath)) {
+                        notes.add("derived(" + rootPath + ") at " + guard.at()
+                                + " — 다른 가드가 이미 body에 결정값을 배치함, concolic 해 배치 skip");
+                        continue;
+                    }
+                    if (claimed.add(rootPath)) {
+                        slots.add(new FillSlot("derived", rootPath, v.javaType(), "none",
+                                "DERIVED " + guard.op() + " at " + guard.at()));
+                    }
+                }
+            }
+        }
+        return slots;
+    }
+
+    /** dot-path가 이미 body에 배치되어 있는지(가드 라우팅 결과와의 충돌 판별용). */
+    private static boolean bodyHasPath(ObjectNode body, String jsonPath) {
+        return !body.at("/" + jsonPath.replace(".", "/")).isMissingNode();
+    }
+
+    /**
+     * 후보마다 값이 달라질 수 있는 body 한 자리. {@code kind}는 notes trace 라벨("unguarded"/"derived"),
+     * {@code guard}는 갭 마커의 {@code guard:} 필드에 그대로 실린다(REQ-007).
+     */
+    private record FillSlot(String kind, String jsonPath, String javaType, String semanticHint, String guard) {
+    }
+
+    /**
+     * 채움 슬롯(unguarded 필드 + DERIVED 파생 루트 필드)별 옵션(갭 마커 + 오라클 결정값)의 cross
+     * product로 후보 조합을 만들고, "결정 필드 수 내림차순 → 정규화 키 사전순"으로 정렬해 상위
+     * {@link #CANDIDATE_CAP}개를 반환한다(REQ-032/REQ-033). 슬롯이 비었거나 오라클 후보가 전혀
+     * 없으면 조합은 정확히 1개(Task 8과 동일한 단일 후보 동작 — 기존 테스트 하위호환).
      */
     private List<TripleCandidate> buildCandidates(ObjectNode baseBody, List<String> seedSqlStatements,
                                                   List<ObjectNode> stubMappings, List<String> baseNotes,
-                                                  List<UnguardedField> unguarded, InputCandidates oracle) {
+                                                  List<FillSlot> slots, InputCandidates oracle) {
         List<List<FieldOption>> perFieldOptions = new ArrayList<>();
-        for (UnguardedField field : unguarded) {
-            perFieldOptions.add(optionsFor(field, oracle));
+        for (FillSlot slot : slots) {
+            perFieldOptions.add(optionsFor(slot, oracle));
         }
 
         List<List<FieldOption>> combos = crossProductWithSafetyCap(perFieldOptions, baseNotes);
@@ -205,16 +259,17 @@ public final class TripleSynthesizer {
             List<FieldOption> combo = ranked.get(i);
             ObjectNode body = baseBody.deepCopy();
             List<String> notes = new ArrayList<>(baseNotes);
-            for (int f = 0; f < unguarded.size(); f++) {
-                UnguardedField field = unguarded.get(f);
+            for (int f = 0; f < slots.size(); f++) {
+                FillSlot slot = slots.get(f);
                 FieldOption option = combo.get(f);
-                putBodyValue(body, field.jsonPath(), option.value());
-                notes.add((option.decided() ? "unguarded(" + field.jsonPath() + ") -> 오라클 결정값 " + option.value()
-                        : "unguarded(" + field.jsonPath() + ") -> 갭 마커(도출 불가, semanticHint="
-                                + (field.semanticHint() == null ? "none" : field.semanticHint()) + ")"));
+                putBodyValue(body, slot.jsonPath(), option.value());
+                notes.add((option.decided()
+                        ? slot.kind() + "(" + slot.jsonPath() + ") -> 오라클 결정값 " + option.value()
+                        : slot.kind() + "(" + slot.jsonPath() + ") -> 갭 마커(도출 불가, semanticHint="
+                                + (slot.semanticHint() == null ? "none" : slot.semanticHint()) + ")"));
             }
             notes.add(0, "cand-" + String.format("%02d", i + 1) + ": 결정 필드 " + decidedCount(combo) + "/"
-                    + unguarded.size() + "(unguarded 기준)");
+                    + slots.size() + "(unguarded+derived 채움 슬롯 기준)");
             out.add(new TripleCandidate(body, seedSqlStatements, stubMappings, String.join("\n", notes)));
         }
         return out;
@@ -243,14 +298,14 @@ public final class TripleSynthesizer {
         return sb.toString();
     }
 
-    /** unguarded 필드 하나의 옵션 목록: 항상 갭 마커 1개 + 오라클 결정값(있으면, 필드명은 jsonPath의 마지막 세그먼트). */
-    private List<FieldOption> optionsFor(UnguardedField field, InputCandidates oracle) {
+    /** 채움 슬롯 하나의 옵션 목록: 항상 갭 마커 1개 + 오라클 결정값(있으면, 필드명은 jsonPath의 마지막 세그먼트). */
+    private List<FieldOption> optionsFor(FillSlot slot, InputCandidates oracle) {
         List<FieldOption> options = new ArrayList<>();
-        options.add(new FieldOption(gapMarker(field.javaType(), field.semanticHint(), "none"), false));
+        options.add(new FieldOption(gapMarker(slot.javaType(), slot.semanticHint(), slot.guard()), false));
         if (oracle == null) {
             return options;
         }
-        String key = simpleFieldName(field.jsonPath());
+        String key = simpleFieldName(slot.jsonPath());
         List<Object> decided = new ArrayList<>();
         Set<Long> numeric = oracle.numeric().get(key);
         if (numeric != null) {
@@ -259,6 +314,12 @@ public final class TripleSynthesizer {
         Set<String> strings = oracle.strings().get(key);
         if (strings != null) {
             decided.addAll(new java.util.TreeSet<>(strings));
+        }
+        // float/double 필드의 Real solve 해도 동일한 concolic 결정값 채널이다(REQ-032 "해가 있으면
+        // 결정값") — 정수/문자열 해가 이미 cap을 채웠으면 자연히 잘린다.
+        Set<Double> reals = oracle.reals().get(key);
+        if (reals != null) {
+            decided.addAll(new java.util.TreeSet<>(reals));
         }
         int limit = Math.min(decided.size(), MAX_OPTIONS_PER_FIELD);
         for (int i = 0; i < limit; i++) {

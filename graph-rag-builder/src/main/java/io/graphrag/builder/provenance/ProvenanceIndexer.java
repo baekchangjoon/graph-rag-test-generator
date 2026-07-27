@@ -78,8 +78,9 @@ import java.util.Set;
  *       본문에서 추출 불가하면 `"<클라이언트FQN>#<메서드명>"` 폴백) + stubField(accessor가 읽는 필드명).</li>
  *   <li>DERIVED 태깅 — 비교/논리 연산자(AND/OR/EQ/NE/GT/GE/LT/LE)가 아닌 이항연산자(산술·문자열 파생,
  *       예: {@code score * 2})가 INPUT/DB_READ 피연산자를 하나 이상 감싸고 있으면 그 전체 식을 하나의
- *       리프로 분류해 {@link Origin#DERIVED} + javaType(원본 유지)로 태깅한다. concolic 채널로의 실제
- *       해 배치(합성 시 결정값 vs 갭 마커)는 이 클래스 범위 밖 — synthesize-triple(C2)이 담당한다.</li>
+ *       리프로 분류해 {@link Origin#DERIVED} + javaType(원본 유지) + {@code derivedFrom}(그 파생식이
+ *       읽는 INPUT 리프의 dot-path 목록 = concolic 채널 위임 표시)으로 태깅한다. 그 목록을 실제 해
+ *       배치(결정값 vs 갭 마커)로 바꾸는 것은 이 클래스 범위 밖 — synthesize-triple(C2)이 담당한다.</li>
  *   <li>UNKNOWN + MULTI_IMPL — 피연산자가 되는 호출의 선언 타입이 인터페이스이고, 모델 내 그 인터페이스의
  *       구현체가 2개 이상이면 {@link Origin#UNKNOWN}으로 태깅하고 {@link Unresolved}(location,
  *       {@link Reason#MULTI_IMPL}, targetType=인터페이스 FQN)를 리포트의 unresolved 배열에 표면화한다.</li>
@@ -562,9 +563,13 @@ public class ProvenanceIndexer {
         if (external.isPresent()) {
             return external.get();
         }
-        if (expr instanceof CtBinaryOperator<?> bin
-                && derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved, referencedInputPaths)) {
-            return new ValueRef(Origin.DERIVED, null, null, null, null, null, typeNameOf(expr), null, null);
+        if (expr instanceof CtBinaryOperator<?> bin) {
+            Set<String> derivedRoots = new LinkedHashSet<>();
+            if (derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved,
+                    referencedInputPaths, derivedRoots)) {
+                return new ValueRef(Origin.DERIVED, null, null, null, null, null, typeNameOf(expr), null, null,
+                        derivedRoots.isEmpty() ? null : List.copyOf(derivedRoots));
+            }
         }
         Optional<String> multiImplTarget = multiImplTargetType(expr, model);
         if (multiImplTarget.isPresent()) {
@@ -579,30 +584,39 @@ public class ProvenanceIndexer {
         return new ValueRef(Origin.UNKNOWN, null, null, null, null, null, typeNameOf(expr), null, null);
     }
 
-    // ---- DERIVED 태깅(REQ-032, 태깅 절반 — concolic 해 합성 배치는 synthesize-triple(C2) 범위) ----
+    // ---- DERIVED 태깅 + 파생 루트 수집(REQ-032) ----
 
     /**
      * 이항연산자 트리(중첩 산술 포함, 예: {@code (a + b) * 2})를 리프까지 내려가며 각 리프를
-     * {@link #classifyOperand}로 분류해 INPUT 또는 DB_READ 출처가 하나라도 있는지 확인한다. 리프
-     * 분류 과정에서 발생하는 부수효과(예: MULTI_IMPL 미해결 기록, {@code referencedInputPaths} 적재)는
-     * 그 리프가 실제로 미해결/참조된 것이므로 그대로 유지한다 — DERIVED 여부와 무관하게 유효한 기록이다.
+     * {@link #classifyOperand}로 분류해 INPUT 또는 DB_READ 출처가 하나라도 있는지 확인하고, 동시에
+     * INPUT 리프의 jsonPath를 {@code derivedRoots}에 누적한다(REQ-032 — 합성(C2)이 concolic 해를
+     * 배치할 body 필드의 결정 근거). 리프 분류 과정에서 발생하는 부수효과(예: MULTI_IMPL 미해결 기록,
+     * {@code referencedInputPaths} 적재)는 그 리프가 실제로 미해결/참조된 것이므로 그대로 유지한다 —
+     * DERIVED 여부와 무관하게 유효한 기록이다.
+     *
+     * <p>좌/우 피연산자를 {@code ||} 단락 없이 <b>둘 다</b> 분류한다 — {@code score * factor}처럼
+     * 양쪽이 모두 INPUT인 파생식에서 한쪽만 보고 멈추면 {@code derivedRoots}가 불완전해져 나머지
+     * 필드가 합성에서 누락된다.
      */
     private boolean derivesFromTrackedOrigin(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
                                              JpaColumnResolver columnResolver, List<Unresolved> unresolved,
-                                             Set<String> referencedInputPaths) {
+                                             Set<String> referencedInputPaths, Set<String> derivedRoots) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            return derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model, columnResolver,
-                            unresolved, referencedInputPaths)
-                    || derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model, columnResolver,
-                            unresolved, referencedInputPaths);
+            boolean leftTracked = derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model,
+                    columnResolver, unresolved, referencedInputPaths, derivedRoots);
+            boolean rightTracked = derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model,
+                    columnResolver, unresolved, referencedInputPaths, derivedRoots);
+            return leftTracked || rightTracked;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
             return derivesFromTrackedOrigin(un.getOperand(), handlerParams, model, columnResolver, unresolved,
-                    referencedInputPaths);
+                    referencedInputPaths, derivedRoots);
         }
-        Origin origin = classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths)
-                .origin();
-        return origin == Origin.INPUT || origin == Origin.DB_READ;
+        ValueRef leaf = classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths);
+        if (leaf.origin() == Origin.INPUT && leaf.jsonPath() != null) {
+            derivedRoots.add(leaf.jsonPath());
+        }
+        return leaf.origin() == Origin.INPUT || leaf.origin() == Origin.DB_READ;
     }
 
     // ---- UNKNOWN + MULTI_IMPL 태깅(REQ-003) ----
