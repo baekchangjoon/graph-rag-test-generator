@@ -77,16 +77,20 @@ cand-01 (Task 18, REQ-018/REQ-036 부트스트랩): 사람 갭필 승격 — spe
 
 ## 별도로 발견했으나 이 task 범위 밖으로 남기는 갭(shell e2e 실측, 새 REQ-ID 없음)
 
-`e2e/run-e2e.sh` 1차 실행에서 `TransfersPostTest`의 negative-validation 파생 시나리오 2건
-(`s422e422_1`: amount를 999로 mutate해 "잔액부족 422"를 노리는 변이, `s422e422_2`: `items` 필드를
-통째로 drop해 "invalid items 422"를 노리는 변이)이 **404**로 실패했다 — 두 시나리오 모두 생성 코드에
-`scope.jdbc().update(...)` seed 삽입 자체가 없다(`fromAccountId`가 `scope.testId()` 기반 매 테스트
-고유 id라 사전 시드 없이는 항상 계정 미존재 → 404). 이는 `EndpointExplorationRunner`의
-negative-validation/mutation 패스가 "제약 위반 변이"를 만들 때 FK 존재-가드에 필요한 시드 요구사항을
-같이 추적하지 못하는(또는 test-generator의 per-test id 격리와 그 요구사항이 어긋나는) 구조적 갭으로
-보인다 — 이 candidate의 값 조정만으로는 고칠 수 없다(어떤 amount/seed 값을 쓰든 계정 자체가
-없으므로 404가 우선 발생). `EndpointExplorationRunner`/`test-generator`는 이 task의 선언 파일 범위
-밖이라 여기서 고치지 않았다 — 별도 후속 task(신규 REQ 또는 버그 티켓) 필요.
+`e2e/run-e2e.sh` 실행에서 `TransfersPostTest`의 negative-validation 파생 시나리오 2건
+(`s422e422_1`: amount를 base(=1) 대비 +1 경계인 `2`로 mutate해 "잔액부족 422"를 노리는 변이,
+`s422e422_2`: `items` 필드를 통째로 drop해 "invalid items 422"를 노리는 변이)이 **404**로 실패했다 —
+두 시나리오 모두 생성 코드에 `scope.jdbc().update(...)` seed 삽입 자체가 없다(`fromAccountId`가
+`scope.testId()` 기반 매 테스트 고유 id라 사전 시드 없이는 항상 계정 미존재 → 404). 이는
+`EndpointExplorationRunner`의 negative-validation/mutation 패스가 "제약 위반 변이"를 만들 때 FK
+존재-가드에 필요한 시드 요구사항을 같이 추적하지 못하는(또는 test-generator의 per-test id 격리와 그
+요구사항이 어긋나는) 구조적 갭이다 — 원인 코드 경로 자체는 이 task 이전부터 존재했지만,
+`post-api-transfers`가 이 task 이전에는 한 번도 2xx에 도달한 적이 없어(REQ-028 outer red) 이
+negative-validation 상호작용이 지금까지 한 번도 실제 generate+run 사이클로 노출된 적이 없었다 — 즉
+"이미 실패하던 테스트"가 아니라 이 task가 처음 노출시킨 기존 서브시스템 결함이다. 이 candidate의
+값 조정만으로는 고칠 수 없다(어떤 amount/seed 값을 쓰든 계정 자체가 없으므로 404가 우선 발생).
+`EndpointExplorationRunner`/`test-generator`는 이 task의 선언 파일 범위 밖이라 여기서 고치지
+않았다 — **REQ-037**(신규, 🔵 out-of-scope, Phase A 분모 제외)로 추적한다.
 
 ## 동반 아티팩트
 

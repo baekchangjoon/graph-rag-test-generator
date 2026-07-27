@@ -281,6 +281,23 @@
   - Given 실 SUT attach 구성, When 플래그 조합별 시도, Then REQ-023 동작이 실 환경에서 재현됨을 기록한다.
 - 검증 레벨: manual
 
+### REQ-037 — negative-validation 파생 TC의 FK 시드 누락 (생성 TC 404)
+- 유형: Functional / 우선순위: Should / **상태: 🔵 out-of-scope(Phase A 분모 제외)**
+- 설명: `EndpointExplorationRunner`/`NegativeValidationSynthesizer`/test-generator 경로에서
+  negative-validation(제약 위반 mutation) 파생 시나리오에 seed INSERT가 부착되지 않아, FK 의존
+  엔드포인트(예: `xxxId` 필드가 부모 테이블 존재 가드에 걸리는 엔드포인트)의 생성 TC가 (기대하는
+  422 등 대신) 404로 실패한다. Task 18이 `post-api-transfers`의 완주 E2E(REQ-018)를 처음 통과시키며
+  노출시킨 **기존 서브시스템 결함**이다 — 원인 코드 경로 자체는 이 Phase의 삼중 합성 파이프라인이
+  도입되기 전부터 존재했지만, 이 엔드포인트가 이 task 이전에는 한 번도 2xx에 도달한 적이 없어(REQ-028
+  outer red) negative-validation 파생 시나리오가 실제 generate+run 사이클로 실행된 적이 한 번도
+  없었다(상세 재현·근거는 `e2e/triples/post-api-transfers/promoted/cand-01/notes.md` §"별도로
+  발견했으나..." 참조). 삼중 합성 파이프라인(T1/T2/T3) 자체의 결함이 아니므로 이 Phase 분모에서는
+  제외하고(🔵) 별도 후속 task/버그 트래킹으로 넘긴다.
+- 수용기준:
+  - Given FK 의존 엔드포인트의 negative-validation 파생 TC, When 생성 TC 실행, Then 선언된
+    `requiredSeeds`가 해당 TC에 부착되어 기대 상태코드(예: 422)가 재현된다.
+- 검증 레벨: E2E black-box (생성 TC 실행)
+
 ## 추적 매트릭스
 
 > 선행 의존: fixture를 Given으로 쓰는 테스트(REQ-001/005/006/013/018/020/034 등)는 **REQ-028이
@@ -324,6 +341,7 @@
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🔴 planned |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🔴 planned |
+| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | (후속 task/버그 트래킹) | E2E black-box | 🔵 out-of-scope[^req037-discovered-by-task18] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
@@ -440,25 +458,30 @@ seed.sql이 아니라 이 제네릭 기본값이었다. **수정:** candidate의
 재실행 후 `s201_1`(및 파생 변이 `s500e500_1/2`, `s404e404_1`)이 모두 GREEN으로 전환됐다(상세 트레이스는
 `e2e/triples/post-api-transfers/promoted/cand-01/notes.md`).
 
-**미해결로 남기는 잔여 실패(REQ-018 범위 밖, 새 REQ-ID 없음):** 같은 실행에서 negative-validation
-파생 변이 2건 — `s422e422_1`(amount를 999로 mutate해 "잔액부족 422"를 노리는 변이),
-`s422e422_2`(`items` 필드를 통째로 drop해 "invalid items 422"를 노리는 변이) — 은 여전히 **404**로
-실패한다(`tests=85, failures=2`). 두 시나리오 모두 생성 코드에 `scope.jdbc().update(...)` seed
-삽입 자체가 없다(`fromAccountId`가 `scope.testId()` 기반 매 테스트 고유 id라 사전 시드 없이는 항상
-계정 미존재 → 404) — candidate의 값 조정만으로는 고칠 수 없다(어떤 값을 쓰든 계정 자체가 없어
-404가 먼저 발생). `EndpointExplorationRunner`의 negative-validation/mutation 패스가 "제약 위반
-변이"를 만들 때 FK 존재-가드에 필요한 시드 요구사항을 함께 추적하지 못하는(또는 test-generator의
-per-test id 격리와 어긋나는) 구조적 갭으로 보이며, `EndpointExplorationRunner`/`test-generator`는
-이 task의 선언 파일 범위(e2e fixture + `run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이라 여기서
-고치지 않았다 — **별도 후속 task(신규 REQ 또는 버그 티켓) 필요**로 명시적으로 남긴다.
+**REQ-037로 추적하는 잔여 실패(REQ-018 범위 밖, 이 diff의 회귀 아님):** 같은 실행에서
+negative-validation 파생 변이 2건 — `s422e422_1`(amount를 base(=1) 대비 +1 경계인 `2`로 mutate해
+"잔액부족 422"를 노리는 변이), `s422e422_2`(`items` 필드를 통째로 drop해 "invalid items 422"를
+노리는 변이) — 은 여전히 **404**로 실패한다(`tests=85, failures=2`). 두 시나리오 모두 생성 코드에
+`scope.jdbc().update(...)` seed 삽입 자체가 없다(`fromAccountId`가 `scope.testId()` 기반 매 테스트
+고유 id라 사전 시드 없이는 항상 계정 미존재 → 404) — candidate의 값 조정만으로는 고칠 수 없다(어떤
+값을 쓰든 계정 자체가 없어 404가 먼저 발생). `EndpointExplorationRunner`의 negative-validation/
+mutation 패스가 "제약 위반 변이"를 만들 때 FK 존재-가드에 필요한 시드 요구사항을 함께 추적하지
+못하는(또는 test-generator의 per-test id 격리와 어긋나는) 구조적 갭이다. **정확한 표현(코드리뷰
+정밀화):** 이 결함이 있는 코드 경로 자체는 이 task 이전부터(삼중 합성 파이프라인 도입 이전부터)
+존재했지만, "이미 실패하던 테스트"였던 것은 아니다 — `TransfersPostTest`/`s422e422_1`/`s422e422_2`는
+base에 아예 존재하지 않았다(REQ-028 outer red로 `post-api-transfers`가 한 번도 2xx에 도달하지 못해
+negative-validation 파생 시나리오가 실제 generate+run 사이클로 실행된 적이 없었다). 즉 **이 task가
+처음 노출시킨, 원인 코드는 기존에 있던 서브시스템 결함**이다. `EndpointExplorationRunner`/
+`test-generator`는 이 task의 선언 파일 범위(e2e fixture + `run-e2e.sh` 배선 + `TriplePromotionE2E`)
+밖이라 여기서 고치지 않았다 — **REQ-037**(신규, 🔵 out-of-scope, Phase A 분모 제외)로 추적한다.
 
 **REQ-018 판정:** 수용기준이 요구하는 것은 "대상 EP의 2xx ExploredPath와 (그) 생성 TC green"이며,
 이는 in-process(`TriplePromotionE2E`, 2/2 GREEN)와 shell 기반 실 e2e(`TransfersPostTest.s201_1`
-GREEN, 실 docker-compose 스택) 양쪽에서 독립적으로 확인됐다 — REQ-018 자체는 🟢. 다만 같은 실행에
-포함된 negative-validation 파생 변이 2건은 위 별도 갭으로 실패 중이며, `e2e/run-e2e.sh` 전체 스위트는
-현재 `tests=85 failures=2`로 **100% green이 아니다** — PR 게이트("전체 e2e 스위트 무회귀")를
-주장하려면 이 잔여 갭의 후속 조치(수정 또는 명시적 known-issue 처리)가 필요하다는 점을
-투명하게 남긴다.
+GREEN, 실 docker-compose 스택) 양쪽에서 독립적으로 확인됐다 — REQ-018 자체는 🟢(코디네이터 리뷰
+Approved: "REQ-018 완주가 산출물로 독립 검증됨, 실패 2건은 이 diff의 회귀 아님"). 같은 실행에
+포함된 negative-validation 파생 변이 2건은 REQ-037로 별도 추적되며(🔵, Phase A 분모 제외),
+`e2e/run-e2e.sh` 전체 스위트는 현재 `tests=85 failures=2`이지만 그 2건은 REQ-037의 기지(旣知) 결함
+범위이므로 REQ-018/삼중 합성 파이프라인 자체의 회귀로 보지 않는다.
 
 [^req036-task18-partial]: `[^req036-task12-partial]`이 남긴 3항목 중 **(c) e2e fixture `promoted/`
 커밋 경로**는 이 task가 완료했다 — `e2e/triples/post-api-transfers/{base,promoted}/cand-01` +
@@ -484,6 +507,13 @@ leafPath 전체 일치(기존 동작, 회귀 없음) 외에 "앞쪽부터 자라
 여전히 reject 확인)를 추가했다 — 기존 13개 테스트 포함 `TripleGateIT` 15/15, `TripleSynthesizerIT`
 8/8 GREEN(회귀 없음).
 
+**알려진 한계(후속 보강 대상, 코드리뷰 Minor):** 이 완화는 top-level 접두사 일치만 확인할 뿐, known
+top-level 필드 **아래의 중첩 필드명 자체는 무검증**이다 — `BodyShape`가 `List<DTO>` 원소의 중첩
+구조(필드명·타입) 정보를 전혀 갖고 있지 않으므로(`BodyShapeExtractor.flatten()`이 원소까지
+전개하지 않기 때문, 위 본문 참조), `items.anyRandomField` 같은 값도 이 게이트만으로는 막지 못한다.
+근본 해결에는 `BodyShapeExtractor`가 컬렉션 원소 타입까지 전개하는 것(또는 동등한 원소 스키마 소스
+도입)이 필요하며, 이는 이 task의 선언 파일 범위 밖이라 후속 보강 대상으로 남긴다.
+
 [^req009-e2e-confirmed]: Task 18의 `TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath`가
 실 SUT를 대상으로 한 완주 E2E에서 배열 원소 내부(`items[0].sku`/`items[0].qty`) 마커 위치에 사람이
 채운 스칼라 값(`SKU-001`/`2`)이 base와의 마커-diff를 통과해 채택됨을 추가로 확인했다 — 기존
@@ -491,13 +521,29 @@ leafPath 전체 일치(기존 동작, 회귀 없음) 외에 "앞쪽부터 자라
 원소 내부 마커라는 구조적 변형까지 실 SUT E2E 레벨에서 검증된 것을 반영한다(새 REQ-ID 아님 — 기존
 REQ-009 커버리지 보강).
 
-Coverage: 31/36 green (86%), 2 partial(🟡 REQ-032, REQ-036) — target 100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢 전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경) 했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다.
+[^req037-discovered-by-task18]: Task 18이 `post-api-transfers`의 REQ-018 완주 E2E(`e2e/run-e2e.sh`)를
+처음으로 끝까지 실행하면서 발견했다 — `TransfersPostTest`의 negative-validation 파생 시나리오
+2건(`s422e422_1`: amount를 base(=1) 대비 +1 경계인 `2`로 mutate, `s422e422_2`: `items` 필드 drop)이
+생성 코드에 FK 부모 행 seed INSERT가 붙지 않아 404로 실패한다(기대는 422). **정확한 성격 규정:**
+원인이 되는 `EndpointExplorationRunner`/`NegativeValidationSynthesizer`/test-generator 시드 추적
+경로 자체는 이 Phase의 삼중 합성 파이프라인(T1/T2/T3) 도입 이전부터 존재했지만, "이미 실패하던
+테스트"였던 적은 없다 — `TransfersPostTest` 클래스 자체가 이 task 이전에는 존재하지 않았다
+(`post-api-transfers`가 REQ-028 outer red로 한 번도 2xx에 도달한 적이 없어 test-generator가 이
+엔드포인트의 negative-validation 시나리오를 generate+run한 적이 한 번도 없었다). 즉 **원인 코드는
+기존 서브시스템에 있었지만 그 결함을 최초로 관측 가능하게 만든 것은 Task 18**이다. 코디네이터
+리뷰에서 이 잔여 실패를 "known-issue로 묵인"하지 않고 REQ-037로 명시 추적하기로 결정했다 — 삼중
+합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
+간주하지 않는다(코디네이터 리뷰: Approved).
 
-**알려진 잔여 이슈(PR 게이트 주의, 새 REQ-ID 아님):** `e2e/run-e2e.sh` 전체 실행 시 `TransfersPostTest`의
+Coverage: 31/36 green (86%), 2 partial(🟡 REQ-032, REQ-036) — target 100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C 및 신설 REQ-037: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢 전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경) 했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다. Task 18이 이 과정에서 처음 노출시킨 별도 서브시스템 결함은 신규 **REQ-037**(🔵 out-of-scope)로 분리 추적한다(분모 영향 없음).
+
+**REQ-037(알려진 잔여 이슈, PR 게이트 주의):** `e2e/run-e2e.sh` 전체 실행 시 `TransfersPostTest`의
 negative-validation 파생 변이 2건(`s422e422_1`/`s422e422_2`)이 404로 실패한다(`tests=85 failures=2`) —
-REQ-018 자체(2xx ExploredPath + 그 생성 TC green)는 GREEN이지만, `EndpointExplorationRunner`/
-test-generator의 negative-validation 시드 추적 구조적 갭(위 REQ-018 각주 참조)으로 전체 e2e 스위트는
-100% green이 아니다. PR 오픈 전 별도 조치(수정 또는 명시적 known-issue 처리) 필요.
+REQ-018 자체(2xx ExploredPath + 그 생성 TC green)는 GREEN이며 코디네이터 리뷰로 Approved 처리됐다
+(이 diff의 회귀가 아님). `EndpointExplorationRunner`/test-generator의 negative-validation 시드
+추적 구조적 갭(REQ-037, 위 REQ-018 각주 참조)으로 전체 e2e 스위트는 100% green이 아니지만, 이는
+삼중 합성 파이프라인(T1/T2/T3) 자체의 결함이 아니라 이 task가 처음 노출시킨 별도의 기존
+서브시스템 결함이므로 Phase A 완료 정의(REQ-018)와 분리해 REQ-037로 후속 트래킹한다.
 
 [^grb-trial-wired]: `GRB_TRIAL=off` 스위치는 Task 14(게이트 배선)까지 문서(design spec/plan)에만
 명시되고 실제로는 `EndpointExplorationRunner`에 배선돼 있지 않았다(다른 `GRB_*` ablation 스위치 —
