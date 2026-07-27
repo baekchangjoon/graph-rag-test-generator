@@ -66,11 +66,11 @@ public record BuildConfig(
          */
         long sqlAwaitMs,
         /**
-         * REQ-018/019/020/035: {@code --triple-candidates <dir>}(nullable). 지정 시 non-attach
-         * explore 루프가 base happy invoke FAILURE인 endpoint에서 이 루트 아래
-         * {@code <endpointId>/promoted/cand-NN}을 재확인·소비한다(design spec §3.2). attach 모드는
-         * REQ-023/024 이중 opt-in 미구현이라 이 값을 항상 무시한다(BuilderCli.explore가 attach 시
-         * null로 넘김).
+         * REQ-018/019/020/035: {@code --triple-candidates <dir>}(nullable). 지정 시 explore 루프가
+         * base happy invoke FAILURE인 endpoint에서 이 루트 아래 {@code <endpointId>/promoted/cand-NN}을
+         * 재확인·소비한다(design spec §3.2). Task 15부터 attach 모드에도 그대로 배선된다 — attach
+         * 안전(REQ-023/024/025 이중 opt-in·역-DELETE 차단·스텁 skip)은 {@link BuilderCli.AttachConfig}의
+         * {@code allowSeed}/{@code confirmNonProduction}을 통해 {@code TrialRunner}가 판정한다.
          */
         Path tripleCandidatesRoot) {
 

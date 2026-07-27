@@ -47,6 +47,20 @@ import java.util.UUID;
  * 정리한다(다음 후보 시도가 DB 잔여 상태와 겹치지 않게). 승격(promoted/로 이동) 자체는 이 클래스의
  * 책임이 아니다 — {@link #runCandidate}는 판정 결과만 반환하고, 실제 {@link TripleStore#promote}/
  * {@link TripleStore#fail} 호출은 호출자(trial CLI 루프)가 예산 로직과 함께 수행한다.
+ *
+ * <p><b>attach 안전 게이트(REQ-023/024/025, Task 15):</b> {@code attachMode}가 true인 생성자로
+ * 만들어지면(attach 여부는 호출자가 기존 환경 기술자 — {@code AttachedComposeEnvironment} 사용
+ * 여부 — 로 판정해 넘긴다) 세 가지가 비-attach 경로와 달라진다:
+ * <ol>
+ *   <li>REQ-023 — {@code attachAllowSeedFlag}와 {@code confirmNonProductionFlag}가 <b>둘 다</b>
+ *       true여야 후보 seed를 적용한다. 하나라도 false면 DB 쓰기를 전혀 시도하지 않고(happy 시드
+ *       정리조차 skip) 사유가 담긴 실패 결과를 즉시 반환한다.</li>
+ *   <li>REQ-024 — (seed가 실제로 적용된 경우) 종료 시 역-DELETE가 하나라도 실패하면 초기 invoke
+ *       판정과 무관하게 그 후보의 승격을 차단하고, 잔존 (table, pk) 목록을 담은 digest를 반환한다.</li>
+ *   <li>REQ-025 — {@code httpCapture}의 null 여부와 무관하게 stub 등록을 전혀 시도하지 않는다(attach
+ *       WireMock 라우팅은 Phase C 소관) — 사유만 로그로 남긴다.</li>
+ * </ol>
+ * attachMode=false(기본 생성자)면 이 문단 전체가 no-op이고 기존 동작과 완전히 동일하다(회귀 0).
  */
 public final class TrialRunner {
 
@@ -71,19 +85,43 @@ public final class TrialRunner {
     private final ResponseClassifier classifier;
     private final SutHandle sut;                   // 로그 슬라이스(REQ-014 stackExcerpt)
     private final TrialInvoker invoker;
+    private final boolean attachMode;                    // REQ-023/024/025 — attach 안전 게이트 활성 여부
+    private final boolean attachAllowSeedFlag;            // --attach-allow-seed 존재 여부
+    private final boolean confirmNonProductionFlag;       // --confirm-non-production 존재 여부
 
     public TrialRunner(Connection connection, DbConfig.Type dbType, HttpCaptureServer httpCapture,
                        ResponseClassifier classifier, SutHandle sut, TrialInvoker invoker) {
+        this(connection, dbType, httpCapture, classifier, sut, invoker, false, false, false);
+    }
+
+    /**
+     * REQ-023/024/025 attach 안전 게이트를 아는 생성자. {@code attachMode=false}면
+     * {@code attachAllowSeedFlag}/{@code confirmNonProductionFlag}는 무시되고 기존(6-arg 생성자)
+     * 동작과 완전히 동일하다.
+     */
+    public TrialRunner(Connection connection, DbConfig.Type dbType, HttpCaptureServer httpCapture,
+                       ResponseClassifier classifier, SutHandle sut, TrialInvoker invoker,
+                       boolean attachMode, boolean attachAllowSeedFlag, boolean confirmNonProductionFlag) {
         this.connection = connection;
         this.dbType = dbType;
         this.httpCapture = httpCapture;
         this.classifier = classifier;
         this.sut = sut;
         this.invoker = invoker;
+        this.attachMode = attachMode;
+        this.attachAllowSeedFlag = attachAllowSeedFlag;
+        this.confirmNonProductionFlag = confirmNonProductionFlag;
     }
 
     public TrialOutcome runCandidate(Endpoint endpoint, Path candDir, List<RequiredSeed> happySeeds,
                                      ProvenanceReport report) throws Exception {
+        // REQ-023: attach 이중 opt-in 미충족이면 happy 시드 정리조차 시도하지 않는다(DB 부작용 0) —
+        // attach 환경은 실운영에 인접할 수 있어 "일단 정리하고 세부만 skip"조차 위험할 수 있다.
+        if (attachMode && !attachSeedAllowed()) {
+            String reason = attachSeedGateReason();
+            log.warn("attach seed gate closed for {} (REQ-023, candidate skipped): {}", endpoint.id(), reason);
+            return new TrialOutcome(false, -2, FailureDigest.forAttachSeedGateClosed(reason));
+        }
         resetHappySeeds(happySeeds);
         // ②/③ 모두 try 안에서 수행한다 — 다중 INSERT 중 후반 statement가 던지거나 stubs.json이
         // malformed여도 finally가 반드시 실행돼야 한다(부분 삽입분 누수 방지). inserted는 try 밖에서
@@ -91,6 +129,12 @@ public final class TrialRunner {
         // 도중에 던져도 그 시점까지 성공한 행은 리스트에 남아 정리 대상이 된다.
         List<InsertedRow> inserted = new ArrayList<>();
         UUID stubId = null;
+        TrialOutcome outcome;
+        // remainingRows는 try 밖에서 선언해, finally(예외 유무 무관 항상 실행)가 채운 값을 try-finally
+        // 블록 이후에도 읽을 수 있게 한다 — try 안에서 예외가 던져지면 이 지점 이후 코드는 실행되지
+        // 않고 그대로 전파되므로(REQ-013 기존 회귀와 동일), REQ-024 승격 차단은 "예외 없이 정상
+        // 완료됐지만 cleanup만 실패한" 경우에만 적용된다.
+        List<InsertedRow> remainingRows = new ArrayList<>();
         try {
             insertCandidateSeed(candDir.resolve("seed.sql"), inserted);
             stubId = registerCandidateStub(candDir.resolve("stubs.json"));
@@ -99,20 +143,48 @@ public final class TrialRunner {
             InvocationOutcome invocation = invoker.invoke(endpoint, body);
             Outcome classified = classifier.classify(invocation.status(), invocation.response());
             if (classified.kind() == Outcome.Kind.SUCCESS) {
-                return new TrialOutcome(true, invocation.status(), null);
+                outcome = new TrialOutcome(true, invocation.status(), null);
+            } else {
+                long logEnd = sut.logOffset();
+                String logExcerpt = sut.readLogRange(logStart, logEnd);
+                String stackExcerpt = extractStackFrames(logExcerpt);
+                FailureDigest digest = FailureDigest.of(invocation.status(), classified.kind(), body,
+                        invocation.response(), logExcerpt, stackExcerpt, report);
+                outcome = new TrialOutcome(false, invocation.status(), digest);
             }
-            long logEnd = sut.logOffset();
-            String logExcerpt = sut.readLogRange(logStart, logEnd);
-            String stackExcerpt = extractStackFrames(logExcerpt);
-            FailureDigest digest = FailureDigest.of(invocation.status(), classified.kind(), body,
-                    invocation.response(), logExcerpt, stackExcerpt, report);
-            return new TrialOutcome(false, invocation.status(), digest);
         } finally {
             if (stubId != null) {
                 httpCapture.removeStub(stubId);
             }
-            deleteInsertedRows(inserted);
+            remainingRows.addAll(deleteInsertedRows(inserted));
         }
+        // REQ-024: attach에서 역-DELETE가 하나라도 실패하면(전형적으로 invoke 중 SUT가 만든 FK 자식
+        // 행) 원래 판정과 무관하게 승격을 차단하고 잔존 행을 보고한다.
+        if (attachMode && !remainingRows.isEmpty()) {
+            List<String> rowDescriptions = remainingRows.stream()
+                    .map(r -> r.table() + "." + r.pkColumn() + "=" + r.pkLiteralSql())
+                    .toList();
+            log.warn("attach cleanup left row(s) behind for {} (REQ-024, promotion blocked): {}",
+                    endpoint.id(), rowDescriptions);
+            return new TrialOutcome(false, outcome.status(), FailureDigest.forAttachCleanupBlocked(rowDescriptions));
+        }
+        return outcome;
+    }
+
+    /** REQ-023: 이중 opt-in(둘 다 true)이어야 attach에서 seed 적용을 허용한다. */
+    private boolean attachSeedAllowed() {
+        return attachAllowSeedFlag && confirmNonProductionFlag;
+    }
+
+    private String attachSeedGateReason() {
+        List<String> missing = new ArrayList<>();
+        if (!attachAllowSeedFlag) {
+            missing.add("--attach-allow-seed");
+        }
+        if (!confirmNonProductionFlag) {
+            missing.add("--confirm-non-production");
+        }
+        return "attach seed gate closed(REQ-023 이중 opt-in 미충족) — missing: " + String.join(", ", missing);
     }
 
     /** ① happy 시드 정리 — reverse-order(child→parent) DELETE만(재삽입 없음, resetSeeds와 구분). */
@@ -170,8 +242,14 @@ public final class TrialRunner {
         }
     }
 
-    /** 후보가 삽입한 행을 역순으로 삭제한다(다음 trial 시도와 상태가 겹치지 않도록). best-effort. */
-    private void deleteInsertedRows(List<InsertedRow> rows) {
+    /**
+     * 후보가 삽입한 행을 역순으로 삭제한다(다음 trial 시도와 상태가 겹치지 않도록). best-effort —
+     * 개별 행 삭제 실패는 로그만 남기고 계속 진행한다. 삭제에 실패한 행은 반환값에 담아 호출자가
+     * (attach 모드에서는 REQ-024 승격 차단으로) 판단할 수 있게 한다. 비-attach 경로는 이 반환값을
+     * 사용하지 않으므로(기존과 동일하게 로그만으로 관측) 회귀가 없다.
+     */
+    private List<InsertedRow> deleteInsertedRows(List<InsertedRow> rows) {
+        List<InsertedRow> remaining = new ArrayList<>();
         for (int i = rows.size() - 1; i >= 0; i--) {
             InsertedRow r = rows.get(i);
             try (Statement st = connection.createStatement()) {
@@ -179,8 +257,10 @@ public final class TrialRunner {
             } catch (Exception e) {
                 log.warn("trial candidate seed cleanup failed: {}.{}={}",
                         r.table(), r.pkColumn(), r.pkLiteralSql(), e);
+                remaining.add(r);
             }
         }
+        return remaining;
     }
 
     /**
@@ -189,8 +269,18 @@ public final class TrialRunner {
      * 반환). 빈 객체 판정은 파싱된 {@link JsonNode#isEmpty()}로 한다 — {@code writerWithDefaultPrettyPrinter}가
      * 실제로는 {@code "{ }"}(공백 포함)를 산출하므로 원문 문자열 정확 일치({@code "{}"})는 오탐(실제
      * 빈 stub을 "내용 있음"으로 오판)을 낸다.
+     *
+     * <p>REQ-025: attach 모드에서는 {@code httpCapture}의 null 여부와 무관하게 이 메서드가 stub 등록을
+     * 전혀 시도하지 않는다 — attach 환경이 실제로 쓰는 외부 stub WireMock으로의 라우팅은 Phase C
+     * 소관이라, 여기서 임의로 candidate stub을 등록하면 그 attach 인스턴스의 실제 외부 의존성 응답을
+     * 예측 불가하게 가로챌 위험이 있다.
      */
     private UUID registerCandidateStub(Path stubsJsonFile) throws Exception {
+        if (attachMode) {
+            log.info("attach mode: stub registration skipped for {} "
+                    + "(REQ-025, attach WireMock routing is Phase C scope)", stubsJsonFile);
+            return null;
+        }
         if (httpCapture == null || !Files.exists(stubsJsonFile)) {
             return null;
         }

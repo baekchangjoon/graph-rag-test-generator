@@ -38,10 +38,14 @@ import java.util.regex.Pattern;
  * 조건이 참일 때 실패(throw/4xx)로 이어진다고 가정한다 — {@code GuardFact}가 then/else 극성을 기록하지
  * 않으므로(Task 8 minor-deferred) 반대 극성 SUT에서는 제안이 부정확할 수 있다(best-effort, 정확성 보장 아님).
  * 반대편 값을 구할 수 없으면(리터럴도 없고 jsonPath도 candidateBody에 없으면) 제안 없이 {@code null}이다.
+ *
+ * <p><b>attachRemainingRows(REQ-024):</b> attach 안전 게이트가 역-DELETE 실패로 후보 승격을 차단할 때만
+ * 채워지는 "(table.pkColumn=literal)" 형식 문자열 목록 — 그 외 모든 경로에서는 빈 리스트다.
  */
 public record FailureDigest(int status, String outcomeKind, JsonNode responseBody,
                             String logExcerpt, String stackExcerpt,
-                            String mappedGuard, ObjectNode toolSuggestion) {
+                            String mappedGuard, ObjectNode toolSuggestion,
+                            List<String> attachRemainingRows) {
 
     private static final Pattern STACK_FRAME =
             Pattern.compile("at\\s+[\\w.$]+\\.[\\w$<>]+\\(([^():]+):(\\d+)\\)");
@@ -57,7 +61,7 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
         String mappedGuardId = guard == null ? null : (guard.op() + "@" + guard.at());
         ObjectNode suggestion = guard == null ? null : suggestPatch(guard, candidateBody);
         return new FailureDigest(status, outcomeKind.name(), responseBody, logExcerpt, stackExcerpt,
-                mappedGuardId, suggestion);
+                mappedGuardId, suggestion, List.of());
     }
 
     /**
@@ -71,7 +75,30 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
         java.io.StringWriter sw = new java.io.StringWriter();
         cause.printStackTrace(new java.io.PrintWriter(sw));
         String logExcerpt = (context == null ? "" : context + ": ") + cause;
-        return new FailureDigest(-1, "ERROR", null, logExcerpt, sw.toString(), null, null);
+        return new FailureDigest(-1, "ERROR", null, logExcerpt, sw.toString(), null, null, List.of());
+    }
+
+    /**
+     * REQ-023: attach 이중 opt-in({@code --attach-allow-seed}·{@code --confirm-non-production})이
+     * 충족되지 않아 이 후보의 {@code seed.sql} 적용 자체를 시도하지 않았을 때(기술적 가드,
+     * DB/HTTP 부작용 0). {@code status=-2}(sentinel, HTTP 상태 아님)로 invoke가 아예 발생하지
+     * 않았음을 표시한다.
+     */
+    public static FailureDigest forAttachSeedGateClosed(String reason) {
+        return new FailureDigest(-2, "ATTACH_SEED_GATE_CLOSED", null, reason, null, null, null, List.of());
+    }
+
+    /**
+     * REQ-024: attach에서 후보가 삽입한 행의 역-DELETE가 하나 이상 실패해(전형적으로 그 사이 SUT가
+     * 만든 FK 자식 행) 잔존 행이 남았을 때. 후보는 초기 invoke 판정과 무관하게 승격이 차단되고,
+     * {@code attachRemainingRows}에 잔존 (table.pkColumn=literal) 목록을 담는다 — 운영자가 수동
+     * 정리할 대상을 그대로 보고한다. {@code status=-3}(sentinel).
+     */
+    public static FailureDigest forAttachCleanupBlocked(List<String> remainingRows) {
+        String logExcerpt = "attach reverse-DELETE cleanup failed; remaining row(s) require manual cleanup: "
+                + remainingRows;
+        return new FailureDigest(-3, "ATTACH_CLEANUP_BLOCKED", null, logExcerpt, null, null, null,
+                List.copyOf(remainingRows));
     }
 
     static GuardFact mapToGuard(String stackExcerpt, JsonNode responseBody, String logExcerpt,

@@ -146,6 +146,8 @@ public final class BuilderCli {
                     dbConfig.dbName(), dbConfig.user(), dbConfig.password());
         }
 
+        // REQ-023: attach seed 적용의 이중 opt-in(기술적 가드) — 둘 다 있어야 활성. 값 없는 존재-플래그
+        // (--no-incremental 등과 동일 관례).
         AttachConfig attach = options.containsKey("--attach")
                 ? new AttachConfig(
                         Path.of(sutComposeStr),
@@ -157,7 +159,9 @@ public final class BuilderCli {
                         options.get("--kafka-bootstrap"),
                         options.getOrDefault("--health-path", "/actuator/health"),
                         Integer.parseInt(options.getOrDefault("--ready-timeout", "120")),
-                        parseCsv(options.get("--capture-services")))
+                        parseCsv(options.get("--capture-services")),
+                        options.containsKey("--attach-allow-seed"),
+                        options.containsKey("--confirm-non-production"))
                 : null;
 
         AuthConfig authConfig = options.containsKey("--auth-login-path")
@@ -952,6 +956,13 @@ public final class BuilderCli {
                 // REQ-012: handler→reachable 캐시. 병렬 워커가 computeIfAbsent로 공유 → ConcurrentHashMap.
                 final Map<String, Set<Map.Entry<String, String>>> sharedReachableCache =
                         new java.util.concurrent.ConcurrentHashMap<>();
+                // REQ-023/024/025: attach 여부는 기존 환경 기술자(AttachedComposeEnvironment 사용 여부)로
+                // 판정한다 — config.attach()!=null과 항상 동치이지만, "환경이 실제로 무엇인가"를 직접
+                // 근거로 삼는다(설정값이 아니라 실제 배선된 인스턴스 타입으로 판정).
+                final boolean sharedAttachMode = env instanceof AttachedComposeEnvironment;
+                final boolean sharedAttachAllowSeed = config.attach() != null && config.attach().allowSeed();
+                final boolean sharedConfirmNonProduction =
+                        config.attach() != null && config.attach().confirmNonProduction();
 
                 // workerTask: 엔드포인트 1개를 자기 Connection으로 탐색해 EndpointResult 반환
                 java.util.function.Function<Endpoint, EndpointExplorationRunner.EndpointResult> workerTask =
@@ -994,8 +1005,11 @@ public final class BuilderCli {
                                 io.graphrag.builder.capture.egress.EgressCollector.forMode(env), stringLiteralsByDto,
                                 sharedTraceParentRef,
                                 io.graphrag.builder.run.ErrorContractDescriptor.fromClassifierConfig(config.classifierConfig()),
-                                // REQ-018/019/020/035: attach 모드는 REQ-023/024 이중 opt-in 미구현이라 항상 비활성.
-                                config.attach() == null ? config.tripleCandidatesRoot() : null);
+                                // REQ-018/019/020/035: attach에서도 이제 게이트를 그대로 배선한다 —
+                                // REQ-023/024/025 안전(이중 opt-in·역-DELETE 차단·스텁 skip)은 TrialRunner
+                                // 자체가 attachMode/allowSeed/confirmNonProduction으로 판정한다.
+                                config.tripleCandidatesRoot(),
+                                sharedAttachMode, sharedAttachAllowSeed, sharedConfirmNonProduction);
 
                         // REQ-012: handler당 reachable 집합(cross-class 귀속). 병렬 워커 공유 → ConcurrentHashMap.
                         // computeIfAbsent는 키별 1회 실행(실행 스레드의 workerSpoon 사용) — Spoon 재빌드 없이 traversal만.
@@ -1127,7 +1141,11 @@ public final class BuilderCli {
                                int appContainerPort, int appHostPort, int coverageHostPort,
                                String jdbcUrl, String kafkaBootstrap,
                                String healthPath, int readyTimeoutSeconds,
-                               java.util.List<String> captureServices) {}
+                               java.util.List<String> captureServices,
+                               /** REQ-023: --attach-allow-seed 존재 여부(이중 opt-in 중 1개). */
+                               boolean allowSeed,
+                               /** REQ-023: --confirm-non-production 존재 여부(이중 opt-in 중 1개). */
+                               boolean confirmNonProduction) {}
 
     /** docs/22 Manual-Archive Seed: 수동 작성 ExploredPath 병합 (id 충돌 시 수동본 우선). */
     private static void mergeManualPaths(Path dir, List<ExploredPath> paths) throws Exception {
