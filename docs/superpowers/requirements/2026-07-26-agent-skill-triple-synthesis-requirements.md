@@ -320,7 +320,7 @@
 | REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected, TrialSeedNormalizedExecutionIT(재생성 SQL 실행), TrialSeedMySqlExecutableCommentIT(실 MySQL 실행형 주석 우회 차단), SeedSqlWhitelistIT#req010_signed*(닫힌 리터럴 판정 집합 일치) | integration | 🟢 green[^c4-readjudication][^closed-literal-alignment] |
 | REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green[^c4-readjudication] |
-| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(문서 순서 파이프라인), TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication] |
+| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(문서 순서 파이프라인), TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication][^n3-assertion-strengthened] |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
@@ -706,3 +706,17 @@ FAILURE/422 파생/교차-테이블 409가 섞인 `fixture-req005-graph`로 REQ-
 별도 처리한다(PK 정리 키로는 쓰이지 않는다) — 이 예외는 양쪽 Javadoc에 명시했다. **회귀 테스트:**
 `SeedSqlWhitelistIT#req010_signedNumericAndPlainLiteralsAccepted`(`-5`/`+3`/`NULL`/`'x'`/`TRUE`
 통과) + `#req010_signedStringLiteralRejected`(`-'x'`) + `#req010_signedNullLiteralRejected`(`+NULL`).
+
+[^n3-assertion-strengthened]: **Phase A 후속(Important 2) — N3 문서-순서 E2E 단언 강화.**
+`TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag`는 종료 코드를
+`assertThat(exitCode).isIn(0, 3)`으로만 봤다. 이 단언은 **모든 후보가 T1에서 거부돼도, 심지어 body가
+비어 SUT 호출이 예외로 끝나도 통과**하므로 "문서화된 파이프라인이 실제로 동작함"을 증명하지 못했다.
+실측으로 확인한 강화 이전의 실제 경로는 후자였다 — 테스트가 쓰던 provenance 리포트에 `unguarded`
+필드가 없어 `synthesize-triple`이 body `{}`인 후보를 만들었고, fake SUT가 `accountId`를 읽다 NPE로
+응답을 못 내 `IOException: HTTP/1.1 header parser received no bytes` → exit 3으로 통과하고 있었다.
+**조치:** 문서화된 순서의 빠진 단계인 **에이전트 갭 마커 채움**을 테스트에 포함했다 — 리포트에
+`unguarded` 두 필드(`accountId`/`amount`)를 넣어 `synthesize-triple`이 갭 마커 body를 만들게 하고,
+`base/` 사본은 두고 후보 `body.json`의 **마커 자리만** 채운 뒤(REQ-009가 허용하는 유일한 변경)
+`trial`을 돌린다. 단언은 `exitCode == 0`(승격), `failed/` 부재, `promoted/cand-01`의 `body.json`이
+채운 값(`acc-1`/`500`)을 담고 `seed.sql`이 그대로 비어 있음(비-마커 변경 없음)으로 바꿨다. 즉
+"T1을 통과해 실제 trial이 수행됐다"가 종료 코드·산출물 양쪽으로 고정된다.

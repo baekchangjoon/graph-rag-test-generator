@@ -125,15 +125,54 @@ class TrialCliE2E {
      * {@code accounts}를 DB_READ 테이블로 선언해 seed.sql 화이트리스트(REQ-010)를 통과시킨다.
      */
     private static void writeProvenanceReport(Path endpointDir) throws Exception {
+        writeProvenanceReport(endpointDir, List.of());
+    }
+
+    /**
+     * @param unguarded {@code synthesize-triple}이 갭 마커 채움 슬롯으로 소비할 unguarded 필드 목록
+     *                  (REQ-007) — 비어 있으면 종전대로 body가 빈 후보가 나온다.
+     */
+    private static void writeProvenanceReport(
+            Path endpointDir,
+            List<io.graphrag.builder.provenance.ProvenanceReport.UnguardedField> unguarded) throws Exception {
         var guard = new io.graphrag.builder.provenance.ProvenanceReport.GuardFact(
                 "Fixture.java:1", "EXISTS",
                 List.of(new io.graphrag.builder.provenance.ProvenanceReport.ValueRef(
                         io.graphrag.builder.provenance.ProvenanceReport.Origin.DB_READ,
                         null, "accounts", "id", null, null, "String", null, null)));
         var report = new io.graphrag.builder.provenance.ProvenanceReport(
-                "post-api-transfers", List.of(guard), List.of(), List.of());
+                "post-api-transfers", List.of(guard), unguarded, List.of());
         Files.writeString(endpointDir.resolve("provenance-report.json"),
                 Json.mapper().writeValueAsString(report));
+    }
+
+    /**
+     * 에이전트 채움 단계(문서화된 파이프라인의 3번째 단계) 시뮬레이션 — 후보 {@code body.json}의 갭
+     * 마커 자리에만 값을 채우고 {@code base/} 사본은 건드리지 않는다(REQ-009 마커-diff가 허용하는
+     * 유일한 변경). 마커가 아닌 자리를 건드리면 T1이 거부하므로, 이 헬퍼가 하는 일이 곧 계약이다.
+     *
+     * @return 채우기 전 마커가 있던 필드 이름들(마커가 실제로 있었는지 단언용)
+     */
+    private static List<String> fillGapMarkers(Path candDir, Map<String, Object> valuesByField) throws Exception {
+        Path bodyFile = candDir.resolve("body.json");
+        ObjectNode body = (ObjectNode) Json.mapper().readTree(bodyFile.toFile());
+        List<String> filled = new java.util.ArrayList<>();
+        for (Map.Entry<String, Object> entry : valuesByField.entrySet()) {
+            var node = body.get(entry.getKey());
+            if (node == null || !node.isTextual()
+                    || !node.asText().startsWith(
+                            io.graphrag.builder.provenance.TripleSynthesizer.GAP_MARKER_PREFIX)) {
+                continue;
+            }
+            filled.add(entry.getKey());
+            if (entry.getValue() instanceof Long longValue) {
+                body.put(entry.getKey(), longValue);
+            } else {
+                body.put(entry.getKey(), String.valueOf(entry.getValue()));
+            }
+        }
+        Files.writeString(bodyFile, Json.mapper().writeValueAsString(body));
+        return filled;
     }
 
     private Map<String, String> baseOptions(Path tripleStore, Path happySeedsFile) {
@@ -389,24 +428,38 @@ class TrialCliE2E {
 
     /**
      * N3 회귀(리뷰 Important): <b>문서화된 파이프라인 순서 그대로</b> — provenance(임의 {@code --out}
-     * 경로) → {@code synthesize-triple} → {@code trial}({@code --provenance-report} 없이) — 을 돌렸을 때
-     * 첫 {@code trial}이 죽지 않아야 한다.
+     * 경로) → {@code synthesize-triple} → 에이전트 갭 마커 채움 → {@code trial}({@code --provenance-report}
+     * 없이) — 을 돌렸을 때 후보가 T1을 통과해 실제로 시험되고 승격까지 도달해야 한다.
      *
      * <p>고치기 전의 결함: {@code synthesize-triple}이 입력 리포트를 저장 레이아웃 규약 위치
      * ({@code <triple-store>/<endpointId>/provenance-report.json})로 복사하지 않아, 문서가 안내하는
      * 순서대로 실행하면 규약 위치에 파일이 없어 {@code trial}이 {@code IllegalArgumentException}으로
      * 즉시 실패했다(스킬 워크플로 파손).
+     *
+     * <p><b>단언 강화(Phase A 후속 Important 2):</b> 이전 판은 종료 코드를 {@code isIn(0, 3)}으로만
+     * 봤다 — 모든 후보가 T1에서 거부돼도, 심지어 body가 비어 SUT 호출이 예외로 끝나도 통과하는
+     * 단언이라 "문서화된 파이프라인이 실제로 동작함"을 전혀 증명하지 못했다(실제로 강화 이전의
+     * 이 테스트는 unguarded 필드가 없어 body가 {@code {}}로 합성됐고, SUT가 응답을 못 내
+     * {@code IOException}으로 exit 3에 도달하고 있었다). 이제는 <b>exit 0(승격 성공)</b>을 요구하고,
+     * 승격된 후보가 마커를 채운 그 후보임을 {@code promoted/} 산출물 내용으로 확인한다.
      */
     @Test
-    @DisplayName("N3: provenance → synthesize-triple → trial(플래그 없이) 문서 순서가 실제로 동작한다")
+    @DisplayName("N3: provenance → synthesize-triple → 마커 채움 → trial(플래그 없이) 문서 순서가 승격까지 완주한다")
     void documentedPipelineOrderWorksWithoutExplicitReportFlag() throws Exception {
         try (Statement st = sutConnection.createStatement()) {
             st.execute("DELETE FROM accounts");
+            // 후보 seed.sql이 아니라 SUT가 이미 갖고 있는 기존 데이터(잔액 1000) — happy 시드가 아니므로
+            // trial의 reset(①) 대상이 아니고, 채운 body(amount=500)에 대해 200이 나오는 조건이 된다.
+            st.execute("INSERT INTO accounts (id, balance) VALUES ('acc-1', 1000)");
         }
         // ① provenance 산출물은 triple-store 밖의 임의 경로에 있다(provenance CLI의 --out 계약).
         Path analysisDir = Files.createDirectories(tempDir.resolve("analysis"));
         Path externalReport = analysisDir.resolve("provenance-report.json");
-        writeProvenanceReport(analysisDir);
+        writeProvenanceReport(analysisDir, List.of(
+                new io.graphrag.builder.provenance.ProvenanceReport.UnguardedField(
+                        "accountId", "java.lang.String", "none"),
+                new io.graphrag.builder.provenance.ProvenanceReport.UnguardedField(
+                        "amount", "java.lang.Long", "none")));
         Path tripleStore = tempDir.resolve("pipeline-triples");
 
         // ② synthesize-triple — 후보와 함께 규약 위치로 리포트가 복사되어야 한다.
@@ -416,24 +469,41 @@ class TrialCliE2E {
                 "--triple-store", tripleStore.toString()
         });
 
-        Path canonicalReport = tripleStore.resolve("post-api-transfers").resolve("provenance-report.json");
+        Path endpointDir = tripleStore.resolve("post-api-transfers");
+        Path canonicalReport = endpointDir.resolve("provenance-report.json");
         assertThat(canonicalReport)
                 .as("synthesize-triple은 입력 리포트를 trial이 읽는 규약 위치로 복사해야 한다")
                 .exists();
         assertThat(Files.readString(canonicalReport)).isEqualTo(Files.readString(externalReport));
 
-        // ③ trial — --provenance-report 없이도 규약 위치를 찾아 후보를 실제로 시험해야 한다.
+        // ③ 에이전트 채움 단계 — 갭 마커 자리에만 값을 넣는다(base/ 사본은 그대로 두어 REQ-009 준수).
+        Path candDir = endpointDir.resolve("cand-01");
+        assertThat(candDir).as("synthesize-triple이 후보를 하나는 만들어야 한다").isDirectory();
+        assertThat(fillGapMarkers(candDir, Map.of("accountId", "acc-1", "amount", 500L)))
+                .as("합성된 body의 unguarded 두 자리는 갭 마커여야 하고, 그 두 자리만 채워야 한다")
+                .containsExactlyInAnyOrder("accountId", "amount");
+
+        // ④ trial — --provenance-report 없이도 규약 위치를 찾아 후보를 T1 통과 → 실제 시험 → 승격해야 한다.
         Path happySeeds = writeHappySeeds();
         int exitCode = BuilderCli.runTrial(baseOptions(tripleStore, happySeeds));
 
         assertThat(exitCode)
-                .as("리포트를 찾았으므로 fail-closed 예외 없이 정상 종료 코드(0 또는 3)여야 한다")
-                .isIn(0, 3);
-        if (exitCode == 3) {
-            assertThat(tripleStore.resolve("post-api-transfers").resolve("failed")
-                    .resolve("digest-final.json"))
-                    .as("후보가 실제로 시험(또는 T1 판정)됐다는 증거")
-                    .exists();
-        }
+                .as("문서 순서대로 돌린 후보가 T1을 통과해 실제로 시험되고 2xx로 승격되면 exit 0이어야 한다 "
+                        + "(T1 거부·invoke 예외로 끝나면 3이 되므로 이 단언이 '실제 trial 수행'의 증거다)")
+                .isEqualTo(0);
+        assertThat(candDir).as("승격된 후보는 원위치에서 사라져야 한다").doesNotExist();
+        assertThat(endpointDir.resolve("failed"))
+                .as("T1 거부/실패 후보가 없어야 한다(하나라도 있으면 파이프라인이 실제로 동작한 게 아니다)")
+                .doesNotExist();
+
+        Path promoted = endpointDir.resolve("promoted").resolve("cand-01");
+        assertThat(promoted).as("성공 후보는 promoted/cand-01로 이동해야 한다").isDirectory();
+        var promotedBody = Json.mapper().readTree(promoted.resolve("body.json").toFile());
+        assertThat(promotedBody.get("accountId").asText())
+                .as("승격된 것은 마커를 채운 바로 그 후보여야 한다").isEqualTo("acc-1");
+        assertThat(promotedBody.get("amount").asLong()).isEqualTo(500L);
+        assertThat(Files.readString(promoted.resolve("seed.sql")))
+                .as("이 후보의 seed.sql은 합성 단계에서 비어 있었고 채움 대상도 아니다(비-마커 변경 없음 증거)")
+                .isBlank();
     }
 }
