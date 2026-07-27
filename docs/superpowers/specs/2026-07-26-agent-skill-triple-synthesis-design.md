@@ -265,7 +265,9 @@ POST /api/transfers  { fromAccountId, amount, note }
 
 - 외부 SUT attach 캠페인은 `--triple-store <dir>` 플래그로 루트를 지정한다(기본은 위 경로).
 - graph-rag repo의 fixture용 promoted는 `e2e/` 리소스로 커밋하고, e2e 스크립트가
-  `--triple-candidates`에 그 상대 경로를 넘긴다(E2E-A3의 입력).
+  `--triple-store`에 그 상대 경로를 넘긴다(E2E-A3의 입력). `--triple-candidates`는 후보 루트를
+  저장 루트와 다르게 둘 때만 쓰는 좁은 오버라이드다(REQ-036 — 해석 우선순위는
+  `--triple-candidates` > `--triple-store` > 기본 경로).
 
 ### 5.4 promoted 라이프사이클
 

@@ -252,7 +252,7 @@
 - 검증 레벨: unit (구조 검사)
 
 ### REQ-027 — 에이전트 완주 실증 (E2E-B1)
-- 유형: Functional / 우선순위: Must
+- 유형: Functional / 우선순위: Should[^req027-reclass]
 - 설명: 실제 에이전트가 스킬 3종(`provenance-analysis`→`triple-synthesis`→`trial-loop`(=T2 CLI 반복 구동))으로 fixture 깊은-happy를 갭필→trial→승격까지 완주하고, 산출 diff로 마커만 변경했음을 확인해 기록을 남긴다.
 - 수용기준:
   - Given fixture SUT와 스킬 3종, When 에이전트 세션이 세 스킬을 순서대로 수행, Then promoted가 생성되고 diff 검사에서 마커 외 변경이 없으며 절차·결과가 문서로 기록된다.
@@ -494,6 +494,8 @@ Given/When/Then 충족). **여전히 미배선(🟡 유지 사유):** (a) attach
 Endpoint/happy 시드를 자동 로드하는 경로 — 둘 다 이 task의 선언 파일 범위(triple fixture 배치 +
 `run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이며 별도 후속 task로 남긴다.
 
+[^req027-reclass]: **Must → Should 재분류(Phase A 후속 작업 2/3, 근거 기록).** 재분류 이전에 이 문서는 REQ-027을 `우선순위: Must`로 정의해 두고도 완료 정의 콜아웃에서는 "manual Should"로 서술해 Must 분모에서 빼고 있었다 — 두 표기가 모순이었고, 그 상태로 "Must 전부 🟢"을 주장하면 실제(33/34)를 34/34로 과대 표기하게 된다. 표기를 실제에 맞추는 방향(콜아웃을 고쳐 33/34로 적는 것)과 우선순위를 실제 성격에 맞추는 방향 중 **후자**를 택했다. 근거: REQ-027은 **에이전트 주체의 1회 수동 실증(E2E-B1)**이라 자동 실행·재현이 불가능하고, 이 문서가 이미 검증 레벨을 `manual`로 규정해 CI 게이트 대상에서 제외하고 있다(같은 성격의 REQ-029/030이 애초에 Should인 것과 일관). 스킬 3종의 **자동 검증 가능한 부분**(패키징 3요소 구조)은 REQ-026(Must, 🟢, `SkillPackagingTest`)이 이미 커버하므로, REQ-027을 Should로 두어도 Must 집합이 보장하는 기능 범위에는 구멍이 생기지 않는다. **다만 이 재분류는 요구사항을 삭제하거나 완화하는 것이 아니다** — REQ-027은 🟡(절차 준비)로 추적 매트릭스에 그대로 남고, 전체 37개 100% green 목표의 분모에도 그대로 포함된다. 즉 "Must 완료"와 "전체 완료"를 구분해 읽어야 하며, Phase A를 전부 완료로 선언하려면 REQ-027/029/030 3건의 manual 실증이 여전히 필요하다.
+
 [^req036-done]: **해소됨(Phase A 후속 작업 2/3).** `[^req036-task12-partial]`/`[^req036-task18-partial]`이 남긴 잔여를 수용기준 문면 기준으로 재판정하고 미충족분만 채웠다.
 
 **수용기준 ①(기본 경로) — 미충족이었고, 구현했다.** 재확인 결과 기본 경로 `.graphrag/triples`는 `BuilderCli.runTrial`에만 있었다. `runSynthesizeTriple`은 `required(o, "--triple-store")`로 **하드 필수**였고(생략하면 기본 경로가 적용되는 게 아니라 실패), `build`의 `--triple-candidates`는 미지정 시 `null`(게이트 비활성)이라 기본 경로 개념 자체가 없었다. 즉 "CLI 실행 시 기본 경로가 적용된다"는 세 서브커맨드 중 하나에서만 참이었다. **조치:** 상수 `BuilderCli.DEFAULT_TRIPLE_STORE`와 해석 함수 `tripleStoreRoot(options)`/`tripleCandidatesRoot(options)`를 단일 소스로 두고 `build`/`synthesize-triple`/`trial` 셋 다 그것만 쓰게 했다(`--triple-candidates` > `--triple-store` > 기본 경로). `build`에서 루트가 항상 non-null이 되지만, 그 경로에 `promoted/` 후보가 없으면 `TriplePromotionGate.attempt`가 즉시 `NO_CANDIDATE`로 빠져 DB/HTTP 부작용이 0이므로 삼중을 안 쓰는 프로젝트의 관측 동작은 종전과 동일하다 — 달라지는 것은 "관례 경로에 삼중이 실제로 있으면 플래그 없이도 소비된다"는 점뿐이고, 이것이 수용기준이 요구한 계약이다. 검증: `TripleStoreCliContractTest`(4케이스 — 둘 다 생략/`--triple-store`만/두 플래그 병행/`--triple-candidates`만). 기본 경로가 **상대 경로**라 CLI를 실제 실행하면 작업 디렉토리에 디렉토리를 만들어 저장소를 오염시키므로, 해석 함수를 직접 검증하는 순수 단위 테스트로 두었다(부작용 0·결정적).
@@ -546,13 +548,21 @@ REQ-009 커버리지 보강).
 간주하지 않는다(코디네이터 리뷰: Approved).
 
 Coverage: 34/37 green (92%), 3 partial(🟡 REQ-027, REQ-029, REQ-030 — 전부 manual Should) — target
-100% (대상: Must 34 + 미연기 Should 3(REQ-029/030/037 중 REQ-037 포함). Won't/Phase B·C: 🔵 분모 제외).
+100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
 
 > **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
-> green**"은 **충족됐다** — Must 34개가 전부 🟢이다. Phase A 후속 작업이 마지막 두 Must를 해소했다:
+> green**"은 **충족됐다** — Must **33개**가 전부 🟢이다. Phase A 후속 작업이 마지막 두 Must를 해소했다:
 > **REQ-032**(1/3, `ValueRef.derivedFrom` 스키마 확장 + `TripleSynthesizer` 채움 슬롯 통합 + CLI 오라클
 > 배선, `[^derived-half]`/`[^req032-level]` 참조)와 **REQ-036**(2/3, `.graphrag/triples` 기본 경로를
 > 세 서브커맨드 단일 소스로 통일 + `run-e2e.sh`를 `--triple-store`로 정정, `[^req036-done]` 참조).
+>
+> **분모가 34 → 33으로 바뀐 이유를 함께 읽어야 한다:** REQ-027(에이전트 완주 실증)은 원래 `우선순위:
+> Must`로 정의돼 있었고 🟡다. 즉 재분류 전 실제 수치는 **Must 33/34**였으며, 이전 판(이 콜아웃의
+> 직전 버전)이 REQ-027을 근거 없이 "manual Should"로 서술해 **34/34로 과대 표기한 것은 오류**였다.
+> 이번에 REQ-027의 우선순위 자체를 Should로 재분류하고 그 근거를 `[^req027-reclass]`에 명시해
+> 표기와 실제를 일치시켰다(요구사항 삭제·완화가 아니라 분류 정정 — REQ-027은 매트릭스와 전체
+> 분모에 그대로 남는다).
+>
 > **남은 🟡는 REQ-027/029/030 3건이며 전부 manual Should**다 — 절차서는 작성돼 있고 실증 세션 실행만
 > 남았다(`[^task19-manual-procedures]`). 따라서 "대상 37개 100% green"이라는 더 넓은 목표는 아직
 > 충족되지 않았고, Phase A를 "전부 완료"로 선언하려면 그 3건의 manual 실증이 필요하다. Must 기준
