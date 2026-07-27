@@ -142,6 +142,32 @@ public class Generator {
             Map<String, Object> postCreateCleanup) {
     }
 
+    /**
+     * REQ-037: 이 endpoint의 <b>2xx(SUCCESS) 시나리오</b>가 SELECT 바인딩으로 "그 값의 행이 존재한다"를
+     * 증명한 키 값 집합. 같은 body 값을 물려받은 파생 시나리오(happy body를 변이해 만든 422/409 등)는
+     * 자기 응답만으로는 조회 성공을 증명하지 못하므로, 이 집합을 근거로 부모 행 시드를 상속한다 —
+     * 그러지 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가 난다.
+     */
+    private java.util.Set<String> provenExistingKeyValues(String endpointId) {
+        java.util.Set<String> proven = new java.util.LinkedHashSet<>();
+        for (ExploredPath p : client.pathsForEndpoint(endpointId)) {
+            if (p.outcome() != io.graphrag.model.Outcome.Kind.SUCCESS) {
+                continue;
+            }
+            for (CapturedSql s : client.sqlForPath(p.id())) {
+                if (!"SELECT".equals(s.sqlKind())) {
+                    continue;
+                }
+                for (io.graphrag.model.SqlBinding b : s.bindings()) {
+                    if (b.origin() == io.graphrag.model.BindingOrigin.API_PARAM && b.value() != null) {
+                        proven.add(b.value());
+                    }
+                }
+            }
+        }
+        return proven;
+    }
+
     private ScenarioMethod buildScenarioMethod(Endpoint endpoint, GenerationRequest request,
                                                ExploredPath path) {
         List<CapturedSql> sql = client.sqlForPath(path.id());
@@ -169,7 +195,8 @@ public class Generator {
         // FixtureComposer가 에러 계약 단언을 생성하지 않게 한다(비-envelope SUT 회귀 방지).
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
                 client.seedsForPath(path.id()), readPath, knownByField,
-                client.errorContractStatusField(), client.errorDetailField(), client.errorDetailContains());
+                client.errorContractStatusField(), client.errorDetailField(), client.errorDetailContains(),
+                provenExistingKeyValues(endpoint.id()));
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(path.id()));
 

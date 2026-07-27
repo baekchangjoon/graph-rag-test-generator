@@ -84,6 +84,22 @@ public class FixtureComposer {
                                    Map<String, String> knownByField,
                                    String semanticStatusField, String errorDetailField,
                                    String errorDetailContains) {
+        return compose(path, sqlList, tables, seeds, readPath, knownByField,
+                semanticStatusField, errorDetailField, errorDetailContains, Set.of());
+    }
+
+    /**
+     * REQ-037 오버로드. {@code provenExistingKeyValues} = 같은 endpoint의 <b>다른</b> 시나리오가 실제로
+     * "그 값의 행이 존재한다"를 증명한 키 값 집합(2xx path의 SELECT 바인딩 값). 파생 시나리오
+     * (happy body를 변이해 만든 422/409 등)는 자기 자신의 응답만 보면 "조회 성공"을 증명할 수 없지만,
+     * 원본 시나리오가 같은 키 값으로 조회에 성공했다면 그 부모 행 시드를 <b>상속</b>해야 한다 — 그러지
+     * 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가 난다(REQ-037).
+     */
+    public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
+                                   List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath,
+                                   Map<String, String> knownByField,
+                                   String semanticStatusField, String errorDetailField,
+                                   String errorDetailContains, Set<String> provenExistingKeyValues) {
         if (readPath || !seeds.isEmpty()) {
             Map<String, TableSchema> seedTables = new HashMap<>();
             tables.forEach(t -> seedTables.put(t.name(), t));
@@ -142,7 +158,9 @@ public class FixtureComposer {
                 if (var == null) {
                     continue;
                 }
-                if (sql.sqlKind().equals("SELECT") && lookupSucceeded(path, sqlList, i)) {
+                if (sql.sqlKind().equals("SELECT")
+                        && (lookupSucceeded(path, sqlList, i)
+                            || provenExistingKeyValues.contains(binding.value()))) {
                     seedWithParents(tablesByName.get(bindingTable(sql, binding)), binding.column(),
                             var.name(), tablesByName, seeded, seenSeeds);
                 }
