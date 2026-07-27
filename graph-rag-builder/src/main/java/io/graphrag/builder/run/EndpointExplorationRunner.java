@@ -29,6 +29,7 @@ import io.graphrag.builder.oracle.CandidateLifter;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.oracle.ResponseClassifier;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
+import io.graphrag.builder.provenance.FailureDigest;
 import io.graphrag.builder.provenance.TriplePromotionGate;
 import io.graphrag.builder.provenance.TrialRunner;
 import io.graphrag.model.BindingOrigin;
@@ -57,6 +58,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -1474,11 +1476,14 @@ public class EndpointExplorationRunner {
                 tripleStalePaths.add(verdict.relPath());
                 log.warn("triple stale for {} (REQ-020/035): {} ({})",
                         endpoint.id(), verdict.relPath(), verdict.reason());
+                classifyAttachGateOutcome(endpoint, verdict.digest());   // 코드리뷰 Important 1 fix
+                recordAttachStubInapplicableIfAny(endpoint, verdict);   // 코드리뷰 Important 2 fix
                 reinsertSeeds(priorHappy);   // trial이 지웠을 수 있는 기존 happy 시드 best-effort 복원
                 return unchanged;
             }
 
             // ---- ADOPTED: 영속 적용 + 확정 run(캡처-on 재explore, REQ-018) ----
+            recordAttachStubInapplicableIfAny(endpoint, verdict);   // 코드리뷰 Important 2 fix — 승격 성공 여부와 무관
             TriplePromotionGate.CandidateMaterials materials = verdict.materials();
             SynthesizedInput candidateHappy = new SynthesizedInput(materials.body(), materials.seedRows());
             // Important fix(REQ-019 리뷰): try 진입 전(예외 발생 가능 구간 밖)에 캡처해 catch에서도
@@ -1543,6 +1548,57 @@ public class EndpointExplorationRunner {
         } finally {
             TRIPLE_GATE_LOCK.unlock();
         }
+    }
+
+    /**
+     * 코드리뷰 Important 1 fix — attach 안전 게이트(REQ-023/024)가 만든 {@link FailureDigest}를
+     * (a) {@code tripleRejectedReasons} 카운터로 분류하고 (b) {@code tripleCandidatesRoot}
+     * 아래 {@code <endpointId>/gate-digest.json}로 남긴다. {@code staleTriples}(REQ-020/021,
+     * {@code <endpointId>/promoted/cand-NN} 포맷 계약)는 경로 문자열만 담는 계약이라 그 포맷을
+     * 건드리지 않고, 세부 사유(누락 플래그·잔존 (table,pk))는 이 파일로 별도 노출한다 — 로그
+     * 문자열이 아니라 파일 필드로 직접 단언 가능한 관측 산출물이다. digest가 attach 게이트 기원이
+     * 아니면(일반 trial 실패·사전 재검증 실패) 아무 것도 하지 않는다(회귀 0).
+     */
+    private void classifyAttachGateOutcome(Endpoint endpoint, FailureDigest digest) {
+        if (digest == null) {
+            return;
+        }
+        String category = switch (digest.outcomeKind()) {
+            case "ATTACH_SEED_GATE_CLOSED" -> "attach-seed-gate-closed";
+            case "ATTACH_CLEANUP_BLOCKED" -> "attach-cleanup-blocked";
+            default -> null;
+        };
+        if (category == null) {
+            return;
+        }
+        tripleRejectedReasons.merge(category, 1, Integer::sum);
+        if (tripleCandidatesRoot == null) {
+            return;
+        }
+        try {
+            Path digestFile = Files.createDirectories(tripleCandidatesRoot.resolve(endpoint.id()))
+                    .resolve("gate-digest.json");
+            Files.writeString(digestFile,
+                    Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(digest));
+        } catch (Exception e) {
+            log.warn("attach gate digest write failed for {}: {}", endpoint.id(), e.toString());
+        }
+    }
+
+    /**
+     * 코드리뷰 Important 2 fix — REQ-025(attach EXTERNAL_RESPONSE 스텁 skip)가 실제로 발화했으면
+     * (candidate stub이 비어있지 않았는데 attach라서 등록을 시도조차 안 했으면) {@code tripleRejectedReasons}에
+     * {@code attach-stub-inapplicable} 카운트를 남긴다. STALE/ADOPTED 어느 kind에서 호출돼도 동작
+     * 동일 — REQ-025는 후보의 최종 승격 여부와 무관하게 "이 스텁은 attach에서 적용 불가"라는 사실
+     * 자체를 관측 가능하게 만드는 것이 목적이다.
+     */
+    private void recordAttachStubInapplicableIfAny(Endpoint endpoint, TriplePromotionGate.GateVerdict verdict) {
+        if (!verdict.attachStubInapplicable()) {
+            return;
+        }
+        tripleRejectedReasons.merge("attach-stub-inapplicable", 1, Integer::sum);
+        log.info("attach EXTERNAL_RESPONSE stub inapplicable for {} (REQ-025): "
+                + "candidate stub skipped, attach WireMock routing is Phase C scope", endpoint.id());
     }
 
     /** REQ-018 테스트 훅 — run()이 게이트 호출 전에 만드는 "stale" invoker를 테스트에서 동일하게 재현한다. */

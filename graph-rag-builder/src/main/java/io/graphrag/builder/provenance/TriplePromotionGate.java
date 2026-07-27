@@ -71,22 +71,41 @@ public final class TriplePromotionGate {
 
     /**
      * 게이트 판정. {@code relPath}는 STALE일 때만 {@code <endpointId>/promoted/cand-NN} 포맷으로
-     * 채워진다(REQ-020/021 staleTriples 원소 포맷).
+     * 채워진다(REQ-020/021 staleTriples 원소 포맷) — 이 포맷 계약은 코드리뷰 fix 이후에도 유지한다.
+     *
+     * <p><b>코드리뷰 Important 1/2 fix:</b> {@code digest}(nullable)와 {@code attachStubInapplicable}은
+     * {@link TrialRunner#runCandidate}가 만든 attach 안전 게이트 사유(REQ-023 누락 플래그,
+     * REQ-024 잔존 (table,pk), REQ-025 스텁 skip)를 호출자({@code EndpointExplorationRunner})까지
+     * 실어 나르기 위한 필드다 — 이전에는 {@code reason} 문자열(상태 코드만 포함)로 요약되면서
+     * digest 자체가 유실됐다. {@code digest}는 trial이 실제로 발화한 STALE에서만 채워지고(사전
+     * 재검증 실패인 base/사본 없음·provenance-report 없음·T1 실패는 여전히 null — 이 경로들은 애초에
+     * TrialRunner를 호출하지 않으므로 attach 관련 digest가 존재할 수 없다), {@code attachStubInapplicable}은
+     * STALE/ADOPTED 어느 kind에서도(REQ-025는 승격 성공 여부와 무관하게 관측 가능해야 하므로) 채워질
+     * 수 있다.
      */
     public record GateVerdict(Kind kind, Path candidateDir, String relPath,
-                              CandidateMaterials materials, String reason) {
+                              CandidateMaterials materials, String reason,
+                              FailureDigest digest, boolean attachStubInapplicable) {
 
         public static GateVerdict noCandidate() {
-            return new GateVerdict(Kind.NO_CANDIDATE, null, null, null, null);
+            return new GateVerdict(Kind.NO_CANDIDATE, null, null, null, null, null, false);
         }
 
+        /** 사전 재검증 실패(TrialRunner 미호출) 경로 전용 — digest 없음, attachStubInapplicable=false. */
         public static GateVerdict stale(Path root, Path candDir, String reason) {
-            String rel = root.relativize(candDir).toString().replace(java.io.File.separatorChar, '/');
-            return new GateVerdict(Kind.STALE, candDir, rel, null, reason);
+            return stale(root, candDir, reason, null, false);
         }
 
-        public static GateVerdict adopted(Path candDir, CandidateMaterials materials) {
-            return new GateVerdict(Kind.ADOPTED, candDir, null, materials, null);
+        /** trial이 실제로 발화한 STALE — {@code trialOutcome}의 digest/attachStubInapplicable을 그대로 싣는다. */
+        public static GateVerdict stale(Path root, Path candDir, String reason,
+                                        FailureDigest digest, boolean attachStubInapplicable) {
+            String rel = root.relativize(candDir).toString().replace(java.io.File.separatorChar, '/');
+            return new GateVerdict(Kind.STALE, candDir, rel, null, reason, digest, attachStubInapplicable);
+        }
+
+        public static GateVerdict adopted(Path candDir, CandidateMaterials materials,
+                                          boolean attachStubInapplicable) {
+            return new GateVerdict(Kind.ADOPTED, candDir, null, materials, null, null, attachStubInapplicable);
         }
     }
 
@@ -132,11 +151,29 @@ public final class TriplePromotionGate {
 
         TrialRunner.TrialOutcome trialOutcome = trialRunner.runCandidate(endpoint, candDir, happySeeds, report);
         if (!trialOutcome.promoted()) {
-            return GateVerdict.stale(tripleCandidatesRoot, candDir,
-                    "trial 재확인 실패(REQ-020): status=" + trialOutcome.status());
+            return GateVerdict.stale(tripleCandidatesRoot, candDir, staleReason(trialOutcome),
+                    trialOutcome.digest(), trialOutcome.attachStubInapplicable());
         }
 
-        return GateVerdict.adopted(candDir, loadMaterials(candDir, dialect));
+        return GateVerdict.adopted(candDir, loadMaterials(candDir, dialect), trialOutcome.attachStubInapplicable());
+    }
+
+    /**
+     * 코드리뷰 Important 1 fix: attach 안전 게이트(REQ-023/024)가 만든 digest가 있으면 그 사유를
+     * reason 문자열에도 반영한다(status만 담겨 digest가 유실되던 문제 수정) — log.warn이 이 reason을
+     * 그대로 찍으므로, 사람이 읽는 로그에서도 즉시 원인을 알 수 있다. 일반 trial 실패(비-attach 또는
+     * attach이지만 REQ-023/024와 무관한 통상 실패)는 기존 문구를 그대로 유지한다(회귀 0).
+     */
+    private static String staleReason(TrialRunner.TrialOutcome trialOutcome) {
+        FailureDigest digest = trialOutcome.digest();
+        if (digest != null && "ATTACH_SEED_GATE_CLOSED".equals(digest.outcomeKind())) {
+            return "trial 재확인 실패(REQ-020, REQ-023 attach seed gate closed): " + digest.logExcerpt();
+        }
+        if (digest != null && "ATTACH_CLEANUP_BLOCKED".equals(digest.outcomeKind())) {
+            return "trial 재확인 실패(REQ-020, REQ-024 attach cleanup blocked) — remaining row(s): "
+                    + digest.attachRemainingRows();
+        }
+        return "trial 재확인 실패(REQ-020): status=" + trialOutcome.status();
     }
 
     private static List<Path> listCandDirs(Path bucketDir) throws IOException {
