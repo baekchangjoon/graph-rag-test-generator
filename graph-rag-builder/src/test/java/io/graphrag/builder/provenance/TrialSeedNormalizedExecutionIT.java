@@ -202,6 +202,52 @@ class TrialSeedNormalizedExecutionIT {
         }
     }
 
+    /**
+     * Phase A 후속(Important 1) 보강: 게이트({@link SeedSqlWhitelist})의 accept/reject만이 아니라
+     * {@link TrialRunner}가 <b>실제로 어떤 값을 바인딩하는지</b>를 실행으로 고정한다.
+     * {@code closedLiteralValue}의 부호 처리(부호 문자 {@code +}/{@code -}만 허용, {@code -}일 때만
+     * negate)에 회귀가 나면 — 예컨대 항상 negate하거나 부호를 통째로 버리면 — 화이트리스트는 여전히
+     * accept하므로 {@code SeedSqlWhitelistIT}로는 잡히지 않는다. 삽입된 행은 시험 종료 시 정리되므로,
+     * 값 관측은 seed 삽입 이후·정리 이전에 호출되는 {@link TrialRunner.TrialInvoker} 안에서 한다.
+     */
+    @Test
+    @DisplayName("REQ-010(followup): 부호 있는 수치 리터럴은 부호를 보존해 바인딩된다(-5는 -5, +7은 7)")
+    void signedNumericLiteralsAreBoundWithSignPreserved() throws Exception {
+        try (Connection connection = newH2Connection(
+                "CREATE TABLE accounts (id VARCHAR(50) PRIMARY KEY, balance BIGINT, credit BIGINT)")) {
+            List<Long> observedBalance = new ArrayList<>();
+            List<Long> observedCredit = new ArrayList<>();
+            TrialRunner.TrialInvoker probingInvoker = (endpoint, body) -> {
+                // seed INSERT 직후·정리 DELETE 이전 시점 — 실제로 DB에 들어간 값을 관측한다.
+                try (Statement st = connection.createStatement();
+                     ResultSet rs = st.executeQuery(
+                             "SELECT balance, credit FROM accounts WHERE id = 'acc-n'")) {
+                    while (rs.next()) {
+                        observedBalance.add(rs.getLong(1));
+                        observedCredit.add(rs.getLong(2));
+                    }
+                }
+                return new InvocationOutcome(200, Json.mapper().readTree("{\"ok\":true}"), Set.of(), 0, 0);
+            };
+            Path candDir = candidate(
+                    "INSERT INTO accounts (id, balance, credit) VALUES ('acc-n', -5, +7);");
+
+            TrialRunner.TrialOutcome outcome = new TrialRunner(connection, DbConfig.Type.POSTGRES, null,
+                    new StatusOnlyClassifier(), new SilentSutHandle(), probingInvoker)
+                    .runCandidate(ENDPOINT, candDir, List.of(), EMPTY_REPORT);
+
+            assertThat(outcome.promoted()).isTrue();
+            assertThat(observedBalance)
+                    .as("음수 부호 리터럴 -5는 negate되어 -5로 삽입돼야 한다(부호 유실 회귀 차단)")
+                    .containsExactly(-5L);
+            assertThat(observedCredit)
+                    .as("양수 부호 리터럴 +7은 그대로 7로 삽입돼야 한다(항상 negate 회귀 차단)")
+                    .containsExactly(7L);
+            assertThat(count(connection, "SELECT COUNT(*) FROM accounts"))
+                    .as("시험은 probe이므로 삽입 행은 정리되어 잔여 0이어야 한다").isZero();
+        }
+    }
+
     @Test
     @DisplayName("N1(회귀 0): NULL 리터럴이 섞인 후보도 파라미터 바인딩으로 삽입·정리된다")
     void nullLiteralIsBoundAsParameter() throws Exception {
