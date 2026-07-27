@@ -45,11 +45,16 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
 
 ```
 <triple-store>/<endpointId>/
+  provenance-report.json    # --report 입력의 사본 — 다음 단계 trial-loop이 읽는 규약 위치
   cand-01/ cand-02/ …       # 미승격 후보(순번 — cand-01이 최우선)
     body.json seed.sql stubs.json notes.md
   base/cand-01/ …           # 도구가 만든 원본 그대로의 사본 — 절대 건드리지 말 것
     body.json seed.sql stubs.json          (notes.md 없음)
 ```
+
+`provenance-report.json` 사본은 이 CLI가 자동으로 만든다. trial-loop의 T1 게이트는 리포트가
+**필수**인데 `--provenance-report` 없이 실행하면 이 규약 위치를 읽으므로, `--out`을 어느
+경로로 잡았든 `provenance-analysis → triple-synthesis → trial-loop` 순서가 그대로 동작한다.
 
 `base/cand-NN`은 다음 단계(trial-loop 및 최종 빌드의 T1 게이트)가 "에이전트가 마커 외에
 무엇을 바꿨는지"를 diff로 판정하는 기준이다. **이 디렉토리는 절대 편집하지 마라** — 이걸

@@ -15,6 +15,7 @@ import net.sf.jsqlparser.expression.BooleanValue;
 import net.sf.jsqlparser.expression.DoubleValue;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.LongValue;
+import net.sf.jsqlparser.expression.NullValue;
 import net.sf.jsqlparser.expression.SignedExpression;
 import net.sf.jsqlparser.expression.StringValue;
 import net.sf.jsqlparser.schema.Column;
@@ -29,7 +30,6 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -104,11 +104,20 @@ public final class TrialRunner {
 
     /**
      * 실행 가능한 후보 seed INSERT 하나와 <b>그 행을 되돌리는 DELETE</b>의 완성된 계획(C4 리뷰
-     * Critical 2/3 fix). {@code deleteSql}의 테이블·컬럼 식별자는 후보 텍스트가 아니라 <b>DB 카탈로그가
-     * 보고한 실제 식별자</b>이고 안전 식별자 정규식({@link #SAFE_IDENTIFIER})을 통과한 것뿐이며, 키
-     * 값은 리터럴 문자열 결합이 아니라 {@link PreparedStatement} 파라미터로 바인딩된다.
+     * Critical 2/3 fix). {@code insertSql}/{@code deleteSql}의 테이블·컬럼 식별자는 후보 텍스트가
+     * 아니라 <b>DB 카탈로그가 보고한 실제 식별자</b>이고 안전 식별자 정규식({@link #SAFE_IDENTIFIER})을
+     * 통과한 것뿐이며, 값은 리터럴 문자열 결합이 아니라 {@link PreparedStatement} 파라미터로 바인딩된다.
+     *
+     * <p><b>N1 리뷰 Critical fix — {@code insertSql}은 후보 원문 줄이 아니라 재생성 SQL이다.</b>
+     * 이전에는 후보 파일의 원문 줄을 {@code Statement.execute}로 그대로 실행했는데, MySQL/MariaDB의
+     * 실행형 주석은 JSqlParser가 주석으로 버리는 반면 서버는 실행하므로 "파서가 본 것"과 "DB가
+     * 실행하는 것"이 갈렸다 — T1 마커-diff·allowlist·정리 계획 어디에도 보이지 않는 행이 삽입되고,
+     * 정리 DELETE는 추적된 PK만 지우므로 그 행이 영속 잔존했다. 지금은 {@link SeedSqlWhitelist}가
+     * 검증하며 파싱한 {@link Insert}의 (컬럼, 닫힌 리터럴) 쌍에서 INSERT를 재생성하므로, 파서가 보지
+     * 못한 텍스트는 구조적으로 DB에 도달할 수 없다.
      */
-    private record SeedStatement(String insertSql, String deleteSql, List<Object> keyValues,
+    private record SeedStatement(String insertSql, List<Object> insertValues, List<Integer> insertJdbcTypes,
+                                 String deleteSql, List<Object> keyValues,
                                  List<Integer> keyJdbcTypes, String description) {
     }
 
@@ -350,14 +359,33 @@ public final class TrialRunner {
             throw new SeedPlanRejectedException(List.of("INSERT 컬럼/값 개수 불일치: " + line));
         }
         Map<String, Expression> byColumn = new LinkedHashMap<>();
+        // N1 fix: 실행할 INSERT를 파싱 결과에서 재생성한다 — 식별자는 카탈로그가 보고한(SAFE_IDENTIFIER를
+        // 통과한) 이름으로 인용하고, 값은 전부 ? 파라미터로 바인딩한다. 후보 원문 텍스트는 한 글자도
+        // 실행 SQL에 들어가지 않는다.
+        List<String> insertColumns = new ArrayList<>();
+        List<Object> insertValues = new ArrayList<>();
+        List<Integer> insertJdbcTypes = new ArrayList<>();
         for (int i = 0; i < columns.size(); i++) {
             String rawColumn = columns.get(i).getUnquotedColumnName().toLowerCase(Locale.ROOT);
             if (!facts.columnNames().containsKey(rawColumn)) {
                 throw new SeedPlanRejectedException(List.of("스키마에 없는 컬럼: "
                         + facts.tableName() + "." + columns.get(i).getUnquotedColumnName()));
             }
-            byColumn.put(rawColumn, values.get(i));
+            Expression value = values.get(i);
+            byColumn.put(rawColumn, value);
+            insertColumns.add(quoteIdentifier(facts.columnNames().get(rawColumn)));
+            if (value instanceof NullValue) {
+                insertValues.add(null);   // NULL 리터럴 — setNull로 바인딩(키로는 쓰이지 않는다)
+            } else {
+                insertValues.add(closedLiteralValue(value).orElseThrow(() -> new SeedPlanRejectedException(
+                        List.of("VALUES 위치 값이 바인딩 가능한 리터럴이 아님: "
+                                + facts.tableName() + "." + rawColumn + " = " + value))));
+            }
+            insertJdbcTypes.add(facts.columnJdbcTypes().get(rawColumn));
         }
+        String insertSql = "INSERT INTO " + quoteIdentifier(facts.tableName())
+                + " (" + String.join(", ", insertColumns) + ") VALUES ("
+                + String.join(", ", java.util.Collections.nCopies(insertColumns.size(), "?")) + ")";
 
         List<String> keyPredicates = new ArrayList<>();
         List<Object> keyValues = new ArrayList<>();
@@ -379,7 +407,8 @@ public final class TrialRunner {
         }
         String deleteSql = "DELETE FROM " + quoteIdentifier(facts.tableName())
                 + " WHERE " + String.join(" AND ", keyPredicates);
-        return new SeedStatement(line, deleteSql, keyValues, keyJdbcTypes, String.join(", ", keyDescriptions));
+        return new SeedStatement(insertSql, insertValues, insertJdbcTypes,
+                deleteSql, keyValues, keyJdbcTypes, String.join(", ", keyDescriptions));
     }
 
     /**
@@ -501,13 +530,40 @@ public final class TrialRunner {
      * 정리할 수 있다). INSERT 문장 자체는 allowlist({@link SeedSqlWhitelist}: 단일 INSERT + 닫힌
      * 리터럴 VALUES)를 통과한 원문을 그대로 실행한다 — 되돌리는 DELETE는 이미
      * {@link #planCandidateSeed}가 스키마 사실로 완성해 뒀다.
+     *
+     * <p><b>N1 리뷰 Critical fix:</b> 실행되는 것은 후보 파일의 <b>원문 줄이 아니라</b>
+     * {@link #planStatement}가 파싱 결과(컬럼 목록 + 닫힌 리터럴)에서 재생성한 파라미터화 INSERT다.
+     * 원문을 {@code Statement.execute}로 보내면 MySQL/MariaDB 실행형 주석처럼 "파서는 주석으로 버리고
+     * 서버는 실행하는" 텍스트가 T1 검증·정리 계획을 통째로 우회한다 — 재생성 실행은 파서가 본 것과
+     * DB가 실행하는 것이 같음을 구조적으로 보장한다.
      */
     private void insertCandidateSeed(List<SeedStatement> plan, List<SeedStatement> inserted) throws Exception {
         for (SeedStatement statement : plan) {
-            try (Statement st = connection.createStatement()) {
-                st.execute(statement.insertSql());   // 실패 시(예: PK 충돌) 던져 이후 문장은 실행되지 않는다.
+            // 실패 시(예: PK 충돌) 던져 이후 문장은 실행되지 않는다.
+            try (PreparedStatement ps = connection.prepareStatement(statement.insertSql())) {
+                bindParameters(ps, statement.insertValues(), statement.insertJdbcTypes());
+                ps.executeUpdate();
             }
             inserted.add(statement);
+        }
+    }
+
+    /**
+     * 계획된 리터럴 값들을 {@link PreparedStatement} 파라미터로 바인딩한다. JDBC 타입을 카탈로그에서
+     * 알아낸 컬럼은 타입을 명시하고(드라이버별 암묵 변환 편차 제거), 알 수 없으면 드라이버 추론에 맡긴다.
+     */
+    private static void bindParameters(PreparedStatement ps, List<Object> values, List<Integer> jdbcTypes)
+            throws SQLException {
+        for (int i = 0; i < values.size(); i++) {
+            Object value = values.get(i);
+            Integer jdbcType = jdbcTypes.get(i);
+            if (value == null) {
+                ps.setNull(i + 1, jdbcType == null ? java.sql.Types.NULL : jdbcType);
+            } else if (jdbcType == null) {
+                ps.setObject(i + 1, value);
+            } else {
+                ps.setObject(i + 1, value, jdbcType);
+            }
         }
     }
 
@@ -523,14 +579,7 @@ public final class TrialRunner {
         for (int i = rows.size() - 1; i >= 0; i--) {
             SeedStatement r = rows.get(i);
             try (PreparedStatement ps = connection.prepareStatement(r.deleteSql())) {
-                for (int p = 0; p < r.keyValues().size(); p++) {
-                    Integer jdbcType = r.keyJdbcTypes().get(p);
-                    if (jdbcType == null) {
-                        ps.setObject(p + 1, r.keyValues().get(p));
-                    } else {
-                        ps.setObject(p + 1, r.keyValues().get(p), jdbcType);
-                    }
-                }
+                bindParameters(ps, r.keyValues(), r.keyJdbcTypes());
                 ps.executeUpdate();
             } catch (Exception e) {
                 log.warn("trial candidate seed cleanup failed: {}", r.description(), e);

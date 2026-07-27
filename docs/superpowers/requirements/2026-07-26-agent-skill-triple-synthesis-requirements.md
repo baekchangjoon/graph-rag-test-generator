@@ -311,16 +311,16 @@
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
 | REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🟡[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
-| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005 | E2E | 🟢 green |
+| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
 | REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009(다중 행/행 순서/컬럼 순서 회귀 5건 포함), TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed][^c4-readjudication] |
-| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected | integration | 🟢 green[^c4-readjudication] |
+| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected, TrialSeedNormalizedExecutionIT(재생성 SQL 실행), TrialSeedMySqlExecutableCommentIT(실 MySQL 실행형 주석 우회 차단) | integration | 🟢 green[^c4-readjudication] |
 | REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green[^c4-readjudication] |
-| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication] |
+| REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(문서 순서 파이프라인), TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication] |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
@@ -341,7 +341,7 @@
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
-| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed] |
+| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
@@ -650,13 +650,25 @@ opt-in)이 이 CLI 경로에서는 애초에 활성화되지 않는다 — attac
 변이해 만든 422 등)는 자기 응답이 FAILURE라 부모 행 시드를 만들지 않았고, 그래서 생성 TC가 시드
 없이 실행돼 기대한 422 대신 404가 났다. 반면 클래스 주석이 선언한 의도는 "404류는 데이터 부재가
 재현 조건(seed 금지), 409류는 존재가 전제(seed 필요)"였으므로 구현이 선언된 의도보다 좁았다.
-**수정:** `Generator.provenExistingKeyValues(endpointId)`가 같은 endpoint의 **2xx(SUCCESS) 시나리오**가
-SELECT 바인딩으로 존재를 증명한 키 값 집합을 계산해 `FixtureComposer.compose`에 넘기고, 파생
-시나리오는 같은 키 값에 대해 그 부모 행 시드를 **상속**한다. 상태코드 기반 휴리스틱(예: "404가
-아니면 시드")을 쓰지 않은 이유는 200-wrapped 에러 엔벨로프(REQ-005, `LookupSucceededOutcomeTest`)를
-깨뜨리기 때문이다 — "형제 시나리오가 그 키의 존재를 증명했는가"는 상태코드와 무관하게 성립하는
-증거라 회귀가 없다. 새 오버로드는 기본값이 빈 집합이라 기존 호출부는 동작이 그대로다.
+**수정:** `Generator.provenExistingKeys(endpointId)`가 같은 endpoint의 **2xx(SUCCESS) 시나리오**가
+SELECT 바인딩으로 존재를 증명한 **(테이블, 컬럼, 값) 조합** 집합을 계산해 `FixtureComposer.compose`에
+넘기고, 파생 시나리오는 같은 자리·같은 키 값에 대해 그 부모 행 시드를 **상속**한다. 상태코드 기반
+휴리스틱(예: "404가 아니면 시드")은 쓰지 않았다 — 200-wrapped 에러 엔벨로프(REQ-005)를 깨뜨린다.
+새 오버로드는 기본값이 빈 집합이라 기존 호출부는 동작이 그대로다.
+
+**REQ-005 회귀 범위(리뷰 N2에서 정정 — 초판의 "회귀가 없다"는 과장이었다):** 최초 구현은 상속
+매칭이 **값 문자열 only**였고, 상속 자체가 `lookupSucceeded`의 outcome 판정을 우회하는 예외
+경로였다. 그래서 같은 endpoint에 SUCCESS와 200-엔벨로프 FAILURE가 공존하면 엔벨로프 path에도
+시드가 붙어 REQ-005가 실제로 깨졌다 — 당시 단위 테스트가 `FixtureComposer`를 **빈 증명 집합**으로
+직접 호출해 이 상호작용을 전혀 커버하지 못했기 때문에 드러나지 않았다. 두 방향으로 좁혀 해소했다:
+(a) 매칭 단위를 `FixtureComposer.ProvenKey(table, column, value)`로 축소, (b) `inheritsProvenSeed`가
+**2xx + outcome=FAILURE**(에러 엔벨로프) path를 상속 대상에서 제외. REQ-037이 겨냥한 파생
+시나리오는 전부 비-2xx라 (b)에 걸리지 않는다.
+
 **검증:** 단위 `LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue`
-(증거 없으면 시드 안 함 + 증거 있으면 시드함, 양방향) + `e2e/run-e2e.sh` 실행 결과
-`tests=85 skipped=0 failures=0 errors=0`(직전 `failures=2`에서 전환). 생성 코드에서
-`s422e422_1`/`s422e422_2` 모두 `INSERT INTO fund_accounts ... / deferDelete`가 붙은 것을 확인했다.
+(증거 없으면 시드 안 함 + 증거 있으면 시드함 + 자리가 다른 증거는 상속 안 함) +
+**Generator 레벨** `GeneratorProvenSeedInheritanceTest`(같은 endpoint에 SUCCESS/200-엔벨로프
+FAILURE/422 파생/교차-테이블 409가 섞인 `fixture-req005-graph`로 REQ-005·REQ-037을 동시에 고정)
++ `e2e/run-e2e.sh` 실행 결과 `tests=85 skipped=0 failures=0 errors=0`(직전 `failures=2`에서 전환).
+생성 코드에서 `s422e422_1`/`s422e422_2` 모두 `INSERT INTO fund_accounts ... / deferDelete`가 붙은
+것을 확인했다.

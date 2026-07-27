@@ -209,6 +209,10 @@ synthesize-triple --report <provenance-report.json> --triple-store <dir>
 | `--report` | 예 | — | `provenance`가 만든 리포트 경로 |
 | `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉터리 |
 
+후보와 함께 **입력 리포트를 `<triple-store>/<endpointId>/provenance-report.json`으로 복사한다** —
+후속 `trial`이 `--provenance-report` 없이 읽는 규약 위치다. 그래서 `provenance --out`을 어느 경로로
+잡았든 `provenance → synthesize-triple → trial` 순서가 그대로 동작한다.
+
 관계 가드(`equals/비교(입력, DB값)`)는 입력과 시드 행을 공동 배치해 만족값을 정하고, 리터럴
 경계 가드는 satisfy/경계 로직으로 계산한다. 후보 수는 EP당 최대 4개로 cap되고 우선순위 정렬은
 결정적(`cand-01`이 최우선). 결정 불가한 자리만 아티팩트별 문법의 갭 마커로 남는다:
@@ -225,6 +229,7 @@ synthesize-triple --report <provenance-report.json> --triple-store <dir>
 
 ```
 <triple-store>/<endpointId>/
+  provenance-report.json       # synthesize-triple이 복사한 입력 리포트(trial의 T1 게이트가 읽는 규약 위치)
   cand-01/ cand-02/ …          # 미승격 후보(순번 — cand-01이 최우선)
     body.json seed.sql stubs.json notes.md
   base/cand-01/ …              # synthesize-triple이 만든 원본 그대로의 사본(마커-diff 기준, 편집 금지)
@@ -242,7 +247,8 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
   --sut-base-url <BASE_URL> \
   --jdbc-url <JDBC_URL> [--db-user <USER>] [--db-password <PASSWORD>] --db-type postgres|mysql|mariadb \
   [--triple-store <DIR>] [--triple-candidates <DIR>] [--trial-budget 8] \
-  [--happy-seeds <required-seeds.json>] [--provenance-report <provenance-report.json>] \
+  [--happy-seeds <required-seeds.json>] \
+  [--provenance-report <provenance-report.json>]   # 플래그는 선택, 리포트 파일 자체는 필수 \
   [--sut-log-file <FILE>] \
   [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
   [--error-detail-field <field>] [--error-detail-contains <substring>]
@@ -258,7 +264,7 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
 | `--triple-candidates` | 아니오 | `--triple-store`와 동일 | 시도할 후보를 읽어올 루트(다르게 지정 가능) |
 | `--trial-budget` | 아니오 | `8` | 이번 호출에서 시도할 후보 최대 개수 |
 | `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON) |
-| `--provenance-report` | 아니오 | — | 실패 가드 역매핑(FailureDigest)에 쓸 리포트 |
+| `--provenance-report` | 플래그는 아니오, **파일은 예** | `<triple-candidates>/<endpointId>/provenance-report.json` | `seed.sql` 화이트리스트(REQ-010) 허용 테이블 집합의 유일한 출처 + 실패 가드 역매핑(`FailureDigest`). 플래그 생략 시 기본값 경로를 읽고, 없으면 후보를 하나도 시험하지 않고 실패한다(fail-closed). `synthesize-triple`이 입력 리포트를 이 경로로 복사한다 |
 | `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
 | `--error-when-present` 등 4종 | 아니오 | (없으면 `StatusOnlyClassifier`) | `build`와 동일한 에러 엔벨로프 분류 플래그 — trial과 확정 run이 **같은 값**을 써야 판정이 일관된다 |
 

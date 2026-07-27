@@ -143,13 +143,18 @@ public class Generator {
     }
 
     /**
-     * REQ-037: 이 endpoint의 <b>2xx(SUCCESS) 시나리오</b>가 SELECT 바인딩으로 "그 값의 행이 존재한다"를
-     * 증명한 키 값 집합. 같은 body 값을 물려받은 파생 시나리오(happy body를 변이해 만든 422/409 등)는
-     * 자기 응답만으로는 조회 성공을 증명하지 못하므로, 이 집합을 근거로 부모 행 시드를 상속한다 —
-     * 그러지 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가 난다.
+     * REQ-037: 이 endpoint의 <b>2xx(SUCCESS) 시나리오</b>가 SELECT 바인딩으로 "그 (테이블, 컬럼) 자리의
+     * 그 값의 행이 존재한다"를 증명한 조합 집합. 같은 body 값을 물려받은 파생 시나리오(happy body를
+     * 변이해 만든 422/409 등)는 자기 응답만으로는 조회 성공을 증명하지 못하므로, 이 집합을 근거로 부모
+     * 행 시드를 상속한다 — 그러지 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가 난다.
+     *
+     * <p>N2 리뷰 fix: 증명 단위가 값 문자열이 아니라 {@link FixtureComposer.ProvenKey}(테이블·컬럼·값)다.
+     * 값만 비교하면 우연히 값이 같은 다른 테이블/컬럼 조회에도 시드가 붙어 REQ-005의 "spurious seed
+     * 없음"이 깨진다. 바인딩 테이블은 {@code FixtureComposer}와 동일한 규칙(조인 별칭이 있으면 그것,
+     * 없으면 statement의 주 테이블)으로 해석한다.
      */
-    private java.util.Set<String> provenExistingKeyValues(String endpointId) {
-        java.util.Set<String> proven = new java.util.LinkedHashSet<>();
+    private java.util.Set<FixtureComposer.ProvenKey> provenExistingKeys(String endpointId) {
+        java.util.Set<FixtureComposer.ProvenKey> proven = new java.util.LinkedHashSet<>();
         for (ExploredPath p : client.pathsForEndpoint(endpointId)) {
             if (p.outcome() != io.graphrag.model.Outcome.Kind.SUCCESS) {
                 continue;
@@ -160,7 +165,8 @@ public class Generator {
                 }
                 for (io.graphrag.model.SqlBinding b : s.bindings()) {
                     if (b.origin() == io.graphrag.model.BindingOrigin.API_PARAM && b.value() != null) {
-                        proven.add(b.value());
+                        String table = b.table() == null || b.table().isEmpty() ? s.tableName() : b.table();
+                        proven.add(new FixtureComposer.ProvenKey(table, b.column(), b.value()));
                     }
                 }
             }
@@ -196,7 +202,7 @@ public class Generator {
         ComposedFixture fixture = new FixtureComposer().compose(path, sql, client.tables(),
                 client.seedsForPath(path.id()), readPath, knownByField,
                 client.errorContractStatusField(), client.errorDetailField(), client.errorDetailContains(),
-                provenExistingKeyValues(endpoint.id()));
+                provenExistingKeys(endpoint.id()));
         HttpMockComposer.ComposedMocks mocks =
                 new HttpMockComposer().compose(client.httpCallsForPath(path.id()));
 

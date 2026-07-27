@@ -1,0 +1,158 @@
+{
+  "sutId": "order-service",
+  "commitSha": "test",
+  "endpoints": [
+    {
+      "id": "post-api-orders",
+      "httpMethod": "POST",
+      "path": "/api/orders",
+      "handlerClass": "io.graphrag.sample.orders.OrderController",
+      "handlerMethod": "create",
+      "params": [
+        {
+          "name": "request",
+          "javaType": "io.graphrag.sample.orders.OrderController$CreateOrderRequest",
+          "kind": "BODY"
+        }
+      ],
+      "authRequired": false
+    }
+  ],
+  "paths": [
+    {
+      "id": "post-api-orders-suc200",
+      "endpointId": "post-api-orders",
+      "sampleInput": { "userId": "probe-userId", "amount": 1, "type": "EXPRESS" },
+      "expectedStatus": 200,
+      "sampleResponse": { "id": 1, "status": "PENDING" },
+      "capturedSqlIds": ["sql-suc200-1"],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "fuzzer",
+      "constraints": [],
+      "validationWarnings": [],
+      "outcome": "SUCCESS",
+      "semanticStatus": 200,
+      "semanticStatusText": "200"
+    },
+    {
+      "id": "post-api-orders-env200",
+      "endpointId": "post-api-orders",
+      "sampleInput": { "userId": "probe-userId", "amount": 1, "type": "EXPRESS" },
+      "expectedStatus": 200,
+      "sampleResponse": null,
+      "capturedSqlIds": ["sql-env200-1"],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "fuzzer",
+      "constraints": [],
+      "validationWarnings": [],
+      "outcome": "FAILURE",
+      "semanticStatus": 200,
+      "semanticStatusText": "200"
+    },
+    {
+      "id": "post-api-orders-derived422",
+      "endpointId": "post-api-orders",
+      "sampleInput": { "userId": "probe-userId", "amount": 2, "type": "EXPRESS" },
+      "expectedStatus": 422,
+      "sampleResponse": null,
+      "capturedSqlIds": ["sql-derived422-1"],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "fuzzer",
+      "constraints": [],
+      "validationWarnings": [],
+      "outcome": "FAILURE",
+      "semanticStatus": 422,
+      "semanticStatusText": "422"
+    },
+    {
+      "id": "post-api-orders-cross409",
+      "endpointId": "post-api-orders",
+      "sampleInput": { "userId": "probe-userId", "amount": 3, "type": "EXPRESS" },
+      "expectedStatus": 409,
+      "sampleResponse": null,
+      "capturedSqlIds": ["sql-cross409-1"],
+      "capturedHttpCallIds": [],
+      "branchesTaken": [],
+      "discoveredBy": "fuzzer",
+      "constraints": [],
+      "validationWarnings": [],
+      "outcome": "FAILURE",
+      "semanticStatus": 409,
+      "semanticStatusText": "409"
+    }
+  ],
+  "sql": [
+    {
+      "id": "sql-suc200-1",
+      "pathId": "post-api-orders-suc200",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        { "position": 1, "column": "id", "value": "probe-userId", "origin": "API_PARAM" }
+      ]
+    },
+    {
+      "id": "sql-env200-1",
+      "pathId": "post-api-orders-env200",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        { "position": 1, "column": "id", "value": "probe-userId", "origin": "API_PARAM" }
+      ]
+    },
+    {
+      "id": "sql-derived422-1",
+      "pathId": "post-api-orders-derived422",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?",
+      "tableName": "users",
+      "bindings": [
+        { "position": 1, "column": "id", "value": "probe-userId", "origin": "API_PARAM" }
+      ]
+    },
+    {
+      "id": "sql-cross409-1",
+      "pathId": "post-api-orders-cross409",
+      "sqlKind": "SELECT",
+      "normalizedSql": "select o1_0.id from orders o1_0 where o1_0.user_id=?",
+      "tableName": "orders",
+      "bindings": [
+        { "position": 1, "column": "user_id", "value": "probe-userId", "origin": "API_PARAM" }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "orders",
+      "columns": [
+        { "name": "id", "jdbcType": "BIGSERIAL", "nullable": false, "primaryKey": true },
+        { "name": "user_id", "jdbcType": "VARCHAR", "nullable": false, "primaryKey": false },
+        { "name": "amount", "jdbcType": "INT4", "nullable": false, "primaryKey": false },
+        { "name": "type", "jdbcType": "VARCHAR", "nullable": false, "primaryKey": false },
+        { "name": "status", "jdbcType": "VARCHAR", "nullable": false, "primaryKey": false }
+      ],
+      "foreignKeys": [
+        { "column": "user_id", "referencedTable": "users", "referencedColumn": "id" }
+      ],
+      "uniqueKeys": [["id"]]
+    },
+    {
+      "name": "users",
+      "columns": [
+        { "name": "id", "jdbcType": "VARCHAR", "nullable": false, "primaryKey": true },
+        { "name": "name", "jdbcType": "VARCHAR", "nullable": false, "primaryKey": false }
+      ],
+      "foreignKeys": [],
+      "uniqueKeys": [["id"]]
+    }
+  ],
+  "httpCalls": [],
+  "wsEndpoints": [],
+  "wsExchanges": [],
+  "capturedEventEmits": []
+}

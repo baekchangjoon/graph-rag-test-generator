@@ -1339,6 +1339,14 @@ public final class BuilderCli {
      * {@link io.graphrag.builder.provenance.TripleValidator}가 이 미변경 사본과 diff해 마커 외
      * 변경을 reject한다(REQ-009). 저장 레이아웃의 완전한 정식화(promoted/failed 이동 등)는
      * Task 11({@code TripleStore})의 범위이며, 여기서는 base 보존만 최소 배선한다.
+     *
+     * <p><b>provenance 리포트 규약 위치 복사(N3 리뷰 fix):</b> 후속 {@code trial}(T2)의 T1 검증
+     * 게이트는 {@code --provenance-report}가 없으면 저장 레이아웃 규약 위치
+     * {@code <candidates-root>/<endpointId>/provenance-report.json}을 읽고, 없으면 후보를 하나도
+     * 시험하지 않고 {@link IllegalArgumentException}으로 실패한다(fail-closed). {@code provenance}
+     * CLI의 {@code --out}은 임의 경로이므로, 문서화된 순서(provenance → synthesize-triple → trial)
+     * 대로 돌렸을 때 그 위치에 파일이 있도록 여기서 입력 리포트를 규약 위치로 복사한다. 이미 그
+     * 위치를 가리키는 입력이면 복사를 건너뛴다.
      */
     private static void runSynthesizeTriple(Map<String, String> o) throws Exception {
         Path reportPath = Path.of(required(o, "--report"));
@@ -1348,7 +1356,12 @@ public final class BuilderCli {
         List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
                 report, BodyShape.empty(), List.of(), io.graphrag.builder.oracle.InputCandidates.empty());
 
-        Path endpointDir = tripleStore.resolve(report.endpointId());
+        Path endpointDir = Files.createDirectories(tripleStore.resolve(report.endpointId()));
+        Path canonicalReport = endpointDir.resolve("provenance-report.json");
+        if (!canonicalReport.toAbsolutePath().normalize()
+                .equals(reportPath.toAbsolutePath().normalize())) {
+            Files.copy(reportPath, canonicalReport, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
         for (int i = 0; i < candidates.size(); i++) {
             TripleCandidate candidate = candidates.get(i);
             String candName = String.format("cand-%02d", i + 1);
@@ -1364,8 +1377,8 @@ public final class BuilderCli {
             }
             Files.writeString(candDir.resolve("notes.md"), candidate.notes());
         }
-        log.info("synthesize-triple: {} candidate(s) for {} -> {}",
-                candidates.size(), report.endpointId(), endpointDir);
+        log.info("synthesize-triple: {} candidate(s) for {} -> {} (provenance report at {})",
+                candidates.size(), report.endpointId(), endpointDir, canonicalReport);
     }
 
     /**

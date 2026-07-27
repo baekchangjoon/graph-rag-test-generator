@@ -51,6 +51,11 @@ description: Repeatedly drives the graph-rag-builder `trial` CLI subcommand (T2)
 `<triple-candidates>/<endpointId>/provenance-report.json`에 파일이 있어야 한다. 없으면 CLI는
 후보를 하나도 시험하지 않고 즉시 실패한다(fail-closed).
 
+**보통은 아무것도 안 해도 된다** — `triple-synthesis`(`synthesize-triple` CLI)가 입력 리포트를
+그 규약 위치로 복사하므로, `provenance-analysis → triple-synthesis → trial-loop` 순서를 그대로
+따랐다면 `--provenance-report`를 넘길 필요가 없다. 별도 경로의 리포트를 쓰고 싶을 때만 플래그로
+지정하라.
+
 **이 경로에 남는 유일한 T1 갭:** 이 CLI에는 그래프 자산이 없어 `BodyShape`를 `empty()`로 넘기므로,
 REQ-011 중 **body 필드 스키마 검증만** skip된다(마커-diff·화이트리스트·PII·stub 스키마 검증은 전부
 적용). body에 SUT DTO에 없는 필드가 있는지는 통합 `build` 경로(실제 `BodyShape` 보유)가 잡는다.
@@ -90,7 +95,8 @@ SUT의 기본 동작 — 예: 외부 호출 실패 시 재시도/타임아웃/�
   --db-type postgres|mysql|mariadb \
   [--triple-store <DIR>] [--triple-candidates <DIR>] \
   [--trial-budget 8] \
-  [--happy-seeds <required-seeds.json>] [--provenance-report <provenance-report.json>] \
+  [--happy-seeds <required-seeds.json>] \
+  [--provenance-report <provenance-report.json>]   # 플래그는 선택, 리포트 파일 자체는 필수 \
   [--sut-log-file <FILE>] \
   [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
   [--error-detail-field <field>] [--error-detail-contains <substring>]"
@@ -112,7 +118,7 @@ SUT의 기본 동작 — 예: 외부 호출 실패 시 재시도/타임아웃/�
 | `--triple-candidates` | 아니오 | `--triple-store`와 동일 | 시도할 후보를 읽어올 루트(다르게 줄 수 있음) |
 | `--trial-budget` | 아니오 | `8` | 이번 호출에서 시도할 후보 최대 개수(fuzzer 예산과 분리된 값) |
 | `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON, `RequiredSeed[]`) |
-| `--provenance-report` | 아니오 | — | 실패 가드 역매핑에 쓸 `provenance-report.json` |
+| `--provenance-report` | 플래그는 아니오, **파일은 예** | `<triple-candidates>/<endpointId>/provenance-report.json` | T1 화이트리스트 허용 테이블 집합의 유일한 출처 + 실패 가드 역매핑(`FailureDigest`). 플래그를 생략하면 기본값 경로를 읽고, 거기에도 파일이 없으면 CLI는 후보를 하나도 시험하지 않고 즉시 실패한다(fail-closed). `synthesize-triple`이 입력 리포트를 이 기본값 경로로 복사하므로, 파이프라인 순서대로 실행했다면 별도 지정이 필요 없다 |
 | `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
 | `--error-when-present` | 아니오 | (없음 → `StatusOnlyClassifier`) | 콤마 구분 필드 목록. 하나라도 주면 `ErrorEnvelopeClassifier` 사용 |
 | `--semantic-status-field` | 아니오 | `errorCode` | 에러 엔벨로프의 상태 필드명(`--error-when-present`와 함께 씀) |
