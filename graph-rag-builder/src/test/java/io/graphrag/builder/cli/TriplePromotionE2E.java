@@ -96,6 +96,45 @@ class TriplePromotionE2E {
     }
 
     /**
+     * REQ-018(완주): 커밋된 {@code e2e/triples/post-api-transfers/promoted/cand-01}(Task 18 부트스트랩
+     * — 사람 갭필, spec §10 허용)이 실 SUT와 일치해 T1 재검증 + trial 재확인을 통과 → 확정 run(캡처-on
+     * 재explore)까지 채택되는지 검증한다. {@code e2e/triples}는 임시 디렉터리가 아니라 이 저장소에
+     * 커밋된 실 e2e fixture다({@code build.gradle.kts}의 {@code -Dtriple.candidates} 시스템 프로퍼티로
+     * 주입, {@code external.stubs}와 동일 관례).
+     *
+     * <p>후보 내용(seed {@code fund_accounts}, stub {@code POST /fraud/check -> CLEAR}, body
+     * {@code fromAccountId/amount/items[0].{sku,qty}}) 근거는
+     * {@code e2e/triples/post-api-transfers/promoted/cand-01/notes.md} 참조 — 이 후보가 채택되면
+     * 컨트롤러의 4개 분기(계좌 존재/잔액/items 유효성/fraud 통과)를 모두 통과해 201을 반환해야 한다.
+     */
+    @Test
+    @DisplayName("REQ-018: 커밋된 promoted 후보(Task 18 부트스트랩)가 실 SUT와 일치 → T1 재검증+trial 재확인 통과 "
+            + "→ 확정 run으로 채택되고 graph.json에 post-api-transfers의 2xx SUCCESS ExploredPath가 남는다")
+    void req018_adoptedTripleProducesSuccessExploredPath() throws Exception {
+        Path tripleCandidatesRoot = Path.of(System.getProperty("triple.candidates"));
+
+        GraphAsset graph = buildOrderServiceGraph(tripleCandidatesRoot);
+
+        List<ExploredPath> transferPaths = graph.paths().stream()
+                .filter(p -> p.endpointId().equals("post-api-transfers")).toList();
+        assertThat(transferPaths).as("post-api-transfers 엔드포인트가 그래프에 있어야 한다").isNotEmpty();
+        assertThat(transferPaths)
+                .as("REQ-018: 채택된 promoted 후보로 2xx SUCCESS ExploredPath가 남아야 한다: " + transferPaths)
+                .anyMatch(p -> p.expectedStatus() / 100 == 2 && p.outcome() == Outcome.Kind.SUCCESS);
+
+        ExplorationReport report = Json.mapper().readValue(
+                out.resolve("exploration-report.json").toFile(), ExplorationReport.class);
+        ExplorationReport.EndpointExploration transferEntry = report.endpoints().stream()
+                .filter(e -> e.endpointId().equals("post-api-transfers"))
+                .findFirst().orElseThrow(() -> new AssertionError("post-api-transfers entry missing from report"));
+        assertThat(transferEntry.tripleAdopted())
+                .as("REQ-018: promoted 후보가 채택돼야 한다(tripleAdopted=true)").isTrue();
+        assertThat(transferEntry.staleTriples())
+                .as("채택된 후보는 staleTriples로 표면화되면 안 된다").isEmpty();
+        assertThat(transferEntry.trialCount()).as("게이트가 정확히 1회 발화했어야 한다").isEqualTo(1);
+    }
+
+    /**
      * {@link FixtureBaselineE2E#buildOrderServiceGraph()}와 동일한 부팅 계약 — 여기에
      * {@code tripleCandidatesRoot}만 추가로 배선한다(REQ-018/019/020/035 게이트 활성화).
      */

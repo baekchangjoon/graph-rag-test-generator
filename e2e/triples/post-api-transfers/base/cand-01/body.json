@@ -1,0 +1,9 @@
+{
+  "fromAccountId" : "seed-fromaccountid",
+  "amount" : 1,
+  "note" : "__AGENT_FILL__{type:String, semanticHint:free-text, guard:none}",
+  "items" : [ {
+    "sku" : "__AGENT_FILL__{type:String, semanticHint:free-text, guard:none}",
+    "qty" : "__AGENT_FILL__{type:int, semanticHint:none, guard:none}"
+  } ]
+}

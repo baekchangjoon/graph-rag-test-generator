@@ -84,6 +84,9 @@ tasks.test {
             .dir("src/main/java").asFile.absolutePath)
     systemProperty("external.stubs",
         rootProject.layout.projectDirectory.dir("e2e/external-stubs").asFile.absolutePath)
+    // Task 18(REQ-018/036): 커밋된 promoted 후보(e2e/triples) 부트스트랩 e2e에서 사용.
+    systemProperty("triple.candidates",
+        rootProject.layout.projectDirectory.dir("e2e/triples").asFile.absolutePath)
     // PoC: pjacoco.agent.jar 경로를 테스트 JVM으로 전달 (-Dpjacoco.agent.jar=<path> 로 지정)
     val pjacocoAgentJar: String? = System.getProperty("pjacoco.agent.jar")
     if (pjacocoAgentJar != null) systemProperty("pjacoco.agent.jar", pjacocoAgentJar)

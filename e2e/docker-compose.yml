@@ -49,6 +49,9 @@ services:
       REQUIRE_AUTH_TIME: ${REQUIRE_AUTH_TIME:-false}
       # 외부 의존은 mock 컨테이너로 redirect (docs/06)
       EXTERNAL_INVENTORY_URL: http://wiremock:8080
+      # Task 18(REQ-018/036): TransferController의 fraud 체크 — post-api-transfers promoted 후보의
+      # WireMock stub(POST /fraud/check)도 이 동일 wiremock 컨테이너로 등록/응답된다.
+      EXTERNAL_FRAUD_URL: http://wiremock:8080
       # OTEL javaagent: baggage propagation만 사용 (트레이스 저장 없음)
       JAVA_TOOL_OPTIONS: "-javaagent:/agents/otel-javaagent.jar"
       OTEL_TRACES_EXPORTER: none

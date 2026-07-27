@@ -1,0 +1,6 @@
+{
+  "endpointId": "post-api-transfers",
+  "testClassName": "TransfersPostTest",
+  "packageName": "io.graphrag.generated",
+  "authMode": "REAL"
+}

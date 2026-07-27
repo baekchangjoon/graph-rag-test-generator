@@ -46,9 +46,14 @@ public final class TripleValidator {
     private static final Pattern REAL_EMAIL_DOMAIN = Pattern.compile("@(gmail|naver|daum|kakao)\\.com");
 
     // REQ-011: WireMock mapping 스키마 고정 키 집합(TripleSynthesizer가 산출하는 stub 구조와 일치).
+    // "headers"(Task 18 보강): jsonBody 응답이 Content-Type 없이 등록되면 WireMock이 헤더를 자동으로
+    // 붙이지 않아(REQ-011 이전 갭 — TripleSynthesizer 자동 생성 stub은 아직 미배선, notes 참조) 실제
+    // HTTP 클라이언트(예: RestTemplate)의 메시지 컨버터 선택이 실패해 SUT가 500을 낸다 — 사람 갭필
+    // 후보가 명시적으로 채워 넣을 수 있도록 이 최상위 키를 허용한다(안쪽 헤더명은 임의이므로 checkKeys
+    // 대상이 아니다 — jsonBody와 동일 취급).
     private static final Set<String> STUB_TOP_KEYS = Set.of("request", "response");
     private static final Set<String> STUB_REQUEST_KEYS = Set.of("method", "urlPath");
-    private static final Set<String> STUB_RESPONSE_KEYS = Set.of("status", "jsonBody");
+    private static final Set<String> STUB_RESPONSE_KEYS = Set.of("status", "jsonBody", "headers");
 
     private final List<TableSchema> tables;
     private final DbConfig.Type dialect;
@@ -264,11 +269,44 @@ public final class TripleValidator {
         Set<String> actualLeafPaths = new LinkedHashSet<>();
         collectLeafPaths(body, "", actualLeafPaths);
         for (String leafPath : actualLeafPaths) {
-            if (!allowed.contains(leafPath)) {
+            if (!isAllowedPath(leafPath, allowed)) {
                 violations.add("body 필드가 BodyShape에 없음(REQ-011 스키마 위반): " + leafPath);
             }
         }
         return violations;
+    }
+
+    /**
+     * REQ-011 보강: {@code leafPath}가 {@code allowed}에 정확히 일치하면 허용한다(기존 동작). 그렇지
+     * 않고 dot-path이면, 앞쪽에서부터 자라나는 접두 경로들이 {@code allowed}의 원소와 일치하는지도
+     * 확인한다 — 예를 들어 {@code items}가 {@code List<TransferItem>}(중첩 리스트) 필드일 때
+     * {@link BodyShapeExtractor}(호출부)는 원소 DTO 필드까지 dot-path로 전개하지 않고 {@code items}
+     * 하나만 top-level 리프로 담으므로, {@code allowed}에는 {@code "items"}만 있고 실제 후보 body의
+     * {@code collectLeafPaths}는 {@code "items.sku"}/{@code "items.qty"}를 만든다. 이 경우 접두
+     * {@code "items"}가 allowed에 있으므로 그 아래 중첩 서브트리(배열 원소 포함)를 허용한다.
+     *
+     * <p><b>REQ-011 핵심 보장은 유지된다:</b> 이 완화는 "알려진 top-level 필드 아래의 미기술 중첩
+     * 구조"만 허용할 뿐, 접두사 자체가 {@code allowed}의 어떤 원소와도 일치하지 않는 완전히 새로운
+     * top-level 필드(예: {@code "extra"}, {@code "hackedField.x"})는 여전히 reject한다 — top-level
+     * 단위의 미지 필드 거부 능력은 그대로다. 스칼라 위치가 배열/객체로 부당 대체되는 것 자체는 이
+     * 메서드가 아니라 {@link #diffJson}의 마커 계약(REQ-009)이 별도로 막는다.
+     */
+    private static boolean isAllowedPath(String leafPath, Set<String> allowed) {
+        if (allowed.contains(leafPath)) {
+            return true;
+        }
+        String[] segments = leafPath.split("\\.");
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (i > 0) {
+                prefix.append('.');
+            }
+            prefix.append(segments[i]);
+            if (allowed.contains(prefix.toString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void collectLeafPaths(JsonNode node, String prefix, Set<String> out) {

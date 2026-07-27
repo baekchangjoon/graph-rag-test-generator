@@ -1,0 +1,9 @@
+{
+  "fromAccountId" : "seed-fromaccountid",
+  "amount" : 1,
+  "note" : "promoted candidate note",
+  "items" : [ {
+    "sku" : "SKU-001",
+    "qty" : 2
+  } ]
+}

@@ -154,6 +154,54 @@ class TripleGateIT {
     }
 
     @Test
+    @DisplayName("REQ-011(보강): List<DTO> 필드(BodyShape에는 top-level 'items'만 있음) 아래 "
+            + "items.sku/items.qty 중첩 리프는 스키마 검증을 통과한다")
+    void req011_nestedListDotPathAcceptedWhenTopLevelFieldKnown() throws IOException {
+        // BodyShapeExtractor.flatten()은 컬렉션 필드를 원소 DTO까지 전개하지 않고 "items" 하나만
+        // top-level 리프로 담는다(java.util.List) — 실제 후보 body는 items를 배열-of-객체로 채운다.
+        String bodyJson = "{\"fromAccountId\":\"probe-1\",\"amount\":100,"
+                + "\"items\":[{\"sku\":\"sku-1\",\"qty\":2}]}";
+        String seed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('probe-1', 100);";
+
+        Path base = writeArtifacts("base", bodyJson, seed, "{}");
+        Path cand = writeArtifacts("cand", bodyJson, seed, "{}");
+
+        BodyShape shape = new BodyShape("CreateTransferRequest", List.of(
+                new BodyShape.BodyField("fromAccountId", "java.lang.String"),
+                new BodyShape.BodyField("amount", "long"),
+                new BodyShape.BodyField("note", "java.lang.String"),
+                new BodyShape.BodyField("items", "java.util.List")));
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), shape);
+
+        assertThat(result.accepted())
+                .as("List<DTO> top-level 필드 아래 중첩 리프(items.sku/items.qty)는 통과해야 한다: " + result.reasons())
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-011(보강 회귀): 완전히 새로운 top-level 필드가 붙은 중첩 경로는 여전히 reject된다 — "
+            + "REQ-011의 미지 필드 거부는 top-level 단위로 유지된다")
+    void req011_unknownTopLevelPrefixStillRejectedEvenIfNested() throws IOException {
+        // "hacked"는 allowed(top-level: fromAccountId/amount/note/items) 어디에도 없으므로,
+        // 그 아래 중첩 경로(hacked.x)라도 여전히 reject되어야 한다 — 완화가 top-level 검증을
+        // 우회하는 구멍이 되지 않음을 확인한다.
+        String bodyJson = "{\"note\":\"x\",\"hacked\":{\"x\":1}}";
+        String seed = "INSERT INTO orders (id) VALUES ('seed-orders');";
+
+        Path base = writeArtifacts("base", bodyJson, seed, "{}");
+        Path cand = writeArtifacts("cand", bodyJson, seed, "{}");
+
+        BodyShape shape = new BodyShape("Req", List.of(new BodyShape.BodyField("note", "String")));
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result = validator.validate(cand, base, reportWithDbReadTable("orders"), shape);
+
+        assertThat(result.accepted()).as("알 수 없는 top-level 접두사(hacked)는 중첩이어도 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).anyMatch(r -> r.contains("hacked.x"));
+    }
+
+    @Test
     @DisplayName("REQ-011: WireMock mapping 스키마에 없는 키를 추가한 stub 후보는 사유와 함께 reject된다")
     void req011_stubKeyOutsideMappingSchemaRejected() throws IOException {
         String body = "{\"note\":\"x\"}";
@@ -172,6 +220,28 @@ class TripleGateIT {
 
         assertThat(result.accepted()).as("mapping 스키마 밖 키(priority)는 reject되어야 한다").isFalse();
         assertThat(result.reasons()).anyMatch(r -> r.contains("priority"));
+    }
+
+    @Test
+    @DisplayName("REQ-011(보강, Task 18): stub.response에 headers 키를 추가한 후보는 통과한다 — "
+            + "jsonBody 전용 stub이 Content-Type 없이 등록되면 실 HTTP 클라이언트의 메시지 컨버터 선택이 "
+            + "실패해 SUT가 500을 내므로(완주 E2E에서 실측), 사람 갭필로 명시적 Content-Type을 채울 수 있어야 한다")
+    void req011_stubResponseHeadersKeyAccepted() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String seed = "INSERT INTO orders (id) VALUES ('seed-orders');";
+        String stub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"headers\":{\"Content-Type\":\"application/json\"},"
+                + "\"jsonBody\":{\"status\":\"CLEAR\"}}}";
+
+        Path base = writeArtifacts("base", body, seed, stub);
+        Path cand = writeArtifacts("cand", body, seed, stub);
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("orders"), BodyShape.empty());
+
+        assertThat(result.accepted())
+                .as("stub.response.headers는 REQ-011 스키마 내 허용 키여야 한다: " + result.reasons()).isTrue();
     }
 
     @Test
