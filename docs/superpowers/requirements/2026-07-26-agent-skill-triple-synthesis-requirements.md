@@ -299,23 +299,23 @@
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
-| REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009 | E2E | 🟢 green |
+| REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009, TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed] |
 | REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010 | integration | 🟢 green |
-| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial] |
+| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green |
 | REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert | E2E | 🟢 green |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
 | REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#req017_* (2케이스: 락 상호배제·2-endpoint 무중첩) | integration | 🟢 green |
-| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#REQ-018 (Task 18에서 추가 예정) | E2E | 🟡[^req018-builder-part] |
+| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath | E2E | 🟢 green[^req018-done] |
 | REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#req019_confirmRunMismatchRejectsCandidateAndRestoresOriginal | integration | 🟢 green |
 | REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#req020_staleTripleOnTrialMismatchFallsBackToBaseline | E2E | 🟢 green |
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#req035_* (2케이스) | integration | 🟢 green |
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🟢 green |
 | REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🟢 green[^grb-trial-wired] |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
-| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split][^req036-task12-partial] |
+| REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | run-e2e.sh(`--triple-candidates e2e/triples`) + TriplePromotionE2E#req018 | integration | 🟡[^req036-split][^req036-task18-partial] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#req023_* (4케이스: 0개/allow만/confirm만/2개) | integration | 🟢 green |
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#req024_reverseDeleteFailureBlocksPromotionAndReportsRemainingRow | integration | 🟢 green |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#req025_attachModeSkipsStubRegistrationEvenWithNonEmptyStub | integration | 🟢 green |
@@ -387,19 +387,117 @@ Endpoint를 직접 명시받고 happy 시드는 별도 JSON 파일(`--happy-seed
 `promoted/` 커밋 경로(Task 18 소관). 이 세 항목이 남아 있어 REQ-036은 이번 task로도 완성되지
 않았고 🔴 planned를 유지한다.
 
-[^req018-builder-part]: Task 14가 REQ-018의 **빌더 소비 부분**을 구현·검증했다 —
-`EndpointExplorationRunner`가 base happy invoke FAILURE인 endpoint에서
-`TriplePromotionGate.attempt`(promoted 존재 확인→T1 재검증→trial 1회 재확인)를 거쳐 성공하면 그
-삼중을 영속 적용하고 확정 run(캡처-on 재explore)까지 수행해, 확정 run이 SUCCESS면 채택
-(`tripleAdopted=true`)한 뒤 현행 explore 파이프라인을 그대로 이어간다(REQ-017 정적 락으로 직렬화).
-이 경로 자체는 `TriplePromotionIT`/`ParallelTrialRegressionIT`가 직접 호출로 커버하지만,
-REQ-018 수용기준이 요구하는 **완주 E2E**("전체 빌드+생성+TC 실행 → 대상 EP의 2xx ExploredPath와
-생성 TC green")는 test-generator TC 생성·실행까지 필요해 이 task의 선언 파일 범위(
-`EndpointExplorationRunner`/`BuilderCli`) 밖이다 — Task 18이 `TriplePromotionE2E`에 ADOPT-성공
-경로를 검증하는 REQ-018 전용 메서드를 추가해 완성한다(브리핑에 명시된 "Task 18의 REQ-018 메서드와
-공존"). 따라서 🟡(빌더 부분 완료, 완주 E2E 미완)로 표기한다.
+[^req018-done]: Task 14가 REQ-018의 **빌더 소비 부분**을 구현·검증했다 — `EndpointExplorationRunner`가
+base happy invoke FAILURE인 endpoint에서 `TriplePromotionGate.attempt`(promoted 존재 확인→T1
+재검증→trial 1회 재확인)를 거쳐 성공하면 그 삼중을 영속 적용하고 확정 run(캡처-on 재explore)까지
+수행해, 확정 run이 SUCCESS면 채택(`tripleAdopted=true`)한 뒤 현행 explore 파이프라인을 그대로
+이어간다(REQ-017 정적 락으로 직렬화). 이 경로 자체는 `TriplePromotionIT`/`ParallelTrialRegressionIT`가
+직접 호출로 커버했으나, REQ-018 수용기준이 요구하는 **완주 E2E**("전체 빌드+생성+TC 실행 → 대상 EP의
+2xx ExploredPath와 생성 TC green")는 미완이었다(🟡, 이전 각주 `req018-builder-part`).
 
-Coverage: 30/36 green (83%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢 전환(+1).
+**Task 18 완결:** 완주를 막던 선결 갭 — `TripleValidator.schemaViolationsForBody`가 중첩 리스트
+dot-path(`items.sku`/`items.qty`)를 지원하지 않아(`BodyShapeExtractor.flatten()`이 `List<DTO>`
+필드를 원소까지 전개하지 않고 top-level 리프 하나로 남김) 배열 바디 후보가 항상 T1에서 reject되던
+문제 — 를 `isAllowedPath`(dot-path 접두사가 `allowed`의 top-level 필드와 일치하면 그 아래 중첩
+서브트리를 허용, 완전히 새로운 top-level 필드는 여전히 reject)로 고쳤다(REQ-011 보강,
+`[^nested-list-schema-fix]` 참조). 이 수정을 전제로 `e2e/triples/post-api-transfers/{base,promoted}/
+cand-01`(사람 갭필 부트스트랩, spec §10 허용 — `fromAccountId`/`amount`/seed/stub은 결정적 값,
+`note`/`items[0].{sku,qty}`만 마커→값 채움, 근거는 해당 `notes.md`)와 동반 `provenance-report.json`을
+커밋하고, `TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath`(Testcontainers
+Postgres + 실 order-service SUT, `-Dtriple.candidates=e2e/triples`)로 전체 빌드 실행 →
+`post-api-transfers`의 2xx SUCCESS ExploredPath 확인 + `tripleAdopted=true` + `staleTriples`
+비어있음 + `trialCount=1`을 단언했다(GREEN, 168초).
+
+**완주 E2E 1차 시도에서 실측한 2번째 선결 갭(REQ-011 추가 보강):** 위 dot-path 수정만으로는 여전히
+STALE이었다 — 실 order-service를 태워보니 `trial 재확인 실패(REQ-020): status=500`. 근본 원인:
+`TripleSynthesizer.routeNegatedEqualityGuard`가 산출하는 WireMock stub은 `{"status","jsonBody"}`만
+채우고 `Content-Type` 헤더를 넣지 않는데, WireMock은 `jsonBody`만 있는 mapping에 Content-Type을
+자동으로 붙이지 않는다(최소 재현: `HttpCaptureServer`에 동일 stub을 등록해 raw HTTP 응답 헤더가
+`matched-stub-id`/`transfer-encoding`뿐임을 확인). `FraudClient`의
+`RestTemplate.postForObject(..., FraudResult.class)`가 Content-Type 부재로 메시지 컨버터를 못 찾아
+예외를 던지고 `TransferController`가 이를 잡지 않아 SUT가 500을 반환했다 — REQ-008/011이 규정한
+WireMock mapping 스키마 자체가 "jsonBody 응답은 타입 있는 HTTP 클라이언트에서 그대로 쓰인다"는
+암묵적 전제를 만족하지 못하고 있었다. **수정:** `TripleValidator.STUB_RESPONSE_KEYS`에 `headers`를
+추가해(내부 헤더명은 임의이므로 `checkKeys` 대상 아님, `jsonBody`와 동일 취급) 사람 갭필 후보가
+`stub.response.headers.Content-Type=application/json`을 명시적으로 채울 수 있게 했다(회귀 테스트
+`TripleGateIT#req011_stubResponseHeadersKeyAccepted`). 후보의 `stubs.json`에 이 헤더를 채운 뒤 위
+E2E가 GREEN으로 전환됐다. **미해결로 남기는 부분:** `TripleSynthesizer`가 EXTERNAL_RESPONSE stub을
+자동 생성할 때 Content-Type을 자동으로 채우지 않는 것 자체는 이 task의 선언 파일 범위(e2e fixture +
+`TriplePromotionE2E`) 밖이라 고치지 않았다 — 향후 자동 생성 stub도 동일한 500 함정에 빠질 수 있으므로
+별도 후속 task 필요(새 REQ-ID 없이 REQ-008 백로그로 기록, 상세는
+`e2e/triples/post-api-transfers/promoted/cand-01/notes.md`).
+
+**완주 E2E 2차 시도(shell `run-e2e.sh`)에서 실측한 3번째 갭:** 위 두 수정 후 in-process
+`TriplePromotionE2E`는 GREEN이었지만, `e2e/run-e2e.sh`(`--triple-candidates e2e/triples` +
+`request-transfers.json` 신규 배선)가 만든 실 docker-compose 스택에서 test-generator 생성
+`TransfersPostTest.s201_1`은 **422**로 실패했다(candidate의 `amount=100`/seed
+`balance_amount=100` 기준). 근본 원인: test-generator/탐색기가 "`xxxId` 필드 → FK 부모 행 자동
+시드" 관례(`SampleInputSynthesizer.findFkTarget`/`defaultFor`)로 시나리오별 **독자적** seed 행을
+만드는데, 이때 NOT NULL numeric 컬럼(`balance_amount`)에는 candidate의 `seed.sql` 값이 아니라
+**제네릭 기본값(=1)**을 쓴다 — candidate의 `amount`가 실제로 만족해야 할 대상은 candidate 자신의
+seed.sql이 아니라 이 제네릭 기본값이었다. **수정:** candidate의 `amount`/`balance_amount`를 `100`에서
+`1`로 낮춰(둘 다 결정값, 마커 아님 — REQ-009 무관) `balance(1) < amount(1)`이 false가 되게 했다 —
+재실행 후 `s201_1`(및 파생 변이 `s500e500_1/2`, `s404e404_1`)이 모두 GREEN으로 전환됐다(상세 트레이스는
+`e2e/triples/post-api-transfers/promoted/cand-01/notes.md`).
+
+**미해결로 남기는 잔여 실패(REQ-018 범위 밖, 새 REQ-ID 없음):** 같은 실행에서 negative-validation
+파생 변이 2건 — `s422e422_1`(amount를 999로 mutate해 "잔액부족 422"를 노리는 변이),
+`s422e422_2`(`items` 필드를 통째로 drop해 "invalid items 422"를 노리는 변이) — 은 여전히 **404**로
+실패한다(`tests=85, failures=2`). 두 시나리오 모두 생성 코드에 `scope.jdbc().update(...)` seed
+삽입 자체가 없다(`fromAccountId`가 `scope.testId()` 기반 매 테스트 고유 id라 사전 시드 없이는 항상
+계정 미존재 → 404) — candidate의 값 조정만으로는 고칠 수 없다(어떤 값을 쓰든 계정 자체가 없어
+404가 먼저 발생). `EndpointExplorationRunner`의 negative-validation/mutation 패스가 "제약 위반
+변이"를 만들 때 FK 존재-가드에 필요한 시드 요구사항을 함께 추적하지 못하는(또는 test-generator의
+per-test id 격리와 어긋나는) 구조적 갭으로 보이며, `EndpointExplorationRunner`/`test-generator`는
+이 task의 선언 파일 범위(e2e fixture + `run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이라 여기서
+고치지 않았다 — **별도 후속 task(신규 REQ 또는 버그 티켓) 필요**로 명시적으로 남긴다.
+
+**REQ-018 판정:** 수용기준이 요구하는 것은 "대상 EP의 2xx ExploredPath와 (그) 생성 TC green"이며,
+이는 in-process(`TriplePromotionE2E`, 2/2 GREEN)와 shell 기반 실 e2e(`TransfersPostTest.s201_1`
+GREEN, 실 docker-compose 스택) 양쪽에서 독립적으로 확인됐다 — REQ-018 자체는 🟢. 다만 같은 실행에
+포함된 negative-validation 파생 변이 2건은 위 별도 갭으로 실패 중이며, `e2e/run-e2e.sh` 전체 스위트는
+현재 `tests=85 failures=2`로 **100% green이 아니다** — PR 게이트("전체 e2e 스위트 무회귀")를
+주장하려면 이 잔여 갭의 후속 조치(수정 또는 명시적 known-issue 처리)가 필요하다는 점을
+투명하게 남긴다.
+
+[^req036-task18-partial]: `[^req036-task12-partial]`이 남긴 3항목 중 **(c) e2e fixture `promoted/`
+커밋 경로**는 이 task가 완료했다 — `e2e/triples/post-api-transfers/{base,promoted}/cand-01` +
+`provenance-report.json`을 커밋하고 `e2e/run-e2e.sh`의 빌더 호출에 `--triple-candidates e2e/triples`를
+배선해, e2e 스크립트가 커밋된 fixture 경로를 그대로 소비함을 확인했다(REQ-036 수용기준 2번째
+Given/When/Then 충족). **여전히 미배선(🟡 유지 사유):** (a) attach 모드에서 실제 SUT가 참조하는
+외부 stub WireMock에 attach하는 경로, (b) `trial` 서브커맨드가 `--graph`로 그래프 자산에서
+Endpoint/happy 시드를 자동 로드하는 경로 — 둘 다 이 task의 선언 파일 범위(triple fixture 배치 +
+`run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이며 별도 후속 task로 남긴다.
+
+[^nested-list-schema-fix]: Task 18 선결 문제로 지적된 갭 — `TripleValidator.schemaViolationsForBody`의
+`allowed` 집합은 `BodyShape.fields()`의 최상위 필드명만 담는데(`BodyShapeExtractor.flatten()`이
+`List<DTO>` 컬렉션 필드를 원소 타입까지 전개하지 않고 top-level 리프 하나로 남기기 때문),
+`collectLeafPaths`는 실제 후보 body에서 `items.sku`/`items.qty` 같은 중첩 dot-path 리프를 만들어
+`allowed`와 항상 불일치 → 배열 바디 후보가 무조건 reject(STALE)됐다(Task 14/16이 이 갭 때문에 items를
+후보에서 제거하고 우회한 사유가 이것). **수정:** `isAllowedPath(leafPath, allowed)`를 도입해
+leafPath 전체 일치(기존 동작, 회귀 없음) 외에 "앞쪽부터 자라나는 접두 경로가 `allowed`의 원소와
+일치"하면 허용하도록 확장했다 — top-level 필드가 `allowed`에 있으면 그 아래 중첩 서브트리(배열 원소
+포함)를 인정하되, **접두사 자체가 `allowed`의 어떤 원소와도 일치하지 않는 완전히 새로운 top-level
+필드는 여전히 reject**한다(REQ-011의 핵심 보장 — 미지 필드 거부 — 은 top-level 단위로 그대로 유지).
+회귀 테스트 `TripleGateIT#req011_nestedListDotPathAcceptedWhenTopLevelFieldKnown`(허용 확인)과
+`TripleGateIT#req011_unknownTopLevelPrefixStillRejectedEvenIfNested`(미지 top-level은 중첩이어도
+여전히 reject 확인)를 추가했다 — 기존 13개 테스트 포함 `TripleGateIT` 15/15, `TripleSynthesizerIT`
+8/8 GREEN(회귀 없음).
+
+[^req009-e2e-confirmed]: Task 18의 `TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath`가
+실 SUT를 대상으로 한 완주 E2E에서 배열 원소 내부(`items[0].sku`/`items[0].qty`) 마커 위치에 사람이
+채운 스칼라 값(`SKU-001`/`2`)이 base와의 마커-diff를 통과해 채택됨을 추가로 확인했다 — 기존
+`TripleGateE2E`/`TripleGateIT`의 REQ-009 커버리지가 스칼라/단일 오브젝트 위주였던 데 비해, 배열
+원소 내부 마커라는 구조적 변형까지 실 SUT E2E 레벨에서 검증된 것을 반영한다(새 REQ-ID 아님 — 기존
+REQ-009 커버리지 보강).
+
+Coverage: 31/36 green (86%), 2 partial(🟡 REQ-032, REQ-036) — target 100% (대상: Must 34 + 미연기 Should 2. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢 전환(+1). Task 18이 REQ-018을 🟡→🟢 전환(+1)하고 REQ-036을 🔴→🟡 전환(부분 진전, 분자 미변경) 했으며 REQ-011 스키마 검증 갭(중첩 리스트 dot-path + stub headers)을 보강했다.
+
+**알려진 잔여 이슈(PR 게이트 주의, 새 REQ-ID 아님):** `e2e/run-e2e.sh` 전체 실행 시 `TransfersPostTest`의
+negative-validation 파생 변이 2건(`s422e422_1`/`s422e422_2`)이 404로 실패한다(`tests=85 failures=2`) —
+REQ-018 자체(2xx ExploredPath + 그 생성 TC green)는 GREEN이지만, `EndpointExplorationRunner`/
+test-generator의 negative-validation 시드 추적 구조적 갭(위 REQ-018 각주 참조)으로 전체 e2e 스위트는
+100% green이 아니다. PR 오픈 전 별도 조치(수정 또는 명시적 known-issue 처리) 필요.
 
 [^grb-trial-wired]: `GRB_TRIAL=off` 스위치는 Task 14(게이트 배선)까지 문서(design spec/plan)에만
 명시되고 실제로는 `EndpointExplorationRunner`에 배선돼 있지 않았다(다른 `GRB_*` ablation 스위치 —

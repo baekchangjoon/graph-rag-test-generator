@@ -48,7 +48,8 @@ rm -rf "$OUT"
   --with-kafka \
   --budget-requests 60 \
   --external-stubs $E2E/external-stubs \
-  --sut-env EXTERNAL_INVENTORY_URL={{wiremock}} \
+  --sut-env EXTERNAL_INVENTORY_URL={{wiremock}},EXTERNAL_FRAUD_URL={{wiremock}} \
+  --triple-candidates $E2E/triples \
   --sut-compose $E2E/docker-compose.yml \
   --auth-login-path /api/auth/login \
   --auth-user admin \
@@ -59,7 +60,7 @@ rm -rf "$OUT"
 echo "=== [3/5] 도구 2: 전 path 테스트 생성 ==="
 for req in request-orders request-orders-batch request-orders-ship request-deep request-prefs request-tags request-search request-ws request-orders-get-id request-orders-get-user \
            request-bookings request-bookings-get-id request-bookings-put-id request-bookings-delete-id \
-           request-order-events request-profiles-by-name request-profiles-map; do
+           request-order-events request-profiles-by-name request-profiles-map request-transfers; do
   "$GW" -q :test-generator:run --args="generate \
     --request $E2E/$req.json \
     --graph $OUT/graph \
