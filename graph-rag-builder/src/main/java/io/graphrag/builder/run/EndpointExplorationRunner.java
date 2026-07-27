@@ -1508,7 +1508,8 @@ public class EndpointExplorationRunner {
             ExecutionDataStore priorCumulative = cumulativeCoverage;
             UUID stubId = null;
             try {
-                List<RequiredSeed> candidateSeeds = insertSeeds(candidateHappy, endpoint, seedResource, tables);
+                List<RequiredSeed> candidateSeeds =
+                        insertSeeds(candidateHappy, endpoint, seedResource, tables, "triple-adopted");
                 if (materials.stubMapping() != null && httpCapture != null) {
                     com.github.tomakehurst.wiremock.stubbing.StubMapping mapping =
                             com.github.tomakehurst.wiremock.stubbing.StubMapping.buildFrom(
