@@ -120,6 +120,22 @@ class TrialCliE2E {
         return file;
     }
 
+    /**
+     * T1 검증 게이트(C4 fix)가 요구하는 provenance 리포트를 저장 레이아웃 규약 위치에 쓴다 —
+     * {@code accounts}를 DB_READ 테이블로 선언해 seed.sql 화이트리스트(REQ-010)를 통과시킨다.
+     */
+    private static void writeProvenanceReport(Path endpointDir) throws Exception {
+        var guard = new io.graphrag.builder.provenance.ProvenanceReport.GuardFact(
+                "Fixture.java:1", "EXISTS",
+                List.of(new io.graphrag.builder.provenance.ProvenanceReport.ValueRef(
+                        io.graphrag.builder.provenance.ProvenanceReport.Origin.DB_READ,
+                        null, "accounts", "id", null, null, "String", null, null)));
+        var report = new io.graphrag.builder.provenance.ProvenanceReport(
+                "post-api-transfers", List.of(guard), List.of(), List.of());
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(report));
+    }
+
     private Map<String, String> baseOptions(Path tripleStore, Path happySeedsFile) {
         return Map.ofEntries(
                 Map.entry("--triple-store", tripleStore.toString()),
@@ -143,6 +159,7 @@ class TrialCliE2E {
         }
         Path tripleStore = tempDir.resolve("triples");
         Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
         // happy(현행) 시드: acc-1 balance=100 — 이 candidate의 시도(amount=500) 기준으로는 잔액 부족.
         // reset(①)이 제대로 동작해야 candidate의 seed.sql(②, 같은 PK acc-1)이 PK 충돌 없이 들어간다.
         Path happySeeds = writeHappySeeds(
@@ -178,6 +195,7 @@ class TrialCliE2E {
         }
         Path tripleStore = tempDir.resolve("triples");
         Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
         Path happySeeds = writeHappySeeds();   // happy 시드 없음(단순화) — reset은 no-op
 
         Path cand01 = writeCandidate(endpointDir, "cand-01",
@@ -223,6 +241,7 @@ class TrialCliE2E {
         }
         Path tripleStore = tempDir.resolve("triples");
         Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
         Path happySeeds = writeHappySeeds();
 
         Path cand01 = writeCandidate(endpointDir, "cand-01",
@@ -272,6 +291,7 @@ class TrialCliE2E {
         }
         Path tripleStore = tempDir.resolve("triples");
         Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
         Path happySeeds = writeHappySeeds();
 
         // cand-01: 두 번째 INSERT가 같은 PK('acc-x')를 재사용해 제약 위반으로 예외를 던진다.
@@ -301,5 +321,69 @@ class TrialCliE2E {
                             + "잔여가 없어야 한다(부분 삽입 누수 없음)")
                     .isEqualTo(0);
         }
+    }
+
+    /**
+     * C4 리뷰 Critical 3(a) 회귀: 독립 {@code trial} CLI가 T1 검증 게이트를 실제로 호출한다. 마커가
+     * 아닌 값을 바꾼 후보(REQ-009 위반)는 <b>DB를 전혀 건드리지 않고</b> {@code T1_REJECTED}로
+     * {@code failed/}에 격리돼야 한다 — 고치기 전에는 검증 없이 그대로 시험돼 승격까지 갔다.
+     */
+    @Test
+    @DisplayName("C4-3(a): T1 게이트에서 거부된 후보(비-마커 값 변경)는 시험되지 않고 T1_REJECTED로 failed/에 격리된다")
+    void t1GateRejectsNonMarkerChangeInStandaloneCli() throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+        }
+        Path tripleStore = tempDir.resolve("triples");
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
+        Path happySeeds = writeHappySeeds();
+
+        // base는 balance=10(잔액 부족 → 422), candidate는 마커가 아닌 그 값을 600으로 바꿔(REQ-009 위반)
+        // 200을 노린다 — T1이 배선돼 있다면 시험 자체가 일어나지 않아야 한다.
+        Path candDir = Files.createDirectories(endpointDir.resolve("cand-01"));
+        Path baseDir = Files.createDirectories(endpointDir.resolve("base").resolve("cand-01"));
+        String body = "{\"accountId\":\"acc-1\",\"amount\":500}";
+        Files.writeString(baseDir.resolve("body.json"), body);
+        Files.writeString(baseDir.resolve("seed.sql"),
+                "INSERT INTO accounts (id, balance) VALUES ('acc-1', 10);");
+        Files.writeString(baseDir.resolve("stubs.json"), "{}");
+        Files.writeString(candDir.resolve("body.json"), body);
+        Files.writeString(candDir.resolve("seed.sql"),
+                "INSERT INTO accounts (id, balance) VALUES ('acc-1', 600);");
+        Files.writeString(candDir.resolve("stubs.json"), "{}");
+
+        int exitCode = BuilderCli.runTrial(baseOptions(tripleStore, happySeeds));
+
+        assertThat(exitCode).as("T1 거부만 남았으면 승격 없이 exit 3이어야 한다").isEqualTo(3);
+        assertThat(endpointDir.resolve("promoted")).as("T1 거부 후보가 승격되면 안 된다").doesNotExist();
+        assertThat(endpointDir.resolve("failed").resolve("cand-01")).isDirectory();
+        var digests = Json.mapper().readTree(
+                endpointDir.resolve("failed").resolve("digest-final.json").toFile());
+        assertThat(digests).hasSize(1);
+        assertThat(digests.get(0).get("outcomeKind").asText())
+                .as("T1에서 거부된 후보는 trial 판정이 아니라 T1_REJECTED로 기록되어야 한다")
+                .isEqualTo("T1_REJECTED");
+    }
+
+    /**
+     * C4 리뷰 Critical 3(a) 회귀: provenance 리포트가 없으면 seed.sql 화이트리스트(REQ-010)의 허용
+     * 테이블 집합을 결정할 수 없으므로, 후보를 시험하지 않고 즉시 실패한다(fail-closed).
+     */
+    @Test
+    @DisplayName("C4-3(a): provenance 리포트가 없으면 후보를 시험하지 않고 즉시 실패한다(fail-closed)")
+    void missingProvenanceReportFailsClosed() throws Exception {
+        Path tripleStore = tempDir.resolve("triples");
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        Path happySeeds = writeHappySeeds();
+        writeCandidate(endpointDir, "cand-01", "{\"accountId\":\"acc-1\",\"amount\":500}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-1', 600);");
+        // provenance-report.json을 의도적으로 쓰지 않는다.
+
+        org.assertj.core.api.Assertions
+                .assertThatThrownBy(() -> BuilderCli.runTrial(baseOptions(tripleStore, happySeeds)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("provenance-report.json");
+        assertThat(endpointDir.resolve("promoted")).doesNotExist();
     }
 }

@@ -101,6 +101,33 @@ public record FailureDigest(int status, String outcomeKind, JsonNode responseBod
                 List.copyOf(remainingRows));
     }
 
+    /**
+     * C4 리뷰 Critical 2/3 fail-closed: 후보 {@code seed.sql}의 어떤 INSERT에 대해 <b>정리(역-DELETE)
+     * 키를 DB 스키마 사실만으로 결정할 수 없어</b> 시도 자체를 차단했을 때(PK 미상/모호한 테이블/
+     * 안전하지 않은 식별자/컬럼 목록 없는 INSERT 등). "일단 넣고 나중에 지운다"가 성립하지 않는
+     * 후보이므로 <b>DB 쓰기를 전혀 시도하지 않고</b> 차단한다 — attach 실 DB에서 잘못된 키로 나가는
+     * DELETE(데이터 손실)를 구조적으로 배제하기 위한 경로다. {@code status=-4}(sentinel).
+     */
+    public static FailureDigest forSeedCleanupUnresolvable(List<String> reasons) {
+        String logExcerpt = "candidate seed.sql rejected before any DB write "
+                + "(cleanup key not resolvable from schema facts): " + reasons;
+        return new FailureDigest(-4, "SEED_CLEANUP_UNRESOLVABLE", null, logExcerpt, null, null, null, List.of());
+    }
+
+    /**
+     * C4 리뷰 Critical 3(a): 독립 {@code trial} CLI에서 후보가 T1 검증 게이트
+     * ({@link TripleValidator}: 마커-diff REQ-009 / seed.sql 화이트리스트 REQ-010 / 스키마 REQ-011 /
+     * PII REQ-012)에서 거부돼 <b>trial 자체를 시도하지 않았을</b> 때. {@code status=-5}(sentinel).
+     * PII 히트(needsHumanReview)면 사람 검토가 필요함을 사유 첫 줄에 명시한다.
+     */
+    public static FailureDigest forT1Rejected(TripleValidator.ValidationResult validation) {
+        String prefix = validation.needsHumanReview()
+                ? "T1 rejected (needsHumanReview — PII heuristic hit, REQ-012): "
+                : "T1 rejected (candidate not tried): ";
+        return new FailureDigest(-5, "T1_REJECTED", null, prefix + validation.reasons(),
+                null, null, null, List.of());
+    }
+
     static GuardFact mapToGuard(String stackExcerpt, JsonNode responseBody, String logExcerpt,
             ProvenanceReport report) {
         if (report == null || report.guards() == null) {

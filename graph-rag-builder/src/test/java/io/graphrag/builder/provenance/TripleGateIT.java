@@ -117,6 +117,121 @@ class TripleGateIT {
         assertThat(result.accepted()).as("notes.md 부재는 판정에 영향을 주지 않아야 한다").isTrue();
     }
 
+    @Test
+    @DisplayName("REQ-009(C4 회귀): base와 동일한 행 '앞에' 추가 INSERT를 끼운 후보는 reject된다 — "
+            + "테이블당 마지막 행만 비교하면 앞선 임의 행이 검증에서 통째로 사라진다")
+    void req009_extraSeedRowInsertedBeforeMatchingRowRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String baseSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-fromaccountid', 1);";
+        // 후보는 base와 동일한 행을 뒤에 두고, 그 '앞에' 임의의 행을 하나 더 끼워 넣는다.
+        String candSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('x', 999999);\n"
+                + "INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-fromaccountid', 1);";
+
+        Path base = writeArtifacts("base", body, baseSeed, "{}");
+        Path cand = writeArtifacts("cand", body, candSeed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted())
+                .as("같은 테이블에 추가된 행은 마커 계약 위반으로 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).anyMatch(r -> r.contains("행 수"));
+    }
+
+    @Test
+    @DisplayName("REQ-009(C4 회귀): base와 동일한 행 '뒤에' 추가 INSERT를 붙인 후보도 reject된다")
+    void req009_extraSeedRowAppendedAfterMatchingRowRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String baseSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-fromaccountid', 1);";
+        String candSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-fromaccountid', 1);\n"
+                + "INSERT INTO fund_accounts (id, balance_amount) VALUES ('x', 999999);";
+
+        Path base = writeArtifacts("base", body, baseSeed, "{}");
+        Path cand = writeArtifacts("cand", body, candSeed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted()).as("행 추가는 방향과 무관하게 reject되어야 한다").isFalse();
+    }
+
+    @Test
+    @DisplayName("REQ-009(C4 회귀): 같은 테이블의 여러 행 순서를 바꾼 후보는 reject된다 — "
+            + "행 순서는 역-DELETE 순서(child→parent)를 결정하므로 계약의 일부다")
+    void req009_seedRowOrderSwapRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String baseSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('a', 1);\n"
+                + "INSERT INTO fund_accounts (id, balance_amount) VALUES ('b', 2);";
+        String candSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('b', 2);\n"
+                + "INSERT INTO fund_accounts (id, balance_amount) VALUES ('a', 1);";
+
+        Path base = writeArtifacts("base", body, baseSeed, "{}");
+        Path cand = writeArtifacts("cand", body, candSeed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted()).as("행 순서 변경은 reject되어야 한다").isFalse();
+    }
+
+    @Test
+    @DisplayName("REQ-009(C4 회귀): 같은 테이블 다중 행이 순서·개수·값 모두 동일하면 통과한다(회귀 0)")
+    void req009_multipleRowsPerTableUnchangedAccepted() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String seed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('a', 1);\n"
+                + "INSERT INTO fund_accounts (id, balance_amount) VALUES ('b', 2);";
+
+        Path base = writeArtifacts("base", body, seed, "{}");
+        Path cand = writeArtifacts("cand", body, seed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted())
+                .as("동일한 다중 행 seed는 통과해야 한다: " + result.reasons()).isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-009(C4 회귀): 컬럼 순서만 뒤바꾼 후보는 reject된다 — "
+            + "Set 비교는 순서를 무시하지만 정리 DELETE는 컬럼 순서에 의존한다")
+    void req009_seedColumnOrderSwapRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String baseSeed = "INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-x', 1);";
+        String candSeed = "INSERT INTO fund_accounts (balance_amount, id) VALUES (1, 'seed-x');";
+
+        Path base = writeArtifacts("base", body, baseSeed, "{}");
+        Path cand = writeArtifacts("cand", body, candSeed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted()).as("컬럼 순서 변경은 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).anyMatch(r -> r.contains("컬럼 목록"));
+    }
+
+    @Test
+    @DisplayName("REQ-010(C4 회귀): 컬럼 목록 없는 INSERT INTO t VALUES (...)는 allowlist에서 reject된다 — "
+            + "역-DELETE 추적 가드를 빠져나가 정리 대상에서 누락되는 형태다")
+    void req010_columnLessInsertRejected() throws IOException {
+        String body = "{\"note\":\"x\"}";
+        String seed = "INSERT INTO fund_accounts VALUES ('seed-x', 1);";
+
+        Path base = writeArtifacts("base", body, seed, "{}");
+        Path cand = writeArtifacts("cand", body, seed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result =
+                validator.validate(cand, base, reportWithDbReadTable("fund_accounts"), BodyShape.empty());
+
+        assertThat(result.accepted()).as("컬럼 목록 없는 INSERT는 reject되어야 한다").isFalse();
+        assertThat(result.reasons()).anyMatch(r -> r.contains("columns"));
+    }
+
     // ---- REQ-011: 스키마 검증(body+stub) ----
 
     @Test

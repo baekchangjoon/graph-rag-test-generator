@@ -211,8 +211,13 @@ class AttachSeedGateIT {
             assertThat(outcome.digest()).isNotNull();
             assertThat(outcome.digest().outcomeKind()).isEqualTo("ATTACH_CLEANUP_BLOCKED");
             assertThat(outcome.digest().attachRemainingRows())
+                    // C4 fix 이후 식별자는 후보 텍스트가 아니라 DB 카탈로그 표기를 쓴다(H2는 대문자로
+                    // 보고) — 대소문자 무시로 대조한다.
                     .as("잔존 (table, pk) 리포트에 정리 실패한 accounts 행이 담겨야 한다")
-                    .anyMatch(row -> row.contains("accounts") && row.contains("id") && row.contains("acc-1"));
+                    .anyMatch(row -> {
+                        String lower = row.toLowerCase(java.util.Locale.ROOT);
+                        return lower.contains("accounts") && lower.contains("id") && lower.contains("acc-1");
+                    });
             assertThat(accountRowCount(connection))
                     .as("실제로 정리에 실패한 행은 DB에 그대로 남아 있어야 한다(리포트와 실제 상태 일치)")
                     .isEqualTo(1);

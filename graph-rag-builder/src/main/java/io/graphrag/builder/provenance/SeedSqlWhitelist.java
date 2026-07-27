@@ -211,6 +211,12 @@ public final class SeedSqlWhitelist {
         if (!(insert.getSelect() instanceof Values)) {
             violations.add("select(VALUES 절이 아니거나 없음 — INSERT ... SELECT/서브쿼리/DEFAULT VALUES 등)");
         }
+        // C4 리뷰 Critical 3(c): 컬럼 목록이 없는 INSERT INTO t VALUES (...)는 어떤 값이 어떤 컬럼에
+        // 들어가는지 SQL 텍스트만으로 결정할 수 없다 — TrialRunner의 역-DELETE 추적(정리 키 해석)이
+        // 성립하지 않아 "삽입됐지만 정리 대상에서 누락되는" 행을 만든다. allowlist에서 reject한다.
+        if (insert.getColumns() == null || insert.getColumns().isEmpty()) {
+            violations.add("columns(컬럼 목록 없는 INSERT INTO t VALUES (...) — 정리 키 추적 불가)");
+        }
         if (insert.getOracleHint() != null) {
             violations.add("oracleHint");
         }

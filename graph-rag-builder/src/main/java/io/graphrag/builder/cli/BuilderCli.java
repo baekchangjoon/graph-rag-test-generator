@@ -1403,6 +1403,16 @@ public final class BuilderCli {
      * [--happy-seeds <required-seeds.json>] [--provenance-report <report.json>]
      * [--sut-log-file <path>] [--error-when-present ...]}.
      *
+     * <p><b>T1 검증 게이트(C4 리뷰 Critical 3 fix):</b> 각 후보는 {@code runCandidate} 이전에
+     * {@link io.graphrag.builder.provenance.TripleValidator}로 검증하며, 통과한 후보만 실제로
+     * 시험한다 — 거부된 후보는 DB/HTTP를 전혀 건드리지 않고 {@code T1_REJECTED} 다이제스트와 함께
+     * {@code failed/}로 이동한다. 그래서 provenance 리포트가 <b>필수</b>다(seed.sql 화이트리스트의
+     * 허용 테이블 집합의 유일한 출처): {@code --provenance-report} 또는 저장 레이아웃 규약 위치
+     * {@code <candidates-root>/<endpointId>/provenance-report.json} 중 하나가 반드시 존재해야 한다.
+     * 다만 {@code BodyShape}는 이 CLI에 그래프 자산이 없어 {@code BodyShape.empty()}로 넘어가므로,
+     * REQ-011의 body 필드 스키마 검증만은 이 경로에서 skip된다(마커-diff·화이트리스트·PII·stub
+     * 스키마 검증은 전부 적용된다 — build 경로는 실제 BodyShape로 이 갭이 없다).
+     *
      * <p><b>REQ-036 부분 배선(각주):</b> {@code --triple-store}/{@code --triple-candidates}의 기본
      * 경로({@code .graphrag/triples})와 두 플래그의 분리(생성 루트 vs trial이 읽는 후보 디렉토리)만
      * 이 task에서 배선한다. 미배선(향후 task 소관): (a) SUT가 실제로 쓰는 외부 stub WireMock에
@@ -1425,9 +1435,18 @@ public final class BuilderCli {
         List<RequiredSeed> happySeeds = o.containsKey("--happy-seeds")
                 ? List.of(Json.mapper().readValue(Path.of(o.get("--happy-seeds")).toFile(), RequiredSeed[].class))
                 : List.of();
-        ProvenanceReport report = o.containsKey("--provenance-report")
-                ? Json.mapper().readValue(Path.of(o.get("--provenance-report")).toFile(), ProvenanceReport.class)
-                : null;
+        // C4 리뷰 Critical 3(a): T1 검증 게이트(마커-diff·seed.sql 화이트리스트·PII 차단)는
+        // provenance 리포트 없이는 성립하지 않는다(화이트리스트 테이블 집합의 유일한 출처) —
+        // 없으면 후보를 시험하지 않고 즉시 실패한다(fail-closed). --provenance-report를 주지 않으면
+        // 저장 레이아웃 규약 위치(<candidates-root>/<endpointId>/provenance-report.json)를 쓴다.
+        Path reportPath = o.containsKey("--provenance-report")
+                ? Path.of(o.get("--provenance-report"))
+                : candidatesRoot.resolve(endpointId).resolve("provenance-report.json");
+        if (!Files.exists(reportPath)) {
+            throw new IllegalArgumentException("provenance-report.json is required for the T1 validation gate "
+                    + "(pass --provenance-report or place it at " + reportPath + ")");
+        }
+        ProvenanceReport report = Json.mapper().readValue(reportPath.toFile(), ProvenanceReport.class);
 
         DbConfig.Type dbType = DbConfig.Type.valueOf(
                 required(o, "--db-type").toUpperCase(java.util.Locale.ROOT));
@@ -1435,6 +1454,11 @@ public final class BuilderCli {
 
         try (Connection connection = java.sql.DriverManager.getConnection(
                 required(o, "--jdbc-url"), o.getOrDefault("--db-user", ""), o.getOrDefault("--db-password", ""))) {
+            // seed.sql 화이트리스트의 FK 전이 폐포(REQ-010)와 body 스키마 검증에 쓸 물리 스키마 사실.
+            List<io.graphrag.model.TableSchema> tables =
+                    new io.graphrag.builder.schema.SchemaExtractor().extract(connection);
+            io.graphrag.builder.provenance.TripleValidator validator =
+                    new io.graphrag.builder.provenance.TripleValidator(tables, dbType);
             SutHandle sut = new LogFileSutHandle(
                     required(o, "--sut-base-url"),
                     o.containsKey("--sut-log-file") ? Path.of(o.get("--sut-log-file")) : null);
@@ -1457,6 +1481,25 @@ public final class BuilderCli {
                 attempts++;
                 FailureDigest digest;
                 int status;
+                // C4 리뷰 Critical 3(a): T1 게이트를 통과한 후보만 실제로 시험한다 — 이 CLI는
+                // 에이전트가 직접 실행하는 문서화된 워크플로이므로, build 경로와 동일한 검증을
+                // 여기서도 거쳐야 한다(이전에는 T1을 전혀 호출하지 않아 마커 계약·seed 화이트리스트가
+                // 통째로 우회됐다).
+                Path baseDir = store.baseDirFor(candDir);
+                io.graphrag.builder.provenance.TripleValidator.ValidationResult validation =
+                        Files.isDirectory(baseDir)
+                                ? validator.validate(candDir, baseDir, report,
+                                        io.graphrag.builder.index.BodyShape.empty())
+                                : new io.graphrag.builder.provenance.TripleValidator.ValidationResult(
+                                        false, false, List.of("base/ 사본 없음(T1 검증 불가) — " + baseDir));
+                if (!validation.accepted()) {
+                    log.warn("trial: {} rejected by T1 validation gate: {}", candDir, validation.reasons());
+                    FailureDigest gateDigest = FailureDigest.forT1Rejected(validation);
+                    digests.add(gateDigest);
+                    store.fail(candDir, Json.mapper().writerWithDefaultPrettyPrinter()
+                            .writeValueAsString(gateDigest));
+                    continue;
+                }
                 try {
                     TrialRunner.TrialOutcome outcome =
                             trialRunner.runCandidate(endpoint, candDir, happySeeds, report);

@@ -518,8 +518,11 @@ class TriplePromotionIT {
             FailureDigest digest = Json.mapper().readValue(digestFile.toFile(), FailureDigest.class);
             assertThat(digest.outcomeKind()).isEqualTo("ATTACH_CLEANUP_BLOCKED");
             assertThat(digest.attachRemainingRows())
+                    // C4 fix 이후 식별자는 후보 텍스트가 아니라 DB 카탈로그 표기를 쓴다(H2는 대문자로
+                    // 보고) — 테이블/컬럼은 대소문자 무시로, PK 값은 그대로 대조한다.
                     .as("잔존 (table,pk) 리포트가 파일 필드로 관측 가능해야 한다")
-                    .anyMatch(row -> row.contains("accounts") && row.contains("ACC-CLEANUP"));
+                    .anyMatch(row -> row.toLowerCase(java.util.Locale.ROOT).contains("accounts")
+                            && row.contains("ACC-CLEANUP"));
 
             // teardown: 이 테스트가 남긴 FK 자식 행을 먼저 지운 뒤 부모 행을 정리한다(H2 in-memory,
             // 다른 테스트와 격리된 DB이지만 상태를 명시적으로 되돌린다).
