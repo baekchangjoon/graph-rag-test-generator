@@ -11,6 +11,7 @@ import io.graphrag.builder.explore.ExplorationOutcome;
 import io.graphrag.builder.explore.HeuristicExplorer;
 import io.graphrag.builder.index.BodyShape;
 import io.graphrag.builder.oracle.StatusOnlyClassifier;
+import io.graphrag.builder.provenance.FailureDigest;
 import io.graphrag.builder.provenance.ProvenanceReport;
 import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
@@ -59,6 +60,11 @@ class TriplePromotionIT {
     private static volatile java.util.function.IntSupplier statusSupplier;
     /** 가장 최근 수신 요청의 raw body — REQ-018 리뷰 fix(stale target) 회귀 검증용. */
     private static volatile String lastRequestBody;
+    /**
+     * 코드리뷰 fix(REQ-024 관측성 테스트 전용) — 요청 수신 시 실행할 부작용. 실 SUT가 trial invoke
+     * 도중 TrialRunner가 추적하지 못하는 행(FK 자식)을 만드는 상황을 재현하기 위한 훅.
+     */
+    private static volatile Runnable onRequestSideEffect;
     private static final AtomicInteger DB_SEQ = new AtomicInteger();
 
     @TempDir
@@ -70,6 +76,9 @@ class TriplePromotionIT {
         port = server.getAddress().getPort();
         server.createContext("/api/transfers", exchange -> {
             int n = callCount.incrementAndGet();
+            if (onRequestSideEffect != null) {
+                onRequestSideEffect.run();
+            }
             int status = statusSupplier != null ? statusSupplier.getAsInt() : 200;
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             byte[] body = ("{\"call\":" + n + "}").getBytes(StandardCharsets.UTF_8);
@@ -94,6 +103,7 @@ class TriplePromotionIT {
         callCount.set(0);
         statusSupplier = null;
         lastRequestBody = null;
+        onRequestSideEffect = null;
     }
 
     /** 로컬호스트의 확실히 닫힌 포트 — 연결 즉시 거부(ECONNREFUSED)를 유도해 확정 explore를 실패시킨다. */
@@ -129,6 +139,10 @@ class TriplePromotionIT {
                 "jdbc:h2:mem:triple-promotion-" + DB_SEQ.incrementAndGet() + ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL");
         try (Statement st = connection.createStatement()) {
             st.execute("CREATE TABLE accounts (id VARCHAR(50) PRIMARY KEY, balance BIGINT)");
+            // REQ-024 관측성 테스트 전용 FK 자식 테이블 — TrialRunner가 추적하지 못하는 행이 남아
+            // accounts 부모 행의 역-DELETE를 실패시키는 상황을 재현한다(다른 테스트는 참조 안 함).
+            st.execute("CREATE TABLE transactions (id VARCHAR(50) PRIMARY KEY, account_id VARCHAR(50), "
+                    + "FOREIGN KEY (account_id) REFERENCES accounts(id))");
         }
         return connection;
     }
@@ -158,6 +172,26 @@ class TriplePromotionIT {
                 new StatusOnlyClassifier(), List.of(), /* egressCollector */ null,
                 java.util.Map.of(), /* traceParent */ null, /* errorContract */ null,
                 tripleCandidatesRoot);
+    }
+
+    /**
+     * 코드리뷰 fix 관측성 테스트 전용 — attach 안전 게이트(REQ-023/024/025)를 아는 25-arg 생성자로
+     * runner를 만든다. {@code newRunner}와 동일하되 attachMode=true + 이중 opt-in 플래그를 명시한다.
+     */
+    private EndpointExplorationRunner newAttachRunner(Connection connection, Path bootJar,
+                                                       Path tripleCandidatesRoot,
+                                                       boolean allowSeed, boolean confirmNonProduction) {
+        return new EndpointExplorationRunner(
+                fakeSut(), connection, DbConfig.Type.POSTGRES,
+                new FakeCoverageProbe(), new io.graphrag.builder.coverage.BranchCoverageAnalyzer(bootJar),
+                0, /* httpCapture */ null,
+                List.of(), List.of(),
+                /* authProvider */ null, /* authConfig */ null,
+                java.util.Map.of(), java.util.Map.of(),
+                RequestHeaders.empty(), new FakeSqlCaptureBackend(), /* kafkaCapture */ null,
+                new StatusOnlyClassifier(), List.of(), /* egressCollector */ null,
+                java.util.Map.of(), /* traceParent */ null, /* errorContract */ null,
+                tripleCandidatesRoot, /* attachMode */ true, allowSeed, confirmNonProduction);
     }
 
     /** {@code doSend}(확정 run, capture-on)이 여는 {@code coverage.baselineCut/requestDelta}만 만족시키는 fake. */
@@ -377,6 +411,164 @@ class TriplePromotionIT {
                     .as("확정 explore 도중 예외가 나도 cumulativeCoverage는 게이트 이전 마커로 원복돼야 한다"
                             + "(수정 전에는 catch 블록에서 priorCumulative가 스코프 밖이라 빈 상태로 남았다)")
                     .isSameAs(marker);
+        }
+    }
+
+    // ---- 코드리뷰 fix: attach 게이트 사유가 관측 가능한 산출물까지 도달하는지(REQ-023/024/025) ----
+
+    @Test
+    @DisplayName("REQ-023 리뷰 fix: attach seed gate 사유가 tripleRejected 카운터와 gate-digest.json 파일로 관측 가능하다")
+    void req023_attachSeedGateReasonReachesTripleRejectedAndDigestFile() throws Exception {
+        Path tripleRoot = tempDir.resolve("triples-req023-observability");
+        Path endpointDir = Files.createDirectories(tripleRoot.resolve("post-api-transfers"));
+        String body = "{\"accountId\":\"ACC-GATE\"}";
+        String seed = "INSERT INTO accounts (id, balance) VALUES ('ACC-GATE', 500);";
+        writeCandidate(endpointDir.resolve("promoted").resolve("cand-01"), body, seed, "{}");
+        writeCandidate(endpointDir.resolve("base").resolve("cand-01"), body, seed, "{}");
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(reportWithDbReadTable("accounts")));
+
+        Endpoint endpoint = new Endpoint("post-api-transfers", "POST", "/api/transfers", "T", "t", List.of(), false);
+        SynthesizedInput priorHappy = new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
+        ExplorationOutcome priorOutcome = new ExplorationOutcome(List.of(), Set.of(), java.util.Map.of());
+        StatusOnlyClassifier classifier = new StatusOnlyClassifier();
+        ExplorationOrchestrator orchestrator =
+                new ExplorationOrchestrator(List.of(new HeuristicExplorer(classifier)), 1, classifier);
+
+        try (Connection connection = newH2Connection()) {
+            // attach 모드이지만 두 플래그 모두 false → REQ-023 이중 opt-in 미충족(0개).
+            EndpointExplorationRunner runner = newAttachRunner(connection, emptyBootJar(), tripleRoot, false, false);
+
+            EndpointExplorationRunner.GateApplyResult result = runner.applyTriplePromotionGate(
+                    endpoint, List.of(), BodyShape.empty(), priorHappy, List.of(),
+                    false, false, false, List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    orchestrator, priorOutcome);
+
+            assertThat(result.outcome()).isSameAs(priorOutcome);
+            assertThat(callCount.get()).as("seed gate가 닫혀 있으면 invoke가 전혀 발생하지 않아야 한다").isZero();
+            assertThat(runner.tripleStalePathsForTest())
+                    .as("REQ-020/021 staleTriples 포맷은 그대로 유지된다")
+                    .containsExactly("post-api-transfers/promoted/cand-01");
+            assertThat(runner.tripleRejectedReasonsForTest())
+                    .as("REQ-023 사유가 tripleRejected 카운터로 분류돼야 한다")
+                    .containsEntry("attach-seed-gate-closed", 1);
+
+            Path digestFile = tripleRoot.resolve("post-api-transfers").resolve("gate-digest.json");
+            assertThat(digestFile).as("사유 상세(누락 플래그)가 파일로 관측 가능해야 한다").exists();
+            FailureDigest digest = Json.mapper().readValue(digestFile.toFile(), FailureDigest.class);
+            assertThat(digest.outcomeKind()).isEqualTo("ATTACH_SEED_GATE_CLOSED");
+            assertThat(digest.logExcerpt())
+                    .as("누락된 두 플래그가 모두 사유에 지목돼야 한다")
+                    .contains("--attach-allow-seed")
+                    .contains("--confirm-non-production");
+        }
+    }
+
+    @Test
+    @DisplayName("REQ-024 리뷰 fix: attach 역-DELETE 실패 사유(잔존 table.pk)가 tripleRejected 카운터와 gate-digest.json 파일로 관측 가능하다")
+    void req024_attachCleanupBlockedReasonReachesTripleRejectedAndDigestFile() throws Exception {
+        Path tripleRoot = tempDir.resolve("triples-req024-observability");
+        Path endpointDir = Files.createDirectories(tripleRoot.resolve("post-api-transfers"));
+        String body = "{\"accountId\":\"ACC-CLEANUP\"}";
+        String seed = "INSERT INTO accounts (id, balance) VALUES ('ACC-CLEANUP', 500);";
+        writeCandidate(endpointDir.resolve("promoted").resolve("cand-01"), body, seed, "{}");
+        writeCandidate(endpointDir.resolve("base").resolve("cand-01"), body, seed, "{}");
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(reportWithDbReadTable("accounts")));
+
+        statusSupplier = () -> 200;   // trial invoke 자체는 성공 — 이후 cleanup 실패로 승격이 차단되는 시나리오.
+
+        Endpoint endpoint = new Endpoint("post-api-transfers", "POST", "/api/transfers", "T", "t", List.of(), false);
+        SynthesizedInput priorHappy = new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
+        ExplorationOutcome priorOutcome = new ExplorationOutcome(List.of(), Set.of(), java.util.Map.of());
+        StatusOnlyClassifier classifier = new StatusOnlyClassifier();
+        ExplorationOrchestrator orchestrator =
+                new ExplorationOrchestrator(List.of(new HeuristicExplorer(classifier)), 1, classifier);
+
+        try (Connection connection = newH2Connection()) {
+            // invoke가 TrialRunner 미추적 FK 자식 행을 흉내낸다(실 SUT의 부작용을 대신 재현) — accounts
+            // 행의 역-DELETE가 FK 위반으로 실패하도록 만든다.
+            onRequestSideEffect = () -> {
+                try (Statement st = connection.createStatement()) {
+                    st.execute("INSERT INTO transactions (id, account_id) VALUES ('txn-req024', 'ACC-CLEANUP')");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            };
+            // 이중 opt-in 충족(2개) → seed는 정상 적용되지만 cleanup이 실패하는 시나리오.
+            EndpointExplorationRunner runner = newAttachRunner(connection, emptyBootJar(), tripleRoot, true, true);
+
+            EndpointExplorationRunner.GateApplyResult result = runner.applyTriplePromotionGate(
+                    endpoint, List.of(), BodyShape.empty(), priorHappy, List.of(),
+                    false, false, false, List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    orchestrator, priorOutcome);
+
+            assertThat(result.outcome()).isSameAs(priorOutcome);
+            assertThat(callCount.get())
+                    .as("trial invoke 1회만 발생 — cleanup 실패는 승격만 막을 뿐 확정 run으로 이어지지 않는다")
+                    .isEqualTo(1);
+            assertThat(runner.tripleRejectedReasonsForTest())
+                    .as("REQ-024 사유가 tripleRejected 카운터로 분류돼야 한다")
+                    .containsEntry("attach-cleanup-blocked", 1);
+
+            Path digestFile = tripleRoot.resolve("post-api-transfers").resolve("gate-digest.json");
+            assertThat(digestFile).exists();
+            FailureDigest digest = Json.mapper().readValue(digestFile.toFile(), FailureDigest.class);
+            assertThat(digest.outcomeKind()).isEqualTo("ATTACH_CLEANUP_BLOCKED");
+            assertThat(digest.attachRemainingRows())
+                    .as("잔존 (table,pk) 리포트가 파일 필드로 관측 가능해야 한다")
+                    .anyMatch(row -> row.contains("accounts") && row.contains("ACC-CLEANUP"));
+
+            // teardown: 이 테스트가 남긴 FK 자식 행을 먼저 지운 뒤 부모 행을 정리한다(H2 in-memory,
+            // 다른 테스트와 격리된 DB이지만 상태를 명시적으로 되돌린다).
+            try (Statement st = connection.createStatement()) {
+                st.execute("DELETE FROM transactions WHERE id = 'txn-req024'");
+                st.execute("DELETE FROM accounts WHERE id = 'ACC-CLEANUP'");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("REQ-025 리뷰 fix: attach 스텁 skip(EXTERNAL_RESPONSE inapplicable)이 승격 성공 여부와 무관하게 tripleRejected 카운터로 관측 가능하다")
+    void req025_attachStubInapplicableReachesTripleRejectedRegardlessOfPromotion() throws Exception {
+        Path tripleRoot = tempDir.resolve("triples-req025-observability");
+        Path endpointDir = Files.createDirectories(tripleRoot.resolve("post-api-transfers"));
+        String candidateBody = "{\"accountId\":\"ACC-STUB\"}";
+        String seed = "INSERT INTO accounts (id, balance) VALUES ('ACC-STUB', 500);";
+        // 비어있지 않은 stub — 비-attach였다면 등록됐을 EXTERNAL_RESPONSE 스텁.
+        String nonEmptyStub = "{\"request\":{\"method\":\"POST\",\"urlPath\":\"/fraud/check\"},"
+                + "\"response\":{\"status\":200,\"jsonBody\":{\"status\":\"CLEAR\"}}}";
+        writeCandidate(endpointDir.resolve("promoted").resolve("cand-01"), candidateBody, seed, nonEmptyStub);
+        writeCandidate(endpointDir.resolve("base").resolve("cand-01"), candidateBody, seed, nonEmptyStub);
+        Files.writeString(endpointDir.resolve("provenance-report.json"),
+                Json.mapper().writeValueAsString(reportWithDbReadTable("accounts")));
+
+        statusSupplier = () -> 200;   // trial + 확정 run 모두 성공 → ADOPT(승격 성공 경로에서도 관측돼야 함).
+
+        Endpoint endpoint = new Endpoint("post-api-transfers", "POST", "/api/transfers", "T", "t", List.of(), false);
+        SynthesizedInput priorHappy = new SynthesizedInput(Json.mapper().createObjectNode(), List.of());
+        ExplorationOutcome priorOutcome = new ExplorationOutcome(List.of(), Set.of(), java.util.Map.of());
+        StatusOnlyClassifier classifier = new StatusOnlyClassifier();
+        ExplorationOrchestrator orchestrator =
+                new ExplorationOrchestrator(List.of(new HeuristicExplorer(classifier)), 1, classifier);
+
+        try (Connection connection = newH2Connection()) {
+            EndpointExplorationRunner runner = newAttachRunner(connection, emptyBootJar(), tripleRoot, true, true);
+
+            runner.applyTriplePromotionGate(
+                    endpoint, List.of(), BodyShape.empty(), priorHappy, List.of(),
+                    false, false, false, List.of(), java.util.Map.of(), java.util.Map.of(), java.util.Map.of(),
+                    List.of(), List.of(), java.util.Map.of(), List.of(), List.of(),
+                    orchestrator, priorOutcome);
+
+            assertThat(runner.tripleAdoptedForTest())
+                    .as("stub inapplicable과 무관하게 trial+확정 run이 모두 성공하면 채택돼야 한다")
+                    .isTrue();
+            assertThat(runner.tripleRejectedReasonsForTest())
+                    .as("REQ-025 사유(스텁 skip)가 승격 성공(ADOPTED) 경로에서도 관측 가능해야 한다")
+                    .containsEntry("attach-stub-inapplicable", 1);
         }
     }
 

@@ -72,8 +72,21 @@ public final class TrialRunner {
         InvocationOutcome invoke(Endpoint endpoint, JsonNode body) throws Exception;
     }
 
-    /** 후보 1개의 trial 결과. {@code promoted=true}면 digest는 null. */
-    public record TrialOutcome(boolean promoted, int status, FailureDigest digest) {
+    /**
+     * 후보 1개의 trial 결과. {@code promoted=true}면 digest는 null.
+     *
+     * <p>{@code attachStubInapplicable}(REQ-025 코드리뷰 fix): attach 모드에서 후보의 {@code stubs.json}이
+     * 비어있지 않았음에도(등록됐다면 실제로 쓰였을 EXTERNAL_RESPONSE 스텁) skip됐을 때만 true다 —
+     * promoted/digest와 독립적으로 관측 가능해야 하므로(ADOPTED 경로에서도 true일 수 있다) 별도
+     * 필드로 분리했다.
+     */
+    public record TrialOutcome(boolean promoted, int status, FailureDigest digest,
+                               boolean attachStubInapplicable) {
+    }
+
+    /** {@link #registerCandidateStub}의 반환값 — stub id(nullable)와 REQ-025 관측 플래그. */
+    private record StubRegistration(UUID stubId, boolean attachInapplicable) {
+        private static final StubRegistration NONE = new StubRegistration(null, false);
     }
 
     private record InsertedRow(String table, String pkColumn, String pkLiteralSql) {
@@ -120,7 +133,7 @@ public final class TrialRunner {
         if (attachMode && !attachSeedAllowed()) {
             String reason = attachSeedGateReason();
             log.warn("attach seed gate closed for {} (REQ-023, candidate skipped): {}", endpoint.id(), reason);
-            return new TrialOutcome(false, -2, FailureDigest.forAttachSeedGateClosed(reason));
+            return new TrialOutcome(false, -2, FailureDigest.forAttachSeedGateClosed(reason), false);
         }
         resetHappySeeds(happySeeds);
         // ②/③ 모두 try 안에서 수행한다 — 다중 INSERT 중 후반 statement가 던지거나 stubs.json이
@@ -129,6 +142,7 @@ public final class TrialRunner {
         // 도중에 던져도 그 시점까지 성공한 행은 리스트에 남아 정리 대상이 된다.
         List<InsertedRow> inserted = new ArrayList<>();
         UUID stubId = null;
+        StubRegistration stubRegistration = StubRegistration.NONE;
         TrialOutcome outcome;
         // remainingRows는 try 밖에서 선언해, finally(예외 유무 무관 항상 실행)가 채운 값을 try-finally
         // 블록 이후에도 읽을 수 있게 한다 — try 안에서 예외가 던져지면 이 지점 이후 코드는 실행되지
@@ -137,20 +151,21 @@ public final class TrialRunner {
         List<InsertedRow> remainingRows = new ArrayList<>();
         try {
             insertCandidateSeed(candDir.resolve("seed.sql"), inserted);
-            stubId = registerCandidateStub(candDir.resolve("stubs.json"));
+            stubRegistration = registerCandidateStub(candDir.resolve("stubs.json"));
+            stubId = stubRegistration.stubId();
             JsonNode body = Json.mapper().readTree(candDir.resolve("body.json").toFile());
             long logStart = sut.logOffset();
             InvocationOutcome invocation = invoker.invoke(endpoint, body);
             Outcome classified = classifier.classify(invocation.status(), invocation.response());
             if (classified.kind() == Outcome.Kind.SUCCESS) {
-                outcome = new TrialOutcome(true, invocation.status(), null);
+                outcome = new TrialOutcome(true, invocation.status(), null, stubRegistration.attachInapplicable());
             } else {
                 long logEnd = sut.logOffset();
                 String logExcerpt = sut.readLogRange(logStart, logEnd);
                 String stackExcerpt = extractStackFrames(logExcerpt);
                 FailureDigest digest = FailureDigest.of(invocation.status(), classified.kind(), body,
                         invocation.response(), logExcerpt, stackExcerpt, report);
-                outcome = new TrialOutcome(false, invocation.status(), digest);
+                outcome = new TrialOutcome(false, invocation.status(), digest, stubRegistration.attachInapplicable());
             }
         } finally {
             if (stubId != null) {
@@ -166,7 +181,8 @@ public final class TrialRunner {
                     .toList();
             log.warn("attach cleanup left row(s) behind for {} (REQ-024, promotion blocked): {}",
                     endpoint.id(), rowDescriptions);
-            return new TrialOutcome(false, outcome.status(), FailureDigest.forAttachCleanupBlocked(rowDescriptions));
+            return new TrialOutcome(false, outcome.status(),
+                    FailureDigest.forAttachCleanupBlocked(rowDescriptions), outcome.attachStubInapplicable());
         }
         return outcome;
     }
@@ -273,28 +289,47 @@ public final class TrialRunner {
      * <p>REQ-025: attach 모드에서는 {@code httpCapture}의 null 여부와 무관하게 이 메서드가 stub 등록을
      * 전혀 시도하지 않는다 — attach 환경이 실제로 쓰는 외부 stub WireMock으로의 라우팅은 Phase C
      * 소관이라, 여기서 임의로 candidate stub을 등록하면 그 attach 인스턴스의 실제 외부 의존성 응답을
-     * 예측 불가하게 가로챌 위험이 있다.
+     * 예측 불가하게 가로챌 위험이 있다. 코드리뷰 Important 2 fix: skip 사실이 로그 한 줄에 그치지
+     * 않도록, "실제로 등록됐다면 쓰였을 non-empty stub이 있었는지"를 {@link StubRegistration#attachInapplicable()}로
+     * 반환해 호출자가 {@link TrialOutcome#attachStubInapplicable()}을 거쳐 리포트/카운터까지 실어
+     * 나를 수 있게 한다(빈 stub이라 원래도 등록 안 됐을 경우는 "inapplicable"이 아니므로 false).
      */
-    private UUID registerCandidateStub(Path stubsJsonFile) throws Exception {
+    private StubRegistration registerCandidateStub(Path stubsJsonFile) throws Exception {
         if (attachMode) {
-            log.info("attach mode: stub registration skipped for {} "
-                    + "(REQ-025, attach WireMock routing is Phase C scope)", stubsJsonFile);
-            return null;
+            boolean hasContent = hasRegistrableStubContent(stubsJsonFile);
+            if (hasContent) {
+                log.info("attach mode: stub registration skipped for {} "
+                        + "(REQ-025, attach WireMock routing is Phase C scope)", stubsJsonFile);
+            }
+            return new StubRegistration(null, hasContent);
         }
         if (httpCapture == null || !Files.exists(stubsJsonFile)) {
-            return null;
+            return StubRegistration.NONE;
         }
         String content = Files.readString(stubsJsonFile);
         if (content.isBlank()) {
-            return null;
+            return StubRegistration.NONE;
         }
         JsonNode node = Json.mapper().readTree(content);
         if (node == null || node.isEmpty()) {
-            return null;
+            return StubRegistration.NONE;
         }
         StubMapping mapping = StubMapping.buildFrom(content);
         httpCapture.registerStub(mapping);
-        return mapping.getId();
+        return new StubRegistration(mapping.getId(), false);
+    }
+
+    /** stubs.json이 존재하고 공백이 아니며 파싱된 JSON이 비어있지 않은지("등록됐다면 실제 매핑이 됐을") 판정. */
+    private static boolean hasRegistrableStubContent(Path stubsJsonFile) throws Exception {
+        if (!Files.exists(stubsJsonFile)) {
+            return false;
+        }
+        String content = Files.readString(stubsJsonFile);
+        if (content.isBlank()) {
+            return false;
+        }
+        JsonNode node = Json.mapper().readTree(content);
+        return node != null && !node.isEmpty();
     }
 
     /** 로그 구간에서 {@code "at "}로 시작하는 스택 프레임 줄만 추출(REQ-014 stackExcerpt). 없으면 빈 문자열. */
