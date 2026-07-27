@@ -77,8 +77,26 @@ public record ProvenanceReport(
             /**
              * 리터럴 값 (예: "12345", "true")
              */
-            String literal
+            String literal,
+            /**
+             * origin이 {@link Origin#DERIVED}일 때만 의미 있는 "concolic 채널 위임 표시"(REQ-032):
+             * 이 파생식이 읽는 INPUT 리프의 dot-path 목록(예: {@code score * 2} → {@code ["score"]},
+             * {@code score * factor} → {@code ["score", "factor"]}). 파생식 자신은 body의 어느 한
+             * 필드가 아니므로 {@code jsonPath}로 표현할 수 없다 — 합성(C2)이 오라클 해를 "어느 입력
+             * 필드에" 배치해야 하는지는 이 목록이 결정한다. DERIVED가 아니거나 INPUT 리프가 하나도
+             * 없으면 null(직렬화 시 생략 — 기존 golden 스키마 무변경).
+             */
+            List<String> derivedFrom
     ) {
+
+        /**
+         * 9-arg 호환 생성자 — {@code derivedFrom}이 의미 없는 출처(INPUT/DB_READ/EXTERNAL_RESPONSE/
+         * UNKNOWN)용. Jackson은 record의 canonical 생성자(10-arg)를 쓰므로 역직렬화에 영향 없다.
+         */
+        public ValueRef(Origin origin, String jsonPath, String table, String column, String callSite,
+                        String stubField, String javaType, String semanticHint, String literal) {
+            this(origin, jsonPath, table, column, callSite, stubField, javaType, semanticHint, literal, null);
+        }
     }
 
     /**

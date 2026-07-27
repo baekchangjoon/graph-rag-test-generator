@@ -309,7 +309,7 @@
 | REQ-002 | 깊이 cap·순환 종료 | ProvenanceIndexerIT#REQ-002 | integration | 🟢 done |
 | REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
-| REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 | integration | 🟡[^derived-half] |
+| REQ-032 | DERIVED 태깅·concolic 위임 | ProvenanceIndexerIT#REQ-032 (태깅 2건: 단일/다변수 derivedFrom), TripleSynthesizerIT#REQ-032 (배치 2건: concolic 해 42 결정값 / 못 푸는 파생 갭 마커) | integration | 🟢 green[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
 | REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
@@ -345,7 +345,7 @@
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
-[^derived-half]: DERIVED **태깅**(origin=DERIVED + javaType 유지, `ProvenanceIndexerIT#req032_derivedTagged`)은 완료. REQ-032 수용기준의 나머지 절반 — concolic 해(예: 42)를 body 결정값으로 실제 배치하는 합성 로직·"concolic이 못 푸는 파생은 갭 마커" 처리 — 은 Task 9(`synthesize-triple`, REQ-005/007/008/033 완성)에서 재검토했으나 **여전히 아키텍처상 미해결**로 판정해 🟡를 유지한다: `ProvenanceIndexer.classifyOperand`가 DERIVED `ValueRef`를 만들 때 `jsonPath`를 의도적으로 `null`로 남긴다(REQ-001 unguarded 오탐 방지 — 파생식이 감싸는 INPUT 리프의 경로를 최종 ValueRef에는 노출하지 않음). 그 결과 `TripleSynthesizer`가 `InputCandidates`(필드 simple-name 키)의 concolic 해를 어느 body jsonPath에 배치해야 하는지 결정적으로 복원할 근거가 없다 — 필드가 1개뿐이라고 가정하는 휴리스틱은 다중-DERIVED-가드 리포트에서 오배치 위험이 있어 채택하지 않았다. Task 9는 대신 `unguarded` 필드(가드에 전혀 쓰이지 않는, jsonPath가 보존된 필드)에 대해서만 `InputCandidates`를 실제로 소비하도록 배선했다(REQ-033 cap/정렬의 조합 소스로 사용, `TripleSynthesizerIT#req033`). REQ-032의 완전한 완성에는 `ProvenanceIndexer`/`ValueRef` 스키마 확장(DERIVED 리프에 원본 필드명 보존)이 필요하며 이는 Task 9의 선언된 파일 범위(TripleSynthesizer/BuilderCli) 밖이므로 별도 후속 작업으로 남긴다.
+[^derived-half]: **해소됨(Phase A 후속 작업 1/3).** 이전 상태는 "태깅 절반만 완료"였다 — DERIVED 태깅(origin=DERIVED + javaType 유지)은 됐지만 concolic 해의 body 배치·"못 푸는 파생은 갭 마커" 처리가 미구현이었고, 그 근본 원인으로 "`ProvenanceIndexer.classifyOperand`가 DERIVED `ValueRef`의 `jsonPath`를 의도적으로 `null`로 남기므로(REQ-001 unguarded 오탐 방지) `TripleSynthesizer`가 오라클 해를 어느 body 경로에 배치할지 복원할 근거가 없다"고 기록돼 있었다. **재확인 결과 그 전제 중 절반은 이미 무효**였다: unguarded 오탐은 이후 `ProvenanceIndexer.analyze`의 `referencedInputPaths` accumulator(리프 인식 시점에 경로를 누적)로 별도 해결되어 `ValueRef.jsonPath`에 의존하지 않는다(`ProvenanceIndexerIT#req001_derivedGuardFieldNotUnguarded`). 남은 진짜 문제는 "이 DERIVED 피연산자가 **어느 입력 필드에서** 파생됐는가"를 C2에 전달할 채널이 없다는 것뿐이었다. **해소 방식:** `ValueRef`에 `derivedFrom: List<String>`(파생식이 읽는 INPUT 리프의 dot-path 목록)을 추가하고(9-arg 호환 생성자 유지, `@JsonInclude(NON_NULL)`이라 기존 golden 스키마 무변경 — REQ-001 golden 파일 수정 없음), `derivesFromTrackedOrigin`이 좌/우 피연산자를 단락 없이 모두 분류해 다변수 파생(`score * factor`)의 루트도 빠짐없이 담게 했다. `TripleSynthesizer`는 `unguarded` 필드와 DERIVED 파생 루트 필드를 동일한 **채움 슬롯**으로 통일해, 슬롯마다 `InputCandidates`(numeric/strings/reals) 해가 있으면 결정값 옵션을, 없으면 갭 마커를 부여하고 기존 REQ-033 cap/정렬 기계에 그대로 태운다. `jsonPath`를 파생 루트로 덮어쓰는 대안(B)은 채택하지 않았다 — 파생식 자신은 body의 한 필드가 아니고 다변수 파생은 단일 `jsonPath`로 표현할 수 없어 의미가 깨진다. **검증:** `ProvenanceIndexerIT#req032_derivedTagged`(derivedFrom=["score"]) + `#req032_multiRootDerivedCollectsEveryInputRoot`(["score","factor"]), `TripleSynthesizerIT#req032_derivedConcolicSolutionPlacedAsDecidedBodyValue`(실 `ProvenanceIndexer` 리포트 + 실 `ConcolicOracle` 해로 `score*2==84` → body.score=42 결정값 배치) + `#req032_unsolvableDerivedFallsBackToGapMarker`(비선형 `score*factor` → 두 루트 모두 갭 마커). **잔여 한계(REQ-032 범위 밖, 명시):** `synthesize-triple` CLI는 여전히 `oracle=empty`로 호출하므로(BuilderCli) concolic 배치는 오라클을 주입하는 상위 오케스트레이션(에이전트 스킬) 경로에서만 발현된다 — CLI에 오라클 플래그를 배선하는 것은 별도 후속 항목이다.
 
 [^jpa-inherited-fix]: Task 7(provenance CLI golden E2E)에서 order-service 실 fixture(`POST /api/transfers`)를 구동해 발견: 리포지토리 인터페이스가 `findById` 등을 재선언하지 않고 `JpaRepository<Entity, Id>`에서 그대로 상속받으면(실 SUT의 일반적 관례), noClasspath에서 `executable.getDeclaringType()`/반환 타입이 모두 해소되지 않아 DB_READ 태깅이 UNKNOWN으로 조용히 강등되는 회귀가 있었다 — REQ-001의 balance 가드 수용기준("INPUT과 DB_READ 피연산자를 함께")을 위반. `ProvenanceIndexer.repositoryEntityType`을 리시버 정적 타입 기반 판별 + `JpaRepository` 제네릭 인자 역산으로 수정하고, `ProvenanceIndexerIT#req004_inheritedRepositoryMethodNotRedeclared`(fixture: `jpa-inherited`)로 회귀 테스트를 추가했다(REQ-004 확장, 새 REQ-ID 아님 — 기존 요구사항의 커버리지 갭 보강).
 
@@ -535,15 +535,15 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 32/37 green (86%), 5 partial(🟡 REQ-032, REQ-036, REQ-027, REQ-029, REQ-030) — target
+Coverage: 33/37 green (89%), 4 partial(🟡 REQ-036, REQ-027, REQ-029, REQ-030) — target
 100% (대상: Must 34 + 미연기 Should 3(REQ-029/030/037 중 REQ-037 포함). Won't/Phase B·C: 🔵 분모 제외).
 
 > **⚠️ 완료 정의 미충족(명시):** 이 명세의 완료 정의는 "**Must 100% green**"인데, **Must인
-> REQ-032와 REQ-036이 🟡**로 남아 있다 — 따라서 현재 상태는 완료 정의를 **충족하지 못한다**.
-> 구체적으로 (a) **REQ-032**는 DERIVED 태깅만 완료되고 concolic 해의 body 배치·"못 푸는 파생은 갭
-> 마커" 처리가 미구현(`ValueRef` 스키마 확장 필요, `[^derived-half]` 참조), (b) **REQ-036**은
-> attach 외부 stub WireMock 라우팅과 `trial --graph` 자동 로드가 미배선(`[^req036-task18-partial]`
-> 참조)이다. 두 항목은 "부분 진전"이지 "충족"이 아니므로 Must 분자에 포함하지 않는다. 이 갭을
+> REQ-036이 🟡**로 남아 있다 — 따라서 현재 상태는 완료 정의를 **충족하지 못한다**.
+> 구체적으로 **REQ-036**은 attach 외부 stub WireMock 라우팅과 `trial --graph` 자동 로드가
+> 미배선(`[^req036-task18-partial]` 참조)이다. (**REQ-032는 Phase A 후속 작업 1/3에서 🟡→🟢으로
+> 해소** — `ValueRef.derivedFrom` 스키마 확장 + `TripleSynthesizer` 채움 슬롯 통합, `[^derived-half]`
+> 참조.) 이 항목은 "부분 진전"이지 "충족"이 아니므로 Must 분자에 포함하지 않는다. 이 갭을
 > 해소하지 않은 채 Phase A를 "완료"로 선언하면 안 되며, 두 REQ를 후속 task로 처리하거나 명시적으로
 > Should로 강등(그 근거를 이 문서에 기록)해야 한다. manual REQ-027/029/030(🟡)은 Should이므로 Must
 > 완료 정의와는 별개다.

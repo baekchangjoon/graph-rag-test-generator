@@ -3,12 +3,15 @@ package io.graphrag.builder.provenance;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import io.graphrag.builder.index.BodyShape;
+import io.graphrag.builder.index.SharedSpoonModel;
+import io.graphrag.builder.oracle.ConcolicOracle;
 import io.graphrag.builder.oracle.InputCandidates;
 import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
 import io.graphrag.builder.provenance.ProvenanceReport.UnguardedField;
 import io.graphrag.builder.provenance.ProvenanceReport.ValueRef;
 import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.Endpoint;
 import io.graphrag.model.ForeignKey;
 import io.graphrag.model.Json;
 import io.graphrag.model.TableSchema;
@@ -17,6 +20,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -337,6 +341,137 @@ class TripleSynthesizerIT {
                 .as("cand-01은 결정 필드 2/2(unguarded 기준) 조합이어야 한다")
                 .contains("cand-01")
                 .contains("결정 필드 2/2");
+    }
+
+    @Test
+    @DisplayName("REQ-032: DERIVED 파생 루트 필드에 concolic 해가 body 결정값으로 배치된다 "
+            + "(score*2==84 → 42, 갭 마커 아님)")
+    void req032_derivedConcolicSolutionPlacedAsDecidedBodyValue() throws IOException {
+        // provenance는 실제 ProvenanceIndexer가 derived 픽스처에서 산출하고(=DERIVED + derivedFrom=[score]),
+        // 오라클 해는 실제 ConcolicOracle이 동일 형상의 바이트코드에서 도출한다 — 두 채널을 모두
+        // 실산출로 묶어 REQ-032 수용기준(provenance + synthesize-triple)을 검증한다.
+        ProvenanceReport report = analyzeDerivedFixture("create");
+        InputCandidates oracle = new ConcolicOracle().analyzeClassBytes(classBytesOf(ScoreGuardSut.class));
+
+        assertThat(oracle.numeric().get("score"))
+                .as("전제: concolic 오라클이 소스에 리터럴로 없는 해 42(=84/2)를 도출해야 한다")
+                .contains(42L);
+
+        List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), oracle);
+
+        assertThat(candidates)
+                .as("DERIVED 피연산자의 파생 루트(score)에 concolic 해 42가 JSON 숫자 결정값으로 "
+                        + "배치된 후보가 있어야 한다(갭 마커 문자열이 아니라)")
+                .anyMatch(c -> c.body().path("score").isNumber() && c.body().path("score").asLong() == 42L);
+
+        TripleCandidate decided = candidates.stream()
+                .filter(c -> c.body().path("score").isNumber() && c.body().path("score").asLong() == 42L)
+                .findFirst()
+                .orElseThrow();
+        assertThat(decided.body().toString())
+                .as("결정값이 배치된 자리에는 갭 마커가 남으면 안 된다")
+                .doesNotContain("__AGENT_FILL__");
+        assertThat(decided.notes())
+                .as("notes에 DERIVED 파생 루트의 오라클 결정값 배치 근거(trace)가 남아야 한다")
+                .contains("derived(score) -> 오라클 결정값 42");
+    }
+
+    @Test
+    @DisplayName("REQ-032: concolic이 못 푸는 파생(비선형 다변수 score*factor)은 그 파생 루트 위치가 갭 마커")
+    void req032_unsolvableDerivedFallsBackToGapMarker() throws IOException {
+        ProvenanceReport report = analyzeDerivedFixture("createNonlinear");
+        InputCandidates oracle = new ConcolicOracle().analyzeClassBytes(classBytesOf(NonlinearGuardSut.class));
+
+        assertThat(oracle.numeric())
+                .as("전제: 변수×변수(비선형) 비교는 오라클이 보수적으로 bail해 해를 내지 못한다")
+                .doesNotContainKeys("score", "factor");
+
+        List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), oracle);
+
+        assertThat(candidates).as("결정값 옵션이 없으므로 조합은 정확히 1개여야 한다").hasSize(1);
+        ObjectNode body = candidates.get(0).body();
+        assertThat(body.get("score").asText())
+                .as("concolic이 못 푸는 파생의 루트 필드는 UNKNOWN과 동일하게 갭 마커로 표기되어야 한다")
+                .startsWith("__AGENT_FILL__");
+        assertThat(body.get("factor").asText())
+                .as("다변수 파생의 나머지 루트 필드도 동일하게 갭 마커여야 한다")
+                .startsWith("__AGENT_FILL__");
+        assertThat(body.get("score").asText())
+                .as("갭 마커의 guard 필드에는 어떤 가드에서 파생됐는지 근거가 실려야 한다(REQ-007)")
+                .contains("guard:DERIVED ==");
+    }
+
+    /** derived 픽스처를 실제 {@link ProvenanceIndexer}로 분석한 리포트(ProvenanceIndexerIT와 동일 관례). */
+    private static ProvenanceReport analyzeDerivedFixture(String handlerMethod) {
+        Path src = Path.of("src/test/resources/provenance-fixtures/derived");
+        Endpoint endpoint = new Endpoint("ep-derived", "POST", "/api/derived",
+                "io.graphrag.fixture.derived.DerivedController", handlerMethod, List.of(), false);
+        return new ProvenanceIndexer().analyze(SharedSpoonModel.build(src), endpoint, 3);
+    }
+
+    /** 테스트 클래스패스에 컴파일되어 있는 클래스의 바이트코드(ConcolicOracle 입력). */
+    private static byte[] classBytesOf(Class<?> type) throws IOException {
+        String resource = type.getName().replace('.', '/') + ".class";
+        try (InputStream in = type.getClassLoader().getResourceAsStream(resource)) {
+            if (in == null) {
+                throw new IOException("class bytes not found on test classpath: " + resource);
+            }
+            return in.readAllBytes();
+        }
+    }
+
+    /** derived 픽스처 {@code ScoreRequest}와 동일 형상의 접근자 홀더(concolic 입력 필드 인식용). */
+    public static final class ScoreHolder {
+        private final Integer score;
+
+        public ScoreHolder(Integer score) {
+            this.score = score;
+        }
+
+        public Integer getScore() {
+            return score;
+        }
+    }
+
+    /** derived 픽스처 {@code create}와 동일한 선형 파생 가드({@code score * 2 == 84})의 바이트코드 원본. */
+    public static final class ScoreGuardSut {
+        public static String create(ScoreHolder req) {
+            if (req.getScore() * 2 == 84) {
+                throw new IllegalStateException("score threshold breached");
+            }
+            return "OK";
+        }
+    }
+
+    /** derived 픽스처 {@code PairRequest}와 동일 형상의 2필드 접근자 홀더. */
+    public static final class PairHolder {
+        private final Integer score;
+        private final Integer factor;
+
+        public PairHolder(Integer score, Integer factor) {
+            this.score = score;
+            this.factor = factor;
+        }
+
+        public Integer getScore() {
+            return score;
+        }
+
+        public Integer getFactor() {
+            return factor;
+        }
+    }
+
+    /** derived 픽스처 {@code createNonlinear}와 동일한 비선형 파생 가드의 바이트코드 원본. */
+    public static final class NonlinearGuardSut {
+        public static String create(PairHolder req) {
+            if (req.getScore() * req.getFactor() == 84) {
+                throw new IllegalStateException("product threshold breached");
+            }
+            return "OK";
+        }
     }
 
     /**
