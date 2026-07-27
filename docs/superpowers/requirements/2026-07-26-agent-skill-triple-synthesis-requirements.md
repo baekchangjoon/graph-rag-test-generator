@@ -311,7 +311,7 @@
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
 | REQ-032 | DERIVED 태깅·concolic 위임 | **TripleSynthesisE2E#req032_cliPipelinePlacesConcolicSolutionInCandidateBody**(`provenance`→`synthesize-triple --sut-jar` CLI 완주), ProvenanceIndexerIT#REQ-032 (태깅 2건: 단일/다변수 derivedFrom), TripleSynthesizerIT#REQ-032 (배치 2건: concolic 해 42 결정값 / 못 푸는 파생 갭 마커) | E2E | 🟢 green[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
-| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green |
+| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green[^envelope-inheritance-boundary] |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
 | REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
@@ -341,7 +341,7 @@
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
-| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed] |
+| REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed][^envelope-inheritance-boundary] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
 
@@ -720,3 +720,33 @@ FAILURE/422 파생/교차-테이블 409가 섞인 `fixture-req005-graph`로 REQ-
 `trial`을 돌린다. 단언은 `exitCode == 0`(승격), `failed/` 부재, `promoted/cand-01`의 `body.json`이
 채운 값(`acc-1`/`500`)을 담고 `seed.sql`이 그대로 비어 있음(비-마커 변경 없음)으로 바꿨다. 즉
 "T1을 통과해 실제 trial이 수행됐다"가 종료 코드·산출물 양쪽으로 고정된다.
+
+[^envelope-inheritance-boundary]: **Phase A 후속(결정 필요 항목) — REQ-005 ↔ REQ-037 경계 실측 재판정: 현행 규칙 유지.**
+`FixtureComposer.inheritsProvenSeed`가 **2xx + `outcome=FAILURE`**(에러 엔벨로프) path를 증명된 형제
+시드 상속에서 제외하는 규칙이, "엔벨로프 SUT의 실패 경로가 부모 행을 실제로 필요로 하는" 경우를
+과잉 차단하는지 실측으로 확인했다. **결론: 이 저장소에 문제를 일으키는 케이스는 존재하지 않으며,
+규칙을 정교화하면 오히려 기존 수용기준이 깨진다.** 근거는 셋이다.
+
+1. **실측(`e2e/run-error-envelope-e2e.sh` 실행, exit 0 — AC1+AC2+AC3b PASS).** 산출된 `graph.json`의
+   전체 5개 path 중 2xx+FAILURE는 `get-items-id-s200e404-1` 하나뿐이고, 그 path의 `requiredSeeds`는
+   0이다. 생성된 `ItemsGetByIdTest#s200e404_1`은 `GET /items/0` → `errorCode == "404"`를 단언한다 —
+   **이 path의 재현 조건 자체가 "id=0 행의 부재"**라, 부모 행을 시드하면 200 SUCCESS로 바뀌어 테스트가
+   깨진다. 즉 여기서 상속 제외는 무해한 정도가 아니라 **정확성의 필요조건**이다(REQ-005의 취지 그대로).
+2. **구조적 도달 불가(GET).** `Generator`는 `readPath = httpMethod.equals("GET")`으로 넘기고,
+   `FixtureComposer.compose`는 `readPath || !seeds.isEmpty()`이면 read-path 분기에서 조기 반환한다 —
+   `inheritsProvenSeed`는 **평가조차 되지 않는다**. error-envelope-service의 두 엔드포인트
+   (`GET /items/{id}`, `GET /items/{id}/price`)는 모두 GET이므로 이 규칙이 개입할 여지가 없다. 게다가
+   그 FAILURE path의 SELECT 바인딩은 `origin=LITERAL`(값 `0`)이고 `sampleInput`이 `{}`라
+   `varsByFieldValue`가 비어, 상속 판정 이전 단계에서 이미 시드 대상이 아니다.
+3. **잔여 창(window)이 구조적으로 좁다.** 규칙이 실제로 결과를 바꾸는 조합은 "비-GET + 명시 seed 없음
+   + 마지막 SQL이 body가 공급한 PK/FK 값에 바인딩된 SELECT + 캡처된 외부 HTTP 호출 없음 +
+   `outcome != SUCCESS` + 형제 2xx가 같은 `ProvenKey`를 증명"뿐이다 — `lookupSucceeded`가
+   `selectIndex < size-1`이거나 `capturedHttpCallIds`가 비지 않으면 이미 `true`를 돌려주기 때문이다.
+   그런데 "조회에 성공한 뒤 나중에 실패한" 경로는 통상 후속 SQL이나 외부 호출을 남기므로 그 두 단락
+   조건에 걸려 **상속 없이도 시드된다**. 남는 조합은 "마지막 SQL이 SELECT인데 path가 실패" —
+   즉 조회 자체가 실패(행 부재)한 형태가 압도적으로 개연적이고, 그것은 시드하면 안 되는 케이스다.
+
+**따라서 규칙은 그대로 둔다(추측으로 완화하지 않는다).** 만약 장래에 **비-GET 엔벨로프 엔드포인트**가
+추가되고 그 실패 경로가 FK 부모 행을 실제로 요구하는 사례가 관측되면, 그때 REQ-ID를 신설해
+"엔벨로프 실패라도 그 경로가 참조하는 FK 부모는 상속" 규칙과 회귀 테스트를 함께 도입한다 — 관측
+근거 없이 여는 예외는 REQ-005가 금지한 spurious seed를 되돌릴 위험이 있다.
