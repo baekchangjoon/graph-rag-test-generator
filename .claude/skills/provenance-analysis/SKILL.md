@@ -1,0 +1,91 @@
+---
+name: provenance-analysis
+description: Recursively slices guard-reachable call chains from an HTTP endpoint handler and tags each guard operand's value origin (INPUT / DB_READ / EXTERNAL_RESPONSE / DERIVED / UNKNOWN) via the graph-rag-builder `provenance` CLI subcommand, producing a provenance-report.json. Use this first — before triple-synthesis and trial-loop — whenever you need to synthesize a deep-happy-path request triple (body/seed/stub) for an endpoint that a build is not yet reaching 2xx on.
+---
+
+# provenance-analysis (C1)
+
+이 스킬은 삼중(triple) 합성 파이프라인의 **첫 단계(C1)**다. 실행 순서는 항상
+`provenance-analysis(C1) → triple-synthesis(C2) → trial-loop(C3)` — 별도 오케스트레이터
+스킬은 없으므로(YAGNI), 이 순서를 에이전트가 직접 지킨다.
+
+## 선행 조건
+
+이 스킬은 **선행 산출물이 필요 없다** — 파이프라인의 첫 단계이므로 provenance-report.json도,
+후보 트리플도 아직 없어도 된다. 필요한 것은 SUT 소스 디렉토리뿐이다. (다음 단계인
+triple-synthesis는 이 스킬의 산출물인 provenance-report.json을 필수로 요구한다.)
+
+## 결정적 코드가 하는 일 (에이전트가 재구현하지 말 것)
+
+`provenance` CLI 서브커맨드가 다음을 전부 코드로 수행한다:
+
+- 대상 엔드포인트 핸들러에서 시작해 가드(throw 또는 에러-return으로 이어지는 조건식)에
+  도달하는 메서드 체인만 재귀적으로 슬라이싱한다(깊이 cap `--provenance-depth`, 기본 3,
+  순환 가드 포함).
+- 가드에 쓰인 각 피연산자(`ValueRef`)의 출처(origin)를 판정한다:
+  - `INPUT` — 핸들러 파라미터(`@RequestBody`/`@PathVariable`/`@RequestParam` 등) 유래
+  - `DB_READ` — repository/JPA/MyBatis mapper 반환값 유래(엔티티 getter 체인 → 컬럼 매핑,
+    `@Column`/`@Table` 오버라이드 인식)
+  - `EXTERNAL_RESPONSE` — RestTemplate/WebClient/Feign 반환 DTO 유래
+  - `DERIVED` — 위 출처값의 산술·문자열 파생
+  - `UNKNOWN` — 해석 실패(noClasspath 미해석, 리플렉션·프록시, 인터페이스 구현체 다수 미해소 등)
+- 가드에 전혀 쓰이지 않는 요청 필드(`unguarded`)에 `semanticHint`(person-name/email/phone/
+  free-text/none 등, 필드명·타입 기반 결정적 규칙)를 태깅한다 — 이는 다음 단계(C2)의 갭필
+  프롬프트 입력으로만 쓰인다.
+
+## CLI 실행법
+
+```
+./gradlew -q :graph-rag-builder:run --args="provenance \
+  --sut-src <SUT_SRC_DIR> \
+  [--sut-resources <RESOURCES_DIR>] \
+  --endpoint '<HTTP_METHOD> <PATH>' \
+  [--provenance-depth 3] \
+  --out <OUT_DIR>/provenance-report.json"
+```
+
+플래그(실제 `BuilderCli` 소스 기준, 추측 아님):
+
+| 플래그 | 필수 | 기본값 | 설명 |
+|---|---|---|---|
+| `--sut-src` | 예 | — | SUT 소스 루트(멀티 루트 glob 문법은 `build` 서브커맨드와 동일) |
+| `--sut-resources` | 아니오 | 각 루트의 형제 `resources` 디렉토리 | MyBatis mapper XML 등이 있는 리소스 디렉토리 |
+| `--endpoint` | 예 | — | 대상 엔드포인트 1개를 지목하는 spec. **정확히 1개**의 HTTP 엔드포인트로 해소되지 않으면 실패한다 |
+| `--provenance-depth` | 아니오 | `3` | 호출 그래프 재귀 추적 깊이 cap |
+| `--out` | 예 | — | 산출 `provenance-report.json` 경로(상위 디렉토리는 자동 생성) |
+
+## 산출물
+
+`provenance-report.json` — 엔드포인트별 가드 목록(`guards[]`, 각 가드의 위치·비교 연산자·
+피연산자들과 그 origin/javaType/semanticHint)과 `unresolved[]`(해석 실패 목록), `unguarded[]`
+(가드 미사용 필드 + semanticHint)를 담는다.
+
+## unresolved / UNKNOWN 항목 처리 절차 (에이전트가 직접 판정)
+
+정적 코드가 해석하지 못한 `unresolved`/`UNKNOWN` 항목만 에이전트가 개입한다 — 이미 해석된
+`INPUT`/`DB_READ`/`EXTERNAL_RESPONSE`/`DERIVED` origin은 도구 판정을 신뢰하고 그대로 둔다.
+
+1. `unresolved` 목록의 각 항목에 대해, 리포트가 가리키는 소스 위치(클래스#메서드)를 직접 연다.
+2. 실제 구현체·리플렉션 대상·인터페이스 구현체를 눈으로 확인해 origin(INPUT/DB_READ/
+   EXTERNAL_RESPONSE/DERIVED 중 하나, 그래도 판정 불가하면 UNKNOWN 유지)을 판정한다.
+3. 판정 근거를 provenance-report.json과 같은 디렉토리의 `provenance-notes.md`에
+   근거(파일:라인, 판단 이유)와 함께 남긴다. **provenance-report.json 자체의 이미 채워진
+   필드(guards/origin 등)는 고치지 않는다** — 이 스킬군 전체의 원칙(§ 아래)과 동일하게,
+   결정적 코드가 이미 확정한 값은 건드리지 않고 UNKNOWN/unresolved라고 명시된 자리만
+   보완한다.
+4. 여전히 판정 불가능한 항목은 UNKNOWN으로 남겨두고 사유를 기록한다 — 모르면 모른다고
+   출력하는 것이 도구의 원칙이다(창작 금지는 다음 단계에서도 동일하게 적용된다).
+
+## 마커 계약(이 파이프라인 전체의 공통 원칙)
+
+이 스킬(C1)은 갭 마커가 있는 산출물(body.json/seed.sql/stubs.json)을 직접 만들지 않는다 —
+그건 다음 단계 **triple-synthesis**의 역할이다. 하지만 이 파이프라인 전체를 관통하는
+원칙은 여기서부터 지킨다: **결정적 코드가 이미 확정한 값(guards의 origin·op·operand,
+unguarded의 semanticHint)은 마커만 채워라 — 마커 아닌 값 수정 금지**와 동일한 규율로, 이미
+해석된 필드를 임의로 고치지 않는다. 이후 단계(triple-synthesis)가 만드는 산출물에서는
+이 원칙이 문자 그대로 `__AGENT_FILL__{...}` 갭 마커 위치에만 적용된다.
+
+## 다음 단계
+
+이 스킬의 산출물(`provenance-report.json`)이 준비되면 **triple-synthesis** 스킬로 넘어간다.
+그 다음이 **trial-loop**다.
