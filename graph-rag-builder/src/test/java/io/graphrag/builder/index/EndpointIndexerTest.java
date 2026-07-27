@@ -45,11 +45,17 @@ class EndpointIndexerTest {
                 .containsExactly("java.lang.String", "java.lang.Integer", "java.lang.String");
     }
 
+    /**
+     * 이 테스트는 원래 {@code src/test/resources}를 "컨트롤러가 (거의) 없는 위치"로 가정해
+     * {@code <= 1}을 단언했는데, 그 뒤 provenance fixture 컨트롤러들이 그 아래에 커밋되면서 가정이
+     * 깨져 상시 실패하게 됐다(13개 검출). 단언 대상이던 계약은 "컨트롤러가 없는 디렉토리를 줘도
+     * 예외 없이 빈 결과를 낸다"이므로, 실제로 비어 있는 임시 디렉토리로 바꿔 그 계약을 정확히
+     * (그리고 더 강하게 — {@code isEmpty()}) 검증한다.
+     */
     @Test
-    void index_emptyDirectory_returnsNoEndpoints() {
-        IndexResult result = new EndpointIndexer().index(Path.of("src/test/resources"));
-        // sample-src 외 컨트롤러가 없는 위치를 줘도 동작해야 한다 (하위 폴더 포함 스캔이므로 1개)
-        assertThat(result.endpoints()).hasSizeLessThanOrEqualTo(1);
+    void index_emptyDirectory_returnsNoEndpoints(@org.junit.jupiter.api.io.TempDir Path emptyDir) {
+        IndexResult result = new EndpointIndexer().index(emptyDir);
+        assertThat(result.endpoints()).isEmpty();
     }
 
     @Test
