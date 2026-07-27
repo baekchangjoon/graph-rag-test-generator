@@ -386,4 +386,54 @@ class TrialCliE2E {
                 .hasMessageContaining("provenance-report.json");
         assertThat(endpointDir.resolve("promoted")).doesNotExist();
     }
+
+    /**
+     * N3 회귀(리뷰 Important): <b>문서화된 파이프라인 순서 그대로</b> — provenance(임의 {@code --out}
+     * 경로) → {@code synthesize-triple} → {@code trial}({@code --provenance-report} 없이) — 을 돌렸을 때
+     * 첫 {@code trial}이 죽지 않아야 한다.
+     *
+     * <p>고치기 전의 결함: {@code synthesize-triple}이 입력 리포트를 저장 레이아웃 규약 위치
+     * ({@code <triple-store>/<endpointId>/provenance-report.json})로 복사하지 않아, 문서가 안내하는
+     * 순서대로 실행하면 규약 위치에 파일이 없어 {@code trial}이 {@code IllegalArgumentException}으로
+     * 즉시 실패했다(스킬 워크플로 파손).
+     */
+    @Test
+    @DisplayName("N3: provenance → synthesize-triple → trial(플래그 없이) 문서 순서가 실제로 동작한다")
+    void documentedPipelineOrderWorksWithoutExplicitReportFlag() throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+        }
+        // ① provenance 산출물은 triple-store 밖의 임의 경로에 있다(provenance CLI의 --out 계약).
+        Path analysisDir = Files.createDirectories(tempDir.resolve("analysis"));
+        Path externalReport = analysisDir.resolve("provenance-report.json");
+        writeProvenanceReport(analysisDir);
+        Path tripleStore = tempDir.resolve("pipeline-triples");
+
+        // ② synthesize-triple — 후보와 함께 규약 위치로 리포트가 복사되어야 한다.
+        BuilderCli.main(new String[] {
+                "synthesize-triple",
+                "--report", externalReport.toString(),
+                "--triple-store", tripleStore.toString()
+        });
+
+        Path canonicalReport = tripleStore.resolve("post-api-transfers").resolve("provenance-report.json");
+        assertThat(canonicalReport)
+                .as("synthesize-triple은 입력 리포트를 trial이 읽는 규약 위치로 복사해야 한다")
+                .exists();
+        assertThat(Files.readString(canonicalReport)).isEqualTo(Files.readString(externalReport));
+
+        // ③ trial — --provenance-report 없이도 규약 위치를 찾아 후보를 실제로 시험해야 한다.
+        Path happySeeds = writeHappySeeds();
+        int exitCode = BuilderCli.runTrial(baseOptions(tripleStore, happySeeds));
+
+        assertThat(exitCode)
+                .as("리포트를 찾았으므로 fail-closed 예외 없이 정상 종료 코드(0 또는 3)여야 한다")
+                .isIn(0, 3);
+        if (exitCode == 3) {
+            assertThat(tripleStore.resolve("post-api-transfers").resolve("failed")
+                    .resolve("digest-final.json"))
+                    .as("후보가 실제로 시험(또는 T1 판정)됐다는 증거")
+                    .exists();
+        }
+    }
 }

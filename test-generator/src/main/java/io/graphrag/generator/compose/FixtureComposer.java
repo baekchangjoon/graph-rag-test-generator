@@ -30,6 +30,14 @@ import java.util.Set;
  */
 public class FixtureComposer {
 
+    /**
+     * REQ-037 상속 증명의 단위 — 같은 endpoint의 2xx 시나리오가 "이 (테이블, 컬럼) 자리의 이 값으로
+     * 조회에 성공했다"를 증명한 조합. N2 리뷰 fix: 이전에는 <b>값 문자열</b>만 비교해, 값이 우연히
+     * 같기만 하면 전혀 다른 테이블·컬럼 조회에도 시드가 붙었다(spurious seed).
+     */
+    public record ProvenKey(String table, String column, String value) {
+    }
+
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables) {
         return compose(path, sqlList, tables, List.of(), false);
@@ -89,17 +97,27 @@ public class FixtureComposer {
     }
 
     /**
-     * REQ-037 오버로드. {@code provenExistingKeyValues} = 같은 endpoint의 <b>다른</b> 시나리오가 실제로
-     * "그 값의 행이 존재한다"를 증명한 키 값 집합(2xx path의 SELECT 바인딩 값). 파생 시나리오
-     * (happy body를 변이해 만든 422/409 등)는 자기 자신의 응답만 보면 "조회 성공"을 증명할 수 없지만,
-     * 원본 시나리오가 같은 키 값으로 조회에 성공했다면 그 부모 행 시드를 <b>상속</b>해야 한다 — 그러지
-     * 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가 난다(REQ-037).
+     * REQ-037 오버로드. {@code provenExistingKeys} = 같은 endpoint의 <b>다른</b> 시나리오가 실제로
+     * "그 (테이블, 컬럼, 값) 자리의 행이 존재한다"를 증명한 조합 집합(2xx path의 SELECT 바인딩). 파생
+     * 시나리오(happy body를 변이해 만든 422/409 등)는 자기 자신의 응답만 보면 "조회 성공"을 증명할 수
+     * 없지만, 원본 시나리오가 같은 자리·같은 키 값으로 조회에 성공했다면 그 부모 행 시드를
+     * <b>상속</b>해야 한다 — 그러지 않으면 생성 TC가 시드 없이 실행돼 의도한 상태코드 대신 404가
+     * 난다(REQ-037).
+     *
+     * <p><b>N2 리뷰 fix — 두 방향의 좁히기(REQ-005 회귀 방지):</b>
+     * <ol>
+     *   <li>매칭 단위가 값 문자열이 아니라 {@link ProvenKey}(테이블·컬럼·값 조합)다. 값만 같은 다른
+     *       테이블/컬럼 조회에는 상속이 적용되지 않는다.</li>
+     *   <li>{@link #inheritsProvenSeed}: 2xx <b>에러 엔벨로프</b> 실패 path(HTTP는 2xx인데
+     *       {@code outcome=FAILURE})는 상속 대상에서 제외한다 — REQ-005가 금지한 spurious seed가
+     *       바로 이 형태이고, REQ-037이 겨냥한 파생 시나리오는 전부 비-2xx(422/409 등)다.</li>
+     * </ol>
      */
     public ComposedFixture compose(ExploredPath path, List<CapturedSql> sqlList,
                                    List<TableSchema> tables, List<RequiredSeed> seeds, boolean readPath,
                                    Map<String, String> knownByField,
                                    String semanticStatusField, String errorDetailField,
-                                   String errorDetailContains, Set<String> provenExistingKeyValues) {
+                                   String errorDetailContains, Set<ProvenKey> provenExistingKeys) {
         if (readPath || !seeds.isEmpty()) {
             Map<String, TableSchema> seedTables = new HashMap<>();
             tables.forEach(t -> seedTables.put(t.name(), t));
@@ -160,7 +178,8 @@ public class FixtureComposer {
                 }
                 if (sql.sqlKind().equals("SELECT")
                         && (lookupSucceeded(path, sqlList, i)
-                            || provenExistingKeyValues.contains(binding.value()))) {
+                            || (inheritsProvenSeed(path) && provenExistingKeys.contains(new ProvenKey(
+                                    bindingTable(sql, binding), binding.column(), binding.value()))))) {
                     seedWithParents(tablesByName.get(bindingTable(sql, binding)), binding.column(),
                             var.name(), tablesByName, seeded, seenSeeds);
                 }
@@ -381,6 +400,20 @@ public class FixtureComposer {
             return true;
         }
         return path.outcome() == io.graphrag.model.Outcome.Kind.SUCCESS;
+    }
+
+    /**
+     * REQ-037의 "증명된 형제 키 상속"을 이 path에 적용해도 되는지 판정한다(N2 리뷰 fix).
+     *
+     * <p>제외 대상은 <b>2xx 에러 엔벨로프</b> — HTTP 상태는 2xx인데 {@code outcome=FAILURE}인 path다.
+     * REQ-005는 이 형태에 시드가 붙는 것을 금지하고({@code LookupSucceededOutcomeTest}), 그 판정은
+     * {@link #lookupSucceeded}가 {@code outcome}으로 내린다. 상속은 그 판정을 우회하는 예외 경로이므로,
+     * 같은 근거(2xx + FAILURE)에는 예외를 열지 않는다. REQ-037이 겨냥한 파생 시나리오(happy body를
+     * 변이해 만든 422/409 등)는 전부 비-2xx라 이 제외에 걸리지 않는다(회귀 0).
+     */
+    private static boolean inheritsProvenSeed(ExploredPath path) {
+        boolean twoXx = path.expectedStatus() / 100 == 2;
+        return !(twoXx && path.outcome() == io.graphrag.model.Outcome.Kind.FAILURE);
     }
 
     /** 자식 테이블 seed 전에 같은 var 값으로 FK 부모 행을 재귀적으로 seed한다. */

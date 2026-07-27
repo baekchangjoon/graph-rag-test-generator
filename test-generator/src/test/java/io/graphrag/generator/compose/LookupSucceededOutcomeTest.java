@@ -123,9 +123,20 @@ class LookupSucceededOutcomeTest {
 
         ComposedFixture withProof = new FixtureComposer().compose(
                 derived, List.of(select), client.tables(), List.of(), false,
-                java.util.Map.of(), null, null, null, java.util.Set.of("probe-userId"));
+                java.util.Map.of(), null, null, null,
+                java.util.Set.of(new FixtureComposer.ProvenKey("users", "id", "probe-userId")));
         assertThat(withProof.inserts())
-                .as("REQ-037: 2xx 형제가 같은 키 값으로 조회에 성공했으면 파생 실패 path도 시드를 상속해야 한다")
+                .as("REQ-037: 2xx 형제가 같은 (테이블, 컬럼, 키 값)으로 조회에 성공했으면 파생 실패 path도 "
+                        + "시드를 상속해야 한다")
                 .isNotEmpty();
+
+        // N2 리뷰 fix: 증명은 (table, column, value) 조합으로만 성립한다 — 값만 같고 자리가 다르면 상속 없음.
+        ComposedFixture withMismatchedProof = new FixtureComposer().compose(
+                derived, List.of(select), client.tables(), List.of(), false,
+                java.util.Map.of(), null, null, null,
+                java.util.Set.of(new FixtureComposer.ProvenKey("orders", "user_id", "probe-userId")));
+        assertThat(withMismatchedProof.inserts())
+                .as("다른 테이블/컬럼에서 증명된 값은 이 SELECT의 시드 근거가 되지 않는다")
+                .isEmpty();
     }
 }
