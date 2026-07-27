@@ -89,4 +89,43 @@ class LookupSucceededOutcomeTest {
                 .as("outcome=SUCCESS인 일반 200 path에서는 seed INSERT가 있어야 한다")
                 .isNotEmpty();
     }
+
+    /**
+     * REQ-037: 파생 시나리오(원본 happy body를 변이해 만든 422 등)는 자기 응답만으로는 조회 성공을
+     * 증명하지 못하지만, 같은 endpoint의 2xx 시나리오가 <b>같은 키 값</b>으로 조회에 성공했다면 그
+     * 부모 행 시드를 상속해야 한다 — 그러지 않으면 생성 TC가 시드 없이 실행돼 422 대신 404가 난다.
+     */
+    @Test
+    void derivedFailurePathInheritsSeedFromProvenSiblingKeyValue() throws Exception {
+        ExploredPath derived = new ExploredPath(
+                "p-derived-422", "post-api-orders",
+                io.graphrag.model.Json.mapper().readTree(
+                        "{\"userId\":\"probe-userId\",\"amount\":2,\"type\":\"EXPRESS\"}"),
+                422,
+                io.graphrag.model.Json.mapper().nullNode(),
+                List.of("sql-derived-1"),
+                List.of(),
+                List.of(), "fuzzer", List.of(), List.of(), List.of(),
+                List.of(), java.util.Map.of(),
+                Outcome.Kind.FAILURE,
+                422, "422"
+        );
+        CapturedSql select = new CapturedSql(
+                "sql-derived-1", "p-derived-422", "SELECT",
+                "select u1_0.id,u1_0.name from users u1_0 where u1_0.id=?", "users",
+                List.of(new SqlBinding(1, "id", "probe-userId", BindingOrigin.API_PARAM)));
+
+        ComposedFixture withoutProof = new FixtureComposer()
+                .compose(derived, List.of(select), client.tables());
+        assertThat(withoutProof.inserts())
+                .as("증명된 형제 시나리오가 없으면 기존대로 시드하지 않는다(회귀 0)")
+                .isEmpty();
+
+        ComposedFixture withProof = new FixtureComposer().compose(
+                derived, List.of(select), client.tables(), List.of(), false,
+                java.util.Map.of(), null, null, null, java.util.Set.of("probe-userId"));
+        assertThat(withProof.inserts())
+                .as("REQ-037: 2xx 형제가 같은 키 값으로 조회에 성공했으면 파생 실패 path도 시드를 상속해야 한다")
+                .isNotEmpty();
+    }
 }
