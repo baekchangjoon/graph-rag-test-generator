@@ -317,7 +317,7 @@
 | REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
 | REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009(다중 행/행 순서/컬럼 순서 회귀 5건 포함), TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed][^c4-readjudication] |
-| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected, TrialSeedNormalizedExecutionIT(재생성 SQL 실행), TrialSeedMySqlExecutableCommentIT(실 MySQL 실행형 주석 우회 차단) | integration | 🟢 green[^c4-readjudication] |
+| REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected, TrialSeedNormalizedExecutionIT(재생성 SQL 실행), TrialSeedMySqlExecutableCommentIT(실 MySQL 실행형 주석 우회 차단), SeedSqlWhitelistIT#req010_signed*(닫힌 리터럴 판정 집합 일치) | integration | 🟢 green[^c4-readjudication][^closed-literal-alignment] |
 | REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green[^c4-readjudication] |
 | REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(문서 순서 파이프라인), TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication] |
@@ -692,3 +692,17 @@ FAILURE/422 파생/교차-테이블 409가 섞인 `fixture-req005-graph`로 REQ-
 + `e2e/run-e2e.sh` 실행 결과 `tests=85 skipped=0 failures=0 errors=0`(직전 `failures=2`에서 전환).
 생성 코드에서 `s422e422_1`/`s422e422_2` 모두 `INSERT INTO fund_accounts ... / deferDelete`가 붙은
 것을 확인했다.
+
+[^closed-literal-alignment]: **Phase A 후속(Important 1) — "닫힌 리터럴" 판정 집합 일치.**
+`SeedSqlWhitelist.isClosedLiteral`(T1 게이트)과 `TrialRunner.closedLiteralValue`(T2 실행 계획의
+2차 방어선)는 같은 개념을 판정하면서 답이 달랐다 — 게이트는 `SignedExpression`이 감싼 **모든**
+리터럴을 허용해 `-'x'`/`+NULL`을 통과시켰지만, `closedLiteralValue`는 그 조합에서 빈 `Optional`을
+반환해 `SeedPlanRejectedException`으로 끝났다. 최종 결과는 fail-closed였으나(두 경로 모두 reject)
+"게이트를 통과한 표현식은 실행 계획으로 반드시 환산된다"는 불변식이 성립하지 않아, 이후 어느 한쪽만
+손대면 조용히 갈라질 수 있는 구조였다. **조치:** 부호(`SignedExpression`)는 **수치 리터럴**
+(`LongValue`/`DoubleValue`)에만 붙을 수 있도록 양쪽을 좁혔고, `closedLiteralValue`는 부호 문자도
+`+`/`-`만 허용한다(`~` 등은 fail-closed로 거부 — 종전에는 항등으로 통과시켰다). 유일한 의도적
+차이는 **최상위 `NULL`**로, 게이트는 통과시키고 `TrialRunner`는 값이 아니라 `setNull` 바인딩으로
+별도 처리한다(PK 정리 키로는 쓰이지 않는다) — 이 예외는 양쪽 Javadoc에 명시했다. **회귀 테스트:**
+`SeedSqlWhitelistIT#req010_signedNumericAndPlainLiteralsAccepted`(`-5`/`+3`/`NULL`/`'x'`/`TRUE`
+통과) + `#req010_signedStringLiteralRejected`(`-'x'`) + `#req010_signedNullLiteralRejected`(`+NULL`).

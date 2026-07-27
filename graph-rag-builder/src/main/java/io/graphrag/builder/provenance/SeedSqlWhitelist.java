@@ -274,17 +274,34 @@ public final class SeedSqlWhitelist {
      * ({@link net.sf.jsqlparser.statement.select.ParenthesedSelect}), 함수 호출({@link
      * net.sf.jsqlparser.expression.Function}), 컬럼 참조({@link net.sf.jsqlparser.schema.Column}) 등은
      * 전부 거부된다 — 마커 위치는 값 하나를 치환하는 자리이지, 임의 SQL 표현식으로 대체할 자리가 아니다.
-     * {@link SignedExpression}(단항 부호, 예: {@code -5})은 감싼 내부 표현식이 상수이면 재귀적으로 허용한다.
+     * {@link SignedExpression}(단항 부호, 예: {@code -5})은 <b>감싼 내부가 수치 리터럴일 때만</b>
+     * 재귀적으로 허용한다 — {@code -'x'}/{@code +NULL}처럼 부호를 붙일 수 없는 리터럴 조합은 여기서
+     * 거부한다(Phase A 후속 Important 1). 이 판정 집합은 {@link TrialRunner}의 {@code closedLiteralValue}
+     * (같은 개념을 "바인딩 가능한 Java 값"으로 환산하는 2차 방어선)와 정확히 일치해야 한다: 게이트가
+     * 통과시킨 표현식은 TrialRunner가 반드시 값으로 환산할 수 있어야 하고, 그 반대도 성립해야 한다.
+     * 유일한 의도적 예외는 최상위 {@link NullValue}로, 여기서는 통과하지만 TrialRunner에서는 값이 아니라
+     * {@code setNull} 바인딩으로 별도 처리된다(PK 정리 키로는 쓰이지 않는다).
      */
     private static boolean isClosedLiteral(Expression expr) {
         if (expr instanceof SignedExpression) {
-            return isClosedLiteral(((SignedExpression) expr).getExpression());
+            return isSignedNumericLiteral(((SignedExpression) expr).getExpression());
         }
         return expr instanceof StringValue
                 || expr instanceof LongValue
                 || expr instanceof DoubleValue
                 || expr instanceof NullValue
                 || expr instanceof BooleanValue;
+    }
+
+    /**
+     * 단항 부호가 감쌀 수 있는 유일한 대상 — 수치 리터럴({@link LongValue}/{@link DoubleValue})인지
+     * 판정한다. 중첩 부호({@code --5})도 결국 수치 리터럴에 도달해야만 허용한다.
+     */
+    private static boolean isSignedNumericLiteral(Expression expr) {
+        if (expr instanceof SignedExpression) {
+            return isSignedNumericLiteral(((SignedExpression) expr).getExpression());
+        }
+        return expr instanceof LongValue || expr instanceof DoubleValue;
     }
 
     private static Statements parseStatements(String sql, DbConfig.Type dialect) throws JSQLParserException {
