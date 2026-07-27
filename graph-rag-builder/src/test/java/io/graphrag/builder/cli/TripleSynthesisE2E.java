@@ -7,10 +7,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -79,5 +85,125 @@ class TripleSynthesisE2E {
                 .contains("TransferController.java:30")
                 .contains("TransferController.java:37")
                 .contains("body.amount=100");
+
+        assertThat(notes)
+                .as("오라클 플래그를 주지 않은 실행은 그 축소 사실을 notes.md에 남겨야 한다(조용한 축소 금지)")
+                .contains("input-oracle: none");
+    }
+
+    @Test
+    @DisplayName("REQ-032: provenance → synthesize-triple(--sut-jar) CLI 경로에서 concolic 해가 "
+            + "cand body에 결정값으로 배치된다(score*2==84 → body.score=42)")
+    void req032_cliPipelinePlacesConcolicSolutionInCandidateBody() throws Exception {
+        // 수용기준 문면("provenance + synthesize-triple 실행") 그대로 재현한다 — 리포트도 CLI가 만들고,
+        // 오라클도 CLI가 --sut-jar에서 실제 ConcolicOracle로 만든다(테스트가 값을 주입하지 않는다).
+        Path fixtureSrc = Path.of("src/test/resources/provenance-fixtures/derived");
+        Path reportFile = tempDir.resolve("derived-provenance.json");
+
+        BuilderCli.main(new String[] {
+                "provenance",
+                "--sut-src", fixtureSrc.toString(),
+                "--endpoint", "POST /api/derived",
+                "--provenance-depth", "3",
+                "--out", reportFile.toString()
+        });
+
+        JsonNode report = Json.mapper().readTree(reportFile.toFile());
+        JsonNode derivedOperand = null;
+        for (JsonNode guard : report.path("guards")) {
+            for (JsonNode operand : guard.path("operands")) {
+                if ("DERIVED".equals(operand.path("origin").asText())) {
+                    derivedOperand = operand;
+                }
+            }
+        }
+        assertThat(derivedOperand)
+                .as("전제: provenance CLI가 DERIVED 피연산자를 산출해야 한다 — 리포트: " + report)
+                .isNotNull();
+        List<String> derivedRoots = new ArrayList<>();
+        derivedOperand.path("derivedFrom").forEach(node -> derivedRoots.add(node.asText()));
+        assertThat(derivedRoots)
+                .as("전제: DERIVED 피연산자가 파생 루트 필드 score를 derivedFrom에 담아야 한다")
+                .containsExactly("score");
+
+        Path bootJar = tempDir.resolve("derived-sut.jar");
+        writeBootJarWith(bootJar, ScoreGuardSut.class);
+        Path tripleStore = tempDir.resolve("triples-derived");
+
+        BuilderCli.main(new String[] {
+                "synthesize-triple",
+                "--report", reportFile.toString(),
+                "--triple-store", tripleStore.toString(),
+                "--sut-jar", bootJar.toString()
+        });
+
+        Path endpointDir = tripleStore.resolve(report.get("endpointId").asText());
+        assertThat(endpointDir).as("엔드포인트 후보 디렉토리가 생성되어야 한다").isDirectory();
+
+        List<Path> candidateDirs;
+        try (var dirs = Files.list(endpointDir)) {
+            candidateDirs = dirs.filter(Files::isDirectory)
+                    .filter(p -> p.getFileName().toString().startsWith("cand-"))
+                    .sorted()
+                    .toList();
+        }
+        assertThat(candidateDirs).as("cand-NN 후보가 하나 이상 생성되어야 한다").isNotEmpty();
+
+        boolean placed = false;
+        for (Path candDir : candidateDirs) {
+            JsonNode body = Json.mapper().readTree(candDir.resolve("body.json").toFile());
+            if (body.path("score").isNumber() && body.path("score").asLong() == 42L) {
+                placed = true;
+                assertThat(Files.readString(candDir.resolve("notes.md")))
+                        .as("결정값 배치 근거와 오라클 출처가 notes.md에 남아야 한다")
+                        .contains("derived(score) -> 오라클 결정값 42")
+                        .contains("input-oracle: concolic-asm-z3(--sut-jar)");
+            }
+        }
+        assertThat(placed)
+                .as("DERIVED 파생 루트(score)에 concolic 해 42가 JSON 숫자 결정값으로 배치된 후보가 "
+                        + "CLI 산출물에 있어야 한다 — 후보 body들: " + candidateDirs)
+                .isTrue();
+    }
+
+    /** {@code type}의 바이트코드를 Spring Boot 실행형 jar 레이아웃({@code BOOT-INF/classes/})으로 담은 jar. */
+    private static void writeBootJarWith(Path jarPath, Class<?> type) throws IOException {
+        String binaryPath = type.getName().replace('.', '/') + ".class";
+        byte[] classBytes;
+        try (InputStream in = type.getClassLoader().getResourceAsStream(binaryPath)) {
+            if (in == null) {
+                throw new IOException("class bytes not found on test classpath: " + binaryPath);
+            }
+            classBytes = in.readAllBytes();
+        }
+        try (OutputStream out = Files.newOutputStream(jarPath);
+             ZipOutputStream zip = new ZipOutputStream(out)) {
+            zip.putNextEntry(new ZipEntry("BOOT-INF/classes/" + binaryPath));
+            zip.write(classBytes);
+            zip.closeEntry();
+        }
+    }
+
+    /** derived 픽스처 {@code ScoreRequest}와 동일 형상의 접근자 홀더. */
+    public static final class ScoreHolder {
+        private final Integer score;
+
+        public ScoreHolder(Integer score) {
+            this.score = score;
+        }
+
+        public Integer getScore() {
+            return score;
+        }
+    }
+
+    /** derived 픽스처 {@code create}와 동일한 선형 파생 가드({@code score * 2 == 84})의 바이트코드 원본. */
+    public static final class ScoreGuardSut {
+        public static String create(ScoreHolder req) {
+            if (req.getScore() * 2 == 84) {
+                throw new IllegalStateException("score threshold breached");
+            }
+            return "OK";
+        }
     }
 }

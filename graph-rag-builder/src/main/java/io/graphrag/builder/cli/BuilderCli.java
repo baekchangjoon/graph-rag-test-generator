@@ -1325,14 +1325,22 @@ public final class BuilderCli {
 
     /**
      * synthesize-triple 서브커맨드: provenance 리포트(REQ-001 산출물)를 읽어 {@link TripleSynthesizer}로
-     * 후보 트리플(body.json/seed.sql/stubs.json/notes.md)을 산출한다(REQ-005/007/008/033). usage:
-     * {@code synthesize-triple --report <provenance-report.json> --triple-store <dir>}.
+     * 후보 트리플(body.json/seed.sql/stubs.json/notes.md)을 산출한다(REQ-005/007/008/032/033). usage:
+     * {@code synthesize-triple --report <provenance-report.json> --triple-store <dir>
+     * [--sut-jar <boot.jar>] [--sut-src <dir> [--sut-resources <dir>]]}.
      *
-     * <p>이 CLI는 provenance 리포트만으로 동작하는 최소 배선이다 — 물리 스키마(seed FK 부모 채움)나
-     * body 형상 검증이 필요하면 상위 오케스트레이션(에이전트 스킬)이 그래프 자산에서 별도로 채워
-     * {@link TripleSynthesizer#synthesize}를 직접 호출하는 경로를 쓸 수 있다(현재 CLI는 tables=[],
-     * oracle=empty로 호출 — guard가 결정하는 값은 스키마 없이도 대부분 결정되고, 결정 불가한 자리는
-     * 갭 마커로 표기되므로 안전하다).
+     * <p><b>입력 오라클(REQ-032):</b> {@code --sut-jar}(ASM+Z3 concolic) / {@code --sut-src}(소스 리터럴)를
+     * 주면 build 경로와 동일한 조합({@code StaticLiteralOracle} ∪ {@code ConcolicOracle}, {@code
+     * GRB_ORACLE=static}이면 concolic 제외)으로 {@link io.graphrag.builder.oracle.InputCandidates}를 만들어
+     * 합성에 넘긴다 — 이때 DERIVED 파생 루트 필드에 concolic 해가 결정값으로 배치된다(예:
+     * {@code score * 2 == 84} → {@code body.score = 42}). 둘 다 없으면 빈 오라클로 동작하며(기존 동작),
+     * 그 축소 사실을 로그와 각 후보의 {@code notes.md}에 {@code input-oracle:} 줄로 남긴다 —
+     * "결정값이 나올 수 있었는데 조용히 갭 마커가 된" 상황을 감출 수 없게 한다.
+     *
+     * <p>물리 스키마(seed FK 부모 채움)나 body 형상 검증이 필요하면 상위 오케스트레이션(에이전트 스킬)이
+     * 그래프 자산에서 별도로 채워 {@link TripleSynthesizer#synthesize}를 직접 호출하는 경로를 쓸 수 있다
+     * (이 CLI는 tables=[], shape=empty로 호출 — guard가 결정하는 값은 스키마 없이도 대부분 결정되고,
+     * 결정 불가한 자리는 갭 마커로 표기되므로 안전하다).
      *
      * <p><b>base/ 사본(REQ-009 마커-diff용, T1):</b> {@code cand-NN}과 동일한 도구 생성 내용을
      * {@code base/cand-NN}에도 그대로 저장한다 — 에이전트가 {@code cand-NN}의 갭 마커를 채운 뒤,
@@ -1353,8 +1361,9 @@ public final class BuilderCli {
         Path tripleStore = Path.of(required(o, "--triple-store"));
 
         ProvenanceReport report = Json.mapper().readValue(reportPath.toFile(), ProvenanceReport.class);
+        SynthesisOracle oracle = resolveSynthesisOracle(o);
         List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
-                report, BodyShape.empty(), List.of(), io.graphrag.builder.oracle.InputCandidates.empty());
+                report, BodyShape.empty(), List.of(), oracle.candidates());
 
         Path endpointDir = Files.createDirectories(tripleStore.resolve(report.endpointId()));
         Path canonicalReport = endpointDir.resolve("provenance-report.json");
@@ -1375,10 +1384,63 @@ public final class BuilderCli {
                 Files.writeString(dir.resolve("seed.sql"), seedSql);
                 Files.writeString(dir.resolve("stubs.json"), stubsJson);
             }
-            Files.writeString(candDir.resolve("notes.md"), candidate.notes());
+            // notes.md는 base/ 사본에 쓰지 않으므로(마커-diff 대상은 body/seed/stubs 3종, REQ-009)
+            // 오라클 배선 근거를 여기에 덧붙여도 T1 게이트에 영향이 없다.
+            Files.writeString(candDir.resolve("notes.md"),
+                    candidate.notes() + System.lineSeparator() + oracle.note());
         }
-        log.info("synthesize-triple: {} candidate(s) for {} -> {} (provenance report at {})",
-                candidates.size(), report.endpointId(), endpointDir, canonicalReport);
+        log.info("synthesize-triple: {} candidate(s) for {} -> {} (provenance report at {}, {})",
+                candidates.size(), report.endpointId(), endpointDir, canonicalReport, oracle.note());
+    }
+
+    /** synthesize-triple에 넘길 입력 오라클과, 그 출처/축소 사유를 설명하는 notes 한 줄. */
+    private record SynthesisOracle(io.graphrag.builder.oracle.InputCandidates candidates, String note) {
+    }
+
+    /**
+     * synthesize-triple의 입력 오라클을 구성한다(REQ-032) — build 경로(§"입력 후보 = 교체가능 오라클들의
+     * 합집합")와 동일한 조합: {@code --sut-src}가 있으면 {@code StaticLiteralOracle}(Spoon 소스 리터럴),
+     * {@code --sut-jar}가 있으면 {@code ConcolicOracle}(ASM+Z3)을 merge한다. build와 동일하게
+     * {@code GRB_ORACLE=static} 환경변수로 concolic만 제외할 수 있다(오라클 기여도 ablation).
+     *
+     * <p>{@code CandidateLifter.lift}(leaf-키 → dot-path 승격)는 여기서 쓰지 않는다 — 그 변환은
+     * mutableFields(dot-path)를 키로 소비하는 탐색 경로용이고, {@link TripleSynthesizer}는 반대로
+     * 슬롯 jsonPath의 마지막 세그먼트로 조회하므로 leaf-키 그대로가 맞다.
+     *
+     * <p>두 플래그가 모두 없으면 빈 오라클(기존 동작)로 폴백하되, 그 사실을 호출부가 로그·notes.md에
+     * 남기도록 사유 문자열을 함께 반환한다 — 조용한 기능 축소 금지.
+     */
+    private static SynthesisOracle resolveSynthesisOracle(Map<String, String> o) {
+        boolean hasSrc = o.containsKey("--sut-src");
+        boolean hasJar = o.containsKey("--sut-jar");
+        if (!hasSrc && !hasJar) {
+            return new SynthesisOracle(io.graphrag.builder.oracle.InputCandidates.empty(),
+                    "input-oracle: none (--sut-src/--sut-jar 미지정) — DERIVED 파생 루트와 unguarded 필드는 "
+                            + "전부 갭 마커로 남는다(REQ-032 concolic 해 배치는 오라클 입력이 있어야 발현)");
+        }
+        SourceRoots roots = hasSrc ? buildSourceRoots(o) : null;
+        Path bootJar = hasJar ? Path.of(o.get("--sut-jar")) : null;
+        io.graphrag.builder.oracle.InputOracle.SutCode sutCode =
+                new io.graphrag.builder.oracle.InputOracle.SutCode(roots, bootJar);
+
+        io.graphrag.builder.oracle.InputCandidates candidates =
+                io.graphrag.builder.oracle.InputCandidates.empty();
+        List<String> used = new ArrayList<>();
+        if (roots != null) {
+            candidates = candidates.merge(new io.graphrag.builder.oracle.StaticLiteralOracle().analyze(sutCode));
+            used.add("static-literal(--sut-src)");
+        }
+        boolean useConcolic = !"static".equalsIgnoreCase(System.getenv("GRB_ORACLE"));
+        if (bootJar != null && useConcolic) {
+            candidates = candidates.merge(new io.graphrag.builder.oracle.ConcolicOracle().analyze(sutCode));
+            used.add("concolic-asm-z3(--sut-jar)");
+        } else if (bootJar != null) {
+            used.add("concolic skipped(GRB_ORACLE=static)");
+        }
+        String note = "input-oracle: " + String.join(" + ", used)
+                + " -> numeric " + candidates.numeric().size() + " field(s), strings "
+                + candidates.strings().size() + " field(s), reals " + candidates.reals().size() + " field(s)";
+        return new SynthesisOracle(candidates, note);
     }
 
     /**
