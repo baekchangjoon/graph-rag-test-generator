@@ -313,7 +313,7 @@
 | REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#req020_staleTripleOnTrialMismatchFallsBackToBaseline | E2E | 🟢 green |
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#req035_* (2케이스) | integration | 🟢 green |
 | REQ-021 | 관측 필드 기록(타입 명시) | EndpointExplorationTest#REQ-021 | unit | 🟢 green |
-| REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🔴 planned |
+| REQ-022 | 회귀 0 (정규화-동등) | TrialAblationE2E#REQ-022 | E2E | 🟢 green[^grb-trial-wired] |
 | REQ-031 | 저장 레이아웃·순번 증번 | TripleStoreLayoutIT#REQ-031 | integration | 🟢 green |
 | REQ-036 | 저장 CLI 계약 + e2e fixture 경로 | (담당: Task 12/18) | integration | 🔴 planned[^req036-split][^req036-task12-partial] |
 | REQ-023 | attach seed 이중 opt-in | AttachSeedGateIT#req023_* (4케이스: 0개/allow만/confirm만/2개) | integration | 🟢 green |
@@ -399,7 +399,18 @@ REQ-018 수용기준이 요구하는 **완주 E2E**("전체 빌드+생성+TC 실
 경로를 검증하는 REQ-018 전용 메서드를 추가해 완성한다(브리핑에 명시된 "Task 18의 REQ-018 메서드와
 공존"). 따라서 🟡(빌더 부분 완료, 완주 E2E 미완)로 표기한다.
 
-Coverage: 28/36 green (78%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3).
+Coverage: 29/36 green (81%), 2 partial(🟡 REQ-018, REQ-032) — target 100% (대상: Must 34 + 미연기 Should 2. REQ-036 신설로 분모 +1. Won't/Phase B·C: 🔵 분모 제외). Task 15가 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1).
+
+[^grb-trial-wired]: `GRB_TRIAL=off` 스위치는 Task 14(게이트 배선)까지 문서(design spec/plan)에만
+명시되고 실제로는 `EndpointExplorationRunner`에 배선돼 있지 않았다(다른 `GRB_*` ablation 스위치 —
+`GRB_RESPONSE_VARIANTS`/`GRB_KAFKA_DIFF`/`GRB_NEGATIVE_AUTH`/`GRB_NEGATIVE_VALIDATION`/
+`GRB_REPRO_VERIFY` — 는 모두 `run()` 내부에서 `System.getenv` 체크가 있었으나 `GRB_TRIAL`만 없었음).
+Task 16이 `EndpointExplorationRunner.tripleGateDisabledByAblation()`을 신설해 게이트 진입 조건
+(`tripleCandidatesRoot != null && ...`)의 최상단에 배선했다 — env var(운영)와 system property(테스트,
+`GRB_EXPLORER_EMPTY_BODY` 선례와 동일 관례) 양쪽을 확인해 같은 JVM 안에서 A/B 빌드를 만들 수 있게
+했다. `TrialAblationE2E`가 실제로 STALE을 유발하는 promoted 후보를 배치한 채 `GRB_TRIAL=off`로
+빌드해도 `trialCount=0`(게이트가 아예 호출되지 않음)임을 확인해, "우연히 후보가 없어 동일했다"가
+아니라 스위치 자체가 게이트를 비활성화함을 고정했다.
 
 ## design spec E2E ↔ REQ 매핑
 

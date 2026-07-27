@@ -568,7 +568,12 @@ public class EndpointExplorationRunner {
         // 비멱등 엔드포인트에 이중 부작용(중복 행 생성 등)이 생겨 REQ-022(회귀 0)를 깨뜨릴 위험이 있다.
         // SUCCESS가 이미 있으면(정상 happy) 이 블록의 어떤 코드도 실행되지 않아 이후 파이프라인은
         // 현행과 완전히 동일하다.
-        if (tripleCandidatesRoot != null && outcome.paths().stream().noneMatch(
+        // REQ-022: GRB_TRIAL=off(env 또는 test-only system property fallback — 다른 GRB_* ablation
+        // 스위치의 GRB_EXPLORER_EMPTY_BODY 선례와 동일 관례, BuilderCli 참고)면 tripleCandidatesRoot
+        // 유무·후보 존재 여부와 무관하게 게이트 전체를 비활성화한다 — applyTriplePromotionGate 자체를
+        // 호출하지 않으므로 tripleTrialCount/tripleStalePaths/gate-digest.json 등 관측 부작용이 전혀
+        // 발생하지 않는다(NO_CANDIDATE보다 더 이른 완전 우회).
+        if (tripleCandidatesRoot != null && !tripleGateDisabledByAblation() && outcome.paths().stream().noneMatch(
                 p -> classifier.classify(p.status(), p.response()).kind() == Outcome.Kind.SUCCESS)) {
             SynthesizedInput happyBeforeGate = happy;
             GateApplyResult gateResult = applyTriplePromotionGate(endpoint, tables, shape, happy,
@@ -1419,6 +1424,16 @@ public class EndpointExplorationRunner {
     /** REQ-019 테스트 훅 — 원복 대상 식별을 위한 마커 스토어 주입. */
     void setCumulativeCoverageForTest(ExecutionDataStore store) {
         this.cumulativeCoverage = store;
+    }
+
+    /**
+     * REQ-022 ablation 스위치. {@code GRB_TRIAL=off}(대소문자 무시)면 true — env var(운영 배선)와
+     * system property(테스트 배선, {@code GRB_EXPLORER_EMPTY_BODY}와 동일 관례로 같은 JVM 안에서
+     * 값을 달리한 A/B 빌드를 만들 수 있게 함)를 모두 확인한다. 둘 다 미설정이면 false(기존 동작 유지).
+     */
+    private static boolean tripleGateDisabledByAblation() {
+        return "off".equalsIgnoreCase(System.getenv("GRB_TRIAL"))
+                || "off".equalsIgnoreCase(System.getProperty("GRB_TRIAL"));
     }
 
     /**
