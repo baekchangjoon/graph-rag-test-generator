@@ -88,8 +88,9 @@ class TripleGateIT {
         var row = rows.get(0);
         int updatedAtIndex = row.columns().indexOf("updated_at");
         assertThat(row.values().get(updatedAtIndex))
-                .as("TIMESTAMP 컬럼 값은 JDBC가 타입을 아는 temporal 객체여야 한다")
-                .isInstanceOf(java.sql.Timestamp.class);
+                .as("TIMESTAMP 컬럼 값은 JDBC가 타입을 아는 temporal 객체여야 한다"
+                        + "(java.sql.Timestamp는 JVM 타임존으로 해석되므로 LocalDateTime을 쓴다)")
+                .isInstanceOf(java.time.LocalDateTime.class);
         assertThat(row.values().get(row.columns().indexOf("diary_id")))
                 .as("문자열 컬럼은 그대로 문자열이어야 한다")
                 .isEqualTo("seed-diaryid");

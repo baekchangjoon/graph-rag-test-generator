@@ -278,17 +278,21 @@ public final class TriplePromotionGate {
         if (jdbcType == null || !(value instanceof String text) || text.isBlank()) {
             return value;
         }
+        // java.time 타입을 그대로 바인딩한다(JDBC 4.2). java.sql.Timestamp/Time으로 내리면
+        // Timestamp는 JVM 기본 타임존으로 해석되고 Time은 나노초를 절삭해, "조용한 값 변경 금지"
+        // 원칙을 스스로 어긴다. 분기 순서도 중요하다 — TIMESTAMP/DATETIME이 문자열로 TIME/DATE를
+        // 포함하므로 먼저 걸러야 한다.
         try {
             if (jdbcType.contains("TIMESTAMP") || jdbcType.contains("DATETIME")) {
                 return text.contains(" ") || text.contains("T")
-                        ? java.sql.Timestamp.valueOf(text.replace('T', ' '))
-                        : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(text).atStartOfDay());
+                        ? java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+                        : java.time.LocalDate.parse(text).atStartOfDay();
             }
             if (jdbcType.contains("DATE")) {
-                return java.sql.Date.valueOf(java.time.LocalDate.parse(text));
+                return java.time.LocalDate.parse(text);
             }
             if (jdbcType.contains("TIME")) {
-                return java.sql.Time.valueOf(java.time.LocalTime.parse(text));
+                return java.time.LocalTime.parse(text);
             }
         } catch (RuntimeException e) {
             return value;   // 해석 불가한 표기 — 원본 유지(조용한 값 변경 금지)

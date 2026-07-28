@@ -17,6 +17,7 @@ import io.graphrag.model.Json;
 import io.graphrag.model.TableSchema;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import spoon.reflect.CtModel;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -729,4 +730,44 @@ class TripleSynthesizerIT {
         parts.add(current.toString());
         return parts;
     }
+
+    @Test
+    @DisplayName("REQ-006: 인덱서가 실제로 산출한 리포트를 그대로 먹여도 각 EXISTS가 자기 테이블에 시드된다 "
+            + "(생산자↔소비자 계약 — 서로 다른 엔티티 2개)")
+    void req006_indexerReportRoutesEachExistsGuardToItsOwnTable() {
+        // 이 테스트가 없으면 합성기 단위 테스트가 인덱서가 **생산하지 않는** 모양
+        // (INPUT 피연산자가 table을 들고 있는 형태)만 검증하게 되어, 생산자↔소비자 계약
+        // 불일치가 통과한다. 여기서는 인덱서를 실제로 돌려 나온 리포트를 그대로 넘긴다.
+        CtModel model = SharedSpoonModel.build(
+                Path.of("src/test/resources/provenance-fixtures/multi-entity"));
+        Endpoint endpoint = new Endpoint("post-api-multi-entity", "POST", "/api/multi-entity",
+                "io.graphrag.fixture.multientity.MultiEntityController", "create", List.of(), false);
+        ProvenanceReport report = new ProvenanceIndexer().analyze(model, endpoint, 3);
+
+        // 전제 확인: 리포트에 서로 다른 DB_READ 테이블이 2개 — 전역 유일성 폴백이 성립하지 않는 조건.
+        assertThat(report.guards().stream()
+                .flatMap(g -> g.operands().stream())
+                .filter(v -> v.origin() == Origin.DB_READ && v.table() != null)
+                .map(ValueRef::table)
+                .distinct())
+                .as("서로 다른 엔티티 2개를 조회하므로 DB_READ 테이블이 2개여야 한다(이 테스트의 전제)")
+                .containsExactlyInAnyOrder("app_user", "fund_account");
+
+        TableSchema appUser = new TableSchema("app_user",
+                List.of(new ColumnSchema("id", "VARCHAR", false, true)), List.of(), List.of());
+        TableSchema fundAccount = new TableSchema("fund_account",
+                List.of(new ColumnSchema("id", "VARCHAR", false, true),
+                        new ColumnSchema("balance_amount", "BIGINT", false, false)),
+                List.of(), List.of());
+
+        List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(appUser, fundAccount), InputCandidates.empty());
+        String seedSql = String.join("\n", candidates.get(0).seedSqlStatements());
+
+        assertThat(seedSql)
+                .as("두 존재 가드가 각자의 테이블에 시드돼야 한다 — 전역 폴백만 쓰면 둘 다 skip된다: " + seedSql)
+                .contains("INSERT INTO app_user")
+                .contains("INSERT INTO fund_account");
+    }
+
 }

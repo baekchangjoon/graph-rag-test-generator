@@ -158,6 +158,12 @@ public class ProvenanceIndexer {
     /** MyBatis mapper 인터페이스 FQN 집합(REQ-004 repository 인식용). 없으면 빈 집합. */
     private final Set<String> mapperInterfaceFqns;
 
+    /**
+     * 인터페이스 FQN → 구체 구현 타입 목록 캐시({@code analyze} 1회 스코프). 분석 중 모델은
+     * 불변이므로 재계산할 필요가 없고, 캐시가 없으면 DFS 호출 지점마다 전 타입을 훑게 된다.
+     */
+    private final Map<String, List<CtType<?>>> implementationsCache = new LinkedHashMap<>();
+
     public ProvenanceIndexer() {
         this(Set.of());
     }
@@ -211,7 +217,8 @@ public class ProvenanceIndexer {
                     continue;
                 }
                 String declaringFqn = typeFqn.replace('$', '.');
-                CtMethod<?> callee = resolveMethod(model, declaringFqn, executable.getSimpleName());
+                int arity = executable.getParameters() == null ? -1 : executable.getParameters().size();
+                CtMethod<?> callee = resolveMethod(model, declaringFqn, executable.getSimpleName(), arity);
                 if (callee == null) {
                     continue; // 소스 트리 밖(라이브러리 등) — 보수적 skip
                 }
@@ -220,7 +227,7 @@ public class ProvenanceIndexer {
                 // 어느 쪽이 실행될지 정적으로 정할 수 없으므로 unresolved로 남긴다 — 그러지 않으면
                 // 가드를 품은 호출을 통째로 건너뛰고도 리포트가 "가드 없음 + 미해결 없음"이 되어
                 // 깨끗한 엔드포인트로 오인된다(조용한 누락은 UNKNOWN보다 나쁘다).
-                List<CtType<?>> implementations = directImplementations(declaringFqn, model);
+                List<CtType<?>> implementations = concreteImplementations(declaringFqn, model);
                 if (!implementations.isEmpty()) {
                     if (implementations.size() >= 2) {
                         unresolved.add(new Unresolved(locationOf(inv), Reason.MULTI_IMPL, declaringFqn));
@@ -228,9 +235,14 @@ public class ProvenanceIndexer {
                     }
                     CtMethod<?> implMethod = resolveMethod(model,
                             implementations.get(0).getQualifiedName().replace('$', '.'),
-                            executable.getSimpleName());
-                    if (implMethod != null) {
+                            executable.getSimpleName(), arity);
+                    // 본문이 없으면(추상 선언만 있는 계층 등) 내려갈 곳이 아니다 — 조용히 종전
+                    // 인터페이스 메서드를 방문해 "가드 0건"으로 끝내지 않고 미해결로 표면화한다.
+                    if (implMethod != null && implMethod.getBody() != null) {
                         callee = implMethod;
+                    } else {
+                        unresolved.add(new Unresolved(locationOf(inv), Reason.MULTI_IMPL, declaringFqn));
+                        continue;
                     }
                 }
                 String key = methodKey(callee);
@@ -238,12 +250,14 @@ public class ProvenanceIndexer {
                     continue; // 이미 방문 — 순환/다이아몬드 종료
                 }
                 int calleeDepth = depth + 1;
-                visited.add(key);
                 if (calleeDepth > maxDepth) {
+                    // visited에 넣지 않는다 — DFS는 최단 깊이 순으로 방문하지 않으므로, 깊게 먼저
+                    // 닿았다는 이유로 박아 두면 나중에 얕은 경로로 도달해도 조용히 skip된다.
                     unresolved.add(new Unresolved(locationOf(inv), Reason.DEPTH_CAP,
                             typeFqn.replace('$', '.') + "#" + executable.getSimpleName()));
                     continue;
                 }
+                visited.add(key);
                 stack.push(new Frame(callee, calleeDepth, bindCalleeParams(callee, inv, inputBindings, model)));
             }
         }
@@ -444,25 +458,47 @@ public class ProvenanceIndexer {
     // ---- 메서드 조회 ----
 
     private static CtMethod<?> resolveMethod(CtModel model, String classFqn, String methodName) {
+        return resolveMethod(model, classFqn, methodName, -1);
+    }
+
+    /**
+     * {@code classFqn#methodName}을 찾는다. {@code arity >= 0}이면 <b>파라미터 개수가 같은 것을
+     * 우선</b> 반환한다 — 이름만으로 첫 매치를 고르면 동명 오버로드에서 엉뚱한 본문을 분석하게 되고,
+     * 그 본문에 가드가 없으면 {@link #methodKey}가 visited에 박아 진짜 가드를 가진 오버로드를
+     * 영원히 방문하지 못한다. arity가 맞는 후보가 없으면 종전대로 이름 매치로 폴백한다(noClasspath
+     * 에서 호출부 파라미터가 해소되지 않는 경우까지 막지 않기 위함).
+     */
+    private static CtMethod<?> resolveMethod(CtModel model, String classFqn, String methodName, int arity) {
+        CtMethod<?> nameMatch = null;
         for (CtType<?> type : model.getAllTypes()) {
             if (!type.getQualifiedName().replace('$', '.').equals(classFqn)) {
                 continue;
             }
             for (CtMethod<?> method : type.getMethods()) {
-                if (method.getSimpleName().equals(methodName)) {
+                if (!method.getSimpleName().equals(methodName)) {
+                    continue;
+                }
+                if (arity >= 0 && method.getParameters().size() == arity) {
                     return method;
+                }
+                if (nameMatch == null) {
+                    nameMatch = method;
                 }
             }
         }
-        return null;
+        return nameMatch;
     }
 
+    /**
+     * visited 키. 파라미터 개수를 포함한다 — 포함하지 않으면 동명 오버로드가 한 키로 뭉개져,
+     * 먼저 방문한 오버로드가 나머지를 조용히 가린다.
+     */
     private static String methodKey(CtMethod<?> method) {
         CtType<?> declaringType = method.getDeclaringType();
         String typeFqn = declaringType != null
                 ? declaringType.getQualifiedName().replace('$', '.')
                 : "?";
-        return typeFqn + "#" + method.getSimpleName();
+        return typeFqn + "#" + method.getSimpleName() + "/" + method.getParameters().size();
     }
 
     // ---- 가드 수집 ----
@@ -747,25 +783,60 @@ public class ProvenanceIndexer {
             return Optional.empty();
         }
         String fqn = declaringType.getQualifiedName().replace('$', '.');
-        return directImplementations(fqn, model).size() >= 2 ? Optional.of(fqn) : Optional.empty();
+        return concreteImplementations(fqn, model).size() >= 2 ? Optional.of(fqn) : Optional.empty();
     }
 
     /**
-     * 모델 안에서 {@code interfaceFqn}을 직접 구현하는 (인터페이스가 아닌) 타입들.
-     * {@code interfaceFqn}이 인터페이스가 아니거나 소스 트리 밖이면 빈 리스트다 — 예컨대
+     * 모델 안에서 {@code interfaceFqn}을 구현하는 <b>구체(비추상) 타입</b>들.
+     *
+     * <p>직접 구현뿐 아니라 상위 계층을 거친 간접 구현도 센다 —
+     * {@code class Impl extends AbstractBase implements I}처럼 추상 베이스를 낀 구성이 흔한데,
+     * 직접 구현만 보면 (a) 추상 베이스를 유일 구현체로 골라 <b>본문 없는</b> 메서드로 내려가
+     * 가드를 통째로 잃거나, (b) 베이스와 구현이 둘 다 {@code implements}를 적은 경우 가짜
+     * MULTI_IMPL로 skip한다. 추상 타입을 제외하면 두 오탐이 함께 사라진다.
+     *
+     * <p>{@code interfaceFqn}이 인터페이스가 아니거나 소스 트리 밖이면 빈 리스트다 — 예컨대
      * {@code JpaRepository}를 상속한 리포지토리 인터페이스는 모델 내 구현체가 없으므로
      * 종전 동작(인터페이스 메서드 그대로 방문)이 유지된다.
+     *
+     * <p>결과는 {@code analyze} 1회 동안 캐시한다(분석 중 모델은 불변) — 호출 지점마다
+     * 전 타입을 훑으면 DFS 루프 안에서 O(호출수 × 전체타입수)가 된다.
      */
-    private static List<CtType<?>> directImplementations(String interfaceFqn, CtModel model) {
+    private List<CtType<?>> concreteImplementations(String interfaceFqn, CtModel model) {
+        List<CtType<?>> cached = implementationsCache.get(interfaceFqn);
+        if (cached != null) {
+            return cached;
+        }
+        List<CtType<?>> result;
         CtType<?> declaringType = resolveType(model, interfaceFqn);
         if (declaringType == null || !declaringType.isInterface()) {
-            return List.of();
+            result = List.of();
+        } else {
+            CtTypeReference<?> interfaceRef = declaringType.getReference();
+            result = model.getAllTypes().stream()
+                    .filter(t -> !t.isInterface())
+                    .filter(t -> !t.isAbstract())
+                    .filter(t -> implementsInterface(t, interfaceRef, interfaceFqn))
+                    .collect(java.util.stream.Collectors.toList());
         }
-        return model.getAllTypes().stream()
-                .filter(t -> !t.isInterface())
-                .filter(t -> t.getSuperInterfaces().stream()
-                        .anyMatch(i -> interfaceFqn.equals(i.getQualifiedName().replace('$', '.'))))
-                .collect(java.util.stream.Collectors.toList());
+        implementationsCache.put(interfaceFqn, result);
+        return result;
+    }
+
+    /** {@code type}이 (상위 계층을 포함해) {@code interfaceFqn}을 구현하는가. */
+    private static boolean implementsInterface(CtType<?> type, CtTypeReference<?> interfaceRef,
+                                               String interfaceFqn) {
+        for (CtTypeReference<?> superInterface : type.getSuperInterfaces()) {
+            if (interfaceFqn.equals(superInterface.getQualifiedName().replace('$', '.'))) {
+                return true;
+            }
+        }
+        try {
+            // noClasspath에서 상위 타입이 해소되지 않으면 예외/false — 직접 구현 검사로 이미 커버된다.
+            return type.getReference().isSubtypeOf(interfaceRef);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     // ---- EXTERNAL_RESPONSE 태깅(REQ-001 EXTERNAL 부분) ----

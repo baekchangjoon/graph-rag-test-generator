@@ -22,10 +22,15 @@ public class DispatchController {
 
     private final SocialVerifier socialVerifier;
     private final AuditService auditService;
+    private final NotifyService notifyService;
+    private final OverloadedService overloadedService;
 
-    public DispatchController(SocialVerifier socialVerifier, AuditService auditService) {
+    public DispatchController(SocialVerifier socialVerifier, AuditService auditService,
+                              NotifyService notifyService, OverloadedService overloadedService) {
         this.socialVerifier = socialVerifier;
         this.auditService = auditService;
+        this.notifyService = notifyService;
+        this.overloadedService = overloadedService;
     }
 
     /** 구현체 2개 — 어느 쪽이 호출될지 정적으로 정할 수 없다. 최소한 unresolved로 남아야 한다. */
@@ -38,5 +43,17 @@ public class DispatchController {
     @PostMapping("/single")
     public String loginViaSingleImpl(@RequestBody LoginRequest req) {
         return auditService.record(req.provider());
+    }
+
+    /** 구체 구현이 추상 베이스를 거쳐 하나뿐 — 추상 클래스를 구현체로 세면 가드를 잃는다. */
+    @PostMapping("/abstract-base")
+    public String notifyViaAbstractBase(@RequestBody LoginRequest req) {
+        return notifyService.notify(req.provider());
+    }
+
+    /** 동명 오버로드 — arity로 해소하지 않으면 가드 없는 쪽을 분석하고 visited에 박는다. */
+    @PostMapping("/overload")
+    public String lookupViaOverload(@RequestBody LoginRequest req) {
+        return overloadedService.lookup(req.provider(), true);
     }
 }

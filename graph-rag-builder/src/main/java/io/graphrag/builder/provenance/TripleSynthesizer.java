@@ -466,15 +466,29 @@ public final class TripleSynthesizer {
         return dbTables.size() == 1 ? dbTables.iterator().next() : null;
     }
 
-    /** EXISTS 가드: INPUT jsonPath 값 s를 body와 seed PK에 동시 배치. */
+    /**
+     * EXISTS 가드: INPUT jsonPath 값 s를 body와 seed PK에 동시 배치.
+     *
+     * <p>대상 테이블은 <b>같은 가드 안의 DB_READ 피연산자</b>를 먼저 쓴다({@code ProvenanceIndexer}가
+     * 수신 리포지토리의 엔티티 테이블을 그 자리에 싣는다). 그것이 없을 때만 리포트 전역 폴백
+     * ({@code solePrimaryTable})으로 내려간다 — 전역 폴백은 "리포트 전체에 DB_READ 테이블이 정확히
+     * 하나"일 때만 값을 주므로, 서로 다른 엔티티를 두 번 조회하는 엔드포인트에서는 null이 되어
+     * 모든 EXISTS 배치가 skip된다. 가드가 정답 테이블을 이미 들고 있는데 전역 유일성 때문에 버리면
+     * 안 된다.
+     */
     private void routeExistsGuard(GuardFact guard, String primaryTable, Map<String, TableSchema> tablesByName,
                                   Map<String, LinkedHashMap<String, Object>> rowsByTable, ObjectNode body,
                                   Set<String> collectionPaths, List<String> notes) {
+        String guardTable = guard.operands().stream()
+                .filter(o -> o.origin() == Origin.DB_READ && o.table() != null)
+                .map(ValueRef::table)
+                .findFirst()
+                .orElse(null);
         for (ValueRef v : guard.operands()) {
             if (v.origin() != Origin.INPUT || v.jsonPath() == null) {
                 continue;
             }
-            String table = v.table() != null ? v.table() : primaryTable;
+            String table = v.table() != null ? v.table() : (guardTable != null ? guardTable : primaryTable);
             TableSchema schema = table == null ? null : tablesByName.get(table);
             ColumnSchema pk = schema == null ? null : findPrimaryKey(schema);
             if (schema == null || pk == null) {
@@ -808,16 +822,28 @@ public final class TripleSynthesizer {
         if (type.contains("BOOL")) {
             return true;
         }
-        if (type.contains("TEXT") || type.contains("CLOB")) {
+        // 길이 제한이 없는 자유형 페이로드 — 내용 계약(JSON/XML 등)을 도구가 알 수 없다.
+        // jdbcType은 드라이버의 TYPE_NAME이라 방언마다 다르다: Postgres TEXT/JSON/JSONB/XML,
+        // MySQL JSON/LONGTEXT, JDBC 표준 CLOB/NCLOB/LONGVARCHAR.
+        if (type.contains("TEXT") || type.contains("CLOB") || type.contains("JSON")
+                || type.contains("XML") || type.contains("LONGVARCHAR")) {
             notes.add("gap-marker: " + tableName + "." + column.name()
-                    + " (NOT NULL 자유형 TEXT, 내용 계약을 도구가 알 수 없음) -> __AGENT_FILL__(REQ-007)");
+                    + " (NOT NULL 자유형 " + type + ", 내용 계약을 도구가 알 수 없음) -> __AGENT_FILL__(REQ-007)");
             return gapMarker("String", column.name(), "none");
         }
         if (type.contains("CHAR")) {
             return "seed-" + column.name();
         }
-        if (type.contains("DATE") || type.contains("TIME")) {
-            return "2037-01-01"; // seed 문자열 리터럴(방언 무관 최소 표기) — 정밀 타입 변환은 후속 task
+        // TIMESTAMP/DATETIME이 TIME을 포함하므로 순서가 중요하다. TIME 전용 컬럼에 날짜 표기를
+        // 넣으면 방언에 따라 INSERT 자체가 실패한다(Postgres: invalid input syntax for type time).
+        if (type.contains("TIMESTAMP") || type.contains("DATETIME")) {
+            return "2037-01-01 00:00:00";
+        }
+        if (type.contains("DATE")) {
+            return "2037-01-01";
+        }
+        if (type.contains("TIME")) {
+            return "00:00:00";
         }
         notes.add("gap-marker: " + tableName + "." + column.name()
                 + " (NOT NULL numeric, 어떤 가드도 결정하지 못함) -> __AGENT_FILL__(REQ-007)");
@@ -826,7 +852,10 @@ public final class TripleSynthesizer {
 
     /** jdbcType(대문자) → 갭 마커의 {@code type} 라벨(java 원시형 이름 근사). 미분류 숫자형은 안전하게 long. */
     private static String numericMarkerType(String upperJdbcType) {
-        if (upperJdbcType.contains("BIGINT")) {
+        // Postgres의 TYPE_NAME은 INT8/INT4/INT2/FLOAT8/FLOAT4 별칭을 쓴다 — BIGINT/INTEGER로
+        // 매칭하면 INT8이 "int"로 오라벨된다(INT8 ⊃ "INT").
+        if (upperJdbcType.contains("BIGINT") || upperJdbcType.contains("INT8")
+                || upperJdbcType.contains("BIGSERIAL")) {
             return "long";
         }
         if (upperJdbcType.contains("DECIMAL") || upperJdbcType.contains("NUMERIC")) {

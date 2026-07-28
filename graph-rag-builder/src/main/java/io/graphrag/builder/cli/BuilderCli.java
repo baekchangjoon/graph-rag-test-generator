@@ -290,6 +290,11 @@ public final class BuilderCli {
                 // 놓여 있으면 플래그 없이도 소비된다는 것(REQ-036 기본 경로 계약).
                 tripleCandidatesRoot(options));
 
+        // 기본 경로가 자동 소비되는 계약이므로, 실제로 대기 중인 후보가 있으면 반드시 보이게 한다 —
+        // 플래그를 주지 않았다는 이유로 "게이트가 꺼져 있다"고 믿는 운영자에게 예상 밖 DB 쓰기가
+        // 되지 않도록. 게이트 자체를 끄려면 GRB_TRIAL=off(REQ-022 ablation 스위치)를 쓴다.
+        logPendingTripleCandidates(tripleCandidatesRoot(options), options);
+
         GraphAsset asset = build(config);
         log.info("graph saved: {} endpoints, {} paths, {} sql, {} http, {} tables, {} mappers -> {}",
                 asset.endpoints().size(), asset.paths().size(), asset.sql().size(),
@@ -1600,7 +1605,47 @@ public final class BuilderCli {
      * 엔드포인트(GET {@code /x/{id}} 등, 실서비스에서 흔한 형태)에서는 유효한 후보인데도 404를 받아
      * 실패로 판정된다. 템플릿만 보면 알 수 있는 사실이므로 여기서 복원한다.
      */
+    /**
+     * 소비 대기 중인 promoted 삼중 후보를 로그로 드러낸다. {@code --triple-candidates}를 주지 않아도
+     * 기본 경로({@link #DEFAULT_TRIPLE_STORE})가 소비되는 것이 REQ-036 계약인데, 그 사실이 로그에
+     * 없으면 이전 캠페인이 남긴 후보가 조용히 재검증·trial되어 DB에 쓰인다.
+     */
+    private static void logPendingTripleCandidates(Path candidatesRoot, Map<String, String> options) {
+        if (candidatesRoot == null || !Files.isDirectory(candidatesRoot)) {
+            return;
+        }
+        List<String> pending = new ArrayList<>();
+        try (Stream<Path> endpoints = Files.list(candidatesRoot)) {
+            for (Path endpointDir : endpoints.filter(Files::isDirectory).toList()) {
+                Path promoted = endpointDir.resolve("promoted");
+                if (!Files.isDirectory(promoted)) {
+                    continue;
+                }
+                try (Stream<Path> cands = Files.list(promoted)) {
+                    long n = cands.filter(Files::isDirectory).count();
+                    if (n > 0) {
+                        pending.add(endpointDir.getFileName() + "(" + n + ")");
+                    }
+                }
+            }
+        } catch (IOException e) {
+            return;   // 관측용 로그 — 열람 실패로 빌드를 막지 않는다
+        }
+        if (pending.isEmpty()) {
+            return;
+        }
+        boolean explicit = options.containsKey("--triple-candidates") || options.containsKey("--triple-store");
+        log.info("triple gate: {} promoted candidate(s) pending at {} -> {} ({}) — 끄려면 GRB_TRIAL=off",
+                pending.size(), candidatesRoot, pending,
+                explicit ? "명시된 경로" : "기본 경로(REQ-036) — 플래그 없이 자동 소비됨");
+    }
+
     static List<io.graphrag.model.EndpointParam> pathParamsOf(String pathTemplate) {
+        // javaType은 템플릿만으로는 알 수 없어 String으로 둔다. 그 결과 후보 body에 해당 키가
+        // 없을 때 EndpointExplorationRunner.pathSentinel이 "0"이 아니라 "missing"을 쓰는데,
+        // 그 자리는 애초에 후보가 잘못된 경우(정상 후보는 값을 갖는다)이고 어느 쪽이든 4xx다.
+        // null을 넣으면 pathSentinel/Generator의 switch(param.javaType())가 NPE를 내고, 공유
+        // 센티널을 바꾸면 기존 골든이 흔들리므로 여기서는 String을 유지한다.
         if (pathTemplate == null || pathTemplate.indexOf('{') < 0) {
             return List.of();
         }
