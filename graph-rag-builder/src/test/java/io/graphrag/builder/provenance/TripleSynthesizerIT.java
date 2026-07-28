@@ -346,6 +346,48 @@ class TripleSynthesizerIT {
     }
 
     @Test
+    @DisplayName("REQ-007: 가드가 결정 못한 NOT NULL TEXT 컬럼은 padding이 아니라 갭 마커여야 한다"
+            + "(내용에 계약이 있는 자유형 페이로드 — VARCHAR 라벨 컬럼은 종전대로 padding)")
+    void req007_freeFormTextColumnsBecomeGapMarkersNotPadding() {
+        // 실측 근거(mindgraph): graph_record.nodes_json은 TEXT NOT NULL이고 핸들러가
+        // objectMapper.readValue로 읽는다. padding 문자열("seed-nodes_json")을 넣으면 존재 가드는
+        // 통과하지만 역직렬화가 던져 500이 된다 — 404가 500이 될 뿐 2xx는 열리지 않는다.
+        // NOT NULL을 만족하는 것과 값이 유효한 것은 다르므로, padding은 그 자체가 침묵 삽입이다.
+        TableSchema graphRecord = new TableSchema(
+                "graph_record",
+                List.of(
+                        new ColumnSchema("diary_id", "VARCHAR", false, true),
+                        new ColumnSchema("user_id", "VARCHAR", false, false),
+                        new ColumnSchema("nodes_json", "TEXT", false, false)),
+                List.of(),
+                List.of());
+        GuardFact existsGuard = new GuardFact("GraphService.java:81", "EXISTS",
+                List.of(new ValueRef(Origin.INPUT, "diaryId", "graph_record", null, null, null,
+                        "String", null, null)));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint", List.of(existsGuard),
+                List.of(), List.of());
+
+        List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(graphRecord), InputCandidates.empty());
+        String insert = candidates.get(0).seedSqlStatements().stream()
+                .filter(sql -> sql.startsWith("INSERT INTO graph_record"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("graph_record seed INSERT가 생성되어야 한다"));
+        assertThat(isWellFormedSingleStatementInsert(insert))
+                .as("마커를 포함해도 파싱 가능한 단일 INSERT여야 한다: " + insert)
+                .isTrue();
+
+        Map<String, String> row = parseInsertColumnsToValues(insert);
+        assertThat(row.get("nodes_json"))
+                .as("자유형 TEXT 컬럼은 도구가 내용 계약을 알 수 없으므로 에이전트가 채워야 한다")
+                .contains("__AGENT_FILL__")
+                .contains("semanticHint:nodes_json");
+        assertThat(row.get("user_id"))
+                .as("길이 제한이 있는 VARCHAR 라벨 컬럼은 종전대로 padding이다(과잉 마커 방지)")
+                .doesNotContain("__AGENT_FILL__");
+    }
+
+    @Test
     @DisplayName("REQ-008: stubs.json = WireMock mapping 스키마 — 기존 StubMapping.buildFrom으로 예외 없이 로드된다")
     void req008_stubMappingLoadableByExistingLoader() throws Exception {
         GuardFact negatedEquality = new GuardFact("Controller.java:37", "!",

@@ -125,8 +125,33 @@ class TrialCliE2E {
             exchange.getResponseBody().write(resp);
             exchange.close();
         });
+        // ---- 경로 변수 GET SUT 시뮬레이션(REQ-013 경로 변수 배선 회귀) ----
+        // 실서비스에서 흔한 형태(mindgraph GET /internal/graphs/diary/{diaryId}): 값이 body가 아니라
+        // URL 경로에 실린다. 후보 body.json의 diaryId가 경로에 바인딩되지 않으면 이 SUT는 404를
+        // 돌려주므로, 유효한 후보인데도 trial이 실패로 판정한다.
+        httpServer.createContext(PATH_PARAM_PREFIX, exchange -> {
+            String requestPath = exchange.getRequestURI().getPath();
+            String accountId = requestPath.substring(requestPath.lastIndexOf('/') + 1);
+            int status;
+            try (PreparedStatement ps = sutConnection.prepareStatement(
+                    "SELECT balance FROM accounts WHERE id = ?")) {
+                ps.setString(1, accountId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    status = rs.next() ? 200 : 404;
+                }
+            } catch (java.sql.SQLException e) {
+                status = 500;
+            }
+            byte[] resp = ("{\"status\":" + status + "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, resp.length);
+            exchange.getResponseBody().write(resp);
+            exchange.close();
+        });
         httpServer.start();
     }
+
+    private static final String PATH_PARAM_PREFIX = "/api/accounts/";
 
     private static final String SECURED_PATH = "/api/secured-transfers";
     private static final String AUTH_TOKEN = "e2e-token";
@@ -229,6 +254,37 @@ class TrialCliE2E {
                 Map.entry("--db-type", "postgres"),
                 Map.entry("--happy-seeds", happySeedsFile.toString()),
                 Map.entry("--trial-budget", "8"));
+    }
+
+    @Test
+    @DisplayName("REQ-013: 경로 변수 엔드포인트는 후보 body의 값을 URL 경로에 바인딩해 시험한다")
+    void req013_pathVariableBoundFromCandidateBody() throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+        }
+        Path tripleStore = tempDir.resolve("triples-path-param");
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("get-api-accounts-accountid"));
+        writeProvenanceReport(endpointDir);
+        Path happySeeds = writeHappySeeds(
+                new RequiredSeed("s1", "happy-path", "accounts", List.of("id", "balance"), List.of("acc-9", "1")));
+        Path candDir = writeCandidate(endpointDir, "cand-01",
+                "{\"accountId\":\"acc-1\"}",
+                "INSERT INTO accounts (id, balance) VALUES ('acc-1', 600);");
+
+        Map<String, String> options = new java.util.HashMap<>(baseOptions(tripleStore, happySeeds));
+        options.put("--endpoint", "get-api-accounts-accountid");
+        options.put("--http-method", "GET");
+        options.put("--path", PATH_PARAM_PREFIX + "{accountId}");
+        options.put("--triple-store", tripleStore.toString());
+
+        int exitCode = BuilderCli.runTrial(options);
+
+        assertThat(exitCode)
+                .as("후보가 시드한 acc-1이 경로에 바인딩되면 200이므로 exit 0이어야 한다"
+                        + "(바인딩되지 않으면 SUT가 404를 돌려주어 유효한 후보가 실패로 판정된다)")
+                .isEqualTo(0);
+        assertThat(candDir).doesNotExist();
+        assertThat(endpointDir.resolve("promoted").resolve("cand-01")).isDirectory();
     }
 
     @Test

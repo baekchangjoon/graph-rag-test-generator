@@ -1408,14 +1408,37 @@ public final class BuilderCli {
      * 대로 돌렸을 때 그 위치에 파일이 있도록 여기서 입력 리포트를 규약 위치로 복사한다. 이미 그
      * 위치를 가리키는 입력이면 복사를 건너뛴다.
      */
+    /**
+     * {@code --graph <dir>}(build 산출 그래프 자산 디렉토리)가 주어지면 그 {@code graph.json}의 물리
+     * 스키마를 읽어 합성기에 넘긴다. 스키마가 없으면 합성기는 PK 컬럼을 몰라 EXISTS 가드의 seed
+     * 배치를 건너뛸 뿐 아니라, 배치되는 INSERT에서도 PK가 빠져 NOT NULL PK 테이블에서는 실행조차
+     * 되지 않는 SQL이 나온다. 스키마는 build가 이미 캡처해 두므로 새로 조회할 필요가 없다.
+     * 미지정 시 종전대로 빈 목록으로 동작한다(하위호환).
+     */
+    private static List<io.graphrag.model.TableSchema> resolveSchemaTables(Map<String, String> o) throws Exception {
+        String graphDir = o.get("--graph");
+        if (graphDir == null || graphDir.isBlank()) {
+            return List.of();
+        }
+        Path graphJson = Path.of(graphDir);
+        if (Files.isDirectory(graphJson)) {
+            graphJson = graphJson.resolve("graph.json");
+        }
+        if (!Files.isRegularFile(graphJson)) {
+            throw new IllegalArgumentException("--graph: graph.json을 찾을 수 없음 — " + graphJson);
+        }
+        return Json.mapper().readValue(graphJson.toFile(), GraphAsset.class).tables();
+    }
+
     private static void runSynthesizeTriple(Map<String, String> o) throws Exception {
         Path reportPath = Path.of(required(o, "--report"));
         Path tripleStore = tripleStoreRoot(o);   // REQ-036: 미지정 시 기본 경로(.graphrag/triples)
 
         ProvenanceReport report = Json.mapper().readValue(reportPath.toFile(), ProvenanceReport.class);
         SynthesisOracle oracle = resolveSynthesisOracle(o);
+        List<io.graphrag.model.TableSchema> tables = resolveSchemaTables(o);
         List<TripleCandidate> candidates = new TripleSynthesizer().synthesize(
-                report, BodyShape.empty(), List.of(), oracle.candidates());
+                report, BodyShape.empty(), tables, oracle.candidates());
 
         Path endpointDir = Files.createDirectories(tripleStore.resolve(report.endpointId()));
         Path canonicalReport = endpointDir.resolve("provenance-report.json");
@@ -1570,6 +1593,26 @@ public final class BuilderCli {
      * 자동 로드하는 경로(REQ-018 T3 파이프라인 통합 소관) — 이 CLI는 {@code --http-method}/{@code --path}로
      * Endpoint를 직접 명시받고, happy 시드는 별도 JSON 파일로 받는다.
      */
+    /**
+     * {@code --path} 템플릿의 {@code {name}} 자리를 PATH 파라미터로 선언한다. 이 CLI에는 그래프 자산이
+     * 없어 {@code EndpointIndexer}가 만든 파라미터 목록을 쓸 수 없는데, 목록이 비어 있으면 invoke가
+     * 경로 변수를 후보 body의 값이 아닌 기본값으로 치환한다 — 값이 body가 아니라 URL에 실리는
+     * 엔드포인트(GET {@code /x/{id}} 등, 실서비스에서 흔한 형태)에서는 유효한 후보인데도 404를 받아
+     * 실패로 판정된다. 템플릿만 보면 알 수 있는 사실이므로 여기서 복원한다.
+     */
+    static List<io.graphrag.model.EndpointParam> pathParamsOf(String pathTemplate) {
+        if (pathTemplate == null || pathTemplate.indexOf('{') < 0) {
+            return List.of();
+        }
+        List<io.graphrag.model.EndpointParam> params = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{([^}/]+)}").matcher(pathTemplate);
+        while (m.find()) {
+            params.add(new io.graphrag.model.EndpointParam(
+                    m.group(1), "java.lang.String", io.graphrag.model.ParamKind.PATH));
+        }
+        return List.copyOf(params);
+    }
+
     static int runTrial(Map<String, String> o) throws Exception {
         Path tripleStoreRoot = tripleStoreRoot(o);        // REQ-036 단일 소스
         Path candidatesRoot = tripleCandidatesRoot(o);    // REQ-036 단일 소스
@@ -1580,9 +1623,10 @@ public final class BuilderCli {
         // 플래그가 없으면 authRequired=false로 기존 동작(무인증 SUT)을 그대로 유지한다.
         AuthConfig authConfig = parseAuthConfig(o);
         RequestHeaders requestHeaders = parseRequestHeaders(o);
+        String pathTemplate = required(o, "--path");
         Endpoint endpoint = new Endpoint(
-                endpointId, required(o, "--http-method"), required(o, "--path"),
-                "unknown", "unknown", List.of(), authConfig != null);
+                endpointId, required(o, "--http-method"), pathTemplate,
+                "unknown", "unknown", pathParamsOf(pathTemplate), authConfig != null);
         int budget = Integer.parseInt(o.getOrDefault("--trial-budget", "8"));
 
         List<RequiredSeed> happySeeds = o.containsKey("--happy-seeds")

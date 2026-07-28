@@ -622,4 +622,22 @@ class TriplePromotionIT {
             };
         }
     }
+
+    @Test
+    @DisplayName("REQ-018: 삼중 후보가 채택되면 SQL-hint pass-2를 돌리지 않는다(채택된 입력 덮어쓰기 방지)")
+    void req018_sqlHintPass2SkippedAfterAdoption() {
+        // pass-2는 입력을 ReadInputSynthesizer로 다시 합성하므로 채택된 body/seed를 probe 값으로
+        // 덮어쓴다. 실측(mindgraph): 채택 직후 pass-2가 nodes_json='probe'로 재시드해 확정 run의
+        // 200이 최종 리포트에서 404로 되돌아갔다.
+        assertThat(EndpointExplorationRunner.shouldRunSqlHintPass2(true, false, true))
+                .as("채택 후에는 pass-2를 돌리면 안 된다")
+                .isFalse();
+        assertThat(EndpointExplorationRunner.shouldRunSqlHintPass2(true, false, false))
+                .as("채택이 없으면 종전대로 pass-2를 돌린다(회귀 0)")
+                .isTrue();
+        assertThat(EndpointExplorationRunner.shouldRunSqlHintPass2(false, false, false))
+                .as("read-path 시드 대상이 아니면 종전대로 돌리지 않는다")
+                .isFalse();
+    }
+
 }
