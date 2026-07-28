@@ -39,6 +39,15 @@ public class JpaColumnResolver {
         return new TableColumn(tableName(type, entityType), columnName(type, fieldName));
     }
 
+    /**
+     * entityType의 테이블명만 해석한다(컬럼 없이). 존재 가드처럼 "이 테이블에 행이 있어야 한다"만
+     * 말하는 경우 컬럼은 특정되지 않으므로 PK는 downstream이 DB 카탈로그에서 찾는다.
+     */
+    public String resolveTable(CtTypeReference<?> entityType) {
+        CtType<?> type = entityType == null ? null : resolveType(entityType.getQualifiedName());
+        return tableName(type, entityType);
+    }
+
     private String tableName(CtType<?> type, CtTypeReference<?> entityType) {
         if (type != null) {
             String override = annotationStringValue(type, "Table", "name");

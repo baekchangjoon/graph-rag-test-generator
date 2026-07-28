@@ -10,7 +10,6 @@ import io.graphrag.model.Endpoint;
 import spoon.reflect.CtModel;
 import spoon.reflect.code.BinaryOperatorKind;
 import spoon.reflect.code.CtBinaryOperator;
-import spoon.reflect.code.CtConstructorCall;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtIf;
@@ -36,6 +35,7 @@ import spoon.reflect.visitor.filter.TypeFilter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -137,8 +137,22 @@ public class ProvenanceIndexer {
     private static final Set<String> CLIENT_LIB_METHODS = Set.of(
             "getForObject", "postForObject", "getForEntity", "postForEntity", "exchange");
 
-    /** DFS 프론티어 항목: 방문할 메서드와 핸들러로부터의 깊이. */
-    private record Frame(CtMethod<?> method, int depth) {
+    /**
+     * 한 메서드 파라미터가 어떤 요청 입력에서 왔는지의 바인딩.
+     *
+     * <p>{@code prefix}는 그 파라미터를 뿌리로 한 필드 접근에 이어붙일 dot-path 세그먼트이고,
+     * {@code bareName}은 파라미터를 필드 접근 없이 그대로 쓸 때의 jsonPath다. 핸들러 파라미터는
+     * {@code prefix=[]}, {@code bareName=파라미터명}으로 시작하며(종전 동작과 동일), 피호출
+     * 메서드의 파라미터는 호출 인자를 호출자 프레임에서 해석한 결과를 물려받는다.
+     */
+    private record InputBinding(List<String> prefix, String bareName) {
+    }
+
+    /**
+     * DFS 프론티어 항목: 방문할 메서드, 핸들러로부터의 깊이, 그리고 그 메서드의 파라미터가
+     * 어떤 요청 입력에 묶여 있는지.
+     */
+    private record Frame(CtMethod<?> method, int depth, Map<CtParameter<?>, InputBinding> bindings) {
     }
 
     /** MyBatis mapper 인터페이스 FQN 집합(REQ-004 repository 인식용). 없으면 빈 집합. */
@@ -167,20 +181,24 @@ public class ProvenanceIndexer {
             return new ProvenanceReport(endpoint.id(), guards, List.of(), unresolved);
         }
 
-        Set<CtParameter<?>> handlerParams = new LinkedHashSet<>(handler.getParameters());
+        Map<CtParameter<?>, InputBinding> handlerBindings = new LinkedHashMap<>();
+        for (CtParameter<?> param : handler.getParameters()) {
+            handlerBindings.put(param, new InputBinding(List.of(), param.getSimpleName()));
+        }
         JpaColumnResolver columnResolver = new JpaColumnResolver(model);
 
         Deque<Frame> stack = new ArrayDeque<>();
         Set<String> visited = new LinkedHashSet<>();
-        stack.push(new Frame(handler, 0));
+        stack.push(new Frame(handler, 0, handlerBindings));
         visited.add(methodKey(handler));
 
         while (!stack.isEmpty()) {
             Frame frame = stack.pop();
             CtMethod<?> method = frame.method();
             int depth = frame.depth();
+            Map<CtParameter<?>, InputBinding> inputBindings = frame.bindings();
 
-            collectGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
+            collectGuards(model, method, inputBindings, columnResolver, guards, unresolved, referencedInputPaths);
 
             for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
                 CtExecutableReference<?> executable = inv.getExecutable();
@@ -208,7 +226,7 @@ public class ProvenanceIndexer {
                             typeFqn.replace('$', '.') + "#" + executable.getSimpleName()));
                     continue;
                 }
-                stack.push(new Frame(callee, calleeDepth));
+                stack.push(new Frame(callee, calleeDepth, bindCalleeParams(callee, inv, inputBindings, model)));
             }
         }
 
@@ -219,6 +237,45 @@ public class ProvenanceIndexer {
                 collectUnguardedFields(handler, referencedInputPaths, model, collectionPaths);
         return new ProvenanceReport(endpoint.id(), guards, unguarded, unresolved,
                 List.copyOf(collectionPaths));
+    }
+
+    /**
+     * 호출 인자를 호출자 프레임에서 해석해 피호출 메서드의 파라미터에 입력 바인딩을 물려준다.
+     * 이것이 없으면 컨트롤러가 얇고 가드가 서비스 계층에 있는 (실서비스의 지배적) 구조에서
+     * 가드 피연산자가 전부 UNKNOWN으로 떨어져, 가드를 인식해도 입력/시드 채널로 라우팅할 수 없다.
+     *
+     * <p>보수적으로 처리한다 — 인자 개수와 파라미터 개수가 정확히 일치할 때만 바인딩한다
+     * (varargs·오버로드 해소 실패 시 잘못된 위치 매칭을 만들지 않기 위함). 요청 입력에서
+     * 유래하지 않는 인자는 바인딩하지 않으므로 종전대로 UNKNOWN이 된다.
+     *
+     * <p>알려진 근사: {@code visited}가 메서드 단위라 같은 메서드가 서로 다른 인자로 두 번
+     * 호출되면 먼저 방문한 호출의 바인딩만 적용된다.
+     */
+    private Map<CtParameter<?>, InputBinding> bindCalleeParams(CtMethod<?> callee, CtInvocation<?> inv,
+                                                               Map<CtParameter<?>, InputBinding> callerBindings,
+                                                               CtModel model) {
+        List<CtParameter<?>> params = List.copyOf(callee.getParameters());
+        List<CtExpression<?>> args = inv.getArguments();
+        if (params.isEmpty() || params.size() != args.size()) {
+            return Map.of();
+        }
+        Map<CtParameter<?>, InputBinding> bindings = new LinkedHashMap<>();
+        for (int i = 0; i < params.size(); i++) {
+            CtExpression<?> arg = args.get(i);
+            Optional<List<String>> segments = getterSegments(arg, callerBindings, model);
+            if (segments.isEmpty()) {
+                continue; // 요청 입력 유래가 아님 — 바인딩하지 않는다(UNKNOWN 유지)
+            }
+            List<String> prefix = segments.get();
+            String bareName = prefix.isEmpty()
+                    ? bareParamName(arg, callerBindings)
+                    : String.join(".", prefix);
+            if (bareName == null) {
+                continue;
+            }
+            bindings.put(params.get(i), new InputBinding(List.copyOf(prefix), bareName));
+        }
+        return bindings;
     }
 
     // ---- unguarded 필드 탐지(REQ-001) ----
@@ -392,15 +449,15 @@ public class ProvenanceIndexer {
 
     // ---- 가드 수집 ----
 
-    private void collectGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+    private void collectGuards(CtModel model, CtMethod<?> method, Map<CtParameter<?>, InputBinding> inputBindings,
                                JpaColumnResolver columnResolver, List<GuardFact> guards,
                                List<Unresolved> unresolved, Set<String> referencedInputPaths) {
-        collectIfGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
-        collectExistsGuards(model, method, handlerParams, columnResolver, guards, unresolved, referencedInputPaths);
+        collectIfGuards(model, method, inputBindings, columnResolver, guards, unresolved, referencedInputPaths);
+        collectExistsGuards(model, method, inputBindings, columnResolver, guards, unresolved, referencedInputPaths);
     }
 
     /** ① CtIf 가드: then/else 분기가 throw 또는 ResponseEntity.status(4xx|5xx) 반환으로 이어지는 경우만 채택. */
-    private void collectIfGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+    private void collectIfGuards(CtModel model, CtMethod<?> method, Map<CtParameter<?>, InputBinding> inputBindings,
                                  JpaColumnResolver columnResolver, List<GuardFact> guards,
                                  List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         for (CtIf ctIf : method.getElements(new TypeFilter<>(CtIf.class))) {
@@ -409,28 +466,40 @@ public class ProvenanceIndexer {
             }
             CtExpression<?> condition = ctIf.getCondition();
             List<ValueRef> operands = new ArrayList<>();
-            decomposeCondition(condition, handlerParams, model, columnResolver, operands, unresolved,
+            decomposeCondition(condition, inputBindings, model, columnResolver, operands, unresolved,
                     referencedInputPaths);
             guards.add(new GuardFact(locationOf(condition), opSymbol(condition), operands));
         }
     }
 
     /**
-     * ② EXISTS 가드: {@code Optional.orElseThrow(() -> ...)}/{@code orElseGet(() -> ...)} 중
-     * 람다 본문이 throw 또는 ResponseStatusException 생성이면, 수신 표현식(예: findById(x))의
-     * 인자를 피연산자로 삼아 EXISTS 가드로 수집한다.
+     * ② EXISTS 가드: 값이 없을 때 실행 경로가 <em>막히는</em> 호출을 수집한다. 수신 표현식
+     * (예: findById(x))의 인자를 피연산자로 삼는다.
+     *
+     * <p>채택 기준은 두 가지로 갈린다:
+     * <ul>
+     *   <li>{@code orElseThrow} — 람다 본문과 무관하게 항상 가드다. JDK 시그니처가
+     *       {@code Supplier<? extends X extends Throwable>}를 강제하므로 <em>무엇을 생성하든</em>
+     *       던져지고, 무인자 오버로드도 NoSuchElementException을 던진다. 과거에는 람다가
+     *       {@code ResponseStatusException}을 생성하거나 본문에 {@code throw}가 있을 때만
+     *       인정했는데, 커스텀 도메인 예외를 생성만 하는 표현식 람다
+     *       ({@code () -> new PostNotFoundException(id)})가 통째로 누락됐다.</li>
+     *   <li>{@code orElseGet} — 기본값 폴백이라 값이 없어도 실행이 계속된다. 따라서 람다 본문이
+     *       실제로 throw할 때만 가드다.</li>
+     * </ul>
      */
-    private void collectExistsGuards(CtModel model, CtMethod<?> method, Set<CtParameter<?>> handlerParams,
+    private void collectExistsGuards(CtModel model, CtMethod<?> method, Map<CtParameter<?>, InputBinding> inputBindings,
                                      JpaColumnResolver columnResolver, List<GuardFact> guards,
                                      List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         for (CtInvocation<?> inv : method.getElements(new TypeFilter<>(CtInvocation.class))) {
             String name = inv.getExecutable().getSimpleName();
-            if (!"orElseThrow".equals(name) && !"orElseGet".equals(name)) {
+            boolean orElseThrow = "orElseThrow".equals(name);
+            if (!orElseThrow && !"orElseGet".equals(name)) {
                 continue;
             }
-            if (inv.getArguments().isEmpty()
+            if (!orElseThrow && (inv.getArguments().isEmpty()
                     || !(inv.getArguments().get(0) instanceof CtLambda<?> lambda)
-                    || !isExistsGuardLambda(lambda)) {
+                    || !isExistsGuardLambda(lambda))) {
                 continue;
             }
             CtExpression<?> receiver = inv.getTarget();
@@ -440,9 +509,17 @@ public class ProvenanceIndexer {
             List<ValueRef> operands = new ArrayList<>();
             if (receiver instanceof CtInvocation<?> receiverInvocation) {
                 for (CtExpression<?> arg : receiverInvocation.getArguments()) {
-                    decomposeCondition(arg, handlerParams, model, columnResolver, operands, unresolved,
+                    decomposeCondition(arg, inputBindings, model, columnResolver, operands, unresolved,
                             referencedInputPaths);
                 }
+                // 존재 가드의 의미는 "이 테이블에 해당 행이 있어야 한다"이므로, 조회 대상 테이블을
+                // 같은 가드에 DB_READ로 함께 싣는다. 이것이 없으면 합성기가 seed를 놓을 테이블을
+                // 알 수 없어 배치를 skip한다(컬럼은 특정되지 않으므로 PK는 DB 카탈로그에서 찾는다).
+                repositoryEntityType(receiverInvocation, model)
+                        .map(columnResolver::resolveTable)
+                        .filter(table -> table != null && !table.isBlank())
+                        .ifPresent(table -> operands.add(new ValueRef(Origin.DB_READ, null, table, null,
+                                null, null, null, receiverLabel(receiver), null)));
             }
             if (operands.isEmpty()) {
                 operands.add(new ValueRef(Origin.UNKNOWN, null, null, null, null, null,
@@ -456,13 +533,13 @@ public class ProvenanceIndexer {
         return receiver instanceof CtInvocation<?> inv ? inv.getExecutable().getSimpleName() : null;
     }
 
+    /**
+     * {@code orElseGet} 전용 판정. 폴백 람다가 값을 반환하면 실행이 계속되므로 가드가 아니고,
+     * 본문에서 실제로 던질 때만 가드다({@code orElseThrow}는 시그니처상 항상 던지므로 이 검사를
+     * 거치지 않는다).
+     */
     private static boolean isExistsGuardLambda(CtLambda<?> lambda) {
-        boolean hasThrow = !lambda.getElements(new TypeFilter<>(CtThrow.class)).isEmpty();
-        boolean constructsResponseStatusException = lambda.getElements(new TypeFilter<>(CtConstructorCall.class))
-                .stream()
-                .anyMatch(cc -> cc.getType() != null
-                        && "ResponseStatusException".equals(cc.getType().getSimpleName()));
-        return hasThrow || constructsResponseStatusException;
+        return !lambda.getElements(new TypeFilter<>(CtThrow.class)).isEmpty();
     }
 
     private static boolean isErrorGuard(CtIf ctIf) {
@@ -513,34 +590,34 @@ public class ProvenanceIndexer {
      * 구조 자체가 사라진다). 단항연산자는 피연산자로, {@code equals}/{@code equalsIgnoreCase} 호출은
      * 수신자+첫 인자로 분해한다.
      */
-    private void decomposeCondition(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+    private void decomposeCondition(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings, CtModel model,
                                     JpaColumnResolver columnResolver, List<ValueRef> out,
                                     List<Unresolved> unresolved, Set<String> referencedInputPaths) {
         if (expr instanceof CtBinaryOperator<?> bin) {
             if (OP_SYMBOLS.containsKey(bin.getKind())) {
-                decomposeCondition(bin.getLeftHandOperand(), handlerParams, model, columnResolver, out, unresolved,
+                decomposeCondition(bin.getLeftHandOperand(), inputBindings, model, columnResolver, out, unresolved,
                         referencedInputPaths);
-                decomposeCondition(bin.getRightHandOperand(), handlerParams, model, columnResolver, out, unresolved,
+                decomposeCondition(bin.getRightHandOperand(), inputBindings, model, columnResolver, out, unresolved,
                         referencedInputPaths);
                 return;
             }
-            out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths));
+            out.add(classifyOperand(expr, inputBindings, model, columnResolver, unresolved, referencedInputPaths));
             return;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            decomposeCondition(un.getOperand(), handlerParams, model, columnResolver, out, unresolved,
+            decomposeCondition(un.getOperand(), inputBindings, model, columnResolver, out, unresolved,
                     referencedInputPaths);
             return;
         }
         if (expr instanceof CtInvocation<?> inv && isEqualsLike(inv)
                 && inv.getTarget() != null && !inv.getArguments().isEmpty()) {
-            decomposeCondition(inv.getTarget(), handlerParams, model, columnResolver, out, unresolved,
+            decomposeCondition(inv.getTarget(), inputBindings, model, columnResolver, out, unresolved,
                     referencedInputPaths);
-            decomposeCondition(inv.getArguments().get(0), handlerParams, model, columnResolver, out, unresolved,
+            decomposeCondition(inv.getArguments().get(0), inputBindings, model, columnResolver, out, unresolved,
                     referencedInputPaths);
             return;
         }
-        out.add(classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths));
+        out.add(classifyOperand(expr, inputBindings, model, columnResolver, unresolved, referencedInputPaths));
     }
 
     private static boolean isEqualsLike(CtInvocation<?> inv) {
@@ -555,13 +632,13 @@ public class ProvenanceIndexer {
      * ({@link #derivesFromTrackedOrigin}) 상관없이 "이 필드는 어떤 가드에 실제로 쓰였다"는 사실은
      * 동일하므로, ValueRef 스키마를 건드리지 않고 이 누적기 하나로 both call site를 커버한다.
      */
-    private ValueRef classifyOperand(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+    private ValueRef classifyOperand(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings, CtModel model,
                                      JpaColumnResolver columnResolver, List<Unresolved> unresolved,
                                      Set<String> referencedInputPaths) {
-        Optional<List<String>> segments = getterSegments(expr, handlerParams, model);
+        Optional<List<String>> segments = getterSegments(expr, inputBindings, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
-            String jsonPath = segs.isEmpty() ? bareParamName(expr) : String.join(".", segs);
+            String jsonPath = segs.isEmpty() ? bareParamName(expr, inputBindings) : String.join(".", segs);
             if (jsonPath != null) {
                 referencedInputPaths.add(jsonPath);
             }
@@ -578,7 +655,7 @@ public class ProvenanceIndexer {
         }
         if (expr instanceof CtBinaryOperator<?> bin) {
             Set<String> derivedRoots = new LinkedHashSet<>();
-            if (derivesFromTrackedOrigin(bin, handlerParams, model, columnResolver, unresolved,
+            if (derivesFromTrackedOrigin(bin, inputBindings, model, columnResolver, unresolved,
                     referencedInputPaths, derivedRoots)) {
                 return new ValueRef(Origin.DERIVED, null, null, null, null, null, typeNameOf(expr), null, null,
                         derivedRoots.isEmpty() ? null : List.copyOf(derivedRoots));
@@ -611,21 +688,21 @@ public class ProvenanceIndexer {
      * 양쪽이 모두 INPUT인 파생식에서 한쪽만 보고 멈추면 {@code derivedRoots}가 불완전해져 나머지
      * 필드가 합성에서 누락된다.
      */
-    private boolean derivesFromTrackedOrigin(CtExpression<?> expr, Set<CtParameter<?>> handlerParams, CtModel model,
+    private boolean derivesFromTrackedOrigin(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings, CtModel model,
                                              JpaColumnResolver columnResolver, List<Unresolved> unresolved,
                                              Set<String> referencedInputPaths, Set<String> derivedRoots) {
         if (expr instanceof CtBinaryOperator<?> bin) {
-            boolean leftTracked = derivesFromTrackedOrigin(bin.getLeftHandOperand(), handlerParams, model,
+            boolean leftTracked = derivesFromTrackedOrigin(bin.getLeftHandOperand(), inputBindings, model,
                     columnResolver, unresolved, referencedInputPaths, derivedRoots);
-            boolean rightTracked = derivesFromTrackedOrigin(bin.getRightHandOperand(), handlerParams, model,
+            boolean rightTracked = derivesFromTrackedOrigin(bin.getRightHandOperand(), inputBindings, model,
                     columnResolver, unresolved, referencedInputPaths, derivedRoots);
             return leftTracked || rightTracked;
         }
         if (expr instanceof CtUnaryOperator<?> un) {
-            return derivesFromTrackedOrigin(un.getOperand(), handlerParams, model, columnResolver, unresolved,
+            return derivesFromTrackedOrigin(un.getOperand(), inputBindings, model, columnResolver, unresolved,
                     referencedInputPaths, derivedRoots);
         }
-        ValueRef leaf = classifyOperand(expr, handlerParams, model, columnResolver, unresolved, referencedInputPaths);
+        ValueRef leaf = classifyOperand(expr, inputBindings, model, columnResolver, unresolved, referencedInputPaths);
         if (leaf.origin() == Origin.INPUT && leaf.jsonPath() != null) {
             derivedRoots.add(leaf.jsonPath());
         }
@@ -968,18 +1045,20 @@ public class ProvenanceIndexer {
      * arr.get(0)}만 변이하므로, 그 밖의 인덱스를 대표원소 경로로 태깅하면 provenance와 실제 변이
      * 대상이 어긋난다).
      */
-    private Optional<List<String>> getterSegments(CtExpression<?> expr, Set<CtParameter<?>> handlerParams,
+    private Optional<List<String>> getterSegments(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings,
                                                    CtModel model) {
         if (expr instanceof CtVariableRead<?> vr
                 && vr.getVariable().getDeclaration() instanceof CtParameter<?> param
-                && handlerParams.contains(param)) {
-            return Optional.of(new ArrayList<>());
+                && inputBindings.containsKey(param)) {
+            // 핸들러 파라미터는 prefix가 비어 있어 종전과 동일하게 동작하고, 전파된 파라미터는
+            // 호출자 쪽에서 해석된 dot-path를 뿌리로 이어받는다.
+            return Optional.of(new ArrayList<>(inputBindings.get(param).prefix()));
         }
         if (expr instanceof CtInvocation<?> inv && inv.getTarget() != null) {
             Optional<Optional<String>> collectionSegment = collectionElementSegment(inv);
             if (collectionSegment.isPresent()) {
                 Optional<String> mapKey = collectionSegment.get();
-                return getterSegments(inv.getTarget(), handlerParams, model).map(segs -> {
+                return getterSegments(inv.getTarget(), inputBindings, model).map(segs -> {
                     mapKey.ifPresent(segs::add);
                     return segs;
                 });
@@ -988,7 +1067,7 @@ public class ProvenanceIndexer {
             if (field == null) {
                 return Optional.empty();
             }
-            return getterSegments(inv.getTarget(), handlerParams, model).map(segs -> {
+            return getterSegments(inv.getTarget(), inputBindings, model).map(segs -> {
                 segs.add(field);
                 return segs;
             });
@@ -1035,8 +1114,21 @@ public class ProvenanceIndexer {
         return arg instanceof CtLiteral<?> literal && literal.getValue() instanceof String s ? s : null;
     }
 
-    private static String bareParamName(CtExpression<?> expr) {
-        return expr instanceof CtVariableRead<?> vr ? vr.getVariable().getSimpleName() : null;
+    /**
+     * 필드 접근 없이 그대로 쓰인 변수의 jsonPath. 바인딩이 있으면 그 이름을 쓴다 — 서비스 계층의
+     * 파라미터명({@code accountId})이 아니라 요청에서의 이름({@code id})이 jsonPath여야 하기 때문이다.
+     */
+    private static String bareParamName(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings) {
+        if (!(expr instanceof CtVariableRead<?> vr)) {
+            return null;
+        }
+        if (vr.getVariable().getDeclaration() instanceof CtParameter<?> param) {
+            InputBinding binding = inputBindings.get(param);
+            if (binding != null) {
+                return binding.bareName();
+            }
+        }
+        return vr.getVariable().getSimpleName();
     }
 
     /**

@@ -94,6 +94,126 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-001: 커스텀 도메인 예외를 생성하는 orElseThrow도 EXISTS 가드로 수집")
+    void req001_existsGuardWithCustomDomainException() {
+        // tainted-spring 벤치마크 조사에서 드러난 최대 미인식 원인: 람다가 ResponseStatusException이
+        // 아닌 프로젝트 고유 예외를 생성만 하면(표현식 람다 → CtThrow 없음) 가드가 통째로 누락됐다.
+        ProvenanceReport report = analyzeFixture(
+                "exists-custom",
+                "io.graphrag.fixture.existscustom.CustomExistsController",
+                "createWithCustomException",
+                3);
+
+        assertThat(report.guards())
+                .as("커스텀 예외 orElseThrow가 EXISTS 가드로 수집되고 피연산자가 INPUT으로 태깅되어야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "fromAccountId".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-001: 인자 없는 orElseThrow()도 EXISTS 가드로 수집")
+    void req001_existsGuardWithNoArgOrElseThrow() {
+        ProvenanceReport report = analyzeFixture(
+                "exists-custom",
+                "io.graphrag.fixture.existscustom.CustomExistsController",
+                "createWithNoArgOrElseThrow",
+                3);
+
+        assertThat(report.guards())
+                .as("무인자 orElseThrow()도 JDK가 NoSuchElementException을 던지므로 EXISTS 가드여야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "toAccountId".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-001: 기본값 폴백(orElseGet)은 EXISTS 가드로 수집되면 안 된다")
+    void req001_orElseGetFallbackIsNotAnExistsGuard() {
+        // orElseGet은 값이 없어도 실행이 계속되므로 도달성을 막지 않는다.
+        // 위 두 수정이 과잉 발동해 폴백까지 가드로 잡으면 불필요한 시드가 합성된다.
+        ProvenanceReport report = analyzeFixture(
+                "exists-custom",
+                "io.graphrag.fixture.existscustom.CustomExistsController",
+                "createWithFallback",
+                3);
+
+        assertThat(report.guards())
+                .as("orElseGet 폴백은 가드가 아니다")
+                .noneMatch(g -> "EXISTS".equals(g.op()));
+    }
+
+    @Test
+    @DisplayName("REQ-004: EXISTS 가드는 조회 대상 테이블을 DB_READ 피연산자로 함께 싣는다(INPUT×DB_READ 교차 가드)")
+    void req004_existsGuardCarriesReadTable() {
+        // EXISTS 가드가 INPUT 피연산자만 실으면 TripleSynthesizer가 대상 테이블을 알 수 없어
+        // seed 배치를 skip한다. 존재 가드의 의미는 "table에 이 PK를 가진 행이 있어야 한다"이므로
+        // 수신 리포지토리 호출의 엔티티 테이블이 같은 가드 안에 있어야 합성이 성립한다.
+        ProvenanceReport report = analyzeFixture(
+                "jpa-inherited",
+                "io.graphrag.fixture.jpainherited.JpaInheritedController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("EXISTS 가드가 INPUT(accountId)과 DB_READ(fund_accounts)를 동시에 실어야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "accountId".equals(v.jsonPath()))
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.DB_READ
+                                && "fund_accounts".equals(v.table())));
+    }
+
+    @Test
+    @DisplayName("REQ-002: @PathVariable이 서비스 메서드 파라미터로 전파돼도 INPUT origin이 유지된다")
+    void req002_pathVariablePropagatesThroughServiceParameter() {
+        // 컨트롤러가 얇고 가드는 서비스에 있는 구조에서, 인자↔파라미터 바인딩이 없으면
+        // 서비스 파라미터가 UNKNOWN이 되어 가드를 인식해도 시드/입력 채널로 라우팅할 수 없다.
+        ProvenanceReport report = analyzeFixture(
+                "param-propagation",
+                "io.graphrag.fixture.paramprop.PropagationController",
+                "get",
+                3);
+
+        assertThat(report.guards())
+                .as("서비스 계층 EXISTS 가드의 피연산자가 핸들러 @PathVariable(jsonPath=\"id\")로 태깅돼야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "id".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-002: @RequestBody 필드가 서비스 메서드 파라미터로 전파돼도 dot-path가 유지된다")
+    void req002_requestBodyFieldPropagatesThroughServiceParameter() {
+        ProvenanceReport report = analyzeFixture(
+                "param-propagation",
+                "io.graphrag.fixture.paramprop.PropagationController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("서비스로 넘어간 body 필드는 원래 dot-path(ownerId)를 유지해야 한다")
+                .anyMatch(g -> "EXISTS".equals(g.op())
+                        && g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                                && "ownerId".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-002: 서비스 계층 CtIf 가드에도 전파된 INPUT origin이 반영된다")
+    void req002_propagationReachesServiceLayerIfGuard() {
+        ProvenanceReport report = analyzeFixture(
+                "param-propagation",
+                "io.graphrag.fixture.paramprop.PropagationController",
+                "limit",
+                3);
+
+        assertThat(report.guards())
+                .as("서비스 CtIf 가드의 피연산자도 핸들러 입력(@RequestParam amount)으로 태깅돼야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                        && "amount".equals(v.jsonPath())));
+    }
+
+    @Test
     @DisplayName("REQ-004: @Table/@Column 오버라이드가 ValueRef.table/column에 반영")
     void req004_jpaOverrides() {
         // fixture: @Table(name="fund_accounts") + @Column(name="balance_amount") long balance
