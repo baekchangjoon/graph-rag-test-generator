@@ -125,9 +125,16 @@ mkdir -p "$WORK"
   --sut-base-url http://localhost:58080 \
   --jdbc-url jdbc:postgresql://localhost:56432/app --db-user app --db-password app \
   --db-type postgres \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
   --triple-store $WORK/triples \
   --trial-budget 8"
 ```
+
+> **`--auth-*`는 필수다(실행 #1의 차단 원인 1 수정 반영, 2026-07-28).** fixture SUT
+> `samples/order-service`는 `/api/auth/**`·`/actuator/**`를 제외한 모든 경로가 JWT로 보호된다.
+> `trial` CLI는 이제 `build`와 동일한 이름·시맨틱으로 `--auth-*`를 파싱해 로그인 토큰을 매 invoke에
+> 붙인다(`BuilderCli.parseAuthConfig` 단일 소스). 이 플래그를 빼면 후보 내용과 무관하게 전부 403이
+> 되어 판정이 무의미해진다 — 실행 #1이 RED로 끝난 원인 중 하나다.
 
 종료 코드 0(성공, 즉시 `promoted/`로 이동)이 될 때까지 스킬의 digest 판독→값 수정→재실행 루프를
 반복한다. 종료 코드 3(예산 소진)이면 `$WORK/triples/post-api-fulfillment/failed/digest-final.json`을

@@ -98,9 +98,19 @@ SUT의 기본 동작 — 예: 외부 호출 실패 시 재시도/타임아웃/�
   [--happy-seeds <required-seeds.json>] \
   [--provenance-report <provenance-report.json>]   # 플래그는 선택, 리포트 파일 자체는 필수 \
   [--sut-log-file <FILE>] \
+  [--auth-login-path /api/auth/login --auth-user <USER> --auth-pass <PASS>] \
+  [--auth-token-field token --auth-header Authorization --auth-scheme Bearer] \
+  [--request-headers-file <FILE> [--request-headers-on-login]] \
   [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
   [--error-detail-field <field>] [--error-detail-contains <substring>]"
 ```
+
+**인증이 걸린 SUT면 `--auth-*`를 반드시 준다.** 이 플래그들은 `build`와 **같은 이름·같은
+시맨틱**으로 해석된다(`BuilderCli.parseAuthConfig` 단일 소스) — 주면 invoke 전에 1회 로그인해
+받은 토큰을 매 요청의 `--auth-header`에 붙인다. **플래그의 존재 자체**가 "이 엔드포인트는 인증이
+필요하다"는 선언이다(이 CLI에는 그래프 자산이 없어 `authRequired`를 인덱싱으로 알 수 없다).
+빠뜨리면 후보 내용과 무관하게 전부 401/403이 되어 trial 판정이 통째로 무의미해진다 —
+`digest-final.json`의 `status`가 401/403 일색이면 가장 먼저 이 플래그를 의심하라.
 
 플래그(실제 `BuilderCli.runTrial` 소스 기준):
 
@@ -120,6 +130,11 @@ SUT의 기본 동작 — 예: 외부 호출 실패 시 재시도/타임아웃/�
 | `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON, `RequiredSeed[]`) |
 | `--provenance-report` | 플래그는 아니오, **파일은 예** | `<triple-candidates>/<endpointId>/provenance-report.json` | T1 화이트리스트 허용 테이블 집합의 유일한 출처 + 실패 가드 역매핑(`FailureDigest`). 플래그를 생략하면 기본값 경로를 읽고, 거기에도 파일이 없으면 CLI는 후보를 하나도 시험하지 않고 즉시 실패한다(fail-closed). `synthesize-triple`이 입력 리포트를 이 기본값 경로로 복사하므로, 파이프라인 순서대로 실행했다면 별도 지정이 필요 없다 |
 | `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
+| `--auth-login-path` | 인증 SUT면 **예** | — | 로그인 경로(예: `/api/auth/login`). 주면 토큰을 받아 매 invoke에 붙이고, `Endpoint.authRequired=true`로 본다 |
+| `--auth-user` / `--auth-pass` | 아니오 | `admin` / `password` | 로그인 자격증명 |
+| `--auth-token-field` | 아니오 | `token` | 로그인 응답 JSON에서 토큰을 꺼낼 필드명 |
+| `--auth-header` / `--auth-scheme` | 아니오 | `Authorization` / `Bearer` | 토큰을 실을 헤더명·스킴 |
+| `--request-headers-file` | 아니오 | — | 매 요청에 덧붙일 커스텀 헤더 파일(`--request-headers-on-login`을 함께 주면 로그인 요청에도 적용) |
 | `--error-when-present` | 아니오 | (없음 → `StatusOnlyClassifier`) | 콤마 구분 필드 목록. 하나라도 주면 `ErrorEnvelopeClassifier` 사용 |
 | `--semantic-status-field` | 아니오 | `errorCode` | 에러 엔벨로프의 상태 필드명(`--error-when-present`와 함께 씀) |
 | `--error-detail-field` | 아니오 | — | 에러 상세 필드명 |

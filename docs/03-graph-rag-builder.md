@@ -264,6 +264,9 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
   [--happy-seeds <required-seeds.json>] \
   [--provenance-report <provenance-report.json>]   # 플래그는 선택, 리포트 파일 자체는 필수 \
   [--sut-log-file <FILE>] \
+  [--auth-login-path /api/auth/login --auth-user <USER> --auth-pass <PASS>] \
+  [--auth-token-field token --auth-header Authorization --auth-scheme Bearer] \
+  [--request-headers-file <FILE> [--request-headers-on-login]] \
   [--error-when-present <field1,field2,...>] [--semantic-status-field <field>] \
   [--error-detail-field <field>] [--error-detail-contains <substring>]
 ```
@@ -280,6 +283,8 @@ trial --endpoint <ENDPOINT_ID> --http-method <METHOD> --path '<PATH>' \
 | `--happy-seeds` | 아니오 | — | 후보 시드 전에 먼저 넣을 happy-path 시드(JSON) |
 | `--provenance-report` | 플래그는 아니오, **파일은 예** | `<triple-candidates>/<endpointId>/provenance-report.json` | `seed.sql` 화이트리스트(REQ-010) 허용 테이블 집합의 유일한 출처 + 실패 가드 역매핑(`FailureDigest`). 플래그 생략 시 기본값 경로를 읽고, 없으면 후보를 하나도 시험하지 않고 실패한다(fail-closed). `synthesize-triple`이 입력 리포트를 이 경로로 복사한다 |
 | `--sut-log-file` | 아니오 | — | 로그 구간 발췌 대상 로그 파일 |
+| `--auth-login-path` / `--auth-user` / `--auth-pass` / `--auth-token-field` / `--auth-header` / `--auth-scheme` | 인증 SUT면 **예** | — / `admin` / `password` / `token` / `Authorization` / `Bearer` | `build`와 **동일한 이름·시맨틱**(`BuilderCli.parseAuthConfig` 단일 소스). `--auth-login-path`를 주면 1회 로그인해 받은 토큰을 매 invoke에 붙이고 그 엔드포인트를 `authRequired`로 본다. 인증 SUT에서 이 플래그를 빼면 후보 내용과 무관하게 전부 401/403이 되어 trial 판정이 무의미해진다 |
+| `--request-headers-file` / `--request-headers-on-login` | 아니오 | — | `build`와 동일 — 매 요청(옵션에 따라 로그인 요청에도)에 덧붙일 커스텀 헤더 |
 | `--error-when-present` 등 4종 | 아니오 | (없으면 `StatusOnlyClassifier`) | `build`와 동일한 에러 엔벨로프 분류 플래그 — trial과 확정 run이 **같은 값**을 써야 판정이 일관된다 |
 
 시퀀스: ① 기존 happy 시드 정리(reverse-DELETE) → ② 후보 `seed.sql` INSERT → ③ 스텁 등록

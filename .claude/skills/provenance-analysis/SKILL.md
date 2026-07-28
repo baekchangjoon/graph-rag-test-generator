@@ -89,3 +89,8 @@ unguarded의 semanticHint)은 마커만 채워라 — 마커 아닌 값 수정 �
 
 이 스킬의 산출물(`provenance-report.json`)이 준비되면 **triple-synthesis** 스킬로 넘어간다.
 그 다음이 **trial-loop**다.
+
+SUT가 인증(JWT 등)으로 보호돼 있다면 그 사실을 지금 확인해 두고 trial-loop에 그대로 넘겨라 —
+`trial` CLI는 `--auth-login-path`/`--auth-user`/`--auth-pass`(+ `--auth-token-field`/
+`--auth-header`/`--auth-scheme`)를 `build`와 같은 이름·시맨틱으로 받는다. 이 플래그를 빠뜨리면
+후보 내용과 무관하게 전부 401/403이 되어 trial 판정 자체가 무의미해진다.
