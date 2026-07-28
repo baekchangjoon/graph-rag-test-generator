@@ -180,6 +180,39 @@ class ProvenanceIndexerIT {
                         && "provider".equals(v.jsonPath())));
     }
 
+
+    @Test
+    @DisplayName("REQ-003: 구체 구현이 추상 베이스를 거쳐 하나뿐이면 그 구현으로 내려간다"
+            + "(추상 클래스를 구현체로 세면 본문 없는 메서드에서 가드를 잃는다)")
+    void req003_abstractBaseDoesNotMaskTheConcreteImplementation() {
+        ProvenanceReport report = analyzeFixture(
+                "impl-dispatch",
+                "io.graphrag.fixture.impldispatch.DispatchController",
+                "notifyViaAbstractBase",
+                3);
+
+        assertThat(report.guards())
+                .as("NotifyServiceImpl 안의 가드가 핸들러 입력(provider)으로 태깅돼야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                        && "provider".equals(v.jsonPath())));
+    }
+
+    @Test
+    @DisplayName("REQ-002: 동명 오버로드는 파라미터 개수로 해소한다"
+            + "(이름만으로 첫 매치를 고르면 가드 없는 쪽을 분석하고 visited에 박아 진짜 가드를 잃는다)")
+    void req002_overloadResolvedByArityNotByName() {
+        ProvenanceReport report = analyzeFixture(
+                "impl-dispatch",
+                "io.graphrag.fixture.impldispatch.DispatchController",
+                "lookupViaOverload",
+                3);
+
+        assertThat(report.guards())
+                .as("2-arg 오버로드 안의 가드가 수집돼야 한다(1-arg 쪽에는 가드가 없다)")
+                .anyMatch(g -> g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                        && "provider".equals(v.jsonPath())));
+    }
+
     @Test
     @DisplayName("REQ-001: EXISTS 가드는 조회 대상 테이블을 DB_READ 피연산자로 함께 싣는다(INPUT×DB_READ 교차 가드)")
     void req001_existsGuardCarriesReadTable() {
