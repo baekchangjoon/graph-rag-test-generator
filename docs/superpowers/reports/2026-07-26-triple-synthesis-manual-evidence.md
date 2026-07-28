@@ -3,8 +3,10 @@
 - 작성일: 2026-07-27 (최종 갱신: 2026-07-28)
 - 상태: **E2E-B1 실증 2회 실행 — 실행 #1 RED, 실행 #2 GREEN**(§"E2E-B1 실행 기록" 참조).
   실행 #1이 지목한 두 차단 원인을 코드로 고친 뒤(`fa2f45a`, `07d8ced`) 재실행해 REQ-027이 🟢가
-  됐다. E2E-B2/B3는 절차 준비 완료·실증 미실행. 실행 과정에서 드러난 절차서 자체의 오류는 해당
-  절에 정정 표기와 함께 반영했다.
+  됐다. **E2E-B2 실증 1회 실행 — RED**(§"E2E-B2 실행 기록"): 머신 과부하로 A/B 빌드가 3회 모두
+  SUT 부팅 실패했고, 그와 별개로 petclinic에서는 승격 가능한 트리플 후보를 **구조적으로 만들 수
+  없음**이 정적으로 확정됐다(순증 없음이 아니라 **효과 미측정**). E2E-B3는 절차 준비 완료·실증
+  미실행. 실행 과정에서 드러난 절차서 자체의 오류는 해당 절에 정정 표기와 함께 반영했다.
 - 관련 문서: [design spec §11.3](../specs/2026-07-26-agent-skill-triple-synthesis-design.md),
   [요구사항명세](../requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   (REQ-023, REQ-027, REQ-029, REQ-030), [docs/03](../../03-graph-rag-builder.md "삼중 합성 CLI 절"),
@@ -572,6 +574,11 @@ docker ps -a --filter status=exited (전체)            → 0건
 - Docker 실행 중(Testcontainers로 DB 기동), `./gradlew :graph-rag-builder:classes`.
 - **"동일 jar"** 원칙: A(현행)/B(Phase A) 두 실행 모두 **같은 petclinic jar**를 가리켜야 한다 —
   변하는 것은 오직 graph-rag-builder 도구 버전(A) 또는 트리플 게이트 활성/비활성(B) 뿐이다.
+- **한산한 머신(2026-07-28 실행 #1에서 확인된 필수 사전조건).** `SutProcess.BOOT_TIMEOUT`이
+  `Duration.ofSeconds(90)` **하드코딩 상수이고 CLI 오버라이드가 없다.** petclinic은 otel +
+  pjacoco javaagent 2종을 달고 뜨므로 한산한 머신에서도 부팅에 수십 초가 걸리고, 부하가 걸리면
+  이 데드라인을 넘겨 `SUT did not become healthy in PT1M30S`로 A/B가 **시작조차 못 한다**.
+  실행 전에 `uptime`의 load average가 코어 수(`sysctl -n hw.ncpu`)를 크게 넘지 않는지 확인하라.
 
 ### 절차 — A(현행 baseline)
 
@@ -580,12 +587,21 @@ Phase A 도구는 현행과 정규화-동등이다. 따라서 별도로 `main` �
 브랜치에서 `--triple-candidates`를 주지 않은 채** 돌리면 A(baseline)와 동등하다(이 동등성 자체는
 `TrialAblationE2E#REQ-022`로 이미 CI 회귀화돼 있다 — 재확인 삼아 `GRB_TRIAL=off`를 명시해도 무방):
 
+> **정정(2026-07-28 실행 #1). `GRB_TRIAL=off`는 Gradle 경유로 전달된다는 보장이 없다.**
+> `EndpointExplorationRunner`는 이 스위치를 `System.getenv`로 읽는데, Gradle `JavaExec`가 포크하는
+> JVM은 **호출 셸이 아니라 (장수명) Gradle 데몬 프로세스의 환경**을 상속한다. 따라서
+> `GRB_TRIAL=off ./gradlew ...`는 데몬이 그 변수 없이 이미 떠 있으면 무시된다. 확실한 방법은
+> **빈 디렉터리를 `--triple-candidates`로 지정**하는 것이다(후보 부재 → `TriplePromotionGate`가
+> 부작용 0으로 NO_CANDIDATE 처리 — `BuilderCli` 286행 주석의 REQ-036 계약). 아래 커맨드는 두
+> 방법을 함께 쓴다.
+
 ```bash
 GRB_TRIAL=off ./gradlew -q :graph-rag-builder:run --args="build \
   --sut-src \$PETCLINIC_ROOT/src/main/java \
   --sut-resources \$PETCLINIC_ROOT/src/main/resources \
   --sut-jar \$(ls \$PETCLINIC_ROOT/build/libs/spring-petclinic-*.jar | head -1) \
   --out .work/e2e-b2-baseline \
+  --triple-candidates .work/e2e-b2/empty-triples \
   --sut-id petclinic \
   --sut-compose \$PETCLINIC_ROOT/docker-compose.yml --db-service postgres \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
@@ -640,6 +656,13 @@ python3 -c "import json; print(json.load(open('.work/e2e-b2-phaseA/exploration-r
   (예: "대상 엔드포인트의 잔여 가드는 집계/비선형이라 이번 Phase A 메커니즘의 적용 범위 밖" 처럼
   구체적 근거를 남긴다). 원인 분석 없이 "순증 없음"만 기록하면 **RED**로 남긴다(요구사항명세
   "무조건 기록=green 금지" 문구 그대로).
+- **A/B를 실행하지 못했거나 승격 후보가 0개면 → 무조건 RED**(2026-07-28 실행 #1에서 추가).
+  위 두 분기는 **A/B가 실제로 실행됐음을 전제**한다. ① 빌드가 실패해 수치를 못 얻었거나,
+  ② §절차 B의 "승격된 후보가 하나 이상 생기면"이 성립하지 않아 B에 투입할 트리플이 0개면,
+  그것은 "순증 없음"이 아니라 **효과 미측정**이다. 원인 분석을 붙이더라도 green으로 올리지
+  않는다 — 원인 분석 첨부는 "순증 없음" 분기에만 붙는 조건이지, 미실측을 green으로 바꾸는
+  조건이 아니다. 이 경우 기록에 **"순증 없음"이 아니라 "미측정"임을 명시**해 다음 세션이
+  "효과 없음"으로 오독하지 않게 한다.
 
 ### 기록 양식
 
@@ -660,6 +683,241 @@ python3 -c "import json; print(json.load(open('.work/e2e-b2-phaseA/exploration-r
 GREEN이면 `docs/coverage-progress.md`의 "Phase A — 삼중 합성" 절(아래 문서 동기화 참조)에 이 표를
 반영하고 추이 그래프에 새 점을 추가하며, 요구사항명세 REQ-029를 🟡 → 🟢로 전환한다. RED면 🔴로
 유지하고 재시도 계획을 남긴다.
+
+### 실행 기록
+
+> 이 절은 **누적**한다(덮어쓰지 않는다). 실행할 때마다 아래에 항목을 추가한다.
+
+#### 실행 #1 — 2026-07-28 (RED — A/B 실측 미실시 + 후보 생성 구조적 불가)
+
+| 항목 | 값 |
+|---|---|
+| 실행일자 | 2026-07-28 |
+| petclinic jar 경로 + sha256 | `~/github_spring-petclinic/spring-petclinic/build/libs/spring-petclinic-4.0.0-SNAPSHOT.jar` / `28e8cea2075203371e2b09a2879441df0cf14847362e40d5d7b34c5d29921ab0` (2026-06-16 빌드, HEAD `fe81280`와 동일 소스 — jar가 마지막 커밋보다 나중이라 stale 아님) |
+| A(baseline) coveredAppBranches | **미측정** — 빌드 3회 연속 실패(`SUT did not become healthy in PT1M30S`). 아래 §차단 원인 1 |
+| B(Phase A) coveredAppBranches | **미측정** — A가 실패했고, 애초에 투입할 promoted 후보를 만들 수 없었다(아래 §차단 원인 2) |
+| Δ(B-A) | **산출 불가**(두 값 모두 미측정) |
+| 대상으로 고른 엔드포인트/가드 | `POST /api/reservations`(가드 11개: INPUT 범위검사 9 + 비선형 `deposit*1.1 < nights*rate` + DB `countByRoomNumberAndStatus >= 2`), `PUT /api/reservations/{id}`(가드 7개, `DB_READ` 피연산자 2개 — Phase A가 노리는 INPUT×DB_READ 조합에 가장 근접한 EP) |
+| 승격된 트리플 후보 수 | **0개** — 두 EP 모두 `trial`까지 가지 못한다(구조적으로 승격 불가, §차단 원인 2) |
+| 판정 | **RED** |
+| 원인 분석(순증 없을 때 필수) | 아래 §차단 원인 1·2. **"순증 없음"이 아니라 "실측 미실시 + 후보 생성 불가"다** — 효과가 없다고 읽으면 오독이다(§판정 근거 참조) |
+
+##### 측정 설계 — 무엇을 A/B로 나눴나
+
+Phase A의 삼중 합성은 **커밋된 promoted 후보를 소비**하는 구조이므로, 후보 없이 A/B를 돌리면
+B는 A와 같을 수밖에 없다(게이트 미발화). 그래서 이번 실증은 두 층으로 나눠 설계했다:
+
+1. **후보 없는 A/B** — Phase A 코드가 기존 경로를 회귀시키지 않는지(REQ-022 회귀 0의 실사용 확인).
+   동일해야 정상이다. → **A 자체가 부팅 실패로 미측정**(차단 원인 1).
+2. **후보를 만든 뒤의 A/B** — petclinic의 막힌 EP에 스킬 파이프라인(provenance → synthesize-triple
+   → trial)을 적용해 promoted를 만들고, 그것을 `--triple-candidates`로 넘긴 빌드와 안 넘긴 빌드를
+   비교. **이것이 이 기능의 실제 효과 측정이다.** → **후보를 만들 수 없어 미실시**(차단 원인 2).
+
+2번이 불가능함은 **머신 부하와 무관하게 정적으로 확정**됐다(아래). 즉 차단 원인 1이 해소돼도
+2번은 그대로 막혀 있다.
+
+> **A(baseline)의 ablation 배선 주의.** 절차서 본문은 `GRB_TRIAL=off`를 예시로 들지만, Gradle
+> `JavaExec`가 포크하는 JVM의 환경변수는 **호출 셸이 아니라 Gradle 데몬 프로세스의 환경**을
+> 상속하므로 `GRB_TRIAL=off ./gradlew ...`가 전달된다는 보장이 없다. 이번 실행은 그 대신
+> **빈 디렉터리를 `--triple-candidates`로 지정**해 게이트를 확실히 NO_CANDIDATE로 만들었다
+> (`TriplePromotionGate`가 후보 부재 시 부작용 0으로 빠지는 계약 — `BuilderCli` 286행 주석).
+> 두 방법 모두 REQ-022 동등이지만 후자가 전달 경로 불확실성이 없다. → 절차서 정정 대상(§4).
+
+##### 차단 원인 1 — 머신 과부하로 SUT가 하드코딩된 90초 health timeout 안에 못 뜬다
+
+`build` 3회(11:50 / 11:54 / 12:12) 전부 동일 실패:
+
+```
+Exception in thread "main" java.lang.IllegalStateException: SUT did not become healthy in PT1M30S
+	at io.graphrag.builder.env.SutProcess.awaitHealthy(SutProcess.java:104)
+```
+
+SUT는 죽은 게 아니라 **느릴 뿐**이다 — `.work/e2e-b2-baseline/work/sut.log` 기준 3회차는
+프로세스 기동 12:13:22 → Spring `main` 진입 12:14:19(**javaagent 2종 부착에만 57초**) →
+JPA repository 스캔 12:14:49로, 90초 데드라인(12:14:52) 시점에 아직 컨텍스트 초기화 중이었다.
+1회차에는 데드라인 이후 12:53:10에 HikariPool까지 정상 기동한 로그가 남아 있다.
+
+원인은 도구가 아니라 **머신 상태**다:
+
+| 관측 | 값 |
+|---|---|
+| CPU 코어 | 10 (`sysctl hw.ncpu`) |
+| load average | 217 ~ 410 (측정 구간 내내) |
+| 원인 프로세스 | `~/.codegraph/versions/v1.0.0/node … codegraph.js init` **41개**, 다수가 CPU 30~90% 점유 |
+| 그 프로세스들의 수명 | 최장 **13일**, 상당수 1일 이상 — 이번 실증이 만든 것이 아닌 **기존 상주 프로세스** |
+
+**이 프로세스들은 종료하지 않았다.** 테스트 자원 정리 규칙상 "테스트가 띄운 것"만 정리 대상이고
+공유·장수명 프로세스는 건드리지 않는다. 종료 여부는 결정 사항이므로 위임 체인을 그대로 밟았다:
+① secretary 인박스(`e6490fa6b4674e9691d7522c7c84bee3.request.json`) → **300초 폴링 타임아웃**
+(`.timeout` 파일 기록), ② `consult-secretary` 스킬 → **CLI 크래시**
+(`llm_client.py`: `RuntimeError: brain returned non-JSON`), ③ → **safe_default 적용**(종료 금지,
+BLOCKED 기록). 무한 대기하지 않았다.
+
+**도구 측 결함도 함께 드러났다(별도 기록 대상):** `SutProcess.BOOT_TIMEOUT`은
+`Duration.ofSeconds(90)` **하드코딩 상수이고 CLI 오버라이드 플래그가 없다**. 즉 이 절차서의
+E2E-B2는 부하가 걸린 머신에서는 **원리적으로 실행할 수 없다** — 절차서가 사전조건으로 "한산한
+머신"을 요구하지 않는 것도 문서 갭이다(§이번 실행에서 새로 드러난 문서 문제 3).
+
+##### 차단 원인 2 — petclinic에는 승격 가능한 트리플 후보를 만들 수 없다 (부하와 무관, 정적 확정)
+
+이쪽은 SUT 부팅이 필요 없는 정적 경로(`provenance` + `synthesize-triple`)라 과부하 상태에서도
+끝까지 실행됐다. 결론부터: **두 EP 모두 마커 계약 안에서는 2xx에 도달할 수 없는 후보만 나온다.**
+
+**(a) `POST /api/reservations` — 가드 11개, `unresolved: 0`, 그러나 피연산자 origin이 전멸**
+
+```
+provenance --endpoint 'POST /api/reservations'
+→ provenance report for post-api-reservations: 11 guard(s), 0 unresolved(s)
+```
+
+`unresolved`는 0건인데, 11개 가드의 피연산자 중 **INPUT으로 판정된 것은 컨트롤러 자신의
+`request == null` 1건뿐이고 나머지는 전부 `UNKNOWN`**이다. `req.nights()`/`req.roomNumber()`/
+`req.priceTier()` 등은 `service.create(request)`로 **한 단계 넘어간 서비스 메서드의 파라미터**인데,
+그 전파에서 origin이 소실된다. DB 가드
+(`repository.countByRoomNumberAndStatus(...) >= ROOM_CAPACITY`, `ReservationService.java:76`)도
+`DB_READ`가 아니라 `UNKNOWN×UNKNOWN`으로 나온다. (E2E-B1 실행 #2가 이미 지적한
+"`unresolved: []`여도 UNKNOWN 피연산자가 남는다"는 함정의 극단 사례다.)
+
+그 결과 `synthesize-triple`이 낸 후보는 **1개, 결정 필드 0/11**이고 body 형상에 결함이 3개 있다:
+
+| # | 결함 | 근거 |
+|---|---|---|
+| A | **enum을 중첩 객체로 생성.** `priceTier`는 `enum PriceTier{BASIC,PREMIUM,VIP}`인데 body가 `"priceTier":{"nightlyRate":<marker>}` — enum의 파생 getter를 필드로 착각했다. Jackson이 enum에 객체를 매핑할 수 없어 **400 확정** | `PriceTier.java:22`, `cand-01/body.json` |
+| B | **유령 필드.** 컨트롤러 메서드 **파라미터명**을 딴 `"request"` 키가 body에 생성된다(`CreateReservationRequest`에 그런 필드는 없다). Spring 기본 설정이 unknown property를 무시해 이번엔 무해했으나, 실제 `BodyShape`를 가진 통합 `build` 경로의 T1은 이를 잡아야 정상이다 | `cand-01/body.json` |
+| C | **가드 표기 누락.** `checkInDate` 마커가 `guard:none`인데 실제로는 `!checkInDate.isAfter(now)` 가드가 있다(`ReservationService.java:70`). 마커 설명만 믿고 채우면 422가 된다 | `cand-01/body.json` vs 소스 |
+| D | **오라클 산출물 전량 폐기.** `notes.md`에 `unguarded 조합 수가 안전 상한(4096)을 초과 — 오라클 변주 생략, 갭 마커 단일 조합으로 폴백`. 오라클이 numeric 13 + strings 3 필드의 해를 실제로 구해 놓고도(`InputCandidates 오라클 16개 필드 후보 보유`) unguarded가 10개라 조합 폭발 상한에 걸려 **하나도 쓰이지 않았다** | `cand-01/notes.md` |
+
+**실증(대조 실험).** 결함 A가 실제 차단 원인임을 추론이 아니라 관측으로 고정했다. petclinic을
+h2 프로파일로 단독 기동(javaagent 없음 → 24초에 healthy)해 두 body를 같은 토큰으로 POST했다 —
+**값은 완전히 동일하고 형상만 다르다**:
+
+```
+(1) 합성 후보, 마커만 채움(키 집합 base와 동일 — 계약 준수)
+    {"petName":"Test Pet","ownerEmail":"test-owner@example.invalid","promoCode":"WELCOME10",
+     "roomNumber":200,"nights":3,"animalCount":2,"loyaltyPoints":600,
+     "priceTier":{"nightlyRate":150.0},"depositAmount":500.0,
+     "checkInDate":"2027-01-01","request":"unused"}
+    → HTTP 400  {"status":400,"error":"Bad Request","path":"/api/reservations"}
+
+(2) 손으로 형상만 고친 대조군(priceTier를 enum 문자열로, 유령 request 제거)
+    {… 동일 값 …, "priceTier":"VIP", …}
+    → HTTP 201  {"id":6,…,"priceTier":"VIP","loyaltyPoints":700,"status":"PENDING","promoApplied":true}
+```
+
+즉 **엔드포인트는 2xx에 도달 가능하고, 도달하지 못하는 것은 합성기의 형상**이다. 그리고
+(2)로 가려면 `priceTier`를 객체→문자열로 바꾸고 `request` 키를 지워야 하는데, 둘 다
+**마커 위치의 값 치환이 아니라 키 집합·구조 변경**이라 마커 계약(REQ-009) 위반이다 —
+에이전트가 계약 안에서 수리할 수 없다.
+
+**(b) `PUT /api/reservations/{id}` — `DB_READ`는 잡히지만 짝이 되는 INPUT이 UNKNOWN**
+
+```
+provenance --endpoint 'PUT /api/reservations/{id}'
+→ 7 guard(s), 0 unresolved(s)
+```
+
+이 EP는 `DB_READ` 피연산자가 2개 잡힌다(`ReservationService.java:128`의 `existing.getStatus()`,
+`:138`의 `countByRoomNumberAndStatus`). **Phase A가 노리는 INPUT×DB_READ 조합에 가장 근접한
+지점**이다. 그런데 짝이 되는 반대편 피연산자(`req.status()`, `req.nights()`)가 전부 `UNKNOWN`이라
+라우팅 조건(`INPUT×(DB_READ|EXTERNAL_RESPONSE)`)이 성립하지 않는다. 산출된 후보 4개는:
+
+| 결함 | 관측 |
+|---|---|
+| **`@PathVariable`을 body에 배치** | 후보 4개 전부 `"id": -1`. `id`는 경로 변수라 body로 전달되지 않고, 게다가 `-1`은 `id <= 0` 가드 위반값이다. **마커가 아니라 오라클 결정값**이라 고칠 수도 없다 |
+| **by-id EP인데 seed가 빈 파일** | 후보 4개 전부 `seed.sql`이 비어 있다. 갱신 대상 행이 없으므로 `findById(...).orElseThrow()`에서 404 확정 |
+| **유령 `request` 필드** | (a)의 결함 B가 그대로 재현 |
+| 후보 간 차이 | `nights`만 0/1/29/2로 변주(오라클 경계값). 나머지는 동일 |
+
+**(c) 공통 근본 원인 — notes.md가 스스로 밝힌다**
+
+두 EP의 `notes.md`가 **모든 가드**를 미지원으로 표기한다:
+
+```
+op '||' at ReservationService.java:49 — 결합 논리/미지원 가드 라우팅은 후속 task 범위(확장 지점)
+op '<'  at ReservationService.java:73 — INPUT×(DB_READ|EXTERNAL_RESPONSE) 조합이 아닌 비교 가드는 미지원(확장 지점)
+op '>=' at ReservationService.java:76 — INPUT×(DB_READ|EXTERNAL_RESPONSE) 조합이 아닌 비교 가드는 미지원(확장 지점)
+…  (POST 11개 / PUT 7개, 전부 동일 유형의 "확장 지점")
+```
+
+정리하면 petclinic의 잔여 가드는 **① `||`/`&&`로 결합된 INPUT 단독 범위검사가 압도적**이고,
+**② 컨트롤러 → 서비스로 한 단계 넘어간 파라미터에서 origin이 UNKNOWN으로 소실**된다. Phase A
+삼중 합성이 여는 대상은 `INPUT×DB_READ` / `INPUT×EXTERNAL_RESPONSE` **교차 가드**인데,
+petclinic에서는 그 조합이 정적으로 인식조차 되지 않는다. 이것이 "petclinic에서 이번 기능의
+효과를 측정할 수 없는" 구조적 이유다.
+
+##### 판정 근거 요약 (수용기준 대조)
+
+수용기준: *"coveredAppBranches가 145 대비 순증하거나, 순증하지 않으면 원인 분석이
+coverage-progress.md에 첨부된 경우에만 green으로 판정한다(무조건 기록=green 금지)."*
+
+| 수용기준 요소 | 결과 |
+|---|---|
+| 동일 jar A/B 실행 | ❌ **미실시** — A가 3회 모두 SUT 부팅 실패, B는 투입할 후보 자체가 없음 |
+| `coveredAppBranches` 순증 | ❌ 판정 불가 — 두 값 모두 미측정 |
+| 순증 없을 때의 원인 분석 첨부 | ⚠️ 원인 분석은 첨부했으나(이 절 + `coverage-progress.md`), 그 원인은 **"순증하지 않았다"가 아니라 "측정하지 못했다"**이다 |
+
+수용기준의 green 분기(순증 / 순증 없음+원인분석)는 **A/B가 실행됐음을 전제**한다. 이번엔 그
+전제가 성립하지 않으므로 **어느 분기에도 해당하지 않는다 → REQ-029는 🔴**. "원인 분석을 적었으니
+green"으로 처리하는 것은 수용기준이 명시적으로 금지한 "무조건 기록=green"에 해당한다.
+
+**오독 방지 — 이 RED는 "Phase A가 효과 없음"을 뜻하지 않는다.** 이번 실증이 확정한 것은
+"**petclinic으로는 이 기능의 효과를 측정할 수 없다**"이지 "효과가 없다"가 아니다. Phase A의
+기능 자체는 `samples/order-service`에서 E2E-B1 실행 #2(REQ-027 🟢)로 실제 완주가 확인돼 있다.
+petclinic은 **벤치마크로서 이 기능의 적용 범위 밖**이라는 것이 이번 관측의 내용이다.
+
+##### 재시도 계획 (절차 재실행만으로는 GREEN 불가 — 선행 수정 필요)
+
+1. **[환경]** 머신이 한산할 때(load < 코어 수) 재실행한다. 겸해서 `SutProcess.BOOT_TIMEOUT`에
+   CLI 오버라이드(`--sut-boot-timeout-sec`)를 추가하는 편이 낫다 — 90초 하드코딩은 이 절차서를
+   환경에 취약하게 만든다.
+2. **[합성기 형상, 차단 원인 2의 (a)]** ① enum 타입 필드를 중첩 객체가 아니라 **enum 상수
+   문자열**로 생성, ② 핸들러 **파라미터명 유래 유령 필드**(`request`) 생성 금지,
+   ③ `@PathVariable` 피연산자를 body가 아니라 **경로 치환값**으로 라우팅, ④ by-id EP의 대상 행
+   `seed.sql` 생성. 각각 RED 회귀 테스트 동반.
+3. **[origin 전파, 차단 원인 2의 (c)②]** 컨트롤러 → 서비스 **1단계 파라미터 전파**에서 INPUT
+   origin을 유지한다. 이것이 풀려야 petclinic에서 `INPUT×DB_READ` 라우팅이 발화한다.
+4. **[오라클 조합 상한, 결함 D]** unguarded가 많을 때 조합 폭발로 오라클 산출물을 **전량 폐기**하는
+   대신, 필드별 대표값 샘플링 등으로 일부라도 소비한다.
+5. 위 수정 후 이 절차를 그대로 재실행하고 "실행 #2"로 누적 기록한다. **2·3번이 풀리기 전까지는
+   petclinic 재측정의 기대값이 "B == A"이므로**, 그 상태의 재실행은 REQ-022 회귀 0 확인(측정 설계
+   1층)에만 의미가 있고 효과 측정(2층)은 여전히 불가다.
+
+##### 이번 실행에서 새로 드러난 문서 문제
+
+1. **절차서 §"절차 — B"가 "승격된 후보가 하나 이상 생기면"을 전제**하지만, 후보가 **0개일 때
+   어떻게 판정하는지**를 적어두지 않았다. 이번처럼 "후보 생성 자체가 불가"한 경우가 실재하므로,
+   그 분기(= 효과 미측정, 순증 없음과 구분)를 판정 기준에 명시해야 한다. → 아래 §정정에 반영.
+2. **사전조건에 "한산한 머신"이 없다.** SUT 부팅에 90초 하드코딩 데드라인이 걸려 있으므로
+   부하 상태는 실행 가능/불가를 가르는 사전조건이다. → 사전조건에 추가.
+3. **A(baseline)의 `GRB_TRIAL=off` 예시가 Gradle에서 전달을 보장하지 않는다**(위 §측정 설계 주의
+   참조). → 빈 `--triple-candidates` 디렉터리 방식을 병기.
+4. **기대값 "145"의 전제가 흔들렸을 가능성**: 이번 정적 인덱싱은 `found 24 endpoint(s)`인데
+   `docs/coverage-progress.md`의 145 측정 당시는 23개다. jar/소스는 동일 커밋이므로 인덱서 쪽
+   변화로 보이며, 재측정 시 baseline이 145와 다를 수 있다. 절차서가 이미 "145와 크게 다르면 먼저
+   그 차이를 원인 분석에 기록하고 진행"이라고 규정하고 있으므로 문구 변경은 불필요하나, **24 vs 23
+   관측 자체를 여기 남겨** 다음 실행이 놀라지 않게 한다.
+
+##### 산출물 보존 위치 (전부 `.gitignore` 대상 — 커밋하지 않음)
+
+`.work/e2e-b2/`(실행 로그·jar sha·probe body 2종), `.work/e2e-b2-baseline/`(실패한 A 빌드 산출물 +
+`work/sut.log`), `.work/e2e-b2-triples-src{,-put}/`(provenance 리포트), `.work/e2e-b2-triples{,-put}/`
+(합성 후보).
+
+##### 자원 정리 (누수 검증 게이트)
+
+`build`가 띄운 Testcontainers(postgres, ryuk)는 JVM 종료 시 Ryuk이 회수했고, 대조 실험의 petclinic
+프로세스는 스크립트의 `trap cleanup EXIT INT TERM`이 **캡처한 PID만** 종료했다. 스위트 종료 후 확인:
+
+```
+docker ps -a                                  → 0건
+docker network ls --filter name=grb -q        → 0건
+pgrep -f spring-petclinic                     → 0건
+docker volume ls --filter dangling=true       → 19건(전부 이번 실행 이전 생성 — 최신 것이 01:36Z,
+                                                 이번 실행 구간은 02:50Z~03:22Z. 이번 실행 기인 0건)
+```
+
+무차별 정리(`docker system prune`, 광범위 `pkill`)는 수행하지 않았다. 과부하의 원인인 codegraph
+프로세스 41개도 이 테스트 소유가 아니므로 그대로 두었다(위 §차단 원인 1).
 
 ---
 

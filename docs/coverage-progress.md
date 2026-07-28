@@ -69,7 +69,7 @@
 - **#5는 petclinic 무변·order-service에서 실증**: petclinic엔 enum 상태 전이 가드가 없어 APP-AGGREGATE는
   그대로지만, order-service `BookingController.advance`(200/409/410)로 다중 전이 arm 캡처를 결정적으로 검증.
 
-## Phase A — 에이전트 스킬 기반 삼중 합성 [🟡 절차 준비, 실측 예정]
+## Phase A — 에이전트 스킬 기반 삼중 합성 [🔴 실증 1회 실행 — 효과 미측정]
 
 `provenance`/`synthesize-triple`/`trial` CLI 3종 + 에이전트 스킬 3종으로 다중 가드(입력 검증 →
 DB 상태 비교 → 외부 응답 검증) 순차 조건 때문에 못 열던 **깊은 happy path**를 여는 기능이다
@@ -81,17 +81,62 @@ petclinic의 잔여 145/253(57.3%)은 이 표(위 "추이" 표)의 마지막 상
 있었고, 삼중 합성이 그중 다중 가드 순차 조건에 해당하는 부분을 얼마나 여는지가 이 절이 채울
 자리다.
 
+### 2026-07-28 실증 #1 결과 — RED (효과 미측정)
+
 | 항목 | 값 |
 |---|---|
 | baseline(A, 이 절 작성 시점) | 145/253 (57.3%) |
-| Phase A 적용 후(B) | **미실측** — 아래 절차서로 후속 세션에서 실행 |
-| Δ | — |
-| 판정 | 🟡 절차 준비 완료, 실증 미실행 |
+| A(baseline) 재측정 | **미측정** — `build` 3회 연속 `SUT did not become healthy in PT1M30S` |
+| Phase A 적용 후(B) | **미측정** — 투입할 promoted 트리플 후보가 **0개** |
+| Δ | **산출 불가**(두 값 모두 미측정) |
+| petclinic jar sha256 | `28e8cea2075203371e2b09a2879441df0cf14847362e40d5d7b34c5d29921ab0` |
+| 판정 | 🔴 — **"순증 없음"이 아니라 "미측정"**이다 |
+
+**⚠️ 이 표를 "Phase A는 효과가 없다"로 읽으면 오독이다.** 이번 실증이 확정한 것은
+"**petclinic으로는 이 기능의 효과를 측정할 수 없다**"이다. 기능 자체의 완주는
+`samples/order-service`에서 E2E-B1 실행 #2로 확인됐다(REQ-027 🟢).
+
+#### 원인 분석 (수용기준이 요구하는 첨부 항목)
+
+**원인 1 — 머신 과부하로 A/B 빌드가 시작조차 못 했다.** 10코어 머신의 load average가 측정 구간
+내내 217~410이었다(원인: 이 실증과 무관하게 상주 중이던 `codegraph init` 프로세스 41개, 최장
+13일). petclinic SUT는 otel + pjacoco javaagent 2종을 달고 뜨는데 `SutProcess.BOOT_TIMEOUT`이
+**90초 하드코딩 상수이고 CLI 오버라이드가 없어**, 부팅이 데드라인을 넘겨 3회 모두 실패했다
+(3회차 실측: 프로세스 기동 → Spring `main` 진입까지만 57초). 이 프로세스들은 이 테스트 소유가
+아니므로 종료하지 않았다(정리 규칙 준수).
+
+**원인 2 — petclinic에는 승격 가능한 트리플 후보를 만들 수 없다(부하와 무관, 정적 확정).**
+SUT 부팅이 필요 없는 `provenance` + `synthesize-triple` 경로는 끝까지 실행됐고, 결과는 명확하다:
+
+- **`POST /api/reservations`** — 가드 11개, `unresolved: 0`이지만 피연산자 origin이 사실상 전멸
+  (`INPUT` 1건, 나머지 `UNKNOWN`). DB 가드 `countByRoomNumberAndStatus >= 2`조차 `DB_READ`로
+  잡히지 않는다. 합성 후보는 1개·**결정 필드 0/11**이고, enum `priceTier`를
+  `{"nightlyRate":…}` 중첩 객체로 만드는 형상 결함이 있다.
+  - **대조 실험(라이브 petclinic)**: 마커만 채운 후보 → **HTTP 400**, 값은 그대로 두고 형상만
+    고친 손수 body → **HTTP 201**. 엔드포인트는 2xx 도달 가능하고, 막는 것은 합성기의 형상이다.
+    그 수리는 키 집합·구조 변경이라 **마커 계약(REQ-009) 위반**이므로 에이전트가 할 수 없다.
+- **`PUT /api/reservations/{id}`** — `DB_READ` 피연산자가 2개 잡혀 Phase A가 노리는
+  `INPUT×DB_READ` 조합에 가장 근접하지만, 짝이 되는 반대편(`req.nights()`/`req.status()`)이
+  `UNKNOWN`이라 라우팅이 발화하지 않는다. 후보 4개 전부 `@PathVariable`인 `id`를 **body에**
+  `-1`로 배치하고 `seed.sql`이 비어 있어 승격 불가.
+- **공통 근본 원인** — 두 EP의 `notes.md`가 **모든 가드**(11 + 7)를 "확장 지점(미지원)"으로
+  표기한다: ① `||`/`&&` 결합 논리 미지원, ② `INPUT×(DB_READ|EXTERNAL_RESPONSE)`가 아닌 비교
+  미지원. petclinic의 잔여 가드는 **`||`로 결합된 INPUT 단독 범위검사**가 압도적이고, 컨트롤러 →
+  서비스로 한 단계 넘어간 파라미터에서 origin이 UNKNOWN으로 소실된다. 즉 Phase A 삼중 합성이
+  여는 대상인 **교차 가드가 petclinic에서는 정적으로 인식되지 않는다**.
+
+상세 관측·커맨드·재시도 계획(합성기 형상 4건 + origin 전파 + 오라클 조합 상한)은
+[수동 실증 절차서 — E2E-B2 실행 기록](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md#e2e-b2--petclinic-커버리지-실측-req-029)에 있다.
+
+#### 추이 그래프에 점을 추가하지 않은 이유
+
+측정값이 없기 때문이다. 위 "추이" 표·그래프의 마지막 상태(145/253, 57.3%)가 여전히 최신이며,
+Phase A 행은 실측이 성립한 뒤에 추가한다.
 
 **실측 절차**: [수동 실증 절차서 — E2E-B2](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md#e2e-b2--petclinic-커버리지-실측-req-029)에
-동일-jar A/B 실행 커맨드·판정 기준(순증 시 green, 순증 없으면 원인 분석 첨부 시에만 green)·
-기록 양식이 고정돼 있다. 실행 후 이 표를 실측치로 갱신하고 요구사항명세 REQ-029를 🟡 → 🟢로
-전환한다(무조건 기록만으로는 green 처리하지 않는다 — 위 절차서 "판정 기준" 참조).
+동일-jar A/B 실행 커맨드·판정 기준(순증 시 green, 순증 없으면 원인 분석 첨부 시에만 green,
+**미실측·후보 0개는 무조건 RED**)·기록 양식이 고정돼 있다. 재실행 후 이 표를 실측치로 갱신하고
+요구사항명세 REQ-029를 🔴 → 🟢로 전환한다(무조건 기록만으로는 green 처리하지 않는다).
 
 ## 작업 #4 — float inter-field (구현 완료)
 

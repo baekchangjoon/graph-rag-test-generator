@@ -339,7 +339,7 @@
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🟢 green |
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟢 green (실증 실행 #2)[^req027-e2e-b1-run2] (실행 #1은 RED[^req027-e2e-b1-run1]) |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
-| REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
+| REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🔴 RED (실증 실행 #1 — 효과 미측정)[^req029-e2e-b2-run1] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed][^envelope-inheritance-boundary] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
@@ -547,7 +547,7 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 35/37 green (95%), 2 partial(🟡 REQ-029, REQ-030) — 전부 manual Should.
+Coverage: 35/37 green (95%), 1 red(🔴 REQ-029), 1 partial(🟡 REQ-030) — 전부 manual Should.
 target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
 
 > **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
@@ -563,8 +563,12 @@ target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Ph
 > 표기와 실제를 일치시켰다(요구사항 삭제·완화가 아니라 분류 정정 — REQ-027은 매트릭스와 전체
 > 분모에 그대로 남는다).
 >
-> **남은 미완 2건은 REQ-029/030이며 둘 다 manual Should**다 — 🟡(절차서 작성 완료, 실증 세션
-> 실행만 남음, `[^task19-manual-procedures]`). **REQ-027은 🟢로 전환됐다**: 2026-07-28 실증
+> **남은 미완 2건은 REQ-029/030이며 둘 다 manual Should**다. **REQ-029는 2026-07-28 실증
+> 실행 #1이 🔴 RED**다(`[^req029-e2e-b2-run1]`) — 머신 과부하로 A/B 빌드가 3회 모두 SUT 부팅에
+> 실패했고, 그와 별개로 petclinic에서는 승격 가능한 트리플 후보를 **구조적으로 만들 수 없음**이
+> 정적으로 확정됐다. **"순증 없음"이 아니라 "효과 미측정"이며, "Phase A가 효과 없음"으로 읽으면
+> 오독이다.** REQ-030은 🟡(절차서 작성 완료, 실증 세션 실행만 남음,
+> `[^task19-manual-procedures]`). **REQ-027은 🟢로 전환됐다**: 2026-07-28 실증
 > 실행 #1이 RED였고(`[^req027-e2e-b1-run1]`), 그 RED가 지목한 두 차단 원인(독립 `trial` CLI의
 > 인증 배선 누락 `fa2f45a`, `synthesize-triple`의 body/stub 형상 결함 `07d8ced`)을 코드로 고친
 > 뒤 **실행 #2가 GREEN**이다(`[^req027-e2e-b1-run2]` — promoted 생성 + 마커 외 변경 없음(사람
@@ -604,7 +608,8 @@ Task 16이 `EndpointExplorationRunner.tripleGateDisabledByAblation()`을 신설�
 후속 세션이 그 절차서를 실제로 수행하고 판정 결과를 기록해야만 이 REQ들이 🟢로 전환된다.
 (**갱신 2026-07-28:** E2E-B1은 두 번 실행됐다 — 실행 #1은 RED(`[^req027-e2e-b1-run1]`),
 그 원인을 코드로 고친 뒤의 **실행 #2는 GREEN**(`[^req027-e2e-b1-run2]`)이라 REQ-027은 🟢다.
-REQ-029/030은 여전히 🟡 절차 준비 상태다.) 절차서 작성 과정에서
+E2E-B2도 1회 실행됐고 **RED**다(`[^req029-e2e-b2-run1]` — A/B 실측 미실시 + 후보 생성 구조적
+불가) → REQ-029는 🔴. REQ-030만 여전히 🟡 절차 준비 상태다.) 절차서 작성 과정에서
 확인한 구현 세부 사항 하나를 여기 기록한다: 독립 `trial` CLI(`BuilderCli.runTrial`)는
 `TrialRunner`를 6-arg 생성자로 생성해 `attachMode=false`로 고정돼 있어, REQ-023(attach 이중
 opt-in)이 이 CLI 경로에서는 애초에 활성화되지 않는다 — attach 이중 opt-in이 실제로 배선되는
@@ -651,6 +656,30 @@ body에 갭 마커 0개(422), `post-api-fulfillment`는 가드 피연산자 `par
 `post-api-quotas`(동적 키 Map 루트 → 마커 계약상 표현 불가)와 `post-api-fulfillment`(독립 `trial`
 CLI가 stub 등록을 항상 skip)가 각각 구조적 한계를 갖기 때문이며, 그 근거도 절차서에 기록했다.
 이번 실행이 새로 드러낸 문서 부정확 4건(스킬 2건 + 절차서 2건)은 같은 커밋에서 정정했다.
+
+[^req029-e2e-b2-run1]: **E2E-B2 실증 실행 #1(2026-07-28) 판정 = RED.** 전체 기록은
+[절차서의 "E2E-B2 실행 기록 → 실행 #1" 절](../reports/2026-07-26-triple-synthesis-manual-evidence.md)과
+[docs/coverage-progress.md § Phase A](../../coverage-progress.md)에 있다. **수용기준의 green 두
+분기(순증 / 순증 없음 + 원인 분석 첨부)는 어느 쪽에도 해당하지 않는다 — A/B 자체가 실행되지
+않았기 때문이다.** ① **A(baseline) 미측정**: `build`가 3회 연속
+`SUT did not become healthy in PT1M30S`로 실패했다. 10코어 머신에 load average 217~410(원인은 이
+실증과 무관한 상주 `codegraph init` 프로세스 41개)인데 `SutProcess.BOOT_TIMEOUT`이 90초
+하드코딩 상수이고 CLI 오버라이드가 없다. 그 프로세스들은 이 테스트 소유가 아니므로 종료하지
+않았고(정리 규칙), 종료 여부는 위임 체인(인박스 300초 타임아웃 → `consult-secretary` CLI 크래시
+→ safe_default)을 거쳐 "종료 금지"로 확정했다. ② **B 미측정**: 투입할 promoted 후보가 **0개**다.
+SUT 부팅이 불필요한 정적 경로(`provenance` + `synthesize-triple`)는 완주했고, `POST
+/api/reservations`(가드 11개)·`PUT /api/reservations/{id}`(가드 7개) 두 EP 모두 **마커 계약
+안에서는 2xx에 도달할 수 없는 후보만** 나온다 — 두 EP의 `notes.md`가 **모든 가드**를 "확장
+지점(미지원)"으로 표기한다(`||`/`&&` 결합 논리 미지원, `INPUT×(DB_READ|EXTERNAL_RESPONSE)`가
+아닌 비교 미지원). 라이브 petclinic 대조 실험으로 이를 관측 고정했다: 마커만 채운 합성 후보 →
+**HTTP 400**, 값을 그대로 두고 형상만 고친 손수 body → **HTTP 201**(막는 것은 엔드포인트가
+아니라 합성기의 형상이며, 그 수리는 키 집합·구조 변경이라 REQ-009 위반이다). **따라서 이
+RED는 "Phase A가 효과 없음"이 아니라 "petclinic으로는 효과를 측정할 수 없음"을 뜻한다** —
+기능 자체의 완주는 REQ-027(E2E-B1 실행 #2, `samples/order-service`)로 확인돼 있다. 재시도는
+한산한 머신 + 합성기 수정(enum 필드, 유령 파라미터 필드, `@PathVariable` 라우팅, by-id seed,
+컨트롤러→서비스 origin 전파, 오라클 조합 상한) 이후에만 의미가 있다. 이번 실행이 드러낸 절차서
+부정확 3건(사전조건에 머신 부하 없음, `GRB_TRIAL=off`의 Gradle 전달 미보장, 후보 0개 분기의
+판정 기준 부재)은 같은 커밋에서 정정했다.
 
 ## design spec E2E ↔ REQ 매핑
 
