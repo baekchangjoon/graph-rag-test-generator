@@ -1503,6 +1503,14 @@ public final class BuilderCli {
      */
     private static String stubsJsonContent(List<com.fasterxml.jackson.databind.node.ObjectNode> stubMappings)
             throws Exception {
+        if (stubMappings.size() > 1) {
+            // 조용한 축소 금지 — 서로 다른 callSite가 2개 이상이면 단일-파일-단일-mapping 규약상 하나만
+            // 실린다(같은 callSite의 여러 필드는 TripleSynthesizer가 이미 한 mapping으로 병합한다).
+            log.warn("stubs.json 규약은 파일당 mapping 1개다 — callSite {}개 중 첫 번째만 싣는다(나머지는 "
+                    + "stub 없이 실제 외부 호출로 나가 후보가 실패할 수 있다): {}",
+                    stubMappings.size(), stubMappings.stream()
+                            .map(s -> s.path("request").path("urlPath").asText()).toList());
+        }
         Object toWrite = stubMappings.isEmpty() ? Json.mapper().createObjectNode() : stubMappings.get(0);
         return Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(toWrite);
     }

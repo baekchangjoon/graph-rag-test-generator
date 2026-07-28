@@ -95,6 +95,27 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
   허용된다.
 - `notes.md`는 검사하지 않는다 — 근거·사유를 자유롭게 기록하는 용도다.
 
+## 도구가 보장하는 body/stub 형상 (읽고 나서 어긋나면 결함으로 보고하라)
+
+이 세 가지는 합성기의 불변식이다 — 산출물이 이를 어기면 마커를 채워도 통과할 수 없으니,
+손으로 고치지 말고(마커 계약 위반) 결함으로 보고하라.
+
+1. **컬렉션 필드는 JSON 배열이다.** `List<LineItem> lineItems`처럼 컬렉션인 필드는
+   `{"lineItems":[{"sku":…,"amount":…}]}`처럼 **원소 1개짜리 배열**로 나온다(대표원소 규약).
+   리포트의 `collectionPaths`가 그 근거다. 객체(`{"lineItems":{…}}`)로 보이면 결함이다.
+2. **가드에 등장하는 INPUT 피연산자는 전부 body에 있다.** 결합 논리(`||`) 안이라 도구가 값을
+   결정하지 못한 자리도 갭 마커로 남는다. 리포트의 어떤 가드가 읽는 필드가 body에 아예 없으면
+   결함이다(단, 컨테이너 타입 피연산자 자신은 원소 필드가 대신하므로 없는 게 정상).
+3. **`EXTERNAL_RESPONSE` 가드가 있으면 `stubs.json`이 비지 않는다.** 같은 callSite의 여러 응답
+   필드는 한 mapping의 `response.jsonBody`에 병합되고, `Content-Type: application/json` 헤더가
+   함께 등록된다. `EXTERNAL_RESPONSE` 피연산자가 있는데 `stubs.json`이 `{ }`이면 결함이다
+   (그 상태로는 SUT가 stub되지 않은 실제 외부 호출을 내보내 5xx가 된다).
+
+**알려진 갭 — 동적 키 Map body.** `@RequestBody Map<String,Integer>`처럼 요청 body 루트가 동적 키
+Map인 핸들러는 현재 합성 범위 밖이다(키를 에이전트가 골라야 하는데, 마커 계약은 base/candidate의
+키 집합이 같을 것을 요구한다). 이 경우 `notes.md`에 `경고(합성 불가)` 줄이 남는다 — 그 줄이 보이면
+trial로 넘기지 말고 provenance 단계로 돌아가 판단하라.
+
 ## 값을 채울 때 지켜야 할 것
 
 1. **semanticHint를 따른다** — 마커의 `semanticHint`(person-name/email/phone/free-text/

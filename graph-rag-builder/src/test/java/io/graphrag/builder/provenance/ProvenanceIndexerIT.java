@@ -306,6 +306,47 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-005: List 타입 필드의 dot-path 접두사가 collectionPaths로 보고된다 "
+            + "(대표원소 규약이 배열/객체 구분을 잃지 않게 하는 유일한 근거)")
+    void req005_collectionPathsReportedForListFields() {
+        // fixture: record CreateRequest(List<Item> items, Map<String,String> configs)
+        ProvenanceReport report = analyzeFixture(
+                "nested",
+                "io.graphrag.fixture.nested.NestedController",
+                "create",
+                3);
+
+        assertThat(report.collectionPaths())
+                .as("items는 List<Item>이므로 배열 접두사로 보고되어야 한다 — 이 정보 없이 합성하면 "
+                        + "{\"items\":{\"qty\":…}}처럼 배열이 객체가 되어 SUT가 400을 낸다")
+                .contains("items");
+        assertThat(report.collectionPaths())
+                .as("Map은 동적 키라 대표원소 규약 대상이 아니므로 배열 접두사가 아니다")
+                .doesNotContain("configs");
+    }
+
+    @Test
+    @DisplayName("REQ-001: 컨테이너/스칼라 라이브러리 메서드(List.isEmpty 등)는 dot-path 세그먼트를 만들지 않는다 "
+            + "— 실재하지 않는 필드(items.empty)를 INPUT으로 태깅하면 합성이 유령 body 필드를 만든다")
+    void req001_containerApiCallsDoNotSynthesizePhantomDotPaths() {
+        // fixture: if (req.items() == null || req.items().isEmpty() || req.items().get(0).qty() <= 0)
+        ProvenanceReport report = analyzeFixture(
+                "nested",
+                "io.graphrag.fixture.nested.NestedController",
+                "create",
+                3);
+
+        assertThat(report.guards())
+                .as("List.isEmpty()는 JavaBean 접근자가 아니다 — \"items.empty\"라는 INPUT jsonPath가 "
+                        + "만들어지면 안 된다(DTO에 그런 필드가 없다)")
+                .allMatch(g -> g.operands().stream().noneMatch(v -> "items.empty".equals(v.jsonPath())));
+        assertThat(report.guards())
+                .as("그 자리는 UNKNOWN(boolean)으로 강등되어야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v ->
+                        v.origin() == Origin.UNKNOWN && "boolean".equals(v.javaType())));
+    }
+
+    @Test
     void recursionDoesNotHangOnMutualRecursion() {
         // methodA()↔methodB() 상호 재귀가 방문 집합으로 자연 종료하는지(무한루프 없이) 확인.
         // 테스트 자체가 유한 시간 내 반환되면 통과(타임아웃되면 실패).
