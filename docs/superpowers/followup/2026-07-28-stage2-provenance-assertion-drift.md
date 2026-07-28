@@ -315,6 +315,54 @@ BUILD FAILED
 
 ## 7. 조사 기록 / 설계 판단 (Task 3 산출물 기록 위치)
 
-> Task 3 실행 전에는 비어 있다. Task 3 Step 1의 전수 조사 결과 목록과 Step 2의 결론
-> ("현행 단일 컬렉션 유지" 또는 "신규 REQ 등록 — 파일 경로")을 여기에 적는다. §6(완료 정의)과
-> 섞지 않는다.
+### Step 1 결과 — `httpCalls()` 소비자 전수 조사 (2026-07-28 실시)
+
+명령: `grep -rn "httpCalls()" --include='*.java' graph-rag-builder/src test-generator/src shared-model/src`
+→ 29건. 판정 기준은 계획대로 **`urlPath`-only 필터 + `findFirst()`/`allMatch(...)`** 조합이다.
+
+**오인 가능(순서 의존) — 3건:**
+
+| # | 위치 | 형태 | 왜 위험한가 |
+|---|---|---|---|
+| 1 | `Stage1ExternalStubSynthesisE2E.java:158` `inventoryCall(asset)` | `urlPath.equals(INVENTORY_PATH)` + `findFirst()` | 같은 `urlPath`에 `-egressassert` 캡처가 섞이므로, 리스트 순서가 바뀌면 계약 산출물을 "관측 캡처"로 집어 단언한다 |
+| 2 | `EgressStatusAgnosticStubE2E.java:102` | `urlPath.endsWith("/inventory/stock")` + `findFirst()` | 동일. `endsWith`라 매칭 범위가 오히려 더 넓다 |
+| 3 | `ExternalStubNoneModeTest.java:55` | `urlPath.equals("/inventory/stock")` + `findFirst()` | 동일 |
+
+**안전 — 나머지:** `BuilderIntegrationTest.java:152`·`FileGraphRagClient.java:55`·
+`GeneratorTest.java:372`·`GeneratorKafkaServerFieldsTest.java:258`은 **`pathId` 필터**라 접미
+`-egressassert`로 자연히 구분된다. `EgressStubBodyFidelity{Otel,Envelope}E2E`는 `CONTRACT`를
+**명시적으로** 골라내므로 의도가 드러나 있다. `PartitionedGraphStoreTest`·`JsonRoundTripTest`·
+`GraphSetEquivDiffTool`은 컬렉션 전체를 다루는 왕복/비교라 해당 없음.
+
+**세 건이 지금 통과하는 이유(= 잠복 상태인 이유).** 탐색 캡처가 리스트에 먼저 쌓이고
+`-egressassert` 캡처는 변형 루프에서 뒤에 추가되므로, `findFirst()`가 우연히 항상 탐색 캡처를
+집는다. **단언이 옳아서가 아니라 순서가 우연히 맞아서 통과한다** — 캡처 순서를 바꾸는 어떤
+변경(병렬화, 변형 루프 순서 조정, 파티션 병합 순서)도 조용히 오단언으로 바꿀 수 있다.
+
+### Step 2 결론 — 오인 지점 ≥ 1건이므로 "현행 단일 컬렉션 유지"로 종결하지 않는다
+
+계획의 분기 조건("1건 이상이면 신규 REQ")에 해당한다. 다만 **이 문서에서 코드는 고치지 않는다**는
+전역 제약도 그대로 유지한다. 남은 작업은 두 갈래이고, 둘 다 이 followup의 범위를 넘는다:
+
+1. **(작은 범위, 즉시 가능)** 위 3건의 필터를 `pathId` 기반 또는 `-egressassert` 제외로 바꿔
+   순서 의존을 제거한다. Task 1이 두 Stage2 테스트에 적용한 것과 **동일한 패턴**이라 새 설계
+   판단이 필요 없다.
+2. **(큰 범위, 신규 REQ 필요)** `GraphAsset`에 계약 산출물 전용 컬렉션을 분리한다. 이는
+   `GraphAsset` 스키마 변경이자 cross-cutting 관심사이므로 신규 요구사항명세
+   `docs/superpowers/requirements/YYYY-MM-DD-graph-asset-contract-artifact-split-requirements.md`
+   로 등록해야 하고, 사용자 워크플로상 **3-벤더 design-doc 리뷰**가 뒤따른다.
+
+**권고: 1을 먼저 하고 2는 별도 착수.** 근거 — 1은 실재하는 잠복 결함을 없애고 설계 판단을
+요구하지 않는다. 2는 "생성기 단언용 산출물이 관측 캡처 컬렉션에 섞여도 되는가"라는 설계 질문에
+답하는 일이고, 그 답이 "안 된다"로 나오면 1의 수정은 버려지지 않고 그대로 유효하다(필터가 이미
+의도를 드러내고 있으므로). 반대 순서는 1의 잠복 결함을 그동안 방치한다.
+
+### 처리 상태 (2026-07-28)
+
+- **1(순서 의존 제거) — 완료.** 위 3건 모두 `.filter(c -> !c.pathId().endsWith("-egressassert"))`를
+  추가하고 그 이유를 주석으로 남겼다. Task 1이 두 Stage2 테스트에 적용한 패턴과 동일하다.
+  세 테스트 모두 수정 후 green(회귀 0).
+- **2(컬렉션 분리 신규 REQ) — 미착수.** `GraphAsset` 스키마 변경 + cross-cutting이라 신규
+  요구사항명세와 3-벤더 design-doc 리뷰가 선행돼야 한다. 이 followup의 "코드 변경 없음" 제약과
+  범위를 함께 넘으므로 **별도 착수 대상으로 남긴다.** 1이 완료됐으므로 잠복 오단언 위험은
+  현재 0이고, 2는 설계 정합성 개선이지 결함 수정이 아니다.

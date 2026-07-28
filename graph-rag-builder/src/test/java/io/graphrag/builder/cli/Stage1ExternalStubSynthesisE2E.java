@@ -153,10 +153,18 @@ class Stage1ExternalStubSynthesisE2E {
 
     // ---- 단언 헬퍼 ----
 
-    /** 인덱싱·캡처된 외부 inventory 호출(GET /inventory/stock). */
+    /**
+     * 인덱싱·캡처된 외부 inventory 호출(GET /inventory/stock).
+     *
+     * <p>egress-assertion 산출물({@code pathId} 접미 {@code -egressassert})은 stub 경유 관측이
+     * 아니라 생성기 단언용 계약 산출물이라 같은 {@code urlPath}를 갖는다 — 제외하지 않으면
+     * {@code findFirst()}가 리스트 순서에 따라 그쪽을 집을 수 있다(현재 통과하는 것은 탐색 캡처가
+     * 먼저 쌓이는 순서 덕분일 뿐이다).
+     */
     private static CapturedHttpCall inventoryCall(GraphAsset asset) {
         return asset.httpCalls().stream()
                 .filter(c -> c.urlPath().equals(INVENTORY_PATH))
+                .filter(c -> !c.pathId().endsWith("-egressassert"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
                         "외부 inventory 호출이 캡처되지 않음 (외부 호출 자체가 발생/탐색되지 않음). "

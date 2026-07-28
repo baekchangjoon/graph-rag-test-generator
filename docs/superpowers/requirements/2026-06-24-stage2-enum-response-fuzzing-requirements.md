@@ -33,6 +33,11 @@
   - Given 변형 stub(헤더 매칭, 전역 Set 미등록)으로 통과한 외부 호출, When 캡처, Then `responseProvenance==SYNTHESIZED`.
 - 검증 레벨: integration
 
+> **범위 각주(2026-07-28):** 대상은 stub 경유 관측 캡처다 — 이후 REQ-F012-006/007이 도입한
+> egress-assertion 산출물(`pathId` 접미 `-egressassert`)은 계약 기반 산출물이라
+> `provenance=CONTRACT`이며 이 요구의 대상이 아니다. 실측 근거와 경위:
+> `docs/superpowers/followup/2026-07-28-stage2-provenance-assertion-drift.md`.
+
 ### REQ-005 — 단계1 회귀 없음
 - 유형: Non-functional / 우선순위: Must
 - 설명: SUT fixture 확장(mode 추가) 후에도 단계1 E2E가 green을 유지한다.
@@ -93,7 +98,7 @@
 | REQ-001 | enum 변형 모든 arm 도달 | `Stage2EnumResponseFuzzingE2E#enumVariantsReachAllArms` | E2E | 🟢 |
 | REQ-002 | 결정성 | `Stage2EnumResponseFuzzingE2E#deterministicAcrossRuns` | E2E | 🟢 |
 | REQ-003 | budget 절단 loud | `EnumResponseVariantGeneratorTest#budgetTruncationLoud` | unit | 🟢 |
-| REQ-004 | 변형 provenance | `Stage2EnumResponseFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 |
+| REQ-004 | 변형 provenance (범위 각주 참조) | `Stage2EnumResponseFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 (2026-07-28 재확인 — 그 전까지 main에서 상시 실패였다: `docs/superpowers/followup/2026-07-28-stage2-provenance-assertion-drift.md`) |
 | REQ-005 | 단계1 회귀 | `Stage1ExternalStubSynthesisE2E`(mode stub 갱신 후, 4 tests green) | E2E | 🟢 |
 | REQ-006 | VariantGenerator | `EnumResponseVariantGeneratorTest` | unit | 🟢 |
 | REQ-007 | trace-id 매칭 조건 | `TraceKeyMatchForTest` | unit | 🟢 |

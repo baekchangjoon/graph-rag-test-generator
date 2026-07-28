@@ -35,6 +35,11 @@
   - Given String 변형 stub(헤더 매칭, 전역 Set 미등록)으로 통과한 외부 호출, When 캡처, Then `responseProvenance==SYNTHESIZED`.
 - 검증 레벨: E2E black-box
 
+> **범위 각주(2026-07-28):** 대상은 stub 경유 관측 캡처다 — 이후 REQ-F012-006/007이 도입한
+> egress-assertion 산출물(`pathId` 접미 `-egressassert`)은 계약 기반 산출물이라
+> `provenance=CONTRACT`이며 이 요구의 대상이 아니다. 실측 근거와 경위:
+> `docs/superpowers/followup/2026-07-28-stage2-provenance-assertion-drift.md`.
+
 ### REQ-005 — 단계1·단계2 회귀 없음 (enum 생성기 byte-동일)
 - 유형: Non-functional / 우선순위: Must
 - 설명: SUT fixture 확장(region 추가)·생성기 통합(`ResponseFieldVariantGenerator`) 후에도 단계1·단계2 E2E가 green을 유지하고, **`ResponseFieldVariantGenerator`의 enum-only 입력 출력(변형 label·순서)이 단계2 `EnumResponseVariantGenerator`와 byte-동일**하다. (산출물 id/discoveredBy 마커의 `enumvar`→`responsevar` rename은 byte-동일 대상이 아님 — REQ-009 참조. enum E2E는 status·branch 집합 기준이라 마커 rename에 무관함을 확인.)
@@ -118,7 +123,7 @@
 | REQ-001 | String 변형 새 arm 도달 | `Stage2AStringLiteralFuzzingE2E#stringVariantReachesEmbargoedArm` | E2E | 🟢 pass |
 | REQ-002 | 결정성 | `Stage2AStringLiteralFuzzingE2E#deterministicAcrossRuns` | E2E | 🟢 pass |
 | REQ-003 | 비동치/미해석 loud skip | `ResponseStringLiteralExtractorTest#nonequalityLoudLogFiredForStartsWith` | unit | 🟢 pass |
-| REQ-004 | 변형 provenance | `Stage2AStringLiteralFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 pass |
+| REQ-004 | 변형 provenance (범위 각주 참조) | `Stage2AStringLiteralFuzzingE2E#variantStubCapturesAreSynthesized` | E2E | 🟢 pass (2026-07-28 재확인 — 그 전까지 main에서 상시 실패였다: `docs/superpowers/followup/2026-07-28-stage2-provenance-assertion-drift.md`) |
 | REQ-005 | 단계1·2 회귀 (enum byte-동일) | `Stage1ExternalStubSynthesisE2E` + `Stage2EnumResponseFuzzingE2E` + `ResponseFieldVariantGeneratorTest#enumPathByteIdenticalToStage2` | E2E+unit | 🟢 pass |
 | REQ-006 | budget 절단 loud | `ResponseFieldVariantGeneratorTest#budgetTruncationLoud` | unit | 🟢 pass |
 | REQ-007 | ResponseStringLiteralExtractor | `ResponseStringLiteralExtractorTest` | unit | 🟢 pass |
