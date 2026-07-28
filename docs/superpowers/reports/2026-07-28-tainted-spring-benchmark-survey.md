@@ -18,6 +18,14 @@
 
 ## 0. 결론 요약 (먼저 읽을 것)
 
+> **[정정 — 2026-07-28, 커밋 `60ecb4b`]** 아래 "교차 가드 0건"이라는 관측 자체는 정확했으나,
+> **그 원인 귀속이 부분적으로 틀렸다.** 0건은 "그런 가드가 SUT에 존재하지 않아서"가 아니라
+> **인덱서가 보지 못해서**였다. §5의 도구 결함 2건(+수정 중 발견한 1건)을 고치자 동일 SUT·동일
+> CLI에서 INPUT×DB_READ 교차 가드가 나타났다(`mindgraph`/`diary`/`community` 3/3 — §5.0 실측표).
+> 따라서 아래 첫 번째 불릿 **"교차 가드를 측정하는 벤치마크로 tainted-spring은 부적합하다"는
+> 철회한다.** 나머지 두 불릿(2xx 도달로의 지표 재정의, 도구 수정 선행)은 유효하며, 도구 수정은
+> 이제 완료 상태다.
+
 **tainted-spring 8개 서비스 24개 REST 엔드포인트 전부에 `provenance` CLI를 실제로 돌린 결과,
 INPUT×DB_READ 교차 가드 0건, INPUT×EXTERNAL_RESPONSE 교차 가드 0건이다.** 전 서비스를 통틀어
 인식된 가드는 **단 1건**(`auth-user` `GET /api/v1/me`)이고, 그 1건조차 피연산자 3개가 모두
@@ -206,6 +214,46 @@ body가 있는 엔드포인트만 발췌. `unguarded[]`가 채워진다는 것�
 ---
 
 ## 5. 부적합 사유 기록 (petclinic 사례와 같은 자산으로 남김)
+
+> **사후 갱신(2026-07-28, 커밋 `60ecb4b`):** §5.1·§5.2는 **수정 완료**이며, 이 조사가 제기하지
+> 않았던 세 번째 결함(EXISTS 가드에 조회 대상 테이블 미기재)이 수정 과정에서 추가로 드러나 함께
+> 고쳤다. 아래 §5.1/§5.2 본문은 **수정 전 상태의 진단 기록으로 그대로 보존**하고, 결과만 §5.0에
+> 요약한다. §5.3~§5.7은 미해결 상태 그대로다.
+
+### 5.0 (사후) 수정 결과 실측
+
+수정 후 동일한 `provenance` CLI를 동일 엔드포인트에 다시 돌린 결과 — 조사가 **0건**으로 셌던
+INPUT×DB_READ 교차 가드가 실재하는 것으로 확인됐다:
+
+| 엔드포인트 | 수정 전 | 수정 후 |
+|---|---|---|
+| `mindgraph` `GET /internal/graphs/diary/{diaryId}` | `guards: []` | `EXISTS @ GraphService.java:81 → [INPUT:diaryId, DB_READ:graph_record]` |
+| `diary` `GET /internal/diaries/{id}` | `guards: []` | `EXISTS @ DiaryService.java:134 → [INPUT:id, DB_READ:diary_entry]` |
+| `community` `POST /internal/posts/{id}/comments` | `guards: []` | `EXISTS @ CommunityService.java:79 → [INPUT:id, DB_READ:post]` |
+| `auth-user` `GET /api/v1/me` | 가드 1건, 피연산자 3/3 UNKNOWN | 동일 가드의 첫 피연산자가 `INPUT:authorization`으로 해소 |
+
+`graph_record`는 §3이 "행 부재로 404"라고 독립적으로 지목한 바로 그 테이블이다 — 정적 산출과
+과거 실측 기록이 교차 확인된다.
+
+**고친 결함 3건:**
+
+1. **§5.1** `orElseThrow`는 JDK 시그니처(`Supplier<? extends X extends Throwable>`)상 무엇을
+   생성하든 던져지므로, 람다 본문 검사 없이 항상 EXISTS 가드로 본다. 무인자 오버로드도 포함한다.
+   `orElseGet`은 기본값 폴백이라 실행을 막지 않으므로 종전대로 실제 `throw`할 때만 가드다.
+2. **§5.2** `Frame`이 파라미터→입력 바인딩을 들고 다니며, 호출 시 인자를 호출자 프레임에서
+   해석해 피호출 파라미터에 물려준다. `jsonPath`는 서비스 계층의 파라미터명이 아니라 요청에서의
+   이름을 쓴다(예: `AccountService.findOrThrow(String accountId)`로 넘어가도 `id`로 남는다).
+   보수적 처리 — 인자·파라미터 개수가 정확히 일치할 때만 바인딩한다. 알려진 근사: `visited`가
+   메서드 단위라 같은 메서드가 서로 다른 인자로 두 번 호출되면 먼저 방문한 쪽 바인딩만 적용된다.
+3. **(신규 발견)** EXISTS 가드가 INPUT 피연산자만 실어, 합성기가 seed를 놓을 테이블을 몰라
+   배치를 skip했다. 수신 리포지토리 호출의 엔티티 테이블을 DB_READ 피연산자로 함께 싣는다.
+   컬럼은 특정되지 않으므로 PK는 downstream이 DB 카탈로그에서 찾는다. **§5.1·§5.2만 고쳤다면
+   교차 가드는 여전히 0건이었을 것**이므로, 이 3번이 실제 임계 결함이다.
+
+**남은 제약(수정 범위 밖):** `synthesize-triple` CLI는 물리 스키마 없이(`tables=[]`) 돌기 때문에
+PK 컬럼을 몰라 여전히 `seed 배치 skip`으로 기록된다. 이는 설계된 역할 분담(스키마는 상위
+오케스트레이션이 그래프 자산에서 채움)이며, 실제 A/B 측정에서는 SUT와 함께 DB가 떠 있으므로
+차단 요인이 아니다.
 
 ### 5.1 (도구 결함) `orElseThrow`의 커스텀 도메인 예외를 EXISTS 가드로 인식하지 못한다 — 영향 6개 서비스
 
