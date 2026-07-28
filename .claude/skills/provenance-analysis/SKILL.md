@@ -71,7 +71,14 @@ dot-path만으로는 그 자리가 중첩 객체인지 배열인지 알 수 없�
 정적 코드가 해석하지 못한 `unresolved`/`UNKNOWN` 항목만 에이전트가 개입한다 — 이미 해석된
 `INPUT`/`DB_READ`/`EXTERNAL_RESPONSE`/`DERIVED` origin은 도구 판정을 신뢰하고 그대로 둔다.
 
-1. `unresolved` 목록의 각 항목에 대해, 리포트가 가리키는 소스 위치(클래스#메서드)를 직접 연다.
+**대상은 두 곳이다 — `unresolved[]`가 비어 있어도 끝난 게 아니다.** ① `unresolved[]` 배열의
+항목, 그리고 ② `guards[].operands[]` 중 `origin: "UNKNOWN"`인 피연산자. 후자는 `unresolved[]`에
+중복 수록되지 않으므로, `unresolved: []`인 리포트에도 UNKNOWN 피연산자가 여러 개 있을 수 있다
+(예: 루프 변수를 거친 컬렉션 원소 접근, 루프 집계 변수, `null` 리터럴). 또한 **UNKNOWN
+피연산자에는 자체 소스 위치 필드가 없다** — 소속 가드의 `at`(파일:라인)을 위치 근거로 써라.
+
+1. 위 ①②의 각 항목에 대해, 리포트가 가리키는 소스 위치(`unresolved`는 클래스#메서드,
+   UNKNOWN 피연산자는 소속 가드의 `at`)를 직접 연다.
 2. 실제 구현체·리플렉션 대상·인터페이스 구현체를 눈으로 확인해 origin(INPUT/DB_READ/
    EXTERNAL_RESPONSE/DERIVED 중 하나, 그래도 판정 불가하면 UNKNOWN 유지)을 판정한다.
 3. 판정 근거를 provenance-report.json과 같은 디렉토리의 `provenance-notes.md`에
@@ -81,6 +88,11 @@ dot-path만으로는 그 자리가 중첩 객체인지 배열인지 알 수 없�
    보완한다.
 4. 여전히 판정 불가능한 항목은 UNKNOWN으로 남겨두고 사유를 기록한다 — 모르면 모른다고
    출력하는 것이 도구의 원칙이다(창작 금지는 다음 단계에서도 동일하게 적용된다).
+5. **판정이 만든 제약을 다음 단계로 넘겨라.** UNKNOWN을 INPUT으로 판정했다면, 그 필드는
+   `unguarded[]`에 `semanticHint`만 달고 실려 있어도 **실제로는 가드된 필드**다(도구가 그 가드를
+   그 필드에 잇지 못했을 뿐). triple-synthesis 단계에서 그 자리의 갭 마커를 채울 때는 —
+   마커에 `guard:none`이라고 적혀 있더라도 — 여기서 읽은 실제 가드 조건을 만족시켜야 한다.
+   그 조건을 `provenance-notes.md`에 한 줄로 명시해 두면 다음 단계에서 놓치지 않는다.
 
 ## 마커 계약(이 파이프라인 전체의 공통 원칙)
 
