@@ -210,10 +210,28 @@ public class ProvenanceIndexer {
                 if (typeFqn == null || typeFqn.isEmpty()) {
                     continue;
                 }
-                CtMethod<?> callee = resolveMethod(model, typeFqn.replace('$', '.'),
-                        executable.getSimpleName());
+                String declaringFqn = typeFqn.replace('$', '.');
+                CtMethod<?> callee = resolveMethod(model, declaringFqn, executable.getSimpleName());
                 if (callee == null) {
                     continue; // 소스 트리 밖(라이브러리 등) — 보수적 skip
+                }
+                // 인터페이스 메서드는 본문이 없다. 구현체가 하나뿐이면 디스패치가 모호하지 않으므로
+                // 그 구현으로 내려가고(interface + 단일 Impl은 Spring에서 가장 흔한 구성), 둘 이상이면
+                // 어느 쪽이 실행될지 정적으로 정할 수 없으므로 unresolved로 남긴다 — 그러지 않으면
+                // 가드를 품은 호출을 통째로 건너뛰고도 리포트가 "가드 없음 + 미해결 없음"이 되어
+                // 깨끗한 엔드포인트로 오인된다(조용한 누락은 UNKNOWN보다 나쁘다).
+                List<CtType<?>> implementations = directImplementations(declaringFqn, model);
+                if (!implementations.isEmpty()) {
+                    if (implementations.size() >= 2) {
+                        unresolved.add(new Unresolved(locationOf(inv), Reason.MULTI_IMPL, declaringFqn));
+                        continue;
+                    }
+                    CtMethod<?> implMethod = resolveMethod(model,
+                            implementations.get(0).getQualifiedName().replace('$', '.'),
+                            executable.getSimpleName());
+                    if (implMethod != null) {
+                        callee = implMethod;
+                    }
                 }
                 String key = methodKey(callee);
                 if (visited.contains(key)) {
@@ -729,12 +747,25 @@ public class ProvenanceIndexer {
             return Optional.empty();
         }
         String fqn = declaringType.getQualifiedName().replace('$', '.');
-        long implCount = model.getAllTypes().stream()
+        return directImplementations(fqn, model).size() >= 2 ? Optional.of(fqn) : Optional.empty();
+    }
+
+    /**
+     * 모델 안에서 {@code interfaceFqn}을 직접 구현하는 (인터페이스가 아닌) 타입들.
+     * {@code interfaceFqn}이 인터페이스가 아니거나 소스 트리 밖이면 빈 리스트다 — 예컨대
+     * {@code JpaRepository}를 상속한 리포지토리 인터페이스는 모델 내 구현체가 없으므로
+     * 종전 동작(인터페이스 메서드 그대로 방문)이 유지된다.
+     */
+    private static List<CtType<?>> directImplementations(String interfaceFqn, CtModel model) {
+        CtType<?> declaringType = resolveType(model, interfaceFqn);
+        if (declaringType == null || !declaringType.isInterface()) {
+            return List.of();
+        }
+        return model.getAllTypes().stream()
                 .filter(t -> !t.isInterface())
                 .filter(t -> t.getSuperInterfaces().stream()
-                        .anyMatch(i -> fqn.equals(i.getQualifiedName().replace('$', '.'))))
-                .count();
-        return implCount >= 2 ? Optional.of(fqn) : Optional.empty();
+                        .anyMatch(i -> interfaceFqn.equals(i.getQualifiedName().replace('$', '.'))))
+                .collect(java.util.stream.Collectors.toList());
     }
 
     // ---- EXTERNAL_RESPONSE 태깅(REQ-001 EXTERNAL 부분) ----

@@ -144,6 +144,43 @@ class ProvenanceIndexerIT {
     }
 
     @Test
+    @DisplayName("REQ-003: 가드를 품은 다중구현 인터페이스 호출은 조용히 건너뛰지 않고 unresolved(MULTI_IMPL)로 남는다")
+    void req003_guardBearingMultiImplCallSurfacedAsUnresolved() {
+        // 기존 multiimpl 픽스처는 다중구현 호출이 가드 조건 안(피연산자)에 있는 경우다.
+        // 여기서는 핸들러가 인터페이스를 부르고 가드가 구현체 안에 있어, DFS가 본문 없는
+        // 인터페이스 메서드에 도달해 아무것도 못 찾는다. 그대로 두면 리포트가
+        // "가드 없음 + 미해결 없음" = 깨끗한 엔드포인트로 오인된다.
+        ProvenanceReport report = analyzeFixture(
+                "impl-dispatch",
+                "io.graphrag.fixture.impldispatch.DispatchController",
+                "loginViaMultiImpl",
+                3);
+
+        assertThat(report.unresolved())
+                .as("모호한 디스패치는 UNKNOWN보다도 나쁜 조용한 누락이 되면 안 된다")
+                .anyMatch(u -> u.reason() == ProvenanceReport.Reason.MULTI_IMPL
+                        && u.targetType() != null
+                        && u.targetType().endsWith("SocialVerifier"));
+    }
+
+    @Test
+    @DisplayName("REQ-002: 구현체가 하나뿐인 인터페이스는 그 구현으로 내려가 가드를 수집한다")
+    void req002_singleImplInterfaceIsTraversed() {
+        // interface + 단일 Impl은 Spring에서 가장 흔한 구성이다. 디스패치가 모호하지 않으므로
+        // 인터페이스에서 멈출 이유가 없다.
+        ProvenanceReport report = analyzeFixture(
+                "impl-dispatch",
+                "io.graphrag.fixture.impldispatch.DispatchController",
+                "loginViaSingleImpl",
+                3);
+
+        assertThat(report.guards())
+                .as("단일 구현체 안의 가드가 핸들러 입력(provider)으로 태깅돼야 한다")
+                .anyMatch(g -> g.operands().stream().anyMatch(v -> v.origin() == Origin.INPUT
+                        && "provider".equals(v.jsonPath())));
+    }
+
+    @Test
     @DisplayName("REQ-004: EXISTS 가드는 조회 대상 테이블을 DB_READ 피연산자로 함께 싣는다(INPUT×DB_READ 교차 가드)")
     void req004_existsGuardCarriesReadTable() {
         // EXISTS 가드가 INPUT 피연산자만 실으면 TripleSynthesizer가 대상 테이블을 알 수 없어
