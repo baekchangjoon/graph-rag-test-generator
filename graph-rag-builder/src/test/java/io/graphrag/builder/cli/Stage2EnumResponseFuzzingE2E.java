@@ -68,7 +68,12 @@ class Stage2EnumResponseFuzzingE2E {
                 .isGreaterThanOrEqualTo(3);
     }
 
-    /** 변형 stub 경유 캡처도 SYNTHESIZED로 태깅된다(REQ-004). */
+    /**
+     * 변형 stub 경유 캡처는 SYNTHESIZED로 태깅된다(REQ-004). egress-assertion 산출물
+     * ({@code pathId}가 {@code -egressassert}로 끝나는 캡처)은 stub 경유 관측이 아니라 생성기
+     * 단언용 계약 산출물이므로 REQ-004 대상이 아니며, CONTRACT임을 별도로 단언한다
+     * (REQ-F012-006/007). 판별자는 이 테스트·주석·요구사항 각주 모두 {@code pathId} 접미로 통일한다.
+     */
     @Test
     @DisplayName("REQ-004: 변형 stub 캡처 SYNTHESIZED")
     void variantStubCapturesAreSynthesized() throws Exception {
@@ -79,9 +84,24 @@ class Stage2EnumResponseFuzzingE2E {
                 .toList();
         assertThat(inventoryCalls)
                 .as("외부 inventory 호출이 변형 포함 다수 캡처됨").isNotEmpty();
-        assertThat(inventoryCalls)
+
+        List<CapturedHttpCall> stubCaptures = inventoryCalls.stream()
+                .filter(c -> !c.pathId().endsWith("-egressassert"))
+                .toList();
+        assertThat(stubCaptures)
+                .as("REQ-004 대상(탐색·변형 stub 경유 캡처)이 존재해야 한다").isNotEmpty();
+        assertThat(stubCaptures)
                 .as("변형 stub 경유 캡처도 SYNTHESIZED")
                 .allMatch(c -> c.responseProvenance() == CapturedHttpCall.Provenance.SYNTHESIZED);
+
+        List<CapturedHttpCall> egressAssertCaptures = inventoryCalls.stream()
+                .filter(c -> c.pathId().endsWith("-egressassert"))
+                .toList();
+        assertThat(egressAssertCaptures)
+                .as("egress-assertion 산출물이 존재해야 한다(REQ-F012-006/007)").isNotEmpty();
+        assertThat(egressAssertCaptures)
+                .as("egress-assertion 산출물은 계약 기반이므로 CONTRACT여야 한다")
+                .allMatch(c -> c.responseProvenance() == CapturedHttpCall.Provenance.CONTRACT);
     }
 
     /** 변형 생성·측정 순서 결정적: 2회 빌드 동일 arm 도달 + 동일 외부-의존 분기집합. */

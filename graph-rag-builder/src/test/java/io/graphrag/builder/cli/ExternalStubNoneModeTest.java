@@ -52,8 +52,11 @@ class ExternalStubNoneModeTest {
                 null, io.graphrag.model.RequestHeaders.empty(), List.of(),
                 "none", null, false));
 
+        // egress-assertion 산출물(pathId 접미 -egressassert)은 같은 urlPath를 갖는 계약 산출물이라
+        // 제외한다 — 없으면 findFirst()가 리스트 순서에 따라 그쪽을 집을 수 있다.
         CapturedHttpCall inventory = asset.httpCalls().stream()
                 .filter(c -> c.urlPath().equals("/inventory/stock"))
+                .filter(c -> !c.pathId().endsWith("-egressassert"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
                         "none 모드에서 외부 inventory 호출이 캡처되지 않음"));
