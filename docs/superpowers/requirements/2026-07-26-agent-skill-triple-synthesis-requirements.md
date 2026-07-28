@@ -322,27 +322,27 @@
 
 | REQ-ID | 요구사항 | 수용 테스트 | Level | Status |
 |--------|----------|-------------|-------|--------|
-| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden) | E2E | 🟢 done[^unguarded-fix][^c4-readjudication] |
+| REQ-001 | provenance 리포트 산출 (operand-level origin) | ProvenanceCliE2E#REQ-001 (golden), ProvenanceIndexerIT#REQ-001(존재 가드 커스텀 예외·무인자·orElseGet 음성·EXISTS의 DB_READ 테이블·인터프로시저 origin 전파 5건) | E2E | 🟢 done[^unguarded-fix][^c4-readjudication] |
 | REQ-002 | 깊이 cap·순환 종료 | ProvenanceIndexerIT#REQ-002 | integration | 🟢 done |
-| REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003 | integration | 🟢 done |
+| REQ-003 | UNKNOWN 강등·unresolved 스키마 | ProvenanceIndexerIT#REQ-003(가드를 품은 다중구현 호출의 MULTI_IMPL 표면화 + 단일구현 하강 포함) | integration | 🟢 done |
 | REQ-004 | @Column/@Table 매핑 | ProvenanceIndexerIT#REQ-004 | integration | 🟢 done[^jpa-inherited-fix] |
 | REQ-032 | DERIVED 태깅·concolic 위임 | **TripleSynthesisE2E#req032_cliPipelinePlacesConcolicSolutionInCandidateBody**(`provenance`→`synthesize-triple --sut-jar` CLI 완주), ProvenanceIndexerIT#REQ-032 (태깅 2건: 단일/다변수 derivedFrom), TripleSynthesizerIT#REQ-032 (배치 2건: concolic 해 42 결정값 / 못 푸는 파생 갭 마커) | E2E | 🟢 green[^derived-half] |
 | REQ-034 | DTO 중첩 재귀 전개 | ProvenanceIndexerIT#REQ-034 | integration | 🟢 done |
-| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green[^envelope-inheritance-boundary] |
+| REQ-005 | 삼중 라우팅 산출 | TripleSynthesisE2E#REQ-005(`--graph` 물리 스키마 배선 포함), FixtureTripleShapeE2E#REQ-005, LookupSucceededOutcomeTest(spurious seed 금지), GeneratorProvenSeedInheritanceTest(SUCCESS/200-엔벨로프 혼재 회귀) | E2E | 🟢 green[^envelope-inheritance-boundary] |
 | REQ-006 | 공동 배치·경계 만족값 | TripleSynthesizerIT#REQ-006 | integration | 🟢 green |
-| REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007 | integration | 🟢 green[^jsql-defer] |
-| REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008 | integration | 🟢 green |
+| REQ-007 | 갭 마커 생성(아티팩트별 문법) | TripleSynthesizerIT#REQ-007(자유형 TEXT 컬럼 마커화 포함), FixtureTripleShapeE2E#REQ-007 | integration | 🟢 green[^jsql-defer] |
+| REQ-008 | WireMock mapping 스키마 | TripleSynthesizerIT#REQ-008, FixtureTripleShapeE2E#REQ-008 | integration | 🟢 green |
 | REQ-033 | 후보 cap·우선순위 정렬 | TripleSynthesizerIT#REQ-033 | integration | 🟢 green |
 | REQ-009 | 마커 계약 강제 | TripleGateE2E#REQ-009, TripleGateIT#REQ-009(다중 행/행 순서/컬럼 순서 회귀 5건 포함), TriplePromotionE2E#REQ-018(완주 E2E에서 items 배열 마커-diff 재확인) | E2E | 🟢 green[^req009-e2e-confirmed][^c4-readjudication] |
 | REQ-010 | seed.sql 화이트리스트(방언 포함) | SeedSqlWhitelistIT#REQ-010, TripleGateIT#req010_columnLessInsertRejected, TrialSeedNormalizedExecutionIT(재생성 SQL 실행), TrialSeedMySqlExecutableCommentIT(실 MySQL 실행형 주석 우회 차단), SeedSqlWhitelistIT#req010_signed*(닫힌 리터럴 판정 집합 일치) | integration | 🟢 green[^c4-readjudication][^closed-literal-alignment] |
-| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011 | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
+| REQ-011 | 스키마 검증(body+stub) | TripleGateIT#REQ-011(`BodyShape` null skip 회귀 포함) | integration | 🟢 green[^stub-shape-partial][^nested-list-schema-fix][^req018-done][^c4-readjudication] |
 | REQ-012 | PII 차단 semantics | TripleGateIT#REQ-012 | integration | 🟢 green[^c4-readjudication] |
 | REQ-013 | trial 실행·승격 마킹(시퀀스) | TrialCliE2E#req013_validCandidatePromotedWithoutDoubleInsert, TrialCliE2E#t1GateRejectsNonMarkerChangeInStandaloneCli, TrialCliE2E#documentedPipelineOrderWorksWithoutExplicitReportFlag(문서 순서 파이프라인), TrialSeedCleanupIT(정리 키 PK 해석·fail-closed 5건) | E2E | 🟢 green[^c4-readjudication][^n3-assertion-strengthened] |
 | REQ-014 | FailureDigest·역매핑 | TrialDigestIT(4케이스: 스택-매칭+제안·literal 폴백·null·성공) | integration | 🟢 green |
 | REQ-015 | 캡처-off no-op scope | TrialCaptureOffIT#REQ-015 | integration | 🟢 green |
 | REQ-016 | 예산 소진 오프라인 산출 | TrialCliE2E#req016_allFailingCandidatesExhaustBudgetAndReportFinalDigest | E2E | 🟢 green |
 | REQ-017 | trial 직렬화 | ParallelTrialRegressionIT#req017_* (2케이스: 락 상호배제·2-endpoint 무중첩) | integration | 🟢 green |
-| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath | E2E | 🟢 green[^req018-done] |
+| REQ-018 | promoted 완주 경로 | TriplePromotionE2E#req018_adoptedTripleProducesSuccessExploredPath, TripleGateIT#req018_temporalColumnLiteralsBoundAsTemporalTypes, TriplePromotionIT#req018_sqlHintPass2SkippedAfterAdoption | E2E | 🟢 green[^req018-done] |
 | REQ-019 | 확정 run 실패 처리 | TriplePromotionIT#req019_confirmRunMismatchRejectsCandidateAndRestoresOriginal | integration | 🟢 green |
 | REQ-020 | stale-triple(재확인 실패) | TriplePromotionE2E#req020_staleTripleOnTrialMismatchFallsBackToBaseline | E2E | 🟢 green |
 | REQ-035 | endpoint 제거·개명 stale | TriplePromotionIT#req035_* (2케이스) | integration | 🟢 green |
@@ -356,7 +356,7 @@
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🟢 green |
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟢 green (실증 실행 #2)[^req027-e2e-b1-run2] (실행 #1은 RED[^req027-e2e-b1-run1]) |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
-| REQ-029 | 커버리지 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟢 green (실행 #2 — mindgraph 2xx 도달)[^req029-e2e-b2-run2] |
+| REQ-029 | 커버리지 실측 — **2xx 도달 지표로 개정**(petclinic 잔여 분기 실측은 **미해결**) | manual: E2E-B2 A/B 기록 | manual | 🟢 green (실행 #2 — mindgraph 404→200)[^req029-e2e-b2-run2] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟢 green (실행 #1 — 4/4 조합)[^req030-e2e-b3-run1] |
 | REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed][^envelope-inheritance-boundary] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |

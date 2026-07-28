@@ -36,6 +36,7 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
 ./gradlew -q :graph-rag-builder:run --args="synthesize-triple \
   --report <OUT_DIR>/provenance-report.json \
   --triple-store <TRIPLE_STORE_DIR> \
+  --graph <GRAPH_ASSET_DIR> \
   --sut-jar <SUT_BOOT_JAR>"
 ```
 
@@ -45,9 +46,23 @@ description: Synthesizes a guard-satisfying request triple (body.json / seed.sql
 |---|---|---|---|
 | `--report` | 예 | — | provenance-analysis(C1)가 만든 `provenance-report.json` 경로 |
 | `--triple-store` | 예 | — | 후보 트리플을 쓸 루트 디렉토리(기본 위치는 SUT 캠페인의 `.graphrag/triples`) |
+| `--graph` | 아니오 | — | `build`가 만든 그래프 자산 디렉토리(또는 `graph.json` 경로). **존재 가드가 있으면 사실상 필수** — 아래 참고 |
 | `--sut-jar` | 아니오 | — | 입력 오라클용 SUT 부트 jar(ASM+Z3 concolic). `DERIVED` 파생 루트의 해를 여기서 도출한다 |
 | `--sut-src` | 아니오 | — | 입력 오라클용 SUT 소스 루트(소스 리터럴 오라클). `build`와 동일한 멀티 루트 glob 문법 |
 | `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | `--sut-src`를 줄 때만 의미 있음 |
+
+**`--graph`를 줄지 판단하는 법 — 리포트에 `EXISTS` 가드가 있으면 반드시 준다.** 존재 가드를
+`seed.sql` INSERT로 배치하려면 대상 테이블의 **PK 컬럼**을 알아야 하는데, 그 사실은 물리
+스키마에만 있고 provenance 리포트에는 없다. `--graph`를 생략하면:
+
+- 존재 가드의 seed 배치를 **통째로 건너뛴다** — `notes.md`에 `대상 테이블/PK 미해결, seed 배치
+  skip(확장 지점)` 줄이 남는다. 이 줄이 보이면 `--graph` 없이 돌린 것이다.
+- 배치되는 다른 INSERT에서도 **PK 컬럼이 빠져**, NOT NULL PK 테이블에서는 실행조차 되지 않는
+  SQL이 나온다.
+
+즉 읽기(GET) 엔드포인트처럼 "행이 존재해야 2xx"인 경우 `--graph` 없이는 T2가 원리적으로 통과할
+수 없다. 스키마는 `build`가 이미 `graph.json`의 `tables`에 캡처해 두므로 새로 조회할 필요가 없다 —
+그 산출 디렉토리를 그대로 넘겨라.
 
 **오라클 플래그를 줄지 판단하는 법 — 기본은 "있으면 준다"다.** 오라클이 소비되는 자리는
 **채움 슬롯 = `unguarded[]` 필드 + `DERIVED` 파생 루트**다. 따라서 판단 기준은 `DERIVED`

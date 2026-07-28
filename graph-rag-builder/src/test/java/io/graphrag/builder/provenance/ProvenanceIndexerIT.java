@@ -164,8 +164,8 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-002: 구현체가 하나뿐인 인터페이스는 그 구현으로 내려가 가드를 수집한다")
-    void req002_singleImplInterfaceIsTraversed() {
+    @DisplayName("REQ-003: 구현체가 하나뿐인 인터페이스는 그 구현으로 내려가 가드를 수집한다")
+    void req003_singleImplInterfaceIsTraversed() {
         // interface + 단일 Impl은 Spring에서 가장 흔한 구성이다. 디스패치가 모호하지 않으므로
         // 인터페이스에서 멈출 이유가 없다.
         ProvenanceReport report = analyzeFixture(
@@ -181,8 +181,8 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-004: EXISTS 가드는 조회 대상 테이블을 DB_READ 피연산자로 함께 싣는다(INPUT×DB_READ 교차 가드)")
-    void req004_existsGuardCarriesReadTable() {
+    @DisplayName("REQ-001: EXISTS 가드는 조회 대상 테이블을 DB_READ 피연산자로 함께 싣는다(INPUT×DB_READ 교차 가드)")
+    void req001_existsGuardCarriesReadTable() {
         // EXISTS 가드가 INPUT 피연산자만 실으면 TripleSynthesizer가 대상 테이블을 알 수 없어
         // seed 배치를 skip한다. 존재 가드의 의미는 "table에 이 PK를 가진 행이 있어야 한다"이므로
         // 수신 리포지토리 호출의 엔티티 테이블이 같은 가드 안에 있어야 합성이 성립한다.
@@ -202,8 +202,8 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-002: @PathVariable이 서비스 메서드 파라미터로 전파돼도 INPUT origin이 유지된다")
-    void req002_pathVariablePropagatesThroughServiceParameter() {
+    @DisplayName("REQ-001: @PathVariable이 서비스 메서드 파라미터로 전파돼도 INPUT origin이 유지된다")
+    void req001_pathVariablePropagatesThroughServiceParameter() {
         // 컨트롤러가 얇고 가드는 서비스에 있는 구조에서, 인자↔파라미터 바인딩이 없으면
         // 서비스 파라미터가 UNKNOWN이 되어 가드를 인식해도 시드/입력 채널로 라우팅할 수 없다.
         ProvenanceReport report = analyzeFixture(
@@ -220,8 +220,8 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-002: @RequestBody 필드가 서비스 메서드 파라미터로 전파돼도 dot-path가 유지된다")
-    void req002_requestBodyFieldPropagatesThroughServiceParameter() {
+    @DisplayName("REQ-001: @RequestBody 필드가 서비스 메서드 파라미터로 전파돼도 dot-path가 유지된다")
+    void req001_requestBodyFieldPropagatesThroughServiceParameter() {
         ProvenanceReport report = analyzeFixture(
                 "param-propagation",
                 "io.graphrag.fixture.paramprop.PropagationController",
@@ -236,8 +236,8 @@ class ProvenanceIndexerIT {
     }
 
     @Test
-    @DisplayName("REQ-002: 서비스 계층 CtIf 가드에도 전파된 INPUT origin이 반영된다")
-    void req002_propagationReachesServiceLayerIfGuard() {
+    @DisplayName("REQ-001: 서비스 계층 CtIf 가드에도 전파된 INPUT origin이 반영된다")
+    void req001_propagationReachesServiceLayerIfGuard() {
         ProvenanceReport report = analyzeFixture(
                 "param-propagation",
                 "io.graphrag.fixture.paramprop.PropagationController",
