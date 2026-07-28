@@ -356,7 +356,7 @@
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🟢 green |
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟢 green (실증 실행 #2)[^req027-e2e-b1-run2] (실행 #1은 RED[^req027-e2e-b1-run1]) |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
-| REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🔴 RED (실증 실행 #1 — 효과 미측정)[^req029-e2e-b2-run1] |
+| REQ-029 | 커버리지 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟢 green (실행 #2 — mindgraph 2xx 도달)[^req029-e2e-b2-run2] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed][^envelope-inheritance-boundary] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
@@ -564,7 +564,7 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 35/37 green (95%), 1 red(🔴 REQ-029), 1 partial(🟡 REQ-030) — 전부 manual Should.
+Coverage: 36/37 green (97%), 1 partial(🟡 REQ-030) — manual Should.
 target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
 
 > **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
@@ -673,6 +673,17 @@ body에 갭 마커 0개(422), `post-api-fulfillment`는 가드 피연산자 `par
 `post-api-quotas`(동적 키 Map 루트 → 마커 계약상 표현 불가)와 `post-api-fulfillment`(독립 `trial`
 CLI가 stub 등록을 항상 skip)가 각각 구조적 한계를 갖기 때문이며, 그 근거도 절차서에 기록했다.
 이번 실행이 새로 드러낸 문서 부정확 4건(스킬 2건 + 절차서 2건)은 같은 커밋에서 정정했다.
+
+[^req029-e2e-b2-run2]: **E2E-B2 실증 실행 #2(2026-07-28) 판정 = GREEN.** 대상 SUT를 petclinic에서
+tainted-spring `mindgraph`로 교체하고 지표를 "엔드포인트 2xx 도달"로 개정한 뒤 재실행했다(개정 근거는
+위 REQ-029 개정 콜아웃). A(`GRB_TRIAL=off`)는 `GET /internal/graphs/diary/{diaryId}`에서 404만
+기록하고 `noHappyPathReason="all responses error-enveloped"`였고, B는 같은 jar·같은 SUT에서
+`s200-1 status=200`·`tripleAdopted=true`를 기록했다. 이 엔드포인트는 프로젝트 이력상 2xx가 관측된 적이
+없다(기존 블랙박스 아카이브의 생성 테스트 4건이 전부 404 단언). 보조 지표 `coveredAppBranches`는
+0/28로 불변인데, 이 두 EP는 `totalBranches: 0`이라 분기 커버리지가 원리적으로 움직일 수 없다 —
+지표를 개정한 이유가 정확히 이것이다. 실행 과정에서 **읽기 엔드포인트에서만 발현하는 결함 10건**이
+드러나 전부 수정했다(커밋 `60ecb4b`/`19b4270`/`a3f90af`). 전체 기록은
+[절차서의 "E2E-B2 실행 기록 → 실행 #2" 절](../reports/2026-07-26-triple-synthesis-manual-evidence.md).
 
 [^req029-e2e-b2-run1]: **E2E-B2 실증 실행 #1(2026-07-28) 판정 = RED.** 전체 기록은
 [절차서의 "E2E-B2 실행 기록 → 실행 #1" 절](../reports/2026-07-26-triple-synthesis-manual-evidence.md)과
