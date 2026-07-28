@@ -119,4 +119,6 @@ happy path 완주에 필요한 가드라면, 이 스킬을 계속 진행하기�
 ## 다음 단계
 
 마커를 다 채우고 사유 주석을 남겼으면 **trial-loop** 스킬로 넘어가 후보를 실제로
-시험(trial)한다.
+시험(trial)한다. SUT가 인증으로 보호돼 있으면 `trial`에 `--auth-login-path`/`--auth-user`/
+`--auth-pass`(+ `--auth-token-field`/`--auth-header`/`--auth-scheme`)를 함께 넘겨야 한다 —
+`build`와 같은 이름·시맨틱이며, 빠뜨리면 후보가 아무리 정확해도 401/403으로 전부 실패한다.

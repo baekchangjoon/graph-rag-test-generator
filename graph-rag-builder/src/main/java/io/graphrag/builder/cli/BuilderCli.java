@@ -134,6 +134,39 @@ public final class BuilderCli {
                 : tripleStoreRoot(options);
     }
 
+    /**
+     * {@code --auth-*} 플래그 → {@link AuthConfig}의 **단일 파싱 소스**(REQ-013). {@code build}와
+     * {@code trial}이 같은 플래그명·같은 기본값 의미를 갖도록 두 서브커맨드가 이 메서드를 공유한다 —
+     * 이전에는 {@code build} 경로에만 인라인으로 존재해, JWT로 보호된 SUT에 대해 {@code trial}이
+     * 후보 내용과 무관하게 항상 401/403을 받는 구조적 결함이 있었다(E2E-B1 실증 차단 원인 1).
+     *
+     * @return {@code --auth-login-path}가 없으면 null(인증 미사용 SUT — 기존 동작)
+     */
+    static AuthConfig parseAuthConfig(Map<String, String> options) {
+        if (!options.containsKey("--auth-login-path")) {
+            return null;
+        }
+        return new AuthConfig(options.get("--auth-login-path"),
+                options.getOrDefault("--auth-user", "admin"),
+                options.getOrDefault("--auth-pass", "password"),
+                options.getOrDefault("--auth-token-field", "token"),
+                options.getOrDefault("--auth-header", "Authorization"),
+                options.getOrDefault("--auth-scheme", "Bearer"),
+                java.util.List.of());
+    }
+
+    /**
+     * {@code --request-headers-file}/{@code --request-headers-on-login} → {@link RequestHeaders}의
+     * 단일 파싱 소스. {@link #parseAuthConfig}와 같은 이유로 {@code build}/{@code trial}이 공유한다.
+     */
+    static io.graphrag.model.RequestHeaders parseRequestHeaders(Map<String, String> options) throws IOException {
+        return options.containsKey("--request-headers-file")
+                ? io.graphrag.model.RequestHeaders.parse(
+                        Files.readAllLines(Path.of(options.get("--request-headers-file"))),
+                        options.containsKey("--request-headers-on-login"))
+                : io.graphrag.model.RequestHeaders.empty();
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && args[0].equals("coverage")) {
             runCoverageReport(parseArgs(args));
@@ -191,21 +224,9 @@ public final class BuilderCli {
                         options.containsKey("--confirm-non-production"))
                 : null;
 
-        AuthConfig authConfig = options.containsKey("--auth-login-path")
-                ? new AuthConfig(options.get("--auth-login-path"),
-                        options.getOrDefault("--auth-user", "admin"),
-                        options.getOrDefault("--auth-pass", "password"),
-                        options.getOrDefault("--auth-token-field", "token"),
-                        options.getOrDefault("--auth-header", "Authorization"),
-                        options.getOrDefault("--auth-scheme", "Bearer"),
-                        java.util.List.of())
-                : null;
+        AuthConfig authConfig = parseAuthConfig(options);
 
-        io.graphrag.model.RequestHeaders requestHeaders = options.containsKey("--request-headers-file")
-                ? io.graphrag.model.RequestHeaders.parse(
-                        Files.readAllLines(Path.of(options.get("--request-headers-file"))),
-                        options.containsKey("--request-headers-on-login"))
-                : io.graphrag.model.RequestHeaders.empty();
+        io.graphrag.model.RequestHeaders requestHeaders = parseRequestHeaders(options);
 
         List<String> endpointSelectors = List.of();
         if (options.containsKey("--endpoint")) {
@@ -1507,7 +1528,18 @@ public final class BuilderCli {
      * --jdbc-url <url> --db-user <u> --db-password <p> --db-type postgres|mysql|mariadb
      * [--triple-store <dir>] [--triple-candidates <dir>] [--trial-budget 8]
      * [--happy-seeds <required-seeds.json>] [--provenance-report <report.json>]
-     * [--sut-log-file <path>] [--error-when-present ...]}.
+     * [--sut-log-file <path>] [--error-when-present ...]
+     * [--auth-login-path /api/auth/login --auth-user admin --auth-pass password]
+     * [--auth-token-field token --auth-header Authorization --auth-scheme Bearer]
+     * [--request-headers-file <file> [--request-headers-on-login]]}.
+     *
+     * <p><b>인증(REQ-013):</b> {@code --auth-*} 플래그는 {@code build}와 <b>동일한 이름·시맨틱</b>으로
+     * 해석된다({@link #parseAuthConfig} 단일 소스) — 주어지면 invoke 전에 1회 로그인해 얻은 토큰을
+     * 매 요청의 {@code --auth-header}에 붙인다. 이 CLI에는 그래프 자산이 없어
+     * {@code Endpoint.authRequired}를 인덱싱으로 알 수 없으므로, <b>플래그의 존재 자체</b>가
+     * "이 엔드포인트는 인증이 필요하다"는 선언으로 쓰인다. 플래그가 없으면 토큰을 붙이지 않는다(기존
+     * 동작). JWT로 보호된 SUT에서 이 배선 없이 돌리면 후보 내용과 무관하게 전부 401/403이 되어 trial
+     * 판정이 구조적으로 무의미해진다(E2E-B1 실증 차단 원인 1).
      *
      * <p><b>T1 검증 게이트(C4 리뷰 Critical 3 fix):</b> 각 후보는 {@code runCandidate} 이전에
      * {@link io.graphrag.builder.provenance.TripleValidator}로 검증하며, 통과한 후보만 실제로
@@ -1534,9 +1566,15 @@ public final class BuilderCli {
         Path tripleStoreRoot = tripleStoreRoot(o);        // REQ-036 단일 소스
         Path candidatesRoot = tripleCandidatesRoot(o);    // REQ-036 단일 소스
         String endpointId = required(o, "--endpoint");
+        // REQ-013 인증 배선: --auth-login-path가 주어지면 이 엔드포인트는 인증이 필요한 것으로 본다.
+        // 이 CLI에는 그래프 자산(EndpointIndexer의 authRequired 판정)이 없으므로, 플래그의 존재 자체가
+        // 운영자의 "이 SUT는 인증이 걸려 있다"는 선언이다 — build 경로의 AuthConfig 시맨틱과 동일하며,
+        // 플래그가 없으면 authRequired=false로 기존 동작(무인증 SUT)을 그대로 유지한다.
+        AuthConfig authConfig = parseAuthConfig(o);
+        RequestHeaders requestHeaders = parseRequestHeaders(o);
         Endpoint endpoint = new Endpoint(
                 endpointId, required(o, "--http-method"), required(o, "--path"),
-                "unknown", "unknown", List.of(), false);
+                "unknown", "unknown", List.of(), authConfig != null);
         int budget = Integer.parseInt(o.getOrDefault("--trial-budget", "8"));
 
         List<RequiredSeed> happySeeds = o.containsKey("--happy-seeds")
@@ -1569,10 +1607,16 @@ public final class BuilderCli {
             SutHandle sut = new LogFileSutHandle(
                     required(o, "--sut-base-url"),
                     o.containsKey("--sut-log-file") ? Path.of(o.get("--sut-log-file")) : null);
+            AuthTokenProvider authProvider = authConfig == null ? null
+                    : new AuthTokenProvider(sut.baseUri(), authConfig, requestHeaders);
+            if (authProvider != null) {
+                log.info("trial: auth wired (login {} as {}, header {}) — invoke에 토큰이 붙는다",
+                        authConfig.loginPath(), authConfig.username(), authConfig.headerName());
+            }
             EndpointExplorationRunner invokeRunner = new EndpointExplorationRunner(
                     sut, connection, dbType, null, null, 0, null,
-                    List.of(), List.of(), null, null, Map.of(), Map.of(),
-                    RequestHeaders.empty(), null, null);
+                    List.of(), List.of(), authProvider, authConfig, Map.of(), Map.of(),
+                    requestHeaders, null, null);
             TrialRunner trialRunner = new TrialRunner(
                     connection, dbType, null, classifier, sut, invokeRunner::invokeTrial);
 

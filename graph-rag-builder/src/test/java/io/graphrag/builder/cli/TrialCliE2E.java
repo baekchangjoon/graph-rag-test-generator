@@ -88,8 +88,49 @@ class TrialCliE2E {
             exchange.getResponseBody().write(resp);
             exchange.close();
         });
+        // ---- JWT 보호 SUT 시뮬레이션(REQ-013 인증 배선 회귀) ----
+        // samples/order-service의 SecurityConfig과 동일한 형태: /api/auth/login만 공개이고, 나머지는
+        // Authorization 헤더가 없으면 내용과 무관하게 403.
+        httpServer.createContext("/api/auth/login", exchange -> {
+            byte[] resp = ("{\"" + AUTH_TOKEN_FIELD + "\":\"" + AUTH_TOKEN + "\"}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, resp.length);
+            exchange.getResponseBody().write(resp);
+            exchange.close();
+        });
+        httpServer.createContext(SECURED_PATH, exchange -> {
+            String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+            int status;
+            if (!("Bearer " + AUTH_TOKEN).equals(authorization)) {
+                status = 403;
+            } else {
+                String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                ObjectNode json = (ObjectNode) Json.mapper().readTree(requestBody);
+                String accountId = json.get("accountId").asText();
+                long amount = json.get("amount").asLong();
+                try (PreparedStatement ps = sutConnection.prepareStatement(
+                        "SELECT balance FROM accounts WHERE id = ?")) {
+                    ps.setString(1, accountId);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        status = !rs.next() ? 404 : (rs.getLong(1) >= amount ? 200 : 422);
+                    }
+                } catch (java.sql.SQLException e) {
+                    status = 500;
+                }
+            }
+            byte[] resp = ("{\"status\":" + status + "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, resp.length);
+            exchange.getResponseBody().write(resp);
+            exchange.close();
+        });
         httpServer.start();
     }
+
+    private static final String SECURED_PATH = "/api/secured-transfers";
+    private static final String AUTH_TOKEN = "e2e-token";
+    private static final String AUTH_TOKEN_FIELD = "token";
 
     @AfterAll
     static void teardown() throws Exception {
@@ -505,5 +546,76 @@ class TrialCliE2E {
         assertThat(Files.readString(promoted.resolve("seed.sql")))
                 .as("이 후보의 seed.sql은 합성 단계에서 비어 있었고 채움 대상도 아니다(비-마커 변경 없음 증거)")
                 .isBlank();
+    }
+
+    // ---- REQ-013 인증 배선(E2E-B1 차단 원인 1) ----
+
+    /** 인증이 걸린 경로를 대상으로 하는 옵션 세트. {@code extra}로 --auth-* 를 덧붙인다. */
+    private Map<String, String> securedOptions(Path tripleStore, Path happySeedsFile, Map<String, String> extra) {
+        Map<String, String> options = new java.util.LinkedHashMap<>(baseOptions(tripleStore, happySeedsFile));
+        options.put("--path", SECURED_PATH);
+        options.putAll(extra);
+        return options;
+    }
+
+    /** 인증 회귀 두 테스트가 공유하는 fixture: 잔액 1000짜리 계좌 + 유효 후보 1개. */
+    private Path securedFixture(Path tripleStore) throws Exception {
+        try (Statement st = sutConnection.createStatement()) {
+            st.execute("DELETE FROM accounts");
+            st.execute("INSERT INTO accounts (id, balance) VALUES ('acc-1', 1000)");
+        }
+        Path endpointDir = Files.createDirectories(tripleStore.resolve("post-api-transfers"));
+        writeProvenanceReport(endpointDir);
+        writeCandidate(endpointDir, "cand-01", "{\"accountId\":\"acc-1\",\"amount\":500}", "");
+        return endpointDir;
+    }
+
+    /**
+     * 결함 재현(고치기 전 RED가 아니라 <b>대조군</b>): 인증이 걸린 SUT에 {@code --auth-*} 없이 trial을
+     * 돌리면 후보 내용이 아무리 유효해도 403으로 실패한다 — 이 테스트는 아래 GREEN 테스트가 "후보가
+     * 원래 유효해서" 통과한 게 아니라 "인증 배선 때문에" 통과했음을 증명한다.
+     */
+    @Test
+    @DisplayName("REQ-013: --auth-* 없이 인증 SUT에 trial을 돌리면 유효 후보도 403으로 실패한다(대조군)")
+    void req013_withoutAuthFlagsSecuredSutRejectsEveryCandidate() throws Exception {
+        Path tripleStore = tempDir.resolve("secured-noauth-triples");
+        Path endpointDir = securedFixture(tripleStore);
+        Path happySeeds = writeHappySeeds();
+
+        int exitCode = BuilderCli.runTrial(securedOptions(tripleStore, happySeeds, Map.of()));
+
+        assertThat(exitCode).as("전부 실패하면 예산 소진으로 exit 3").isEqualTo(3);
+        var digests = Json.mapper().readTree(
+                endpointDir.resolve("failed").resolve("digest-final.json").toFile());
+        assertThat(digests.get(0).get("status").asInt())
+                .as("실패 원인이 후보 내용이 아니라 인증(403)임을 고정한다")
+                .isEqualTo(403);
+    }
+
+    /**
+     * REQ-013 인증 배선 — {@code build} 경로와 동일한 {@code --auth-*} 플래그를 {@code trial}에도
+     * 배선했으므로, 동일한 후보·동일한 SUT에서 이제 403이 아니라 실제 판정(2xx → 승격)이 나와야 한다.
+     * 배선 이전에는 {@code RequestHeaders.empty()} + {@code authProvider=null} 하드코딩 탓에 이 테스트가
+     * 위 대조군과 똑같이 403/exit 3으로 끝났다(E2E-B1 실증 차단 원인 1).
+     */
+    @Test
+    @DisplayName("REQ-013: --auth-* 를 주면 trial이 로그인 토큰을 붙여 실제 판정에 도달하고 승격한다")
+    void req013_authFlagsAreWiredIntoTrialInvoke() throws Exception {
+        Path tripleStore = tempDir.resolve("secured-auth-triples");
+        Path endpointDir = securedFixture(tripleStore);
+        Path happySeeds = writeHappySeeds();
+
+        int exitCode = BuilderCli.runTrial(securedOptions(tripleStore, happySeeds, Map.of(
+                "--auth-login-path", "/api/auth/login",
+                "--auth-user", "admin",
+                "--auth-pass", "password")));
+
+        assertThat(exitCode)
+                .as("토큰이 붙으면 403이 사라지고 후보가 2xx 판정으로 승격되어 exit 0이어야 한다")
+                .isEqualTo(0);
+        assertThat(endpointDir.resolve("promoted").resolve("cand-01")).isDirectory();
+        assertThat(endpointDir.resolve("failed"))
+                .as("403으로 인한 실패 후보가 하나도 없어야 한다")
+                .doesNotExist();
     }
 }
