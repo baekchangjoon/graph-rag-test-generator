@@ -49,7 +49,7 @@ RestAssured 블랙박스 테스트를 생성한다. 그러나 **다중 가드(�
 | D3 | 탐색 확정 경유(무-fabrication) | 합성 삼중은 후보일 뿐. TC에 들어가는 것은 **확정 run의 관측물**(capturedSql·httpExchanges·seeds)뿐 |
 | D4 | LLM 사후 게이트 + 갭 타게팅 | base happy 실패가 발화 조건. Phase A에서는 갭필이 오프라인(사람 또는 에이전트 수동)으로만 수행되고, **자동 LLM 호출은 Phase B에서 도입**(§3.2·§10) |
 | D5 | trial 루프는 out-of-process | in-process(@SpringBootTest/@WebMvcTest) 시험은 기각(§9). 부팅된 SUT에 캡처-off 경량 invoke로 시험, 성공 시 캡처-on 확정 run 1회 |
-| D6 | 성공 기준 | order-service 깊은-happy fixture(CI 강제) + petclinic 잔여 분기 실측(확증) |
+| D6 | 성공 기준 | order-service 깊은-happy fixture(CI 강제) + 외부 SUT 2xx 도달 실측(확증) — 2026-07-28 개정, 아래 각주 |
 | D7 | 캐시-커밋 모델 | 성공(promoted) 삼중을 repo에 커밋. CI·재실행은 커밋된 후보를 결정적으로 소비 — 에이전트는 새 갭 발생 시에만 재투입. promoted 커밋은 **표준 PR 리뷰 게이트 대상**이며 라이프사이클은 §5.4 |
 
 ## 3. 아키텍처
@@ -371,8 +371,25 @@ invoices/quotas, 커밋 b60b9a3)을 본 브랜치로 cherry-pick해 착륙시킨
 | ID | 기준 |
 |---|---|
 | E2E-B1 | 스킬 3종을 실제 에이전트가 수행해 fixture 깊은-happy를 갭필→trial→승격 완주(마커만 채웠는지 diff 확인) |
-| E2E-B2 | petclinic 동일-jar A/B — 잔여 분기(145/253) 대비 상승폭 실측, `coverage-progress.md` 갱신 |
+| E2E-B2 | 동일-jar A/B — **대상 엔드포인트의 2xx 도달 여부** 실측, `coverage-progress.md` 갱신 (2026-07-28 개정 — 아래 각주) |
 | E2E-B3 | 실 SUT attach에서 seed 기본 off·이중 opt-in 플래그 경계 동작 확인(§8 — 스텁은 attach 미지원이므로 범위 외) |
+
+> **E2E-B2 개정 각주(2026-07-28).** 최초 정의는 "petclinic 동일-jar A/B로 잔여 분기(145/253)
+> 대비 상승폭 실측"이었다. 실증 실행 #1이 **대상과 지표 양쪽에서 측정 불가**임을 확정해 둘 다
+> 개정했다:
+> - **대상 petclinic → tainted-spring `mindgraph`.** petclinic의 두 대상 EP는 마커 계약 안에서
+>   승격 가능한 후보를 원리적으로 만들 수 없음이 정적 조사 + 라이브 대조 실험으로 확정됐다
+>   (enum을 중첩 객체로 생성 → 400 확정, unguarded 조합 폭발로 오라클 산출물 전량 폐기).
+>   고수하면 "미충족"이 아니라 **영구 측정 불가**가 된다.
+> - **지표 `coveredAppBranches` 순증 → 엔드포인트 2xx 도달.** 분기 커버리지는 탐색 예산·무관
+>   엔드포인트 변동에 함께 흔들려 Phase A가 연 경로와 노이즈를 분리하지 못한다. 분기 수는
+>   **보조 지표로 유지**한다.
+>
+> **개정이 감추지 않는 것:** petclinic 145/253은 이 개정으로 갱신되지 않았고, D6가 원래 겨냥한
+> "잔여 분기를 얼마나 여는가"는 **여전히 답이 없다**. 실측 대상 EP는 `totalBranches: 0`이라
+> 보조 지표가 원리적으로 움직일 수 없다는 점도 함께 기록한다. 상세 근거·실측:
+> [요구사항명세 REQ-029 개정 콜아웃](../requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md),
+> [실증 절차서 § E2E-B2 실행 기록](../reports/2026-07-26-triple-synthesis-manual-evidence.md).
 
 ### 11.4 내부 루프 (unit TDD)
 

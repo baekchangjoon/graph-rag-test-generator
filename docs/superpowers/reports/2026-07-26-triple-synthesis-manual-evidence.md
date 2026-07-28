@@ -552,16 +552,24 @@ docker ps -a --filter status=exited (전체)            → 0건
 
 ---
 
-## E2E-B2 — petclinic 커버리지 실측 (REQ-029)
+## E2E-B2 — 커버리지 실측 (REQ-029)
 
-### 목적·수용기준 (요구사항명세 원문)
+### 목적·수용기준 (요구사항명세 원문 — 2026-07-28 개정판)
 
-> Given 동일 petclinic jar, When 현행 vs Phase A 빌드 A/B, Then coveredAppBranches가 **145 대비
-> 순증**하거나, 순증하지 않으면 **원인 분석이 coverage-progress.md에 첨부**된 경우에만 green으로
-> 판정한다(무조건 기록=green 금지).
+> Given 동일 SUT jar, When 현행 vs Phase A 빌드 A/B, Then **대상 엔드포인트가 A에서 2xx 미도달이고
+> B에서 2xx 도달**하거나, 도달하지 않으면 **원인 분석이 coverage-progress.md에 첨부**된 경우에만
+> green으로 판정한다(무조건 기록=green 금지). 보조 지표로 `coveredAppBranches` 변화를 함께 기록한다.
 
 검증 레벨: manual (주기 실증). 측정 방식은 `docs/coverage-progress.md` "측정 방식"과 동일 원칙
 (동일 jar, 도구 버전만 A/B) — 이 절차는 그 원칙을 이번 Phase A 변경에 적용한다.
+
+> **⚠️ 개정 전 기준으로 판정하지 말 것.** 최초 수용기준은 "petclinic `coveredAppBranches`가 145
+> 대비 순증"이었고, 아래 §절차와 §판정 기준도 그 전제로 쓰여 있었다. 실증 실행 #1이 대상·지표
+> 양쪽에서 측정 불가임을 확정해 **대상을 tainted-spring으로, 지표를 2xx 도달로 개정**했다(근거:
+> [요구사항명세 REQ-029 개정 콜아웃](../requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md),
+> [설계명세 E2E-B2 개정 각주](../specs/2026-07-26-agent-skill-triple-synthesis-design.md)).
+> **아래 §절차의 petclinic 커맨드와 §판정 기준의 `> 145` 분기는 실행 #1 당시의 기록으로만 읽고,
+> 재실행할 때는 §실행 #2가 실제로 사용한 tainted-spring 절차와 개정 판정 기준을 따른다.**
 
 ### 사전조건
 
@@ -650,6 +658,15 @@ python3 -c "import json; print(json.load(open('.work/e2e-b2-phaseA/exploration-r
 남긴다 — 다르면 "동일 jar A/B"가 아니므로 판정 자체가 무효다.
 
 ### 판정 기준 (요구사항명세 수용기준 재확인, 무조건 기록=green 금지)
+
+**[개정판 — 이것을 따른다]**
+
+- **대상 EP가 A에서 2xx 미도달 → B에서 2xx 도달** → **green**. `coveredAppBranches` 변화도 함께
+  기록하되, 그 값이 움직이지 않는 것 자체는 RED 사유가 아니다(대상 EP의 `totalBranches`가 0이면
+  원리적으로 움직일 수 없다 — 실행 #2가 그 경우였다).
+- **B에서도 2xx 미도달** → 원인 분석을 반드시 첨부해야만 **green**으로 판정한다.
+
+**[구판 — 실행 #1 판정에만 적용, 재실행 시 사용 금지]**
 
 - `coveredAppBranches(B) > 145` → **green**, 상승폭을 `docs/coverage-progress.md`에 기록.
 - `coveredAppBranches(B) <= 145`(순증 없음) → 원인 분석을 반드시 첨부해야만 **green**으로 판정한다
@@ -933,7 +950,7 @@ REQ-029 개정 콜아웃).
   load 256 → 8. 실행 #1의 90초 health timeout 문제는 재현되지 않았다(SUT가 즉시 기동).
 - **후보 생성 불가**: mindgraph는 평면 스칼라 body·단일 테이블 EXISTS 가드라 실행 #1이 지적한
   결함 A(enum 중첩)/D(조합 폭발)에 걸리지 않는다. 대신 **읽기 엔드포인트에서만 발현하는 결함
-  6건**이 새로 드러나 전부 수정했다(커밋 `60ecb4b`, `19b4270`, `a3f90af` — 아래 §드러난 결함).
+  10건**이 새로 드러나 전부 수정했다(커밋 `60ecb4b`, `19b4270`, `a3f90af` — 아래 §드러난 결함).
 
 ##### A/B 결과
 
@@ -945,10 +962,15 @@ REQ-029 개정 콜아웃).
 | `get-internal-graphs-user-userid` | 404만 | 404만 (Redis 캐시 — `seed.sql` 채널 없음, 변화 없음) |
 | `coveredAppBranches` | 0/28 | 0/28 |
 
-**판정: GREEN.** 개정된 수용기준("A에서 2xx 미도달 → B에서 2xx 도달")을 충족한다. 이 엔드포인트는
-이 프로젝트 이력상 **한 번도 2xx가 관측된 적이 없다** — 기존 블랙박스 아카이브의 생성 테스트
-4건이 전부 404 단언이고, 유일한 500 케이스는 재생 불가 시드로 격리돼 있다
-(`graphrag-blackbox/KNOWN-LIMITATIONS.md`).
+**판정: GREEN.** 개정된 수용기준("A에서 2xx 미도달 → B에서 2xx 도달")을 충족한다. **판정 근거는
+같은 실행의 A(404만) / B(200) 대조 그 자체**이며, 아래 "이력상 최초"는 그 판정에 필요하지 않은
+보조 서술이다.
+
+> **보조 서술(이 저장소에서는 검증 불가).** 이 엔드포인트는 과거에도 2xx가 관측된 적이 없는
+> 것으로 보인다 — tainted-spring `mindgraph` 레포에 동봉된 블랙박스 아카이브
+> (`graphrag-blackbox/README.md`·`KNOWN-LIMITATIONS.md`, **이 저장소가 아니라 그 외부 레포의
+> 파일**)의 생성 테스트 4건이 전부 404 단언이고 유일한 500 케이스는 재생 불가 시드로 격리돼
+> 있다. 이 저장소만으로는 확인할 수 없으므로 판정 근거로 쓰지 않는다.
 
 **보조 지표는 움직이지 않았다(0/28 유지).** 축소해 적지 않는다 — 이 두 엔드포인트는
 `totalBranches: 0`이라 분기 커버리지가 원리적으로 움직일 수 없다. 지표를 2xx 도달로 개정한
@@ -970,7 +992,7 @@ build --triple-candidates → tripleAdopted=true, path s200-1 status=200
 작동한 증거다. `nodes_json`이 유효한 JSON이어야 한다는 것은 스키마(TEXT NOT NULL)로는 알 수 없고
 핸들러의 `objectMapper.readValue` 호출에서만 드러나는 사실이다.
 
-##### 드러난 결함 6건 (전부 "읽기 엔드포인트" 조건에서만 발현 — POST 픽스처 테스트를 모두 통과하고 있었다)
+##### 드러난 결함 10건 (전부 "읽기 엔드포인트" 조건에서만 발현 — POST 픽스처 테스트를 모두 통과하고 있었다)
 
 | # | 결함 | 증상 | 커밋 |
 |---|---|---|---|
