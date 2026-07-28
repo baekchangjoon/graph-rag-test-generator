@@ -357,7 +357,7 @@
 | REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟢 green (실증 실행 #2)[^req027-e2e-b1-run2] (실행 #1은 RED[^req027-e2e-b1-run1]) |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | 커버리지 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟢 green (실행 #2 — mindgraph 2xx 도달)[^req029-e2e-b2-run2] |
-| REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
+| REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟢 green (실행 #1 — 4/4 조합)[^req030-e2e-b3-run1] |
 | REQ-037 | negative-validation 파생 TC의 FK 시드 누락 | LookupSucceededOutcomeTest#derivedFailurePathInheritsSeedFromProvenSiblingKeyValue + GeneratorProvenSeedInheritanceTest + `e2e/run-e2e.sh`(tests=85 failures=0) | E2E black-box | 🟢 green[^req037-fixed][^envelope-inheritance-boundary] |
 | — | Phase B: LLM 갭필 자동화 | (별도 spec) | — | 🔵 out-of-scope |
 | — | Phase C: attach egress 라우팅 | (백로그) | — | 🔵 out-of-scope |
@@ -564,34 +564,40 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 36/37 green (97%), 1 partial(🟡 REQ-030) — manual Should.
+Coverage: 37/37 green (100%) — 대상 요구사항 전부 green.
 target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
 
-> **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
+> **✅ Must 완료 정의 충족 / ✅ 대상 37개 100% green(2026-07-28 갱신):** 이 명세의 완료 정의인 "**Must 100%
 > green**"은 **충족됐다** — Must **33개**가 전부 🟢이다. Phase A 후속 작업이 마지막 두 Must를 해소했다:
 > **REQ-032**(1/3, `ValueRef.derivedFrom` 스키마 확장 + `TripleSynthesizer` 채움 슬롯 통합 + CLI 오라클
 > 배선, `[^derived-half]`/`[^req032-level]` 참조)와 **REQ-036**(2/3, `.graphrag/triples` 기본 경로를
 > 세 서브커맨드 단일 소스로 통일 + `run-e2e.sh`를 `--triple-store`로 정정, `[^req036-done]` 참조).
 >
 > **분모가 34 → 33으로 바뀐 이유를 함께 읽어야 한다:** REQ-027(에이전트 완주 실증)은 원래 `우선순위:
-> Must`로 정의돼 있었고 🟡다. 즉 재분류 전 실제 수치는 **Must 33/34**였으며, 이전 판(이 콜아웃의
+> Must`로 정의돼 있었고 당시 🟡였다. 즉 재분류 전 실제 수치는 **Must 33/34**였으며, 이전 판(이 콜아웃의
 > 직전 버전)이 REQ-027을 근거 없이 "manual Should"로 서술해 **34/34로 과대 표기한 것은 오류**였다.
 > 이번에 REQ-027의 우선순위 자체를 Should로 재분류하고 그 근거를 `[^req027-reclass]`에 명시해
 > 표기와 실제를 일치시켰다(요구사항 삭제·완화가 아니라 분류 정정 — REQ-027은 매트릭스와 전체
 > 분모에 그대로 남는다).
 >
-> **남은 미완 2건은 REQ-029/030이며 둘 다 manual Should**다. **REQ-029는 2026-07-28 실증
-> 실행 #1이 🔴 RED**다(`[^req029-e2e-b2-run1]`) — 머신 과부하로 A/B 빌드가 3회 모두 SUT 부팅에
-> 실패했고, 그와 별개로 petclinic에서는 승격 가능한 트리플 후보를 **구조적으로 만들 수 없음**이
-> 정적으로 확정됐다. **"순증 없음"이 아니라 "효과 미측정"이며, "Phase A가 효과 없음"으로 읽으면
-> 오독이다.** REQ-030은 🟡(절차서 작성 완료, 실증 세션 실행만 남음,
-> `[^task19-manual-procedures]`). **REQ-027은 🟢로 전환됐다**: 2026-07-28 실증
-> 실행 #1이 RED였고(`[^req027-e2e-b1-run1]`), 그 RED가 지목한 두 차단 원인(독립 `trial` CLI의
-> 인증 배선 누락 `fa2f45a`, `synthesize-triple`의 body/stub 형상 결함 `07d8ced`)을 코드로 고친
-> 뒤 **실행 #2가 GREEN**이다(`[^req027-e2e-b1-run2]` — promoted 생성 + 마커 외 변경 없음(사람
-> diff + T1 기계 확인) + 기록). 따라서 "대상 37개 100% green"이라는 더 넓은 목표는 아직
-> 충족되지 않았고(REQ-029/030 잔여), Phase A를 "전부 완료"로 선언하려면 그 2건이 필요하다.
-> Must 기준 완료와 전체 기준 완료를 구분해 읽어야 한다.
+> **남은 미완 2건이던 REQ-029/030도 2026-07-28에 모두 해소돼 대상 37개가 전부 🟢이 됐다.**
+>
+> - **REQ-027 🟢** — 실증 실행 #1이 RED(`[^req027-e2e-b1-run1]`)였고, 그 RED가 지목한 두 차단
+>   원인(독립 `trial` CLI의 인증 배선 누락 `fa2f45a`, `synthesize-triple`의 body/stub 형상 결함
+>   `07d8ced`)을 코드로 고친 뒤 **실행 #2가 GREEN**이다(`[^req027-e2e-b1-run2]`).
+> - **REQ-029 🟢** — 실행 #1은 RED였다(`[^req029-e2e-b2-run1]`: 머신 과부하로 A/B 빌드 3회 실패
+>   + petclinic에서는 승격 가능한 후보를 **구조적으로** 만들 수 없음이 정적으로 확정). 그 RED가
+>   지목한 두 차단 원인을 각각 해소하고(부하 원인 프로세스 정리, 대상 SUT를 tainted-spring
+>   `mindgraph`로 교체 + 지표를 "엔드포인트 2xx 도달"로 개정) **실행 #2가 GREEN**이다
+>   (`[^req029-e2e-b2-run2]`). 이 과정에서 **읽기 엔드포인트에서만 발현하는 결함 10건**이 드러나
+>   전부 수정됐다.
+> - **REQ-030 🟢** — 실 attach 환경에서 플래그 4조합을 각각 독립 실행해 REQ-023 경계가 재현됨을
+>   확인했다(`[^req030-e2e-b3-run1]`).
+>
+> **다만 "전부 완료"의 의미를 정확히 읽어야 한다.** 이 100%는 **이 명세가 대상으로 삼은 37개**
+> 기준이다. 🔵로 분모에서 제외한 Phase B(LLM 갭필 자동화)·Phase C(attach egress 라우팅)는 그대로
+> 미착수이며, REQ-029의 보조 지표(`coveredAppBranches`)는 측정 대상 엔드포인트가
+> `totalBranches: 0`이라 움직이지 않았다 — **petclinic의 145/253은 이번 실증들로 갱신되지 않았다.**
 
 Task 15가
 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢
@@ -673,6 +679,20 @@ body에 갭 마커 0개(422), `post-api-fulfillment`는 가드 피연산자 `par
 `post-api-quotas`(동적 키 Map 루트 → 마커 계약상 표현 불가)와 `post-api-fulfillment`(독립 `trial`
 CLI가 stub 등록을 항상 skip)가 각각 구조적 한계를 갖기 때문이며, 그 근거도 절차서에 기록했다.
 이번 실행이 새로 드러낸 문서 부정확 4건(스킬 2건 + 절차서 2건)은 같은 커밋에서 정정했다.
+
+[^req030-e2e-b3-run1]: **E2E-B3 실증 실행 #1(2026-07-28) 판정 = GREEN(4/4 조합).**
+`samples/order-service` + `e2e/docker-compose.yml`을 attach 대상으로, 커밋된
+`e2e/triples/post-api-transfers` 픽스처를 재사용해 플래그 4조합을 각각 독립 실행했다. 0개/1개
+조합(3회)은 전부 `attach seed gate closed(REQ-023 이중 opt-in 미충족)`로 차단되고 누락 플래그
+목록이 조합별로 정확히 달랐으며(`둘 다` / `--confirm-non-production`만 / `--attach-allow-seed`만),
+`exploration-report.json`의 `tripleRejected`가 `{"attach-seed-gate-closed":1}`이었다. 2개 조합에서는
+그 로그가 **나오지 않고** 거부 사유가 `{"attach-stub-inapplicable":1}`로 **바뀌었다** — seed 게이트를
+통과해 다음 단계까지 진행했다는 뜻이며, 차단된 후보는 그 단계에 도달하지 않으므로 이것이 REQ-023
+경계의 실 환경 재현이다. 2개 조합의 `status=500`은 결함이 아니라 REQ-025(attach는 스텁 등록을
+전혀 시도하지 않음 — attach egress 라우팅은 Phase C 백로그)의 설계된 귀결이고, CI(AttachStubSkipIT)로만
+확인되던 그 동작이 실 attach 환경에서도 재현됨이 함께 실증됐다. 누수 검증 게이트 통과(compose
+project/컨테이너/볼륨 잔존 0). 전체 기록은
+[절차서 § E2E-B3 실행 기록](../reports/2026-07-26-triple-synthesis-manual-evidence.md).
 
 [^req029-e2e-b2-run2]: **E2E-B2 실증 실행 #2(2026-07-28) 판정 = GREEN.** 대상 SUT를 petclinic에서
 tainted-spring `mindgraph`로 교체하고 지표를 "엔드포인트 2xx 도달"로 개정한 뒤 재실행했다(개정 근거는
