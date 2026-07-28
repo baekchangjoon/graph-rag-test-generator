@@ -267,12 +267,29 @@
 
 ### 확증 실측 (수동/주기)
 
-### REQ-029 — petclinic 커버리지 실측 (E2E-B2)
+### REQ-029 — 커버리지 실측 (E2E-B2)
 - 유형: Non-functional / 우선순위: Should
-- 설명: petclinic 동일-jar A/B로 잔여 분기(145/253) 대비 변화를 실측하고 `coverage-progress.md`를 갱신한다.
+- 설명: 동일-jar A/B로 현행 대비 Phase A의 효과를 실측하고 `coverage-progress.md`를 갱신한다.
 - 수용기준:
-  - Given 동일 petclinic jar, When 현행 vs Phase A 빌드 A/B, Then coveredAppBranches가 **145 대비 순증**하거나, 순증하지 않으면 **원인 분석이 coverage-progress.md에 첨부**된 경우에만 green으로 판정한다(무조건 기록=green 금지).
+  - Given 동일 SUT jar, When 현행 vs Phase A 빌드 A/B, Then **대상 엔드포인트가 A에서 2xx 미도달이고 B에서 2xx 도달**하거나, 도달하지 않으면 **원인 분석이 coverage-progress.md에 첨부**된 경우에만 green으로 판정한다(무조건 기록=green 금지). 보조 지표로 `coveredAppBranches` 변화를 함께 기록한다.
 - 검증 레벨: manual (주기 실증)
+
+> **[개정 — 2026-07-28] 측정 대상과 지표를 함께 바꿨다.**
+>
+> **대상: petclinic → tainted-spring.** petclinic은 남은 가드가 `||` 결합 INPUT-only 범위 검사뿐이고
+> 동적 키 `Map` body가 있어 마커 계약으로 표현할 수 없는 엔드포인트가 섞여 있다 — 삼중 채널
+> 라우팅의 효과가 원리적으로 나타날 수 없는 표면이다(실증 실행 #1이 이를 확인).
+>
+> **지표: `coveredAppBranches` 순증 → 엔드포인트 2xx 도달 여부.** 분기 커버리지는 탐색 예산·시드
+> 품질·무관한 엔드포인트의 변동에 함께 흔들려, Phase A가 연 경로와 노이즈를 분리할 수 없다.
+> "A에서 열리지 않던 엔드포인트가 B에서 열렸는가"가 삼중 합성이 겨냥한 것을 직접 잰다. 분기 수는
+> 버리지 않고 보조 지표로 남긴다.
+>
+> **선행 게이트(완료).** 이 개정은 도구가 실제 서비스의 가드를 볼 수 있다는 전제 위에 선다.
+> tainted-spring 정적 조사가 그 전제가 깨져 있음을 드러냈고(24개 EP 교차 가드 0건), 원인인
+> 인덱서 결함 3건을 커밋 `60ecb4b`에서 수정해 `mindgraph`/`diary`/`community` 3/3에서
+> INPUT×DB_READ 교차 가드가 나타나는 것을 확인했다. 상세는
+> [tainted-spring 벤치마크 조사 §5.0](../reports/2026-07-28-tainted-spring-benchmark-survey.md).
 
 ### REQ-030 — attach 경계 수동 확인 (E2E-B3)
 - 유형: Functional / 우선순위: Should
