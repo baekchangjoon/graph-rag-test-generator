@@ -13,8 +13,31 @@ public record ProvenanceReport(
         String endpointId,
         List<GuardFact> guards,
         List<UnguardedField> unguarded,
-        List<Unresolved> unresolved
+        List<Unresolved> unresolved,
+        /**
+         * <b>컬렉션 dot-path 접두사 목록</b>(REQ-005/034). {@code jsonPath}의 대표원소 규약은
+         * {@code List<LineItem> lineItems}의 원소 필드를 bracket 없이 {@code "lineItems.sku"}로
+         * 평탄화하므로, dot-path만 보면 {@code lineItems}가 중첩 <b>객체</b>인지 <b>배열</b>인지
+         * 구분할 수 없다. 그 정보를 잃지 않도록 인덱서가 컬렉션으로 판정한 경로를 여기에 그대로
+         * 싣는다 — {@link TripleSynthesizer}는 이 목록에 있는 접두사에서만 JSON 배열(대표원소 1개)을
+         * 만들고, 나머지는 종전대로 중첩 객체를 만든다. 이 정보 없이 합성하면
+         * {@code {"lineItems":{"sku":…}}}처럼 SUT DTO와 형상이 어긋난 body가 나와 400이 된다.
+         *
+         * <p>구 리포트(이 필드가 없는 JSON)를 역직렬화하면 null이 들어오므로 compact 생성자가
+         * 빈 리스트로 정규화한다 — 그 경우 합성은 배열을 만들지 않는 종전 동작으로 폴백한다.
+         */
+        @JsonInclude(JsonInclude.Include.NON_EMPTY) List<String> collectionPaths
 ) {
+
+    public ProvenanceReport {
+        collectionPaths = collectionPaths == null ? List.of() : List.copyOf(collectionPaths);
+    }
+
+    /** 4-arg 호환 생성자 — collectionPaths를 모르는 기존 호출부(테스트 fixture 등)용. */
+    public ProvenanceReport(String endpointId, List<GuardFact> guards,
+                            List<UnguardedField> unguarded, List<Unresolved> unresolved) {
+        this(endpointId, guards, unguarded, unresolved, List.of());
+    }
 
     /**
      * 가드 사실: 호출 위치, 연산, 피연산자들.

@@ -212,8 +212,13 @@ public class ProvenanceIndexer {
             }
         }
 
-        List<UnguardedField> unguarded = collectUnguardedFields(handler, referencedInputPaths, model);
-        return new ProvenanceReport(endpoint.id(), guards, unguarded, unresolved);
+        // REQ-005 body 형상: 대표원소 규약으로 평탄화된 dot-path는 배열/객체를 구분하지 못하므로,
+        // 컬렉션으로 판정한 접두 경로를 리포트에 함께 싣는다(합성이 배열을 만들 유일한 근거).
+        Set<String> collectionPaths = new LinkedHashSet<>();
+        List<UnguardedField> unguarded =
+                collectUnguardedFields(handler, referencedInputPaths, model, collectionPaths);
+        return new ProvenanceReport(endpoint.id(), guards, unguarded, unresolved,
+                List.copyOf(collectionPaths));
     }
 
     // ---- unguarded 필드 탐지(REQ-001) ----
@@ -225,13 +230,14 @@ public class ProvenanceIndexer {
      * 없으면(예: body 없는 GET) 빈 리스트.
      */
     private List<UnguardedField> collectUnguardedFields(CtMethod<?> handler, Set<String> referencedInputPaths,
-                                                         CtModel model) {
+                                                         CtModel model, Set<String> collectionPaths) {
         CtParameter<?> bodyParam = findRequestBodyParam(handler);
         if (bodyParam == null) {
             return List.of();
         }
         List<UnguardedField> out = new ArrayList<>();
-        collectFieldPaths(bodyParam.getType(), "", model, referencedInputPaths, out, new LinkedHashSet<>());
+        collectFieldPaths(bodyParam.getType(), "", model, referencedInputPaths, out,
+                new LinkedHashSet<>(), collectionPaths);
         return out;
     }
 
@@ -257,15 +263,20 @@ public class ProvenanceIndexer {
      */
     private void collectFieldPaths(CtTypeReference<?> type, String path, CtModel model,
                                    Set<String> referencedInputPaths, List<UnguardedField> out,
-                                   Set<String> visitedTypeFqns) {
+                                   Set<String> visitedTypeFqns, Set<String> collectionPaths) {
         if (type == null) {
             return;
         }
         String simpleName = type.getSimpleName();
         if (LIST_LIKE_TYPES.contains(simpleName)) {
+            // 대표원소 규약(REQ-034)은 세그먼트를 추가하지 않고 원소 타입으로 이어가므로, 여기서
+            // path가 "이 아래는 배열 원소"라는 사실을 기록해 두지 않으면 dot-path에서 영영 잃는다.
+            if (!path.isEmpty()) {
+                collectionPaths.add(path);
+            }
             if (!type.getActualTypeArguments().isEmpty()) {
                 collectFieldPaths(type.getActualTypeArguments().get(0), path, model,
-                        referencedInputPaths, out, visitedTypeFqns);
+                        referencedInputPaths, out, visitedTypeFqns, collectionPaths);
             }
             return;
         }
@@ -285,7 +296,8 @@ public class ProvenanceIndexer {
         if (declared instanceof CtRecord record) {
             for (var component : record.getRecordComponents()) {
                 String childPath = path.isEmpty() ? component.getSimpleName() : path + "." + component.getSimpleName();
-                collectFieldPaths(component.getType(), childPath, model, referencedInputPaths, out, visitedTypeFqns);
+                collectFieldPaths(component.getType(), childPath, model, referencedInputPaths, out,
+                        visitedTypeFqns, collectionPaths);
             }
         } else {
             for (CtMethod<?> m : declared.getMethods()) {
@@ -294,7 +306,8 @@ public class ProvenanceIndexer {
                     continue;
                 }
                 String childPath = path.isEmpty() ? field : path + "." + field;
-                collectFieldPaths(m.getType(), childPath, model, referencedInputPaths, out, visitedTypeFqns);
+                collectFieldPaths(m.getType(), childPath, model, referencedInputPaths, out,
+                        visitedTypeFqns, collectionPaths);
             }
         }
         visitedTypeFqns.remove(fqn);
@@ -1032,6 +1045,15 @@ public class ProvenanceIndexer {
      * accessor, 예: {@code req.amount()} → {@code "amount"}). 어느 쪽도 아니면 null.
      */
     private static String getterFieldName(String methodName, CtExpression<?> target, CtModel model) {
+        if (isLibraryLeafTarget(target)) {
+            // 컨테이너/스칼라 라이브러리 타입에는 DTO 필드가 없다 — 여기서 getFoo/isFoo 관례를 적용하면
+            // 실재하지 않는 dot-path를 만들어낸다(예: List.isEmpty() → "lineItems.empty",
+            // Map.isEmpty() → "empty", String.isEmpty() → "note.empty"). 그런 유령 경로는 INPUT
+            // 피연산자로 리포트에 실려 합성 단계에서 SUT DTO에 없는 body 필드를 만들게 하므로,
+            // 여기서 관례 적용을 끊고 UNKNOWN으로 강등한다(원소/키 접근 .get(...)은 호출부의
+            // collectionElementSegment가 이미 앞서 처리한다).
+            return null;
+        }
         if (methodName.startsWith("get") && methodName.length() > 3) {
             return decapitalize(methodName.substring(3));
         }
@@ -1044,6 +1066,31 @@ public class ProvenanceIndexer {
         }
         return null;
     }
+
+    /**
+     * {@code target}의 정적 타입이 <b>필드를 가질 수 없는 라이브러리 리프</b>(컬렉션/Map/JDK 스칼라)인지.
+     * 타입을 알 수 없으면 false(보수적으로 기존 동작 유지).
+     */
+    private static boolean isLibraryLeafTarget(CtExpression<?> target) {
+        CtTypeReference<?> type = target == null ? null : target.getType();
+        if (type == null) {
+            return false;
+        }
+        String simpleName = type.getSimpleName();
+        return LIST_LIKE_TYPES.contains(simpleName) || MAP_LIKE_TYPES.contains(simpleName)
+                || SCALAR_LEAF_TYPES.contains(simpleName);
+    }
+
+    /**
+     * DTO가 아닌 JDK 스칼라 타입명(단순명 기준) — 이 타입 위의 {@code getX()}/{@code isX()}는 필드
+     * 접근자가 아니라 라이브러리 API다({@code String.isEmpty()}, {@code BigDecimal.intValue()} 등).
+     */
+    private static final Set<String> SCALAR_LEAF_TYPES = Set.of(
+            "String", "Boolean", "boolean", "Character", "char",
+            "Byte", "byte", "Short", "short", "Integer", "int", "Long", "long",
+            "Float", "float", "Double", "double", "BigDecimal", "BigInteger",
+            "LocalDate", "LocalDateTime", "LocalTime", "Instant", "OffsetDateTime", "ZonedDateTime",
+            "UUID");
 
     private static String decapitalize(String s) {
         return Character.toLowerCase(s.charAt(0)) + s.substring(1);

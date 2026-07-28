@@ -58,7 +58,13 @@ triple-synthesis는 이 스킬의 산출물인 provenance-report.json을 필수�
 
 `provenance-report.json` — 엔드포인트별 가드 목록(`guards[]`, 각 가드의 위치·비교 연산자·
 피연산자들과 그 origin/javaType/semanticHint)과 `unresolved[]`(해석 실패 목록), `unguarded[]`
-(가드 미사용 필드 + semanticHint)를 담는다.
+(가드 미사용 필드 + semanticHint), `collectionPaths[]`를 담는다.
+
+`collectionPaths[]`는 **컬렉션 필드의 dot-path 접두사** 목록이다(예: `["lineItems"]`). 대표원소
+규약상 `List<LineItem> lineItems`의 원소 필드는 bracket 없이 `"lineItems.sku"`로 평탄화되므로,
+dot-path만으로는 그 자리가 중첩 객체인지 배열인지 알 수 없다 — 다음 단계(triple-synthesis)가
+`{"lineItems":[{…}]}`처럼 **배열**을 만들 유일한 근거가 이 목록이다. 이 목록이 비면 합성은
+중첩 객체로 폴백하므로, 요청 DTO에 컬렉션 필드가 있는데 여기가 비어 있으면 결함으로 보고하라.
 
 ## unresolved / UNKNOWN 항목 처리 절차 (에이전트가 직접 판정)
 

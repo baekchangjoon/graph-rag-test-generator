@@ -91,6 +91,131 @@ class TripleSynthesizerIT {
                 .isGreaterThanOrEqualTo(bodyAmount);
     }
 
+    // ---- E2E-B1 실증(2026-07-28 RED)이 드러낸 body 형상 결함 회귀 ----
+
+    @Test
+    @DisplayName("REQ-005: collectionPaths의 접두 경로는 원소 1개짜리 JSON 배열로 합성되고, "
+            + "같은 접두사의 여러 리프는 그 대표원소 하나에 병합된다(객체로 나오면 SUT 400)")
+    void req005_collectionPathsBecomeJsonArraysWithMergedRepresentativeElement() {
+        ProvenanceReport report = new ProvenanceReport(
+                "fixture-endpoint", List.of(), List.of(
+                        new UnguardedField("lineItems.sku", "String", "free-text"),
+                        new UnguardedField("lineItems.amount", "int", "none")),
+                List.of(), List.of("lineItems"));
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+        ObjectNode body = candidate.body();
+
+        assertThat(body.get("lineItems").isArray())
+                .as("List<LineItem> 필드는 JSON 배열이어야 한다 — 대표원소 규약(REQ-034)의 dot-path만 보고 "
+                        + "객체로 쓰면 SUT의 Jackson 역직렬화가 400으로 실패한다")
+                .isTrue();
+        assertThat(body.get("lineItems")).as("대표원소 1개").hasSize(1);
+        assertThat(body.get("lineItems").get(0).has("sku")).isTrue();
+        assertThat(body.get("lineItems").get(0).has("amount"))
+                .as("같은 접두사의 두 리프는 배열을 두 번 만들지 않고 같은 대표원소에 쌓여야 한다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-005: collectionPaths가 비면(구 리포트) 종전대로 중첩 객체로 합성한다(하위호환)")
+    void req005_absentCollectionPathsKeepsLegacyNestedObjectBehaviour() {
+        ProvenanceReport report = new ProvenanceReport(
+                "fixture-endpoint", List.of(),
+                List.of(new UnguardedField("lineItems.sku", "String", "free-text")), List.of());
+
+        ObjectNode body = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0).body();
+
+        assertThat(body.get("lineItems").isObject()).isTrue();
+        assertThat(body.get("lineItems").has("sku")).isTrue();
+    }
+
+    @Test
+    @DisplayName("REQ-005: 라우팅이 값을 결정하지 못한 가드의 INPUT 피연산자도 body에 갭 마커로 존재한다 "
+            + "(컨테이너 타입 피연산자는 스칼라 슬롯을 만들지 않는다)")
+    void req005_everyGuardInputOperandGetsABodySlot() {
+        // invoices의 실제 가드 형상: `||` 결합 논리(컨테이너 lineItems) + `!=`(UNKNOWN sum vs INPUT total).
+        // 두 가드 모두 기존 라우팅으로는 값을 결정하지 못해 total이 body에서 통째로 누락됐다(400).
+        GuardFact combined = new GuardFact("InvoiceController.java:18", "||",
+                List.of(new ValueRef(Origin.INPUT, "lineItems", null, null, null, null, "List", null, null)));
+        GuardFact sumCheck = new GuardFact("InvoiceController.java:28", "!=",
+                List.of(new ValueRef(Origin.UNKNOWN, null, null, null, null, null, "int", null, null),
+                        new ValueRef(Origin.INPUT, "total", null, null, null, null, "int", null, null)));
+        ProvenanceReport report = new ProvenanceReport("post-api-invoices",
+                List.of(combined, sumCheck), List.of(), List.of(), List.of("lineItems"));
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.body().path("total").asText())
+                .as("가드가 읽는 INPUT 피연산자는 결정값이 없으면 갭 마커로라도 body에 있어야 한다")
+                .startsWith(TripleSynthesizer.GAP_MARKER_PREFIX);
+        assertThat(candidate.body().has("lineItems"))
+                .as("컨테이너 타입(List) 피연산자 자신은 스칼라 자리가 아니므로 배치하지 않는다 "
+                        + "(원소 필드 경로가 대신 채운다)")
+                .isFalse();
+        assertThat(candidate.notes()).contains("컨테이너 타입(List)");
+    }
+
+    @Test
+    @DisplayName("REQ-008: 라우팅 밖(결합 논리 등)에 있는 EXTERNAL_RESPONSE 피연산자도 stub 자리를 갖고, "
+            + "같은 callSite의 필드들은 한 mapping으로 병합된다")
+    void req008_allExternalOperandsGetMergedStubSlots() throws Exception {
+        GuardFact prefixGuard = new GuardFact("FulfillmentController.java:27", "||",
+                List.of(new ValueRef(Origin.EXTERNAL_RESPONSE, null, null, null,
+                        "GET /carriers/policy", "allowedPrefix", "String", null, null)));
+        GuardFact weightGuard = new GuardFact("FulfillmentController.java:32", ">",
+                List.of(new ValueRef(Origin.INPUT, "parcelWeight", null, null, null, null, "int", null, null),
+                        new ValueRef(Origin.EXTERNAL_RESPONSE, null, null, null,
+                                "GET /carriers/policy", "maxWeight", "int", null, null)));
+        ProvenanceReport report = new ProvenanceReport("post-api-fulfillment",
+                List.of(prefixGuard, weightGuard), List.of(), List.of());
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.stubMappings())
+                .as("같은 callSite의 두 응답 필드는 mapping 2개가 아니라 1개로 병합돼야 한다 "
+                        + "(SUT는 외부 호출을 한 번만 한다)")
+                .hasSize(1);
+        ObjectNode stub = candidate.stubMappings().get(0);
+        ObjectNode jsonBody = (ObjectNode) stub.get("response").get("jsonBody");
+        assertThat(jsonBody.path("allowedPrefix").asText())
+                .as("결합 논리 안의 EXTERNAL 피연산자는 값을 결정할 수 없으므로 갭 마커 자리가 생겨야 한다")
+                .startsWith(TripleSynthesizer.GAP_MARKER_PREFIX);
+        assertThat(jsonBody.path("maxWeight").isNumber())
+                .as("INPUT×EXTERNAL 비교 가드는 만족 쌍을 body/stub에 공동 배치한다(갭 마커가 아닌 결정값)")
+                .isTrue();
+        assertThat(candidate.body().path("parcelWeight").asInt())
+                .as("negate된 관계(> → <=)를 만족해야 한다")
+                .isLessThanOrEqualTo(jsonBody.get("maxWeight").asInt());
+        assertThat(stub.path("response").path("headers").path("Content-Type").asText())
+                .as("jsonBody 응답에는 Content-Type을 함께 등록해야 한다(없으면 RestTemplate 컨버터 선택 실패 → 500)")
+                .isEqualTo("application/json");
+        StubMapping.buildFrom(Json.mapper().writeValueAsString(stub));   // REQ-008 로더 호환 유지
+    }
+
+    @Test
+    @DisplayName("REQ-007: 가드는 있는데 배치 가능한 INPUT dot-path가 하나도 없으면(동적 키 Map body) "
+            + "빈 body를 조용히 내보내지 않고 합성 불가 사유를 notes에 남긴다")
+    void req007_emptyBodyWithGuardsIsLoudlyReported() {
+        GuardFact mapGuard = new GuardFact("QuotaController.java:17", "||",
+                List.of(new ValueRef(Origin.INPUT, "quotas", null, null, null, null, "Map", null, null)));
+        ProvenanceReport report = new ProvenanceReport(
+                "post-api-quotas", List.of(mapGuard), List.of(), List.of());
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.body().isEmpty()).isTrue();
+        assertThat(candidate.notes())
+                .as("조용한 축소 금지 — 채울 자리조차 없다는 사실이 notes에 남아야 한다")
+                .contains("경고(합성 불가)")
+                .contains("동적 키 Map");
+    }
+
     @Test
     @DisplayName("REQ-006: FK NOT NULL 부모 행 재귀 시딩 — 부모 INSERT가 자식보다 먼저, "
             + "NOT NULL 컬럼은 결정적 기본값으로 채워짐")

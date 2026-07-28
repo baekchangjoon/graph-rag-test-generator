@@ -50,10 +50,24 @@ import java.util.Set;
  * guard:<G>}} — 미상 필드는 {@code none}.
  *
  * <p><b>stubs.json = WireMock mapping 스키마(REQ-008):</b> {@code {"request":{"method","urlPath"},
- * "response":{"status","jsonBody"}}} — {@code HttpCaptureServer.loadStubs}가 쓰는
+ * "response":{"status","headers","jsonBody"}}} — {@code HttpCaptureServer.loadStubs}가 쓰는
  * {@code StubMapping.buildFrom(json)}으로 그대로 로드 가능하다. {@code callSite}가
  * {@code "<HTTP메서드> <path>"} 형식이 아니면(class#method 폴백 등) stub을 만들지 않고 notes에 사유를
- * 남긴다.
+ * 남긴다. 같은 {@code callSite}의 여러 응답 필드는 <b>한 mapping</b>으로 병합하고,
+ * {@code Content-Type: application/json}을 함께 등록한다.
+ *
+ * <p><b>body 형상 불변식(E2E-B1 실증 2026-07-28 RED에서 도출):</b>
+ * <ul>
+ *   <li><b>컬렉션은 배열로</b> — {@link ProvenanceReport#collectionPaths()}에 있는 접두 경로는 원소
+ *       1개짜리 JSON 배열로 만들고 그 대표원소 안에 리프를 쌓는다. 대표원소 규약(REQ-034)이
+ *       {@code List<LineItem>}의 원소 필드를 {@code "lineItems.sku"}로 평탄화하므로 이 정보 없이는
+ *       배열이 객체가 되어 SUT 역직렬화가 400으로 실패한다.</li>
+ *   <li><b>가드의 INPUT 피연산자는 반드시 body에</b> — 라우팅이 값을 결정하지 못한 자리(결합 논리
+ *       {@code ||}, 상대 피연산자가 DB/EXTERNAL이 아닌 비교 등)도 갭 마커 슬롯으로 남긴다. 컨테이너
+ *       타입 피연산자 자신은 스칼라 자리가 아니므로 제외한다(원소 필드가 대신 채운다).</li>
+ *   <li><b>가드의 EXTERNAL_RESPONSE 피연산자는 반드시 stub에</b> — 라우팅 밖에 있어도 갭 마커 자리를
+ *       확보한다. stub이 없으면 SUT가 실제 외부 호출을 내보내 5xx가 된다.</li>
+ * </ul>
  *
  * <p><b>DERIVED concolic 해 배치(REQ-032):</b> 가드 피연산자가 {@link Origin#DERIVED}(예:
  * {@code score * 2 == 84})이면 그 피연산자 자신은 body의 어느 한 필드가 아니므로 직접 배치할 수 없다.
@@ -147,8 +161,12 @@ public final class TripleSynthesizer {
     public List<TripleCandidate> synthesize(ProvenanceReport report, BodyShape shape,
                                             List<TableSchema> tables, InputCandidates oracle) {
         ObjectNode body = Json.mapper().createObjectNode();
-        List<ObjectNode> stubMappings = new ArrayList<>();
+        // callSite당 mapping 1개로 병합한다 — 같은 외부 호출의 응답에서 두 필드를 읽는 가드가 둘 있으면
+        // (예: policy.allowedPrefix()와 policy.maxWeight()) mapping을 두 개 만들 게 아니라 한 mapping의
+        // response.jsonBody에 두 필드를 모두 담아야 SUT가 한 번의 호출로 둘 다 받는다.
+        Map<String, ObjectNode> stubsByCallSite = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
+        Set<String> collectionPaths = new LinkedHashSet<>(report.collectionPaths());
         Map<String, TableSchema> tablesByName = new LinkedHashMap<>();
         for (TableSchema t : tables) {
             tablesByName.put(t.name(), t);
@@ -163,14 +181,21 @@ public final class TripleSynthesizer {
 
         for (GuardFact guard : report.guards()) {
             switch (guard.op()) {
-                case "EXISTS" -> routeExistsGuard(guard, primaryTable, tablesByName, rowsByTable, body, notes);
+                case "EXISTS" -> routeExistsGuard(guard, primaryTable, tablesByName, rowsByTable, body,
+                        collectionPaths, notes);
                 case "<", "<=", ">", ">=", "==", "!=" ->
-                        routeComparisonGuard(guard, tablesByName, rowsByTable, body, notes);
-                case "!" -> routeNegatedEqualityGuard(guard, stubMappings, notes);
+                        routeComparisonGuard(guard, tablesByName, rowsByTable, body, stubsByCallSite,
+                                collectionPaths, notes);
+                case "!" -> routeNegatedEqualityGuard(guard, stubsByCallSite, notes);
                 default -> notes.add("op '" + guard.op() + "' at " + guard.at()
                         + " — 결합 논리/미지원 가드 라우팅은 후속 task 범위(확장 지점)");
             }
         }
+
+        // 라우팅이 값을 결정하지 못한 EXTERNAL_RESPONSE 피연산자도 stub에 자리를 만든다(REQ-008).
+        // 가드가 외부 응답 필드를 읽는데 stubs.json이 비어 있으면, SUT는 stub되지 않은 실제 외부 호출을
+        // 내보내고 그 실패(연결 거부/타임아웃)가 5xx로 나타난다 — 후보가 어떤 값을 채우든 검증 불가.
+        ensureExternalStubSlots(report, stubsByCallSite, notes);
 
         List<String> seedSqlStatements = finalizeSeedRows(rowsByTable, tablesByName, notes);
 
@@ -181,8 +206,20 @@ public final class TripleSynthesizer {
                     + "개 필드 후보 보유 — 채움 슬롯(unguarded + DERIVED 파생 루트) 조합에 소비(REQ-032/REQ-033)");
         }
 
-        return buildCandidates(body, seedSqlStatements, stubMappings, notes,
-                fillSlots(report, body, notes), oracle);
+        List<FillSlot> slots = fillSlots(report, body, collectionPaths, notes);
+        if (body.isEmpty() && slots.isEmpty() && !report.guards().isEmpty()) {
+            // 조용한 축소 금지: 가드는 있는데 body가 비었다는 건 "채울 자리조차 없는" 후보라는 뜻이다.
+            // 대표 원인은 동적 키 Map을 @RequestBody 루트로 받는 핸들러(예: Map<String,Integer> quotas) —
+            // 갭 마커 계약(REQ-009: base와 candidate의 키 집합이 같아야 함)은 "에이전트가 키를 고르는"
+            // 자리를 표현할 수 없어, 이 형상은 현재 합성 범위 밖이다.
+            notes.add("경고(합성 불가): body가 비었고 채움 슬롯도 0개다 — 가드 " + report.guards().size()
+                    + "건이 있는데도 배치 가능한 INPUT dot-path가 하나도 없다. 동적 키 Map을 "
+                    + "@RequestBody 루트로 받는 핸들러가 대표 원인이며(키를 에이전트가 골라야 하는데 "
+                    + "마커 계약은 키 집합 변경을 허용하지 않는다), 이 후보는 그대로는 통과할 수 없다. "
+                    + "trial로 넘기지 말고 provenance 단계로 돌아가 판단하라.");
+        }
+        return buildCandidates(body, seedSqlStatements, new ArrayList<>(stubsByCallSite.values()), notes,
+                slots, collectionPaths, oracle);
     }
 
     /**
@@ -190,7 +227,8 @@ public final class TripleSynthesizer {
      * DERIVED 피연산자의 파생 루트 INPUT 필드(REQ-032). 가드 라우팅이 이미 {@code body}에 결정값을
      * 배치한 경로와, 앞서 등록된 슬롯과 중복되는 경로는 제외한다(같은 필드에 두 값을 쓰지 않는다).
      */
-    private static List<FillSlot> fillSlots(ProvenanceReport report, ObjectNode body, List<String> notes) {
+    private static List<FillSlot> fillSlots(ProvenanceReport report, ObjectNode body,
+                                            Set<String> collectionPaths, List<String> notes) {
         List<FillSlot> slots = new ArrayList<>();
         Set<String> claimed = new LinkedHashSet<>();
         for (UnguardedField field : report.unguarded()) {
@@ -205,7 +243,7 @@ public final class TripleSynthesizer {
                     continue;
                 }
                 for (String rootPath : v.derivedFrom()) {
-                    if (bodyHasPath(body, rootPath)) {
+                    if (bodyHasPath(body, rootPath, collectionPaths)) {
                         notes.add("derived(" + rootPath + ") at " + guard.at()
                                 + " — 다른 가드가 이미 body에 결정값을 배치함, concolic 해 배치 skip");
                         continue;
@@ -217,12 +255,46 @@ public final class TripleSynthesizer {
                 }
             }
         }
+        // REQ-005 불변식: **가드에 등장하는 INPUT 피연산자는 반드시 body에 존재한다.** 라우팅이 값을
+        // 결정한 자리는 이미 body에 있고, 결정하지 못한 자리(결합 논리 ||, DB_READ가 아닌 상대 피연산자,
+        // 지원 밖 op 등)는 여기서 갭 마커/오라클 결정값 슬롯이 된다. 이 스윕이 없으면 가드가 읽는 필드가
+        // body에서 통째로 누락돼(예: invoices의 total, fulfillment의 parcelWeight) SUT가 400/역직렬화
+        // 실패로 떨어지고, 에이전트가 채울 자리조차 없다.
+        for (GuardFact guard : report.guards()) {
+            for (ValueRef v : guard.operands()) {
+                if (v.origin() != Origin.INPUT || v.jsonPath() == null || v.jsonPath().isBlank()) {
+                    continue;
+                }
+                String path = v.jsonPath();
+                if (isContainerType(v.javaType()) || collectionPaths.contains(path)) {
+                    // 컨테이너 자체(예: lineItems, quotas)는 스칼라 값을 놓을 자리가 아니다 — 그 원소
+                    // 필드가 별도 슬롯으로 이미 배치되거나(대표원소), body 루트 자신이라 배치 불가하다.
+                    notes.add("guard-input(" + path + ") at " + guard.at() + " — 컨테이너 타입("
+                            + v.javaType() + ")이라 스칼라 슬롯을 만들지 않음(원소 필드 경로가 대신 배치된다)");
+                    continue;
+                }
+                if (bodyHasPath(body, path, collectionPaths) || !claimed.add(path)) {
+                    continue;
+                }
+                slots.add(new FillSlot("guard-input", path, v.javaType(), "none",
+                        guard.op() + " at " + guard.at()));
+            }
+        }
         return slots;
     }
 
-    /** dot-path가 이미 body에 배치되어 있는지(가드 라우팅 결과와의 충돌 판별용). */
-    private static boolean bodyHasPath(ObjectNode body, String jsonPath) {
-        return !body.at("/" + jsonPath.replace(".", "/")).isMissingNode();
+    /** 컬렉션/Map 타입명(리포트의 {@code javaType}은 단순명) — body에 스칼라로 놓을 수 없는 자리. */
+    private static final Set<String> CONTAINER_JAVA_TYPES = Set.of(
+            "List", "ArrayList", "LinkedList", "Collection", "Iterable", "Set", "HashSet", "LinkedHashSet",
+            "Queue", "Deque", "Map", "HashMap", "LinkedHashMap", "TreeMap", "SortedMap", "ConcurrentHashMap");
+
+    private static boolean isContainerType(String javaType) {
+        if (javaType == null) {
+            return false;
+        }
+        String simpleName = javaType.substring(javaType.lastIndexOf('.') + 1);
+        int generic = simpleName.indexOf('<');
+        return CONTAINER_JAVA_TYPES.contains(generic < 0 ? simpleName : simpleName.substring(0, generic));
     }
 
     /**
@@ -240,7 +312,8 @@ public final class TripleSynthesizer {
      */
     private List<TripleCandidate> buildCandidates(ObjectNode baseBody, List<String> seedSqlStatements,
                                                   List<ObjectNode> stubMappings, List<String> baseNotes,
-                                                  List<FillSlot> slots, InputCandidates oracle) {
+                                                  List<FillSlot> slots, Set<String> collectionPaths,
+                                                  InputCandidates oracle) {
         List<List<FieldOption>> perFieldOptions = new ArrayList<>();
         for (FillSlot slot : slots) {
             perFieldOptions.add(optionsFor(slot, oracle));
@@ -262,7 +335,7 @@ public final class TripleSynthesizer {
             for (int f = 0; f < slots.size(); f++) {
                 FillSlot slot = slots.get(f);
                 FieldOption option = combo.get(f);
-                putBodyValue(body, slot.jsonPath(), option.value());
+                putBodyValue(body, slot.jsonPath(), option.value(), collectionPaths);
                 notes.add((option.decided()
                         ? slot.kind() + "(" + slot.jsonPath() + ") -> 오라클 결정값 " + option.value()
                         : slot.kind() + "(" + slot.jsonPath() + ") -> 갭 마커(도출 불가, semanticHint="
@@ -396,7 +469,7 @@ public final class TripleSynthesizer {
     /** EXISTS 가드: INPUT jsonPath 값 s를 body와 seed PK에 동시 배치. */
     private void routeExistsGuard(GuardFact guard, String primaryTable, Map<String, TableSchema> tablesByName,
                                   Map<String, LinkedHashMap<String, Object>> rowsByTable, ObjectNode body,
-                                  List<String> notes) {
+                                  Set<String> collectionPaths, List<String> notes) {
         for (ValueRef v : guard.operands()) {
             if (v.origin() != Origin.INPUT || v.jsonPath() == null) {
                 continue;
@@ -410,7 +483,7 @@ public final class TripleSynthesizer {
                 continue;
             }
             Object idValue = deterministicIdValue(v.jsonPath(), v.javaType(), pk);
-            putBodyValue(body, v.jsonPath(), idValue);
+            putBodyValue(body, v.jsonPath(), idValue, collectionPaths);
             rowFor(rowsByTable, table).put(pk.name(), coerceForColumn(idValue, pk));
             notes.add("EXISTS(" + v.jsonPath() + ") at " + guard.at() + " -> body." + v.jsonPath()
                     + " = seed " + table + "." + pk.name() + " = " + idValue);
@@ -423,6 +496,7 @@ public final class TripleSynthesizer {
      */
     private void routeComparisonGuard(GuardFact guard, Map<String, TableSchema> tablesByName,
                                       Map<String, LinkedHashMap<String, Object>> rowsByTable, ObjectNode body,
+                                      Map<String, ObjectNode> stubsByCallSite, Set<String> collectionPaths,
                                       List<String> notes) {
         List<ValueRef> operands = guard.operands();
         if (operands.size() != 2) {
@@ -432,42 +506,61 @@ public final class TripleSynthesizer {
         }
         ValueRef opA = operands.get(0);
         ValueRef opB = operands.get(1);
-        ValueRef dbRef;
+        ValueRef sourceRef;   // 값을 SUT 바깥(DB row 또는 외부 응답)에 놓아야 하는 쪽
         ValueRef inputRef;
-        if (opA.origin() == Origin.DB_READ && opB.origin() == Origin.INPUT) {
-            dbRef = opA;
+        if (isRoutableSource(opA.origin()) && opB.origin() == Origin.INPUT) {
+            sourceRef = opA;
             inputRef = opB;
-        } else if (opA.origin() == Origin.INPUT && opB.origin() == Origin.DB_READ) {
-            dbRef = opB;
+        } else if (opA.origin() == Origin.INPUT && isRoutableSource(opB.origin())) {
+            sourceRef = opB;
             inputRef = opA;
         } else {
             notes.add("op '" + guard.op() + "' at " + guard.at()
-                    + " — DB_READ/INPUT 조합이 아닌 비교 가드는 미지원(확장 지점)");
+                    + " — INPUT×(DB_READ|EXTERNAL_RESPONSE) 조합이 아닌 비교 가드는 미지원(확장 지점)");
             return;
         }
         Rel rel = Rel.fromSymbol(guard.op());
-        if (rel == null || dbRef.table() == null || dbRef.column() == null || inputRef.jsonPath() == null) {
+        boolean sourceResolved = sourceRef.origin() == Origin.DB_READ
+                ? sourceRef.table() != null && sourceRef.column() != null
+                : sourceRef.callSite() != null && sourceRef.stubField() != null;
+        if (rel == null || !sourceResolved || inputRef.jsonPath() == null) {
             notes.add("op '" + guard.op() + "' at " + guard.at()
-                    + " — table/column/jsonPath 미해결, 비교 가드 skip(확장 지점)");
+                    + " — table/column/callSite/stubField/jsonPath 미해결, 비교 가드 skip(확장 지점)");
             return;
         }
-        TableSchema schema = tablesByName.get(dbRef.table());
-        ColumnSchema column = schema == null ? null
-                : schema.columns().stream().filter(c -> c.name().equals(dbRef.column())).findFirst().orElse(null);
 
         Rel needed = rel.negate();
-        boolean numeric = isNumericJavaType(dbRef.javaType()) || isNumericJavaType(inputRef.javaType());
+        boolean numeric = isNumericJavaType(sourceRef.javaType()) || isNumericJavaType(inputRef.javaType());
         Object[] pair = satisfyingPair(needed, numeric);
-        Object aVal = pair[0];
-        Object bVal = pair[1];
-        Object dbVal = dbRef == opA ? aVal : bVal;
-        Object inputVal = inputRef == opA ? aVal : bVal;
+        Object sourceVal = sourceRef == opA ? pair[0] : pair[1];
+        Object inputVal = inputRef == opA ? pair[0] : pair[1];
 
-        putBodyValue(body, inputRef.jsonPath(), inputVal);
-        rowFor(rowsByTable, dbRef.table()).put(dbRef.column(), coerceForColumn(dbVal, column));
-        notes.add("comparison(" + opA.origin() + " " + guard.op() + " " + opB.origin() + ") at " + guard.at()
-                + " negated-to=" + needed + " -> body." + inputRef.jsonPath() + "=" + inputVal
-                + ", seed " + dbRef.table() + "." + dbRef.column() + "=" + dbVal);
+        putBodyValue(body, inputRef.jsonPath(), inputVal, collectionPaths);
+        if (sourceRef.origin() == Origin.DB_READ) {
+            TableSchema schema = tablesByName.get(sourceRef.table());
+            ColumnSchema column = schema == null ? null : schema.columns().stream()
+                    .filter(c -> c.name().equals(sourceRef.column())).findFirst().orElse(null);
+            rowFor(rowsByTable, sourceRef.table()).put(sourceRef.column(), coerceForColumn(sourceVal, column));
+            notes.add("comparison(" + opA.origin() + " " + guard.op() + " " + opB.origin() + ") at " + guard.at()
+                    + " negated-to=" + needed + " -> body." + inputRef.jsonPath() + "=" + inputVal
+                    + ", seed " + sourceRef.table() + "." + sourceRef.column() + "=" + sourceVal);
+            return;
+        }
+        // EXTERNAL_RESPONSE 쪽: 만족값을 stub의 response.jsonBody에 놓는다(REQ-008). DB_READ와 완전히
+        // 대칭이며, 이 배선이 없으면 body는 결정값을 받는데 상대 피연산자는 stub이 없어 실제 외부 호출로
+        // 나가버려 가드를 통과시킬 수 없다.
+        boolean placed = putStubField(stubsByCallSite, sourceRef.callSite(), sourceRef.stubField(),
+                sourceVal, guard.at(), notes);
+        if (placed) {
+            notes.add("comparison(" + opA.origin() + " " + guard.op() + " " + opB.origin() + ") at " + guard.at()
+                    + " negated-to=" + needed + " -> body." + inputRef.jsonPath() + "=" + inputVal
+                    + ", stub " + sourceRef.callSite() + "." + sourceRef.stubField() + "=" + sourceVal);
+        }
+    }
+
+    /** 비교 가드에서 "SUT 바깥에 값을 놓을 수 있는" 출처인지(DB seed 또는 외부 stub). */
+    private static boolean isRoutableSource(Origin origin) {
+        return origin == Origin.DB_READ || origin == Origin.EXTERNAL_RESPONSE;
     }
 
     /**
@@ -477,7 +570,8 @@ public final class TripleSynthesizer {
      * 위치) stub을 만들지 않고 notes에 사유를 남긴다 — 형식을 알 수 없는 request.method/urlPath로 잘못된
      * mapping을 만드는 것보다 안전하다.
      */
-    private void routeNegatedEqualityGuard(GuardFact guard, List<ObjectNode> stubMappings, List<String> notes) {
+    private void routeNegatedEqualityGuard(GuardFact guard, Map<String, ObjectNode> stubsByCallSite,
+                                           List<String> notes) {
         ValueRef literalRef = null;
         ValueRef externalRef = null;
         for (ValueRef v : guard.operands()) {
@@ -492,31 +586,84 @@ public final class TripleSynthesizer {
             notes.add("op '!' at " + guard.at() + " — EXTERNAL_RESPONSE 부정 등가 패턴이 아님, stub 라우팅 skip(확장 지점)");
             return;
         }
-        String callSite = externalRef.callSite();
-        int sp = httpCallSiteSplit(callSite);
-        if (sp < 0) {
-            notes.add("op '!' at " + guard.at() + " — callSite '" + callSite
-                    + "' 가 '<HTTP메서드> <path>' 형식이 아님(class#method 폴백으로 추정), stub 생성 불가");
+        boolean decided = literalRef != null && literalRef.literal() != null;
+        Object value = decided ? literalRef.literal()
+                : gapMarker(externalRef.javaType(), "none", "none");
+        if (!putStubField(stubsByCallSite, externalRef.callSite(), externalRef.stubField(),
+                value, guard.at(), notes)) {
             return;
         }
-        ObjectNode stub = Json.mapper().createObjectNode();
-        ObjectNode request = stub.putObject("request");
-        request.put("method", callSite.substring(0, sp));
-        request.put("urlPath", callSite.substring(sp + 1));
-        ObjectNode response = stub.putObject("response");
-        response.put("status", 200);
-        ObjectNode jsonBody = response.putObject("jsonBody");
-        if (literalRef != null && literalRef.literal() != null) {
-            jsonBody.put(externalRef.stubField(), literalRef.literal());
-            stubMappings.add(stub);
-            notes.add("EXTERNAL_RESPONSE(" + callSite + ") at " + guard.at() + " -> stub."
-                    + externalRef.stubField() + "=" + literalRef.literal() + " (WireMock mapping 스키마, REQ-008)");
-        } else {
-            jsonBody.put(externalRef.stubField(), gapMarker(externalRef.javaType(), "none", "none"));
-            stubMappings.add(stub);
-            notes.add("EXTERNAL_RESPONSE(" + callSite + ") at " + guard.at()
-                    + " — 만족 리터럴 미해결, stub." + externalRef.stubField() + " = 갭 마커(REQ-007)");
+        notes.add(decided
+                ? "EXTERNAL_RESPONSE(" + externalRef.callSite() + ") at " + guard.at() + " -> stub."
+                        + externalRef.stubField() + "=" + value + " (WireMock mapping 스키마, REQ-008)"
+                : "EXTERNAL_RESPONSE(" + externalRef.callSite() + ") at " + guard.at()
+                        + " — 만족 리터럴 미해결, stub." + externalRef.stubField() + " = 갭 마커(REQ-007)");
+    }
+
+    /**
+     * 리포트에 등장하는 <b>모든</b> {@link Origin#EXTERNAL_RESPONSE} 피연산자가 stub의
+     * {@code response.jsonBody}에 자리를 갖도록 보장한다(REQ-008). 라우팅이 값을 정하지 못한 자리는 갭
+     * 마커로 남긴다.
+     *
+     * <p>이 스윕이 없으면 결합 논리({@code ||})나 미지원 op 안에 든 외부 응답 피연산자는 통째로 무시돼
+     * {@code stubs.json}이 빈 채로 나가고(예: fulfillment의 {@code allowedPrefix}), SUT는 stub되지 않은
+     * 실제 외부 호출을 시도해 5xx로 떨어진다 — 후보 내용과 무관한 실패라 trial 판정이 무의미해진다.
+     */
+    private void ensureExternalStubSlots(ProvenanceReport report, Map<String, ObjectNode> stubsByCallSite,
+                                         List<String> notes) {
+        for (GuardFact guard : report.guards()) {
+            for (ValueRef v : guard.operands()) {
+                if (v.origin() != Origin.EXTERNAL_RESPONSE || v.callSite() == null || v.stubField() == null) {
+                    continue;
+                }
+                ObjectNode existing = stubsByCallSite.get(v.callSite());
+                if (existing != null && existing.path("response").path("jsonBody").has(v.stubField())) {
+                    continue;   // 이미 라우팅이 값을 배치함
+                }
+                if (putStubField(stubsByCallSite, v.callSite(), v.stubField(),
+                        gapMarker(v.javaType(), "none", guard.op() + " at " + guard.at()), guard.at(), notes)) {
+                    notes.add("EXTERNAL_RESPONSE(" + v.callSite() + "." + v.stubField() + ") at " + guard.at()
+                            + " — 가드가 읽지만 라우팅이 값을 결정하지 못함, stub에 갭 마커 자리 확보(REQ-007/008)");
+                }
+            }
         }
+    }
+
+    /**
+     * {@code callSite}의 WireMock mapping(없으면 생성)에 {@code response.jsonBody.<field> = value}를
+     * 넣는다. 같은 callSite의 여러 필드는 <b>한 mapping</b>에 병합된다(SUT는 한 번만 호출한다).
+     *
+     * <p>{@code callSite}가 {@code "<HTTP메서드> <path>"} 형식이 아니면(class#method 폴백 등) mapping을
+     * 만들지 않고 사유만 남긴다 — 잘못된 request 매칭을 만드는 것보다 안전하다.
+     *
+     * <p>응답에 {@code Content-Type: application/json}을 함께 등록한다. WireMock은 {@code jsonBody}만으로
+     * 헤더를 자동 부여하지 않아, {@code RestTemplate} 같은 클라이언트의 메시지 컨버터 선택이 실패해 SUT가
+     * 500을 내는 사례가 있었다(사람이 갭필한 fixture가 손으로 채워 넣던 자리 — 이제 도구가 만든다).
+     *
+     * @return mapping에 실제로 배치했으면 true
+     */
+    private static boolean putStubField(Map<String, ObjectNode> stubsByCallSite, String callSite,
+                                        String field, Object value, String at, List<String> notes) {
+        int sp = httpCallSiteSplit(callSite);
+        if (sp < 0) {
+            notes.add("op at " + at + " — callSite '" + callSite
+                    + "' 가 '<HTTP메서드> <path>' 형식이 아님(class#method 폴백으로 추정), stub 생성 불가");
+            return false;
+        }
+        ObjectNode stub = stubsByCallSite.computeIfAbsent(callSite, cs -> {
+            ObjectNode created = Json.mapper().createObjectNode();
+            ObjectNode request = created.putObject("request");
+            request.put("method", cs.substring(0, sp));
+            request.put("urlPath", cs.substring(sp + 1));
+            ObjectNode response = created.putObject("response");
+            response.put("status", 200);
+            response.putObject("headers").put("Content-Type", "application/json");
+            response.putObject("jsonBody");
+            return created;
+        });
+        ObjectNode jsonBody = (ObjectNode) stub.get("response").get("jsonBody");
+        putScalar(jsonBody, field, value);
+        return true;
     }
 
     /**
@@ -719,18 +866,129 @@ public final class TripleSynthesizer {
         return "seed-" + seedKey.replaceAll("[^a-zA-Z0-9]+", "-").toLowerCase();
     }
 
-    private static void putBodyValue(ObjectNode body, String jsonPath, Object value) {
-        if (value instanceof Long l) {
-            JsonPaths.putPath(body, jsonPath, l);
-        } else if (value instanceof Integer i) {
-            JsonPaths.putPath(body, jsonPath, i);
-        } else if (value instanceof Double d) {
-            JsonPaths.putPath(body, jsonPath, d);
-        } else if (value instanceof Boolean b) {
-            JsonPaths.putPath(body, jsonPath, b);
-        } else {
-            JsonPaths.putPath(body, jsonPath, String.valueOf(value));
+    /**
+     * dot-path에 값을 배치한다. {@code collectionPaths}에 있는 접두 경로는 <b>JSON 배열</b>로 만들고
+     * 대표(첫) 원소 안으로 내려간다 — {@code ProvenanceIndexer}의 대표원소 규약(REQ-034)이
+     * {@code List<LineItem> lineItems}의 원소 필드를 bracket 없이 {@code "lineItems.sku"}로 평탄화하기
+     * 때문에, 이 정보 없이 {@link JsonPaths#putPath}로 쓰면 {@code {"lineItems":{"sku":…}}}처럼 배열이
+     * 객체가 되어 SUT의 Jackson 역직렬화가 400으로 실패한다(E2E-B1 실증 차단 원인 2).
+     *
+     * <p>{@code collectionPaths}가 비었으면(구 리포트 등) 종전과 동일하게 전부 중첩 객체로 쓴다.
+     */
+    private static void putBodyValue(ObjectNode body, String jsonPath, Object value,
+                                     Set<String> collectionPaths) {
+        if (collectionPaths.isEmpty()) {
+            putScalar(descendObjects(body, jsonPath), leafSegment(jsonPath), value);
+            return;
         }
+        ObjectNode parent = descendWithCollections(body, jsonPath, collectionPaths);
+        String leaf = leafSegment(jsonPath);
+        if (collectionPaths.contains(jsonPath)) {
+            // 리프 자체가 스칼라 컬렉션(예: List<String> tags) — 원소 1개짜리 배열로 만든다.
+            com.fasterxml.jackson.databind.node.ArrayNode array = parent.putArray(leaf);
+            ObjectNode holder = Json.mapper().createObjectNode();
+            putScalar(holder, leaf, value);
+            array.add(holder.get(leaf));
+            return;
+        }
+        putScalar(parent, leaf, value);
+    }
+
+    /** dot-path의 마지막 세그먼트. */
+    private static String leafSegment(String jsonPath) {
+        int dot = jsonPath.lastIndexOf('.');
+        return dot < 0 ? jsonPath : jsonPath.substring(dot + 1);
+    }
+
+    /** 중간 세그먼트를 전부 객체로 취급해 내려간다(collectionPaths 정보가 없을 때의 종전 동작). */
+    private static ObjectNode descendObjects(ObjectNode root, String jsonPath) {
+        return descendWithCollections(root, jsonPath, Set.of());
+    }
+
+    /**
+     * 중간 세그먼트를 차례로 내려가며, 그 시점까지의 접두 경로가 {@code collectionPaths}에 있으면 배열
+     * (원소 1개 보장) 안의 대표 원소로, 아니면 중첩 객체로 진입한다. 이미 만들어진 노드는 재사용하므로
+     * 같은 배열 원소에 여러 필드({@code lineItems.sku}, {@code lineItems.amount})가 함께 쌓인다.
+     */
+    private static ObjectNode descendWithCollections(ObjectNode root, String jsonPath,
+                                                     Set<String> collectionPaths) {
+        String[] segments = jsonPath.split("\\.");
+        ObjectNode node = root;
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < segments.length - 1; i++) {
+            if (i > 0) {
+                prefix.append('.');
+            }
+            prefix.append(segments[i]);
+            node = childContainer(node, segments[i], collectionPaths.contains(prefix.toString()));
+        }
+        return node;
+    }
+
+    private static ObjectNode childContainer(ObjectNode parent, String key, boolean asArray) {
+        com.fasterxml.jackson.databind.JsonNode child = parent.get(key);
+        if (!asArray) {
+            if (child instanceof ObjectNode object) {
+                return object;
+            }
+            ObjectNode created = parent.objectNode();
+            parent.set(key, created);
+            return created;
+        }
+        com.fasterxml.jackson.databind.node.ArrayNode array =
+                child instanceof com.fasterxml.jackson.databind.node.ArrayNode existing
+                        ? existing : parent.putArray(key);
+        if (array.isEmpty() || !(array.get(0) instanceof ObjectNode)) {
+            array.removeAll();
+            array.addObject();
+        }
+        return (ObjectNode) array.get(0);
+    }
+
+    private static void putScalar(ObjectNode node, String key, Object value) {
+        if (value instanceof Long l) {
+            node.put(key, l);
+        } else if (value instanceof Integer i) {
+            node.put(key, i);
+        } else if (value instanceof Double d) {
+            node.put(key, d);
+        } else if (value instanceof Boolean b) {
+            node.put(key, b);
+        } else {
+            node.put(key, String.valueOf(value));
+        }
+    }
+
+    /**
+     * dot-path가 이미 body에 배치되어 있는지(가드 라우팅 결과와의 충돌 판별용). 배열 접두 경로는 대표
+     * 원소(index 0)를 따라 내려간다 — 그렇지 않으면 {@code lineItems.sku}가 배열 안에 이미 있어도
+     * "없음"으로 오판해 중복 슬롯을 만든다.
+     */
+    private static boolean bodyHasPath(ObjectNode body, String jsonPath, Set<String> collectionPaths) {
+        com.fasterxml.jackson.databind.JsonNode node = body;
+        StringBuilder prefix = new StringBuilder();
+        String[] segments = jsonPath.split("\\.");
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) {
+                prefix.append('.');
+            }
+            prefix.append(segments[i]);
+            if (!(node instanceof ObjectNode object)) {
+                return false;
+            }
+            node = object.get(segments[i]);
+            if (node == null) {
+                return false;
+            }
+            if (collectionPaths.contains(prefix.toString())
+                    && node instanceof com.fasterxml.jackson.databind.node.ArrayNode array) {
+                if (array.isEmpty()) {
+                    return false;
+                }
+                node = array.get(0);
+            }
+        }
+        return true;
     }
 
     private static Object coerceForColumn(Object raw, ColumnSchema column) {

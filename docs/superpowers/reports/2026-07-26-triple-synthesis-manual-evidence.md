@@ -319,6 +319,36 @@ committed base/cand-01/seed.sql  : INSERT INTO fund_accounts (id, balance_amount
    (c) `EXTERNAL_RESPONSE` 피연산자가 있으면 `stubs.json`에 해당 mapping을 생성.
 3. 위 2건 수정 후 이 절차를 그대로 재실행하고 "실행 #2"로 누적 기록한다.
 
+##### 선행 수정 반영 상태 (2026-07-28)
+
+위 1·2번은 **수정 완료**다(RED→GREEN 회귀 테스트 동반). 재실행(실행 #2) 전에 알아둘 변경점:
+
+| 항목 | 수정 내용 | 회귀 테스트 |
+|---|---|---|
+| 차단 원인 1 | `BuilderCli.parseAuthConfig`/`parseRequestHeaders`를 `build`에서 추출해 `runTrial`에 배선. 절차서의 `trial` 커맨드에 `--auth-*`가 추가됐다(위 참조) | `TrialCliE2E` REQ-013 2건(대조군 403 / 배선 후 승격) |
+| 차단 원인 2(a) 배열 | `ProvenanceReport.collectionPaths[]` 신설 + 합성이 그 접두사를 JSON 배열(대표원소 1개)로 생성 | `TripleSynthesizerIT` REQ-005 2건, `ProvenanceIndexerIT` REQ-005 |
+| 차단 원인 2(b) 가드 피연산자 | 가드의 INPUT 피연산자를 전부 body 슬롯으로 보장(`total`/`parcelWeight`). 컨테이너 타입 피연산자는 제외 | `TripleSynthesizerIT` REQ-005, `FixtureTripleShapeE2E` |
+| 차단 원인 2(c) stub | 모든 `EXTERNAL_RESPONSE` 피연산자에 stub 자리 확보 + 같은 callSite 병합 + `Content-Type` 헤더 | `TripleSynthesizerIT` REQ-008, `FixtureTripleShapeE2E` |
+| 부수 결함 | 컨테이너/스칼라 라이브러리 메서드(`List.isEmpty()`)가 만들던 유령 dot-path(`items.empty`) 제거 — golden 리포트도 갱신 | `ProvenanceIndexerIT` REQ-001 |
+
+**남은 갭(수정하지 않음, 근거와 함께 유지):**
+
+- **`post-api-quotas`는 여전히 합성 불가.** `@RequestBody Map<String,Integer>`는 요청 body 루트가
+  동적 키 Map이라 에이전트가 **키**를 골라야 하는데, 마커 계약(REQ-009)은 base/candidate의 키 집합이
+  동일할 것을 요구하므로 "키 자리 마커"를 표현할 수 없다. 억지 우회 대신 `notes.md`에
+  `경고(합성 불가)` 줄을 남기도록 바꿨다(조용한 빈 body 금지). 이 EP로는 E2E-B1을 재실행하지 마라.
+- **`post-api-fulfillment`는 독립 `trial` CLI로 검증 불가.** 그 CLI는 `HttpCaptureServer`를 띄우지
+  않아 stub 등록을 항상 skip한다(`docs/03` "주의" 참조) — 이제 `stubs.json`이 올바르게 채워지지만
+  등록되지 않으므로 외부 호출이 unstubbed로 나간다. 이 EP의 삼중은 `build --triple-candidates`
+  경로(T3)로 검증해야 한다.
+- **DB 가드가 있는 EP의 seed 공동 배치는 `synthesize-triple` CLI에서 여전히 불완전하다.** 이 CLI는
+  물리 스키마를 받을 경로가 없어 `tables=[]`로 호출하므로(`runSynthesizeTriple` Javadoc), EXISTS/
+  비교 가드의 DB 쪽 값은 배치되지 않는다(INPUT 쪽은 이제 갭 마커로 남는다). `post-api-transfers`의
+  커밋된 fixture가 현행 도구로 재현되지 않는 "부수 발견"의 잔여 원인이 이것이다.
+
+**따라서 실행 #2의 대상 EP는 `post-api-invoices`를 권한다** — 외부 의존도 DB 가드도 없고, 형상
+결함이 모두 해소돼 마커(`total`, `lineItems.sku`)만 채우면 완주 가능한 형태다.
+
 ---
 
 ## E2E-B2 — petclinic 커버리지 실측 (REQ-029)

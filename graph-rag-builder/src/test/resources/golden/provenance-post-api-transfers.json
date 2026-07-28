@@ -15,7 +15,7 @@
       "operands": [
         { "origin": "INPUT", "jsonPath": "items", "javaType": "List" },
         { "origin": "UNKNOWN", "javaType": "<nulltype>" },
-        { "origin": "INPUT", "jsonPath": "items.empty", "javaType": "boolean" },
+        { "origin": "UNKNOWN", "javaType": "boolean" },
         { "origin": "INPUT", "jsonPath": "items.qty", "javaType": "int" },
         { "origin": "UNKNOWN", "javaType": "int", "literal": "0" }
       ]
@@ -40,5 +40,6 @@
     { "jsonPath": "note", "javaType": "String", "semanticHint": "free-text" },
     { "jsonPath": "items.sku", "javaType": "String", "semanticHint": "free-text" }
   ],
-  "unresolved": []
+  "unresolved": [],
+  "collectionPaths": ["items"]
 }

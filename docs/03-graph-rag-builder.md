@@ -196,7 +196,7 @@ provenance --sut-src <SUT_SRC_DIR> [--sut-resources <RESOURCES_DIR>] \
 산출 `provenance-report.json`은 `guards[]`(가드 위치·비교 연산자·피연산자별 origin —
 `INPUT`/`DB_READ`/`EXTERNAL_RESPONSE`/`DERIVED`/`UNKNOWN`), `unresolved[]`(정적 해석 실패 —
 `{location, reason: no-classpath|reflection|proxy|multi-impl|depth-cap, targetType}`),
-`unguarded[]`(가드 미사용 필드 + `semanticHint`)를 담는다. `DERIVED` 피연산자(예: `score * 2`)는
+`unguarded[]`(가드 미사용 필드 + `semanticHint`), `collectionPaths[]`를 담는다. `DERIVED` 피연산자(예: `score * 2`)는
 그 파생식이 읽는 입력 리프의 dot-path 목록을 `derivedFrom`에 함께 담는다 — `synthesize-triple`이
 concolic 해를 어느 body 필드에 배치할지 결정하는 근거다(해가 없으면 그 자리는 갭 마커).
 
@@ -237,7 +237,29 @@ ASM+Z3 concolic, `GRB_ORACLE=static`이면 concolic 제외)으로 입력 후보�
 | `seed.sql` | 컬럼 타입 무관 작은따옴표 문자열 리터럴 `'__AGENT_FILL__{...}'`(SQL 파싱 유지) |
 
 `stubs.json`은 기존 external-stubs와 동일한 WireMock mapping 스키마(`request.method/urlPath` +
-`response.status/jsonBody`, 헤더가 필요하면 `response.headers`)다.
+`response.status/jsonBody`, 헤더가 필요하면 `response.headers`)다. 같은 `callSite`의 여러 응답
+필드는 **한 mapping**으로 병합하고 `Content-Type: application/json`을 함께 등록한다(SUT는 그
+외부 호출을 한 번만 하고, `jsonBody`만으로는 WireMock이 헤더를 자동 부여하지 않아 클라이언트
+메시지 컨버터 선택이 실패한다). 파일당 mapping 1개 규약이므로 서로 다른 `callSite`가 2개 이상이면
+첫 번째만 실리고 그 사실을 로그로 경고한다.
+
+**body 형상 불변식(E2E-B1 실증에서 도출).** 합성 결과는 아래 셋을 항상 만족한다 — 어긋나면 마커를
+채워도 통과할 수 없으므로 도구 결함이다.
+
+1. **컬렉션은 배열로.** 리포트의 `collectionPaths[]`에 있는 접두 경로는 원소 1개짜리 JSON 배열로
+   만들고 그 대표원소 안에 리프를 쌓는다(`{"lineItems":[{"sku":…,"amount":…}]}`). 대표원소 규약이
+   dot-path에서 배열/객체 구분을 지우기 때문에, 이 목록 없이 쓰면 배열이 객체가 되어 SUT
+   역직렬화가 400으로 실패한다. `collectionPaths[]`가 없는 구 리포트는 중첩 객체로 폴백한다.
+2. **가드의 `INPUT` 피연산자는 반드시 body에.** 라우팅이 값을 결정하지 못한 자리(결합 논리 `||`,
+   상대 피연산자가 DB/EXTERNAL이 아닌 비교 등)도 갭 마커 슬롯으로 남긴다. 컨테이너 타입 피연산자
+   자신은 스칼라 자리가 아니므로 제외한다(원소 필드 경로가 대신 채운다).
+3. **가드의 `EXTERNAL_RESPONSE` 피연산자는 반드시 stub에.** 라우팅 밖에 있어도 갭 마커 자리를
+   확보한다 — stub이 없으면 SUT가 stub되지 않은 실제 외부 호출을 내보내 5xx가 된다.
+
+**알려진 갭 — 동적 키 Map body.** `@RequestBody Map<String, Integer>`처럼 요청 body 루트가 동적 키
+Map인 핸들러는 합성 범위 밖이다(키를 에이전트가 골라야 하는데 마커 계약은 base/candidate의 키
+집합이 같을 것을 요구한다). 이 경우 빈 body를 조용히 내보내지 않고 `notes.md`에 `경고(합성 불가)`
+줄을 남긴다.
 
 ### 삼중 저장 레이아웃
 
