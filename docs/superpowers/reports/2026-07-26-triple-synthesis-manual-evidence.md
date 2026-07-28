@@ -1,8 +1,9 @@
 # 삼중 합성(Phase A) 수동 실증 절차서 — E2E-B1 / E2E-B2 / E2E-B3
 
-- 작성일: 2026-07-27
-- 상태: **절차 준비 완료 — 실증 미실행**(본 문서는 절차서이며, 실제 실행·기록은 별도 후속 세션에서
-  수행한다)
+- 작성일: 2026-07-27 (최종 갱신: 2026-07-28)
+- 상태: **E2E-B1 실증 1회 실행 완료 — 판정 RED**(§"E2E-B1 실행 기록" 참조). E2E-B2/B3는 절차
+  준비 완료·실증 미실행. 실행 과정에서 드러난 절차서 자체의 오류는 해당 절에 정정 표기와 함께
+  반영했다.
 - 관련 문서: [design spec §11.3](../specs/2026-07-26-agent-skill-triple-synthesis-design.md),
   [요구사항명세](../requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   (REQ-023, REQ-027, REQ-029, REQ-030), [docs/03](../../03-graph-rag-builder.md "삼중 합성 CLI 절"),
@@ -39,18 +40,39 @@
 
 ### 사전조건
 
-- 이 브랜치(`worktree-agent-skill-triple-synthesis`)의 `samples/order-service`에 fixture EP
-  4종(fulfillment/transfers/invoices/quotas, REQ-028)이 착륙돼 있어야 한다 — `git log --oneline
+- `samples/order-service`에 fixture EP 4종(fulfillment/transfers/invoices/quotas, REQ-028)이
+  착륙돼 있어야 한다 — `git log --oneline
   -- samples/order-service/src/main/java/io/graphrag/sample/orders/FulfillmentController.java`로 확인.
+  (fixture는 Task 18에서 `main`에 병합돼 있으므로 특정 wip 브랜치를 요구하지 않는다 — 초판은
+  `worktree-agent-skill-triple-synthesis`를 명시했으나 그 브랜치 밖에서도 성립한다.)
 - **대상 엔드포인트는 `post-api-transfers`를 제외한 나머지 3개 중 하나를 고른다**
   (`post-api-fulfillment` | `post-api-invoices` | `post-api-quotas`). `post-api-transfers`는
   이미 Task 18에서 **사람이** 갭필한 promoted 후보(`e2e/triples/post-api-transfers/`)가 커밋돼
   있어 "에이전트 주체의 완주"를 새로 실증하는 목적에 맞지 않는다 — 재사용하지 말 것. 이하 예시는
   `post-api-fulfillment`(INPUT+EXTERNAL_RESPONSE 가드 조합, DB 가드 없음)로 든다.
+  - **주의(2026-07-28 실행에서 확인):** `post-api-fulfillment`는 예시로 부적절하다 — 가드가
+    `EXTERNAL_RESPONSE`(`GET /carriers/policy`)에 걸려 있는데 `trial-loop` SKILL.md가 명시하듯
+    독립 `trial` CLI 경로는 **stub 등록을 항상 skip**하므로, `stubs.json`을 아무리 정확히 채워도
+    외부 호출이 unstubbed 상태로 나가 500이 된다. 이 절차서로 실증할 때는
+    `post-api-invoices`/`post-api-quotas`처럼 외부 의존이 없는 EP를 고르는 편이 낫다.
 - Docker 실행 중, `./gradlew :graph-rag-builder:classes` 로 빌더가 컴파일된 상태.
 - SUT jar 빌드: `./gradlew :samples:order-service:bootJar`.
+- **OTEL javaagent 배치(누락 시 app 컨테이너가 뜨지 않는다).** `e2e/docker-compose.yml`의 app
+  서비스는 `./agents:/agents:ro`를 마운트하고 `-javaagent:/agents/otel-javaagent.jar`를 강제하는데,
+  `e2e/agents/`는 `.gitignore` 대상이라 clone 직후에는 비어 있다. `:graph-rag-builder:classes`
+  이후 아래로 채운다:
+  ```bash
+  mkdir -p e2e/agents
+  cp graph-rag-builder/build/resources/main/agents/otel-javaagent.jar e2e/agents/
+  ```
 - 작업용 임시 디렉터리(커밋 대상 아님): `WORK=.work/e2e-b1-<endpointId>` — 이 디렉터리는
   `.gitignore` 대상(`.work/`)이라 실행 산출물이 실수로 커밋되지 않는다.
+- **경로는 절대경로로 준다.** 아래 모든 `:graph-rag-builder:run` 커맨드의 `--args` 안 경로는
+  Gradle `JavaExec`의 작업 디렉터리(=`graph-rag-builder/` 서브프로젝트 디렉터리) 기준으로
+  해석된다. 저장소 루트 기준 상대경로를 쓰면 `--sut-src '...' matched no source directory`로
+  즉시 실패한다. 실행 전에 `ROOT=$(git rev-parse --show-toplevel)`를 잡고
+  `--sut-src $ROOT/samples/...`처럼 절대경로로 넘긴다(아래 예시는 가독성을 위해 상대경로로
+  적었으므로 그대로 붙여넣지 말고 `$ROOT/`를 앞에 붙일 것).
 
 ### 절차
 
@@ -59,9 +81,12 @@ SUT**가 필요하다 — `e2e/docker-compose.yml`의 `postgres`/`wiremock`/`app
 
 ```bash
 docker compose -p grb-e2e-b1 -f e2e/docker-compose.yml up -d postgres wiremock app
-# app이 /actuator/health로 뜰 때까지 대기(수 초) 후 확인:
+# app이 /actuator/health로 뜰 때까지 대기(수십 초) 후 확인:
 curl -sf http://localhost:58080/actuator/health
 ```
+
+`app`은 `kafka`에 `depends_on`이 걸려 있어 위 커맨드는 **kafka 컨테이너도 함께 기동한다** —
+정리(§완료 후 처리)는 project 단위(`-p grb-e2e-b1`)로 하므로 자동으로 함께 제거된다.
 
 **2) provenance-analysis 스킬 실행** — `.claude/skills/provenance-analysis/SKILL.md`를 그대로
 따른다:
@@ -125,12 +150,22 @@ done
 치환이어야 한다 — 마커가 아니었던 키/컬럼 값이 하나라도 바뀌었다면 이 단계에서 이미 실패로
 기록한다(재작업 후 재실행).
 
-**(b) 권위 있는 확인(T1 게이트 — `TripleValidator`의 실제 마커-diff 강제)**: 독립 `trial` CLI(T2)
-경로는 `TripleValidator`를 호출하지 않는다(`BuilderCli.runTrial`은 T1 재검증 없이 바로
-`promoted/`로 옮긴다) — 따라서 (a)만으로는 **기계 검증**이 아니라 **사람 눈 검사**에 그친다.
-REQ-009가 실제로 강제되는 지점은 이 promoted 후보를 `build` 파이프라인이 소비할 때
-(`TriplePromotionGate.attempt` → `TripleValidator.validate`)이므로, 아래처럼 전체 빌드를 1회
-더 돌려 T1이 실제로 통과했는지 확인한다:
+**(b) 권위 있는 확인(T1 게이트 — `TripleValidator`의 실제 마커-diff 강제)**
+
+> **정정(2026-07-28 E2E-B1 실행에서 확인).** 이 절의 초판은 "독립 `trial` CLI(T2) 경로는
+> `TripleValidator`를 호출하지 않는다"고 적었으나 **사실이 아니다**. `BuilderCli.runTrial`은
+> 각 후보에 대해 `runCandidate` 이전에
+> `validator.validate(candDir, baseDir, report, BodyShape.empty())`를 호출하며(소스 주석의
+> "C4 리뷰 Critical 3(a)" fix), 거부된 후보는 DB/HTTP를 전혀 건드리지 않고 `T1_REJECTED`
+> 다이제스트와 함께 `failed/`로 간다. `trial-loop` SKILL.md의 §"T1 검증 게이트는 이 CLI에도
+> 적용된다"가 옳고 이 절차서가 stale이었다. 따라서 **`trial` 실행 자체가 이미 마커-diff(REQ-009)
+> 기계 검증을 수행한다** — `failed/digest-final.json`에 `T1_REJECTED`가 없으면 그 후보들은
+> 마커-diff를 기계적으로 통과한 것이다.
+
+이 경로에 남는 유일한 T1 갭은 `BodyShape.empty()`로 인한 **body 필드 스키마 검증 skip**이다
+(마커-diff·seed 화이트리스트·PII·stub 스키마는 전부 적용). 그 갭까지 닫으려면 실제 `BodyShape`를
+가진 통합 `build` 경로(`TriplePromotionGate.attempt` → `TripleValidator.validate`)를 1회 더
+돌린다:
 
 ```bash
 ./gradlew -q :graph-rag-builder:run --args="build \
@@ -178,6 +213,104 @@ REQ-009가 실제로 강제되는 지점은 이 promoted 후보를 `build` 파�
 
 GREEN 판정 시 요구사항명세 REQ-027 행을 🟡(절차 준비) → 🟢(done)로 바꾸고 위 표를 각주로 링크한다.
 RED면 🔴 planned로 유지하고 실패 사유·재시도 계획을 기록한다.
+
+### 실행 기록
+
+> 이 절은 **누적**한다(덮어쓰지 않는다). 실행할 때마다 아래에 항목을 추가한다.
+
+#### 실행 #1 — 2026-07-28 (RED)
+
+| 항목 | 값 |
+|---|---|
+| 실행일자 | 2026-07-28 |
+| 대상 endpointId | `post-api-invoices` (`POST /api/invoices`) — `post-api-quotas`/`post-api-fulfillment`도 대조로 확인 |
+| 실행 에이전트(모델·세션) | Claude Opus 5 (Claude Code 서브에이전트), worktree `manual-evidence-and-drift` / 브랜치 `worktree-manual-evidence-and-drift` |
+| 스킬 실행 순서 준수 여부 | **준수** — `provenance-analysis`(C1) → `triple-synthesis`(C2) → `trial-loop`(C3) 순서로 각 SKILL.md를 읽고 그 지시대로 수행 |
+| trial 시도 횟수(성공까지) | **성공 없음.** `trial` 1회 호출로 후보 4개 전부 시도(budget 8, `attempts=4`), 전부 실패 → 종료 코드 **3** |
+| (a) 사람 diff 결과 | **마커 외 변경 없음.** 후보 4개 × 3파일 전부 확인 — `body.json`은 `lineItems.sku`의 `__AGENT_FILL__{…}` 1줄만 `"SKU-TEST-0001"`로 치환, `seed.sql`/`stubs.json`은 diff 없음(빈 파일/`{ }` 그대로) |
+| (b) T1 기계 확인 결과 | **마커-diff는 기계 통과.** `failed/digest-final.json`에 `T1_REJECTED` **0건**(4개 digest 전부 `outcomeKind: FAILURE`, `status: 403` — 즉 T1을 통과해 실제 invoke까지 갔다). `build` 경로 `tripleAdopted`/`staleTriples`는 **측정 불가** — promoted 후보가 만들어지지 않아 소비할 대상이 없다 |
+| 최종 판정 | **RED** — 아래 차단 원인 2건. 어느 쪽도 마커 계약 안에서 수리 불가 |
+| 산출물 보존 위치 | `.work/e2e-b1-post-api-invoices/`, `.work/e2e-b1-post-api-quotas/`, `.work/e2e-b1-post-api-fulfillment/`, `.work/e2e-b1-diag-transfers{,2}/` (전부 `.gitignore` 대상 — 커밋하지 않음) |
+
+##### 차단 원인 1 — 독립 `trial` CLI에 인증 경로가 없다 (모든 invoke가 403)
+
+`trial`은 후보 4개 전부에 대해 `status 403 Forbidden`을 받았다(`path: /api/invoices`,
+`responseBody.error: "Forbidden"`). 원인은 트리플 내용이 아니라 **인증**이다:
+
+- fixture SUT `samples/order-service`는 JWT로 보호된다 —
+  `auth/SecurityConfig.java`가 `/api/auth/**`·`/actuator/**`·`/ws/**`·`/error`만 `permitAll()`이고
+  나머지는 `anyRequest().authenticated()` + `JwtAuthFilter`.
+- 그런데 `BuilderCli.runTrial`은 `EndpointExplorationRunner`를 **`RequestHeaders.empty()`로
+  하드코딩**해 생성하고 `AuthTokenProvider`도 붙이지 않는다. `--auth-login-path`/`--auth-user`/
+  `--auth-pass` 등 `AuthConfig` 플래그는 `BuilderCli` 안에서 **`build` 서브커맨드 경로에서만**
+  파싱된다(`e2e/run-e2e.sh`가 build에 그 플래그를 넘겨 쓰는 것과 대조).
+- 즉 **인증이 걸린 SUT에 대해서는 독립 `trial` CLI가 트리플 내용과 무관하게 항상 실패한다.**
+  `trial-loop` SKILL.md도, 이 절차서도 이 제약을 언급하지 않는다.
+
+수동 재현(토큰을 직접 붙이면 403이 사라진다 — 인증이 원인임의 대조 증거):
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:58080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"password"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -s -w "\nHTTP %{http_code}\n" -X POST http://localhost:58080/api/invoices \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" \
+  --data-binary @.work/e2e-b1-post-api-invoices/triples/post-api-invoices/failed/cand-03/body.json
+# → HTTP 400 (403이 아님)
+```
+
+##### 차단 원인 2 — `synthesize-triple`의 body가 SUT DTO와 형상이 맞지 않는다
+
+인증을 우회해 직접 호출해도 2xx가 나오지 않는다. 세 EP 모두 **도구가 생성한 body 자체**가
+happy path를 만족시킬 수 없고, 그 수리는 마커가 아닌 자리를 고쳐야 하므로 마커 계약(REQ-009)
+위반이 된다:
+
+| endpointId | 생성된 body(마커 채운 후) | 인증 붙인 직접 호출 | 원인 |
+|---|---|---|---|
+| `post-api-invoices` | `{"lineItems":{"sku":"SKU-TEST-0001","amount":1}}` | **HTTP 400** | DTO는 `List<LineItem> lineItems`인데 **배열이 아니라 객체**로 생성됨. 또한 가드 `sum != req.total()`의 INPUT 피연산자 `total`이 **body에서 통째로 누락** |
+| `post-api-quotas` | `{ }` | **HTTP 422** | 가드가 `quotas.isEmpty()`인데 빈 body 생성. **갭 마커가 0개**라 에이전트가 채울 자리조차 없다 |
+| `post-api-fulfillment` | `{"carrierCode":"CR-TEST-01"}` | **HTTP 500** | 가드 `req.parcelWeight() > policy.maxWeight()`의 INPUT 피연산자 `parcelWeight`가 body에서 누락. `stubs.json`은 `EXTERNAL_RESPONSE` 피연산자 2개(`allowedPrefix`/`maxWeight`)가 있는데도 `{ }`로 비어 있고, 독립 `trial` CLI는 stub 등록을 항상 skip하므로 외부 호출이 unstubbed로 나가 500 |
+
+`post-api-invoices`는 `--sut-jar`/`--sut-src` 오라클을 붙여 후보 4개(`amount` = -1/0/1/2)를
+얻었으나 형상 문제는 그대로였다. 오라클 없이 돌리면 후보가 1개로 줄고 `amount`가 마커로
+남을 뿐, 배열/`total` 문제는 동일하다.
+
+##### 부수 발견 — `e2e/triples/post-api-transfers` fixture는 현행 도구 출력과 다르다
+
+커밋된 `base/cand-01`이 "도구가 만든 원본"이라는 전제(마커-diff의 기준선)가 성립하는지 확인하려
+그 fixture의 **자기 자신의** `provenance-report.json`으로 `synthesize-triple`을 재실행해 대조했다:
+
+```
+committed base/cand-01/body.json : {"fromAccountId":"seed-fromaccountid","amount":1,"note":<marker>,"items":[{"sku":<marker>,"qty":<marker>}]}
+재생성  base/cand-01/body.json    : {"amount":100,"note":<marker>,"items":{"sku":<marker>,"qty":<marker>}}
+committed base/cand-01/seed.sql  : INSERT INTO fund_accounts (id, balance_amount) VALUES ('seed-fromaccountid', 1);
+재생성  base/cand-01/seed.sql     : INSERT INTO fund_accounts (balance_amount) VALUES (100);
+```
+
+`items`가 배열↔객체로 다르고, `EXISTS` 가드의 INPUT 피연산자 `fromAccountId`가 재생성본에는
+없다. 즉 **커밋된 fixture의 `base/`는 현행 `synthesize-triple`이 만들 수 없는 산출물**이며
+(a17a8cc "promoted 부트스트랩"), 도구 출력의 증거로 쓸 수 없다. 차단 원인 2가 transfers에도
+동일하게 존재함을 뒤집어 보여주는 관측이기도 하다.
+
+##### 판정 근거 요약 (수용기준 대조)
+
+| 수용기준 | 결과 |
+|---|---|
+| promoted가 생성된다 | ❌ `promoted/` 디렉터리 미생성, `trial` 종료 코드 3 |
+| diff 검사에서 마커 외 변경이 없다 | ✅ (a) 사람 diff·(b) T1 기계 게이트 모두 통과 — 단 승격이 없어 "승격된 후보의" diff는 아니다 |
+| 절차·결과가 문서로 기록된다 | ✅ 이 절 |
+
+3개 중 1개(promoted 생성)가 미충족이므로 **REQ-027은 🔴**. 조용히 넘어가지 않는다.
+
+##### 재시도 계획 (선행 수정 필요 — 절차 재실행만으로는 GREEN 불가)
+
+1. **`trial` CLI에 인증 배선 추가** — `build` 경로와 동일한 `--auth-*` 플래그(또는
+   `--request-headers-file`)를 `runTrial`에서도 파싱해 `AuthTokenProvider`/`RequestHeaders`로
+   넘긴다. 이것 없이는 인증된 SUT 전반에서 이 스킬 파이프라인이 동작하지 않는다.
+2. **`synthesize-triple`의 body 형상 수정** — (a) 컬렉션 필드(`List<T>`)를 JSON 배열로 생성,
+   (b) 가드에 쓰인 INPUT 피연산자(`total`, `parcelWeight`)를 body에 반드시 포함,
+   (c) `EXTERNAL_RESPONSE` 피연산자가 있으면 `stubs.json`에 해당 mapping을 생성.
+3. 위 2건 수정 후 이 절차를 그대로 재실행하고 "실행 #2"로 누적 기록한다.
 
 ---
 
