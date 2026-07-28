@@ -337,7 +337,7 @@
 | REQ-024 | attach 역-DELETE 실패 차단 | AttachSeedGateIT#req024_reverseDeleteFailureBlocksPromotionAndReportsRemainingRow | integration | 🟢 green |
 | REQ-025 | attach 스텁 skip | AttachStubSkipIT#req025_attachModeSkipsStubRegistrationEvenWithNonEmptyStub | integration | 🟢 green |
 | REQ-026 | SKILL.md 3종 패키징(3요소) | SkillPackagingTest#REQ-026 | unit | 🟢 green |
-| REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🔴 **실증 실행 → RED**[^req027-e2e-b1-run1] |
+| REQ-027 | 에이전트 완주 실증 | manual: E2E-B1 절차·diff 기록 | manual | 🟢 green (실증 실행 #2)[^req027-e2e-b1-run2] (실행 #1은 RED[^req027-e2e-b1-run1]) |
 | REQ-028 | fixture 착륙·outer red | FixtureBaselineE2E#REQ-028 | E2E | 🟢 green |
 | REQ-029 | petclinic 실측(판정 분기) | manual: E2E-B2 A/B 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
 | REQ-030 | attach 경계 수동 확인 | manual: E2E-B3 기록 | manual | 🟡 절차 준비[^task19-manual-procedures] |
@@ -494,7 +494,7 @@ Given/When/Then 충족). **여전히 미배선(🟡 유지 사유):** (a) attach
 Endpoint/happy 시드를 자동 로드하는 경로 — 둘 다 이 task의 선언 파일 범위(triple fixture 배치 +
 `run-e2e.sh` 배선 + `TriplePromotionE2E`) 밖이며 별도 후속 task로 남긴다.
 
-[^req027-reclass]: **Must → Should 재분류(Phase A 후속 작업 2/3, 근거 기록).** 재분류 이전에 이 문서는 REQ-027을 `우선순위: Must`로 정의해 두고도 완료 정의 콜아웃에서는 "manual Should"로 서술해 Must 분모에서 빼고 있었다 — 두 표기가 모순이었고, 그 상태로 "Must 전부 🟢"을 주장하면 실제(33/34)를 34/34로 과대 표기하게 된다. 표기를 실제에 맞추는 방향(콜아웃을 고쳐 33/34로 적는 것)과 우선순위를 실제 성격에 맞추는 방향 중 **후자**를 택했다. 근거: REQ-027은 **에이전트 주체의 1회 수동 실증(E2E-B1)**이라 자동 실행·재현이 불가능하고, 이 문서가 이미 검증 레벨을 `manual`로 규정해 CI 게이트 대상에서 제외하고 있다(같은 성격의 REQ-029/030이 애초에 Should인 것과 일관). 스킬 3종의 **자동 검증 가능한 부분**(패키징 3요소 구조)은 REQ-026(Must, 🟢, `SkillPackagingTest`)이 이미 커버하므로, REQ-027을 Should로 두어도 Must 집합이 보장하는 기능 범위에는 구멍이 생기지 않는다. **다만 이 재분류는 요구사항을 삭제하거나 완화하는 것이 아니다** — REQ-027은 🟡(절차 준비)로 추적 매트릭스에 그대로 남고, 전체 37개 100% green 목표의 분모에도 그대로 포함된다. 즉 "Must 완료"와 "전체 완료"를 구분해 읽어야 하며, Phase A를 전부 완료로 선언하려면 REQ-027/029/030 3건의 manual 실증이 여전히 필요하다.
+[^req027-reclass]: **Must → Should 재분류(Phase A 후속 작업 2/3, 근거 기록).** 재분류 이전에 이 문서는 REQ-027을 `우선순위: Must`로 정의해 두고도 완료 정의 콜아웃에서는 "manual Should"로 서술해 Must 분모에서 빼고 있었다 — 두 표기가 모순이었고, 그 상태로 "Must 전부 🟢"을 주장하면 실제(33/34)를 34/34로 과대 표기하게 된다. 표기를 실제에 맞추는 방향(콜아웃을 고쳐 33/34로 적는 것)과 우선순위를 실제 성격에 맞추는 방향 중 **후자**를 택했다. 근거: REQ-027은 **에이전트 주체의 1회 수동 실증(E2E-B1)**이라 자동 실행·재현이 불가능하고, 이 문서가 이미 검증 레벨을 `manual`로 규정해 CI 게이트 대상에서 제외하고 있다(같은 성격의 REQ-029/030이 애초에 Should인 것과 일관). 스킬 3종의 **자동 검증 가능한 부분**(패키징 3요소 구조)은 REQ-026(Must, 🟢, `SkillPackagingTest`)이 이미 커버하므로, REQ-027을 Should로 두어도 Must 집합이 보장하는 기능 범위에는 구멍이 생기지 않는다. **다만 이 재분류는 요구사항을 삭제하거나 완화하는 것이 아니다** — REQ-027은 추적 매트릭스에 그대로 남고, 전체 37개 100% green 목표의 분모에도 그대로 포함된다(재분류 시점의 상태는 🟡, 이후 실증 실행 #1 → 🔴, 실행 #2 → 🟢). 즉 "Must 완료"와 "전체 완료"를 구분해 읽어야 하며, Phase A를 전부 완료로 선언하려면 REQ-027/029/030 3건의 manual 실증이 여전히 필요하다.
 
 [^req036-done]: **해소됨(Phase A 후속 작업 2/3).** `[^req036-task12-partial]`/`[^req036-task18-partial]`이 남긴 잔여를 수용기준 문면 기준으로 재판정하고 미충족분만 채웠다.
 
@@ -547,8 +547,8 @@ REQ-009 커버리지 보강).
 합성 파이프라인 자체의 결함이 아니므로 Phase A 분모에서는 제외(🔵)하되, REQ-018/이 diff의 회귀로는
 간주하지 않는다(코디네이터 리뷰: Approved).
 
-Coverage: 34/37 green (92%), 2 partial(🟡 REQ-029, REQ-030) + **1 fail(🔴 REQ-027)** — 전부 manual
-Should. target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
+Coverage: 35/37 green (95%), 2 partial(🟡 REQ-029, REQ-030) — 전부 manual Should.
+target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). Won't/Phase B·C: 🔵 분모 제외).
 
 > **✅ Must 완료 정의 충족 / ⚠️ 전체 100%는 미충족(명시):** 이 명세의 완료 정의인 "**Must 100%
 > green**"은 **충족됐다** — Must **33개**가 전부 🟢이다. Phase A 후속 작업이 마지막 두 Must를 해소했다:
@@ -563,12 +563,14 @@ Should. target 100% (대상: Must 33 + 미연기 Should 4(REQ-027/029/030/037). 
 > 표기와 실제를 일치시켰다(요구사항 삭제·완화가 아니라 분류 정정 — REQ-027은 매트릭스와 전체
 > 분모에 그대로 남는다).
 >
-> **남은 미완 3건은 REQ-027/029/030이며 전부 manual Should**다. REQ-029/030은 🟡(절차서 작성 완료,
-> 실증 세션 실행만 남음, `[^task19-manual-procedures]`). **REQ-027은 2026-07-28에 실제로 실증을
-> 실행했고 판정이 RED라 🔴**다(`[^req027-e2e-b1-run1]`) — 절차 재실행만으로는 GREEN이 될 수 없고,
-> 독립 `trial` CLI의 인증 배선 누락과 `synthesize-triple`의 body 형상 결함을 코드로 고쳐야 한다.
-> 따라서 "대상 37개 100% green"이라는 더 넓은 목표는 아직 충족되지 않았고, Phase A를 "전부 완료"로
-> 선언하려면 그 3건이 필요하다. Must 기준 완료와 전체 기준 완료를 구분해 읽어야 한다.
+> **남은 미완 2건은 REQ-029/030이며 둘 다 manual Should**다 — 🟡(절차서 작성 완료, 실증 세션
+> 실행만 남음, `[^task19-manual-procedures]`). **REQ-027은 🟢로 전환됐다**: 2026-07-28 실증
+> 실행 #1이 RED였고(`[^req027-e2e-b1-run1]`), 그 RED가 지목한 두 차단 원인(독립 `trial` CLI의
+> 인증 배선 누락 `fa2f45a`, `synthesize-triple`의 body/stub 형상 결함 `07d8ced`)을 코드로 고친
+> 뒤 **실행 #2가 GREEN**이다(`[^req027-e2e-b1-run2]` — promoted 생성 + 마커 외 변경 없음(사람
+> diff + T1 기계 확인) + 기록). 따라서 "대상 37개 100% green"이라는 더 넓은 목표는 아직
+> 충족되지 않았고(REQ-029/030 잔여), Phase A를 "전부 완료"로 선언하려면 그 2건이 필요하다.
+> Must 기준 완료와 전체 기준 완료를 구분해 읽어야 한다.
 
 Task 15가
 REQ-023/024/025를 🔴→🟢 전환(+3). Task 16이 REQ-022를 🔴→🟢 전환(+1). Task 17이 REQ-026을 🔴→🟢
@@ -600,7 +602,8 @@ Task 16이 `EndpointExplorationRunner.tripleGateDisabledByAblation()`을 신설�
 `docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md`를 작성했다. 작성
 시점에는 세 절차 모두 **실행되지 않은** 상태였다 — 각 절차의 "완료 후 처리"에 명시된 대로,
 후속 세션이 그 절차서를 실제로 수행하고 판정 결과를 기록해야만 이 REQ들이 🟢로 전환된다.
-(**갱신 2026-07-28:** E2E-B1은 실제로 실행됐고 판정은 RED다 — `[^req027-e2e-b1-run1]` 참조.
+(**갱신 2026-07-28:** E2E-B1은 두 번 실행됐다 — 실행 #1은 RED(`[^req027-e2e-b1-run1]`),
+그 원인을 코드로 고친 뒤의 **실행 #2는 GREEN**(`[^req027-e2e-b1-run2]`)이라 REQ-027은 🟢다.
 REQ-029/030은 여전히 🟡 절차 준비 상태다.) 절차서 작성 과정에서
 확인한 구현 세부 사항 하나를 여기 기록한다: 독립 `trial` CLI(`BuilderCli.runTrial`)는
 `TrialRunner`를 6-arg 생성자로 생성해 `attachMode=false`로 고정돼 있어, REQ-023(attach 이중
@@ -629,6 +632,25 @@ body에 갭 마커 0개(422), `post-api-fulfillment`는 가드 피연산자 `par
 자신의 provenance 리포트로 재생성해도 재현되지 않아(배열↔객체, `fromAccountId` 유무) **현행
 도구 출력이 아닌 손으로 만든 부트스트랩 fixture**임이 드러났다. 재시도는 위 ①②를 코드로
 고친 뒤에야 의미가 있다(절차 재실행만으로는 GREEN이 될 수 없다).
+(**후속:** ①은 `fa2f45a`, ②는 `07d8ced`로 수정됐고 실행 #2가 GREEN이다 —
+`[^req027-e2e-b1-run2]` 참조. 이 각주는 이력 보존을 위해 그대로 둔다.)
+
+[^req027-e2e-b1-run2]: **E2E-B1 실증 실행 #2(2026-07-28) 판정 = GREEN.** 전체 기록은
+[절차서의 "E2E-B1 실행 기록 → 실행 #2" 절](../reports/2026-07-26-triple-synthesis-manual-evidence.md)에
+있다. 에이전트가 스킬 3종을 순서대로(`provenance-analysis` → `triple-synthesis` → `trial-loop`)
+`post-api-invoices`에 수행해 수용기준 3개를 전부 충족했다: ① **promoted 생성** — `trial` 1회
+호출에서 `cand-03`이 HTTP 201로 승격(`promoted/cand-03`), 확인용 2회차에서 `cand-04`도 201·종료
+코드 0. ② **마커 외 변경 없음** — (a) 사람 확인: `base` vs `promoted`의 JSON 키 집합이 동일하고
+변경된 키는 마커였던 `lineItems[0].sku`·`total` 2개뿐, `seed.sql`/`stubs.json`은 바이트 동일.
+(b) T1 기계 확인: `trial` 경로에서 `T1_REJECTED` 0건이고, 실제 `BodyShape`를 가진 `build
+--triple-candidates` 경로에서 `tripleAdopted: true` + `staleTriples: []` + 로그에 `"T1 재검증 실패"`
+0건. ③ **절차·결과 기록** — 절차서 실행 #2 절. **실행 #1의 차단 원인 2건이 해소됐음이 실측으로
+확인된다:** ①(인증 배선 부재, `fa2f45a`)은 이번 실행에서 403이 **0건**이고 `trial: auth wired …`
+로그가 남은 것으로, ②(body 형상 결함, `07d8ced`)는 `lineItems`가 배열 `[{…}]`로 생성되고 가드
+피연산자 `total`이 body에 포함된 것으로 확인됐다. 대상 EP를 `post-api-invoices`로 고른 이유는
+`post-api-quotas`(동적 키 Map 루트 → 마커 계약상 표현 불가)와 `post-api-fulfillment`(독립 `trial`
+CLI가 stub 등록을 항상 skip)가 각각 구조적 한계를 갖기 때문이며, 그 근거도 절차서에 기록했다.
+이번 실행이 새로 드러낸 문서 부정확 4건(스킬 2건 + 절차서 2건)은 같은 커밋에서 정정했다.
 
 ## design spec E2E ↔ REQ 매핑
 

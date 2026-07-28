@@ -1,9 +1,10 @@
 # 삼중 합성(Phase A) 수동 실증 절차서 — E2E-B1 / E2E-B2 / E2E-B3
 
 - 작성일: 2026-07-27 (최종 갱신: 2026-07-28)
-- 상태: **E2E-B1 실증 1회 실행 완료 — 판정 RED**(§"E2E-B1 실행 기록" 참조). E2E-B2/B3는 절차
-  준비 완료·실증 미실행. 실행 과정에서 드러난 절차서 자체의 오류는 해당 절에 정정 표기와 함께
-  반영했다.
+- 상태: **E2E-B1 실증 2회 실행 — 실행 #1 RED, 실행 #2 GREEN**(§"E2E-B1 실행 기록" 참조).
+  실행 #1이 지목한 두 차단 원인을 코드로 고친 뒤(`fa2f45a`, `07d8ced`) 재실행해 REQ-027이 🟢가
+  됐다. E2E-B2/B3는 절차 준비 완료·실증 미실행. 실행 과정에서 드러난 절차서 자체의 오류는 해당
+  절에 정정 표기와 함께 반영했다.
 - 관련 문서: [design spec §11.3](../specs/2026-07-26-agent-skill-triple-synthesis-design.md),
   [요구사항명세](../requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   (REQ-023, REQ-027, REQ-029, REQ-030), [docs/03](../../03-graph-rag-builder.md "삼중 합성 CLI 절"),
@@ -166,8 +167,14 @@ done
 > "C4 리뷰 Critical 3(a)" fix), 거부된 후보는 DB/HTTP를 전혀 건드리지 않고 `T1_REJECTED`
 > 다이제스트와 함께 `failed/`로 간다. `trial-loop` SKILL.md의 §"T1 검증 게이트는 이 CLI에도
 > 적용된다"가 옳고 이 절차서가 stale이었다. 따라서 **`trial` 실행 자체가 이미 마커-diff(REQ-009)
-> 기계 검증을 수행한다** — `failed/digest-final.json`에 `T1_REJECTED`가 없으면 그 후보들은
-> 마커-diff를 기계적으로 통과한 것이다.
+> 기계 검증을 수행한다** — 실패 후보 어디에도 `T1_REJECTED`가 없으면 그 후보들은 마커-diff를
+> 기계적으로 통과한 것이다.
+>
+> **증거 파일은 종료 코드에 따라 다르다(2026-07-28 실행 #2에서 확인).** `trial`이 **종료 코드 3**
+> (전부 실패)으로 끝났을 때만 `failed/digest-final.json`(이번 호출의 digest 배열)이 쓰인다.
+> **종료 코드 0**(어떤 후보가 승격)으로 끝나면 그 파일은 생성되지 않고, 앞서 실패한 후보들에
+> 후보별 `failed/cand-NN/digest.txt`만 남는다. 그러므로 확인은 두 경로를 모두 덮는
+> `grep -rl T1_REJECTED "$WORK/triples/<endpointId>/failed/" | wc -l` → `0` 으로 한다.
 
 이 경로에 남는 유일한 T1 갭은 `BodyShape.empty()`로 인한 **body 필드 스키마 검증 skip**이다
 (마커-diff·seed 화이트리스트·PII·stub 스키마는 전부 적용). 그 갭까지 닫으려면 실제 `BodyShape`를
@@ -185,9 +192,16 @@ done
   --endpoint post-api-fulfillment \
   --external-stubs e2e/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}} \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
   --triple-candidates $WORK/triples \
   --commit-sha e2e-b1-manual"
 ```
+
+> **`--auth-*`는 여기서도 필수다(실행 #2에서 확인, 2026-07-28).** fixture SUT는 JWT 보호이므로
+> 이 플래그 없이는 대상 EP가 2xx에 도달하지 못해 `tripleAdopted` 판정 자체가 무의미해진다
+> (`e2e/run-e2e.sh`의 `build` 호출도 같은 플래그를 넘긴다). 초판 커맨드에는 빠져 있었다.
+> 반대로 `run-e2e.sh`에 있는 `--with-kafka`는 여기서 **넣지 마라** — 대상 EP가 Kafka를 쓰지 않고,
+> `apache/kafka` Testcontainer 기동 실패(ARM Mac)로 빌드가 통째로 죽는다.
 
 **판정**: `$WORK/build/exploration-report.json`에서 대상 endpoint의 `tripleAdopted:true` +
 `staleTriples`가 비어 있음 + 빌드 로그에 `"T1 재검증 실패"` 문자열이 없음. 이 3가지가 모두
@@ -348,6 +362,191 @@ committed base/cand-01/seed.sql  : INSERT INTO fund_accounts (id, balance_amount
 
 **따라서 실행 #2의 대상 EP는 `post-api-invoices`를 권한다** — 외부 의존도 DB 가드도 없고, 형상
 결함이 모두 해소돼 마커(`total`, `lineItems.sku`)만 채우면 완주 가능한 형태다.
+
+#### 실행 #2 — 2026-07-28 (GREEN)
+
+| 항목 | 값 |
+|---|---|
+| 실행일자 | 2026-07-28 |
+| 대상 endpointId | `post-api-invoices` (`POST /api/invoices`) |
+| 실행 에이전트(모델·세션) | Claude Opus 5 (Claude Code 서브에이전트), worktree `manual-evidence-and-drift` / 브랜치 `worktree-manual-evidence-and-drift` |
+| 스킬 실행 순서 준수 여부 | **준수** — `provenance-analysis`(C1) → `triple-synthesis`(C2) → `trial-loop`(C3). 세 SKILL.md를 먼저 읽고 그 지시대로만 진행했다(1차 수정 과정의 사전 지식으로 지름길을 타지 않음) |
+| trial 시도 횟수(성공까지) | **T2 1회 호출 / 후보 3개 시도**(budget 8) — `cand-01`(amount=-1) 422, `cand-02`(amount=0) 422, **`cand-03`(amount=1) → HTTP 201 promoted, 즉시 종료**. 실패 2건은 결함이 아니라 오라클이 준 경계값 후보를 루프가 소거하는 정상 동작이다. 이후 잔여 `cand-04`로 종료 코드를 명시 캡처하는 확인용 T2 호출 1회 추가(→ `cand-04`도 201 promoted, `TRIAL_EXIT=0`) |
+| (a) 사람 diff 결과 | **마커 외 변경 없음.** `base/cand-03` vs `promoted/cand-03`: 키 집합 동일, 변경된 키는 마커였던 2개(`lineItems[0].sku`, `total`)뿐, `seed.sql`/`stubs.json`은 바이트 동일. `cand-04`도 동일 결과 |
+| (b) T1 기계 확인 결과 | **`tripleAdopted: true`, `staleTriples: []`, 빌드 로그에 `"T1 재검증 실패"` 0건** — 3조건 모두 충족. `trial` 경로에서도 `T1_REJECTED` 0건 |
+| 최종 판정 | **GREEN** — 수용기준 3항목 전부 충족 |
+| 산출물 보존 위치 | `.work/e2e-b1-run2-post-api-invoices/`(`.gitignore` 대상 — 커밋하지 않음). 하위: `provenance-report.json`, `provenance-notes.md`, `triples-nooracle/`(오라클 없이 돌린 1차 합성), `triples/`(오라클 포함, 승격본 포함), `build/exploration-report.json` |
+
+##### 대상 EP 선택 이유
+
+`post-api-transfers`는 절차서가 제외한다(사람이 갭필한 fixture 재사용 금지). 남은 3개 중:
+
+- **`post-api-quotas`** — `@RequestBody Map<String,Integer>`(동적 키 Map 루트)라 마커 계약(REQ-009,
+  base/candidate 키 집합 동일)이 "키 자리 마커"를 표현할 수 없다. 구조적 한계로 합성 불가(위 §남은 갭 1).
+- **`post-api-fulfillment`** — 가드가 `EXTERNAL_RESPONSE`(`GET /carriers/policy`)에 걸려 있는데
+  독립 `trial` CLI는 stub 등록을 항상 skip한다(`trial-loop` SKILL.md §결정적 코드가 하는 일).
+  `stubs.json`이 옳게 채워져도 이 경로로는 검증되지 않는다(위 §남은 갭 2).
+- **`post-api-invoices`** — 외부 의존 없음, DB 가드 없음(`seed.sql` 빈 파일), 가드 3개가 전부
+  INPUT/파생이라 마커만으로 완주 가능. **선택.**
+
+##### 실제 실행 커맨드와 관측
+
+**C1 provenance** (`ROOT=$(git rev-parse --show-toplevel)`, `WORK=$ROOT/.work/e2e-b1-run2-post-api-invoices`):
+
+```
+provenance --sut-src $ROOT/samples/order-service/src/main/java \
+  --sut-resources $ROOT/samples/order-service/src/main/resources \
+  --endpoint 'POST /api/invoices' --out $WORK/provenance-report.json
+→ provenance report for post-api-invoices: 3 guard(s), 0 unresolved(s)
+→ collectionPaths: ["lineItems"]   # 형상 불변식 1의 근거가 실려 있다
+```
+
+`unresolved`는 0건이지만 guards 안에 `origin:"UNKNOWN"` 피연산자가 4개 있어, 스킬 §"unresolved /
+UNKNOWN 항목 처리 절차"대로 소스를 직접 열어 판정하고 `$WORK/provenance-notes.md`에 근거를 남겼다
+(리포트 자체는 수정하지 않음). 판정 요약: `null` 리터럴 1건(출처 없음, UNKNOWN 유지), `isEmpty()`
+결과 1건(DERIVED from INPUT `lineItems`), `li.amount()` 1건(**INPUT** `lineItems.amount` — 루프 변수
+↔ 컬렉션 원소 체인 미해소), `sum` 1건(DERIVED 집계). 이 판정에서 **`lineItems.amount`는
+`unguarded[]`에 실려 있지만 실제로는 가드된다**는 제약이 나왔고, 그에 따라 마커를
+`amount > 0 && sum == total`을 만족하도록 채웠다.
+
+**C2 synthesize-triple** — 스킬의 오라클 결정 규칙("리포트에 `DERIVED` 피연산자가 있으면 `--sut-jar`")을
+글자 그대로 적용하면 **이 리포트에는 `DERIVED`가 0건**이므로 오라클 없이 돌리게 된다. 그렇게 먼저
+돌린 결과(`$WORK/triples-nooracle/`)는 후보 **1개**, 마커 3개(`sku`/`amount`/`total`)였고 `notes.md`
+끝줄에 `input-oracle: none`이 남았다. 스킬이 그 줄을 "부트 jar가 있으면 붙여 다시 돌리는 편이 낫다"는
+신호로 규정하므로 재실행:
+
+```
+synthesize-triple --report $WORK/provenance-report.json --triple-store $WORK/triples \
+  --sut-jar $ROOT/samples/order-service/build/libs/order-service.jar \
+  --sut-src $ROOT/samples/order-service/src/main/java \
+  --sut-resources $ROOT/samples/order-service/src/main/resources
+→ 4 candidate(s), input-oracle: static-literal + concolic-asm-z3 -> numeric 15 field(s), strings 5
+→ cand-01..04의 lineItems[0].amount = -1 / 0 / 1 / 2 (오라클 결정값 = 마커 아님)
+```
+
+형상 불변식 3종 확인: ① `lineItems`가 **배열**(`[{...}]`) ✅ ② 가드 INPUT 피연산자 `total`이 body에
+존재 ✅(컨테이너 `lineItems` 자신은 제외가 정상) ③ `EXTERNAL_RESPONSE` 피연산자 0개이므로
+`stubs.json`이 `{ }`인 것은 결함 아님 ✅.
+
+갭필: `lineItems[0].sku` → `"SKU-TEST-000N"`(free-text, 가드 없음, 합성값·PII 아님), `total` →
+그 후보의 `amount` 합(가드 `sum != total` 만족). `amount`는 마커가 아니므로 건드리지 않았다 —
+그래서 `cand-01`/`cand-02`는 `amount<=0` 가드에 걸릴 것이 예상됐고 실제로 그렇게 됐다. 채운 사유는
+각 후보 `notes.md`에 append했다.
+
+**C3 trial** — SUT는 JWT 보호이므로 스킬 지시대로 `--auth-*`를 넘겼다:
+
+```
+trial --endpoint post-api-invoices --http-method POST --path /api/invoices \
+  --sut-base-url http://localhost:58080 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-user app --db-password app --db-type postgres \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
+  --triple-store $WORK/triples --trial-budget 8
+→ trial: auth wired (login /api/auth/login as admin, header Authorization) — invoke에 토큰이 붙는다
+→ cand-01 failed (status 422) / cand-02 failed (status 422)
+→ cand-03 promoted -> …/promoted/cand-03 (status 201)
+```
+
+`failed/cand-01/digest.txt`의 `mappedGuard`가 `<=@InvoiceController.java:23`으로 정확히 역매핑됐다
+(`toolSuggestion: null` — 스킬이 명시한 대로 제안 산출 조건(`DB_READ` 피연산자 NUMERIC 비교)에
+해당하지 않는다). **403은 한 건도 없다** — 실행 #1의 차단 원인 1이 해소됐음이 여기서 확인된다.
+
+##### (a) 마커-diff 사람 확인 — 커맨드와 출력
+
+절차서 §(a)의 `diff -u`는 통과하나 갭필 시 JSON 재포맷이 섞여 눈으로 읽기 나쁘다. T1이 실제로 보는
+것은 **JSON 키 단위 구조 diff**이므로 그와 같은 의미로 다시 검사했다(둘 다 수행):
+
+```
+$ python3 (base vs promoted 평탄화 키 비교)
+--- cand-03 body.json key-level diff ---
+ key sets identical: True
+  CHANGED lineItems[0].sku: '__AGENT_FILL__{type:String, semanticHint:free-text, guard:none}' -> 'SKU-TEST-0003'  (base was marker: True)
+  CHANGED total: '__AGENT_FILL__{type:int, semanticHint:none, guard:!= at InvoiceController.java:28}' -> 1  (base was marker: True)
+  non-marker changes: NONE
+  seed.sql byte-identical: True
+  stubs.json byte-identical: True
+--- cand-04 body.json key-level diff ---
+ key sets identical: True
+  CHANGED lineItems[0].sku: … -> 'SKU-TEST-0004'  (base was marker: True)
+  CHANGED total: … -> 2  (base was marker: True)
+  non-marker changes: NONE
+  seed.sql byte-identical: True
+  stubs.json byte-identical: True
+
+$ grep -rl T1_REJECTED failed/ | wc -l
+0
+```
+
+##### (b) T1 기계 확인 — 커맨드와 출력
+
+```
+build --sut-src … --sut-resources … --sut-jar … --sut-compose $ROOT/e2e/docker-compose.yml \
+  --out $WORK/build --sut-id order-service --endpoint post-api-invoices \
+  --external-stubs $ROOT/e2e/external-stubs \
+  --sut-env EXTERNAL_INVENTORY_URL={{wiremock}},EXTERNAL_FRAUD_URL={{wiremock}} \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
+  --triple-candidates $WORK/triples --commit-sha e2e-b1-manual-run2
+→ BUILD_EXIT=0
+→ triple adopted for post-api-invoices (REQ-018): …/triples/post-api-invoices/promoted/cand-03
+
+$ python3 (exploration-report.json에서 대상 EP 추출)
+{"endpointId": "post-api-invoices", "tripleAdopted": true, "tripleRejected": {}, "staleTriples": []}
+$ grep -c "T1 재검증 실패" build.log   → 0
+$ grep -ic "stale" build.log          → 0
+```
+
+##### 판정 근거 요약 (수용기준 대조)
+
+| 수용기준 | 결과 |
+|---|---|
+| promoted가 생성된다 | ✅ `promoted/cand-03`(HTTP 201), 확인용 2회차에서 `promoted/cand-04`도 201·`TRIAL_EXIT=0` |
+| diff 검사에서 마커 외 변경이 없다 | ✅ (a) 키 단위 diff에서 `non-marker changes: NONE`, `seed.sql`/`stubs.json` 바이트 동일 + (b) T1 기계 게이트 `tripleAdopted:true`/`staleTriples:[]`/`T1 재검증 실패` 0건 |
+| 절차·결과가 문서로 기록된다 | ✅ 이 절 |
+
+3개 전부 충족이므로 **REQ-027은 🟢**. 실행 #1의 차단 원인 2건(인증 배선 부재 → 전부 403 / body 형상
+결함 → 400)은 각각 `fa2f45a`·`07d8ced`로 해소됐고, 이번 실행에서 403이 0건이고 배열 형상
+`lineItems:[{…}]`이 그대로 관측돼 해소가 실측으로 확인됐다.
+
+##### 이번 실행에서 새로 드러난 문서 문제 (해당 문서를 이 커밋에서 정정)
+
+1. **`provenance-analysis` SKILL.md §"unresolved / UNKNOWN 항목 처리 절차"** — 절 제목은
+   "unresolved / UNKNOWN"인데 1번 단계가 "`unresolved` 목록의 각 항목에 대해"로만 적혀 있다. 이번
+   리포트는 `unresolved: []`이면서 guards 안에 UNKNOWN 피연산자가 4개였고, 절차를 글자 그대로
+   따르면 그 4개를 건너뛰게 된다. 게다가 UNKNOWN 피연산자에는 개별 소스 위치 필드가 없어 소속
+   가드의 `at`을 위치 근거로 써야 한다는 점도 적혀 있지 않다. → 두 사실을 스킬에 명시.
+2. **`triple-synthesis` SKILL.md §"오라클 플래그를 줄지 판단하는 법"** — "리포트에 `DERIVED`
+   피연산자가 있으면 `--sut-jar`를 줘라"는 규칙만으로는 이번 케이스를 못 잡는다. 이 리포트의
+   `DERIVED` 피연산자는 **0건**인데(집계 `sum`이 UNKNOWN으로 남았다) 오라클을 붙이자 후보가
+   1개→4개, 결정 필드가 0→1개로 늘었다. 실제로 오라클이 의미 있는 조건은 "`DERIVED`가 있을 때"가
+   아니라 "**채울 슬롯(unguarded + DERIVED 파생 루트)이 하나라도 있을 때**"다. → 규칙 문구를 정정.
+3. **이 절차서 §(b)의 `build` 커맨드에 `--auth-*`가 없다.** fixture SUT는 JWT 보호이므로 그대로
+   붙여넣으면 대상 EP가 2xx에 도달하지 못한다(`e2e/run-e2e.sh`는 이 플래그를 넘긴다). → 커맨드 정정.
+4. **이 절차서 §(b)가 `failed/digest-final.json`을 T1_REJECTED 증거원으로 지목**하지만, 그 파일은
+   `trial`이 **종료 코드 3**으로 끝났을 때만 쓰인다. GREEN(종료 코드 0) 경로에서는 실패 후보에
+   후보별 `digest.txt`만 남고 `digest-final.json`은 생성되지 않는다. → 두 경로를 구분해 표기.
+
+##### 막히지는 않았으나 기록해 둘 마찰 (문서 수정 없이 관측만)
+
+- **`--with-kafka`를 붙이면 이 머신에서 `build`가 실패한다.** `e2e/run-e2e.sh`를 따라 처음에
+  `--with-kafka`를 넣었더니 `apache/kafka:3.8.0` Testcontainer가 exit 126(`Timed out waiting for log
+  output matching '.*Transitioning from RECOVERY to RUNNING.*'`)로 죽어 빌드가 실패했다. `invoices`
+  EP는 Kafka를 쓰지 않으므로 플래그를 빼고 재실행해 통과했다. 절차서 §(b)에는 원래 이 플래그가
+  없으므로 문서 결함은 아니다(ARM Mac 환경 이슈, `TrialSeedMySqlExecutableCommentIT`의 mysql
+  타임아웃과 같은 부류).
+- **zsh에서 `${PIPESTATUS[0]}`가 비어 나온다**(zsh는 `$pipestatus`). 종료 코드를 증거로 남기려면
+  파이프 없이 `> log 2>&1; echo $?` 형태로 캡처해야 한다. 문서 문제는 아니고 실행 요령이다.
+
+##### 자원 정리
+
+compose는 고유 project name `grb-e2e-b1-run2`로 띄우고 `down -v --remove-orphans`로 내렸다.
+`build` 경로의 Testcontainers는 Ryuk이 회수한다. 종료 후 확인:
+
+```
+docker ps -a --filter name=grb-e2e-b1-run2 | wc -l   → 0
+docker network ls --filter name=grb-e2e-b1-run2 -q   → 0
+docker volume ls --filter name=grb-e2e-b1-run2 -q    → 0
+docker ps        (전체)                               → 0건
+docker ps -a --filter status=exited (전체)            → 0건
+```
 
 ---
 
