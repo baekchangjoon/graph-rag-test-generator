@@ -155,7 +155,7 @@ public final class TriplePromotionGate {
                     trialOutcome.digest(), trialOutcome.attachStubInapplicable());
         }
 
-        return GateVerdict.adopted(candDir, loadMaterials(candDir, dialect), trialOutcome.attachStubInapplicable());
+        return GateVerdict.adopted(candDir, loadMaterials(candDir, dialect, tables), trialOutcome.attachStubInapplicable());
     }
 
     /**
@@ -194,9 +194,9 @@ public final class TriplePromotionGate {
         return m.matches() ? Integer.parseInt(m.group(1)) : Integer.MAX_VALUE;
     }
 
-    private static CandidateMaterials loadMaterials(Path candDir, DbConfig.Type dialect) throws Exception {
+    private static CandidateMaterials loadMaterials(Path candDir, DbConfig.Type dialect, List<TableSchema> tables) throws Exception {
         JsonNode body = Json.mapper().readTree(candDir.resolve("body.json").toFile());
-        List<SynthesizedInput.SeedRow> seedRows = parseSeedRows(candDir.resolve("seed.sql"), dialect);
+        List<SynthesizedInput.SeedRow> seedRows = parseSeedRows(candDir.resolve("seed.sql"), dialect, tables);
         ObjectNode stubMapping = null;
         Path stubsFile = candDir.resolve("stubs.json");
         if (Files.exists(stubsFile)) {
@@ -215,7 +215,8 @@ public final class TriplePromotionGate {
      * {@code EndpointExplorationRunner.insertSeeds}/{@code deleteSeeds}(dialect별 파라미터 바인딩,
      * IDENTITY 재동기화)를 변경 없이 재사용할 수 있다.
      */
-    static List<SynthesizedInput.SeedRow> parseSeedRows(Path seedSqlFile, DbConfig.Type dialect) throws Exception {
+    static List<SynthesizedInput.SeedRow> parseSeedRows(Path seedSqlFile, DbConfig.Type dialect,
+                                                        List<TableSchema> tables) throws Exception {
         if (!Files.exists(seedSqlFile)) {
             return List.of();
         }
@@ -239,12 +240,60 @@ public final class TriplePromotionGate {
             List<String> columnNames = new ArrayList<>();
             List<Object> literalValues = new ArrayList<>();
             for (int i = 0; i < columns.size(); i++) {
-                columnNames.add(columns.get(i).getUnquotedColumnName());
-                literalValues.add(literalToObject(values.get(i)));
+                String columnName = columns.get(i).getUnquotedColumnName();
+                columnNames.add(columnName);
+                literalValues.add(coerceToColumnType(
+                        literalToObject(values.get(i)), columnTypeOf(tables, table, columnName)));
             }
             rows.add(new SynthesizedInput.SeedRow(table, columnNames, literalValues));
         }
         return rows;
+    }
+
+    /** {@code tables}에서 (table, column)의 jdbcType(대문자). 스키마에 없으면 null. */
+    private static String columnTypeOf(List<TableSchema> tables, String table, String column) {
+        if (tables == null) {
+            return null;
+        }
+        for (TableSchema schema : tables) {
+            if (!schema.name().equalsIgnoreCase(table)) {
+                continue;
+            }
+            for (io.graphrag.model.ColumnSchema c : schema.columns()) {
+                if (c.name().equalsIgnoreCase(column)) {
+                    return c.jdbcType() == null ? null : c.jdbcType().toUpperCase(java.util.Locale.ROOT);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * seed.sql 리터럴은 전부 문자열로 파싱되는데, 시간형 컬럼에 문자열을 그대로 바인딩하면 엄격한
+     * 드라이버가 거부한다(Postgres: "column is of type timestamp but expression is of type character
+     * varying"). 스키마를 알면 결정 가능한 변환이므로 여기서 temporal 타입으로 올린다. 변환할 수
+     * 없는 표기는 원래 값을 그대로 둔다 — 후보를 조용히 바꾸지 않고 드라이버가 판단하게 한다.
+     */
+    private static Object coerceToColumnType(Object value, String jdbcType) {
+        if (jdbcType == null || !(value instanceof String text) || text.isBlank()) {
+            return value;
+        }
+        try {
+            if (jdbcType.contains("TIMESTAMP") || jdbcType.contains("DATETIME")) {
+                return text.contains(" ") || text.contains("T")
+                        ? java.sql.Timestamp.valueOf(text.replace('T', ' '))
+                        : java.sql.Timestamp.valueOf(java.time.LocalDate.parse(text).atStartOfDay());
+            }
+            if (jdbcType.contains("DATE")) {
+                return java.sql.Date.valueOf(java.time.LocalDate.parse(text));
+            }
+            if (jdbcType.contains("TIME")) {
+                return java.sql.Time.valueOf(java.time.LocalTime.parse(text));
+            }
+        } catch (RuntimeException e) {
+            return value;   // 해석 불가한 표기 — 원본 유지(조용한 값 변경 금지)
+        }
+        return value;
     }
 
     /** JSqlParser 리터럴 표현식 → JDBC 바인딩용 Java 객체(String/Long/Double/null, 그 외 원문 문자열). */

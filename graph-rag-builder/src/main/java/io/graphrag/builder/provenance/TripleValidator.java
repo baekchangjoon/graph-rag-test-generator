@@ -286,6 +286,12 @@ public final class TripleValidator {
 
     private static List<String> schemaViolationsForBody(JsonNode body, BodyShape shape) {
         List<String> violations = new ArrayList<>();
+        if (shape == null) {
+            // 요청 바디가 없는 엔드포인트(GET 등)는 인덱싱된 형상이 아예 없어 null이 넘어온다 —
+            // BodyShape.empty()와 같은 "형상 미상"이므로 동일하게 skip한다. 여기서 터지면 게이트
+            // 전체가 현행 경로로 회귀해 읽기 엔드포인트에서는 삼중 게이트가 동작하지 못한다.
+            return violations;
+        }
         Set<String> allowed = new LinkedHashSet<>();
         for (BodyShape.BodyField field : shape.fields()) {
             allowed.add(field.name());

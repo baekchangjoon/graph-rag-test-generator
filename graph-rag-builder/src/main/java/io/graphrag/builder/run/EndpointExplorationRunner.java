@@ -642,7 +642,7 @@ public class EndpointExplorationRunner {
         // 해석한 엔드포인트(petclinic /pets→pets 등)는 건드리지 않는다 — 다중 SELECT(부모 엔티티+
         // 컬렉션 로드)에서 param명이 자식 FK 컬럼명과 우연히 일치해 자식 테이블을 오선택하는
         // 회귀를 원천 차단(회귀 0). 실제 타깃(analytics/mindgraph/diary/auth-user)은 모두 null.
-        if (seedResource && !skipHappySynthesis) {
+        if (shouldRunSqlHintPass2(seedResource, skipHappySynthesis, tripleAdopted)) {
             ResolutionHint heuristic = new ReadInputSynthesizer(enumConstants, enumColumns)
                     .heuristicResolution(endpoint, tables);
             ResolutionHint hint = heuristic.table() == null
@@ -1406,6 +1406,21 @@ public class EndpointExplorationRunner {
 
     boolean tripleAdoptedForTest() {
         return tripleAdopted;
+    }
+
+    /**
+     * SQL-hint pass-2(캡처 SQL로 시드를 보정하고 재탐색) 실행 여부.
+     *
+     * <p>삼중 후보가 채택된 뒤에는 돌리지 않는다 — pass-2는 입력을 {@link ReadInputSynthesizer}로
+     * <b>다시 합성</b>하므로 채택된 body와 seed를 probe 기반 값으로 덮어쓴다. 실측(mindgraph
+     * {@code GET /internal/graphs/diary/{diaryId}})에서 채택 직후 pass-2가
+     * {@code graph_record}를 {@code nodes_json='probe'}로 재시드해, 확정 run이 얻은 200이
+     * 최종 리포트에서 404로 되돌아갔다. 채택된 입력은 이미 확정 run으로 2xx가 확인된 깊은 happy
+     * 입력이므로 SQL 힌트로 보정할 대상이 아니다.
+     */
+    static boolean shouldRunSqlHintPass2(boolean seedResource, boolean skipHappySynthesis,
+                                         boolean tripleAdopted) {
+        return seedResource && !skipHappySynthesis && !tripleAdopted;
     }
 
     Map<String, Integer> tripleRejectedReasonsForTest() {

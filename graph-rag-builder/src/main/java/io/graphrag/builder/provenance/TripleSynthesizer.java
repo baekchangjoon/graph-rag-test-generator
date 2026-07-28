@@ -793,16 +793,27 @@ public final class TripleSynthesizer {
     }
 
     /**
-     * NOT NULL·FK가 아닌 컬럼의 기본값. 문자열/불리언/날짜형은 구조적으로 결정 가능한 값(NOT NULL
-     * 제약만 만족하면 되는 padding)이므로 그대로 둔다. 그 외(주로 numeric)는 어떤 가드도 값을 정하지
-     * 못한 "UNKNOWN 출처"이므로 임의값(예: 1)을 침묵 삽입하지 않고 갭 마커로 표기한다(REQ-007).
+     * NOT NULL·FK가 아닌 컬럼의 기본값. 어떤 가드도 값을 정하지 못한 자리에 임의값을 침묵 삽입하지
+     * 않는다는 것이 원칙이고(REQ-007), 예외는 "제약을 만족하기만 하면 무엇이든 되는" 자리뿐이다.
+     *
+     * <p>{@code CHAR}/{@code VARCHAR}처럼 길이가 제한된 라벨 컬럼은 그 예외에 해당하므로 padding을
+     * 둔다. 반면 {@code TEXT}/{@code CLOB}은 길이 제한이 없는 자유형 페이로드로, 내용에 계약이 붙어
+     * 있는 경우가 흔하다 — 실측(mindgraph {@code graph_record.nodes_json})에서 padding 문자열은
+     * 존재 가드를 통과시키지만 핸들러의 역직렬화가 던져 500이 됐다. NOT NULL을 만족하는 것과 값이
+     * 유효한 것은 다르므로, 여기서 padding은 그 자체가 침묵 삽입이다. 도구는 내용 계약을 알 수
+     * 없으므로 컬럼명을 semanticHint로 실어 갭 마커로 남기고 에이전트가 채우게 한다.
      */
     private static Object defaultValueFor(ColumnSchema column, String tableName, List<String> notes) {
         String type = column.jdbcType() == null ? "" : column.jdbcType().toUpperCase();
         if (type.contains("BOOL")) {
             return true;
         }
-        if (type.contains("CHAR") || type.contains("TEXT") || type.contains("CLOB")) {
+        if (type.contains("TEXT") || type.contains("CLOB")) {
+            notes.add("gap-marker: " + tableName + "." + column.name()
+                    + " (NOT NULL 자유형 TEXT, 내용 계약을 도구가 알 수 없음) -> __AGENT_FILL__(REQ-007)");
+            return gapMarker("String", column.name(), "none");
+        }
+        if (type.contains("CHAR")) {
             return "seed-" + column.name();
         }
         if (type.contains("DATE") || type.contains("TIME")) {

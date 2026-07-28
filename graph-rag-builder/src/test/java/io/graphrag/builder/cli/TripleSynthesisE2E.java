@@ -184,6 +184,50 @@ class TripleSynthesisE2E {
         }
     }
 
+
+    @Test
+    @DisplayName("REQ-005: --graph로 물리 스키마를 주면 EXISTS 가드가 seed.sql INSERT로 배치된다")
+    void req005_graphAssetSchemaEnablesExistsSeedPlacement() throws Exception {
+        // 물리 스키마가 없으면 합성기는 PK 컬럼을 몰라 EXISTS 가드의 seed 배치를 건너뛴다.
+        // 스키마는 build가 이미 graph.json에 캡처해 두므로, 그 자산을 입력으로 받으면 된다.
+        Path reportFile = tempDir.resolve("provenance-report.json");
+        try (InputStream in = getClass().getClassLoader()
+                .getResourceAsStream("golden/provenance-post-api-transfers.json")) {
+            Files.copy(in, reportFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+        Path graphDir = Files.createDirectories(tempDir.resolve("graph"));
+        io.graphrag.model.GraphAsset asset = new io.graphrag.model.GraphAsset(
+                "order-service", "test-sha", List.of(), List.of(), List.of(),
+                List.of(new io.graphrag.model.TableSchema("fund_accounts", List.of(
+                        new io.graphrag.model.ColumnSchema("id", "VARCHAR", false, true, false),
+                        new io.graphrag.model.ColumnSchema("balance_amount", "BIGINT", false, false, false)),
+                        List.of(), List.of())),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                null, null, null);
+        Files.writeString(graphDir.resolve("graph.json"),
+                Json.mapper().writerWithDefaultPrettyPrinter().writeValueAsString(asset));
+        Path tripleStore = tempDir.resolve("triples-with-schema");
+
+        BuilderCli.main(new String[] {
+                "synthesize-triple",
+                "--report", reportFile.toString(),
+                "--graph", graphDir.toString(),
+                "--triple-store", tripleStore.toString()
+        });
+
+        Path candDir = tripleStore.resolve("post-api-transfers").resolve("cand-01");
+        // 스키마가 없으면 INSERT가 `(balance_amount)`뿐이라 PK가 빠진다 — NOT NULL PK 테이블에서는
+        // 실행조차 되지 않는 SQL이다. EXISTS 가드가 배치되면 PK 컬럼이 함께 들어가야 한다.
+        assertThat(Files.readString(candDir.resolve("seed.sql")))
+                .as("스키마를 알면 EXISTS 가드가 PK 컬럼과 함께 배치돼야 한다")
+                .containsIgnoringCase("insert into")
+                .contains("fund_accounts")
+                .contains("id");
+        assertThat(Files.readString(candDir.resolve("notes.md")))
+                .as("PK를 해결했으므로 seed 배치 skip 사유가 남으면 안 된다")
+                .doesNotContain("대상 테이블/PK 미해결");
+    }
+
     /** derived 픽스처 {@code ScoreRequest}와 동일 형상의 접근자 홀더. */
     public static final class ScoreHolder {
         private final Integer score;

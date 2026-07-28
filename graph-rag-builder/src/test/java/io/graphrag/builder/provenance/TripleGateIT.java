@@ -6,6 +6,8 @@ import io.graphrag.builder.provenance.ProvenanceReport.GuardFact;
 import io.graphrag.builder.provenance.ProvenanceReport.Origin;
 import io.graphrag.builder.provenance.ProvenanceReport.ValueRef;
 import io.graphrag.builder.provenance.TripleValidator.ValidationResult;
+import io.graphrag.model.ColumnSchema;
+import io.graphrag.model.TableSchema;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,6 +65,57 @@ class TripleGateIT {
 
         assertThat(result.accepted()).as("마커만 채운 후보는 통과해야 한다: " + result.reasons()).isTrue();
         assertThat(result.needsHumanReview()).isFalse();
+    }
+
+    @Test
+    @DisplayName("REQ-018: 시간형 컬럼의 문자열 리터럴은 스키마를 보고 temporal 타입으로 바인딩된다")
+    void req018_temporalColumnLiteralsBoundAsTemporalTypes() throws Exception {
+        // seed.sql 리터럴은 전부 문자열로 파싱되는데, 그대로 setObject하면 Postgres가
+        // "column is of type timestamp but expression is of type character varying"로 거부한다.
+        // 실측(mindgraph): T2 trial은 200으로 통과했는데 채택 단계 INSERT에서만 터져
+        // adoption-error로 회귀했다 — 스키마를 알면 결정 가능한 변환이다.
+        Path seedFile = tempDir.resolve("seed-temporal.sql");
+        Files.writeString(seedFile,
+                "INSERT INTO graph_record (diary_id, updated_at) VALUES ('seed-diaryid', '2037-01-01');");
+        TableSchema schema = new TableSchema("graph_record", List.of(
+                new ColumnSchema("diary_id", "VARCHAR", false, true, false),
+                new ColumnSchema("updated_at", "TIMESTAMP", false, false, false)),
+                List.of(), List.of());
+
+        var rows = TriplePromotionGate.parseSeedRows(seedFile, DbConfig.Type.POSTGRES, List.of(schema));
+
+        assertThat(rows).hasSize(1);
+        var row = rows.get(0);
+        int updatedAtIndex = row.columns().indexOf("updated_at");
+        assertThat(row.values().get(updatedAtIndex))
+                .as("TIMESTAMP 컬럼 값은 JDBC가 타입을 아는 temporal 객체여야 한다")
+                .isInstanceOf(java.sql.Timestamp.class);
+        assertThat(row.values().get(row.columns().indexOf("diary_id")))
+                .as("문자열 컬럼은 그대로 문자열이어야 한다")
+                .isEqualTo("seed-diaryid");
+    }
+
+    @Test
+    @DisplayName("REQ-011: BodyShape가 null이어도(요청 바디 없는 GET 등) 검증이 터지지 않고 body 스키마 검사만 skip한다")
+    void req011_nullBodyShapeSkipsSchemaCheckInsteadOfThrowing() throws IOException {
+        // 요청 바디가 없는 엔드포인트는 인덱싱된 BodyShape가 아예 없어 null이 넘어온다. 이때
+        // NPE가 나면 게이트 전체가 현행 경로로 회귀해, 읽기 엔드포인트에서는 삼중 게이트가
+        // 원천적으로 동작하지 못한다(실측: mindgraph GET). 형상 미상은 이미 skip이 계약이다.
+        String baseBody = "{\"diaryId\":\"seed-diaryid\"}";
+        String baseSeed = "INSERT INTO graph_record (diary_id, nodes_json) VALUES "
+                + "('seed-diaryid', '" + GAP + "{type:String, semanticHint:nodes_json, guard:none}');";
+        String candSeed = "INSERT INTO graph_record (diary_id, nodes_json) VALUES ('seed-diaryid', '[]');";
+
+        Path base = writeArtifacts("base", baseBody, baseSeed, "{}");
+        Path cand = writeArtifacts("cand", baseBody, candSeed, "{}");
+
+        TripleValidator validator = new TripleValidator(List.of(), DbConfig.Type.POSTGRES);
+        ValidationResult result = validator.validate(
+                cand, base, reportWithDbReadTable("graph_record"), null);
+
+        assertThat(result.accepted())
+                .as("형상 미상은 과잉 reject 없이 skip되어야 한다: " + result.reasons())
+                .isTrue();
     }
 
     @Test
