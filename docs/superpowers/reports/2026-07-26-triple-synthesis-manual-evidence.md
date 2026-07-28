@@ -1042,20 +1042,23 @@ attach 미지원(design spec §8, REQ-025로 CI 검증됨)이므로 이 절차�
 ```bash
 FLAGS="$1"   # 아래 표의 값을 그대로 넣어 4회 반복 실행
 PROJECT="grb-e2e-b3"
-trap 'docker compose -p "$PROJECT" -f e2e/docker-compose.yml -f .work/e2e-b3/work/attach-override.yml down -v >/dev/null 2>&1 || true' EXIT
+# 경로는 반드시 절대 경로여야 한다 — :graph-rag-builder:run의 작업 디렉터리는 저장소 루트가
+# 아니라 모듈 디렉터리라, 상대 경로를 주면 "matched no source directory"로 즉시 실패한다.
+W="$(pwd)"
+trap 'docker compose -p "$PROJECT" -f "$W/e2e/docker-compose.yml" -f "$W/.work/e2e-b3/work/attach-override.yml" down -v --remove-orphans >/dev/null 2>&1 || docker compose -p "$PROJECT" -f "$W/e2e/docker-compose.yml" down -v --remove-orphans >/dev/null 2>&1 || true' EXIT INT TERM
 rm -rf .work/e2e-b3; mkdir -p .work/e2e-b3
 ./gradlew -q :graph-rag-builder:run --args="build \
-  --sut-src samples/order-service/src/main/java \
-  --sut-resources samples/order-service/src/main/resources \
-  --sut-jar samples/order-service/build/libs/order-service.jar \
-  --sut-compose e2e/docker-compose.yml \
-  --out .work/e2e-b3 --sut-id order \
+  --sut-src $W/samples/order-service/src/main/java \
+  --sut-resources $W/samples/order-service/src/main/resources \
+  --sut-jar $W/samples/order-service/build/libs/order-service.jar \
+  --sut-compose $W/e2e/docker-compose.yml \
+  --out $W/.work/e2e-b3 --sut-id order \
   --attach --app-service app --app-port 58080 --coverage-port 16300 \
   --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres \
   --auth-login-path /api/auth/login --auth-user admin --auth-pass password \
-  --external-stubs e2e/external-stubs \
+  --external-stubs $W/e2e/external-stubs \
   --sut-env EXTERNAL_INVENTORY_URL={{wiremock}},EXTERNAL_FRAUD_URL={{wiremock}} \
-  --triple-candidates e2e/triples \
+  --triple-candidates $W/e2e/triples \
   --endpoint post-api-transfers \
   $FLAGS"
 ```
@@ -1091,6 +1094,73 @@ DB 상태는 초기화된다):
 | 2 | allow-seed만 | | 미적용 | | GREEN/RED |
 | 3 | confirm만 | | 미적용 | | GREEN/RED |
 | 4 | 둘 다 | | 적용 | | GREEN/RED |
+
+### 실행 기록
+
+#### 실행 #1 — 2026-07-28 (**GREEN** — 4/4 조합 기대대로)
+
+절차대로 `samples/order-service` + `e2e/docker-compose.yml`을 attach 대상으로, 커밋된
+`e2e/triples/post-api-transfers/{base,promoted}/cand-01` 픽스처를 재사용해 4개 조합을 각각
+독립 실행했다(매 회 `trap`이 compose 스택을 내려 DB 상태 초기화).
+
+| # | 플래그 조합 | 관측된 게이트 로그(누락 플래그 목록) | seed 적용 여부 | exploration-report 필드 | 판정 |
+|---|---|---|---|---|---|
+| 1 | 0개 | `attach seed gate closed(REQ-023 이중 opt-in 미충족) — missing: --attach-allow-seed, --confirm-non-production` | 미적용 | `tripleRejected={"attach-seed-gate-closed":1}`, `staleTriples=["post-api-transfers/promoted/cand-01"]` | **GREEN** |
+| 2 | `--attach-allow-seed` | `… — missing: --confirm-non-production` | 미적용 | 동일(`attach-seed-gate-closed`) | **GREEN** |
+| 3 | `--confirm-non-production` | `… — missing: --attach-allow-seed` | 미적용 | 동일(`attach-seed-gate-closed`) | **GREEN** |
+| 4 | 둘 다 | **게이트 차단 로그 없음** | 적용(게이트 통과) | `tripleRejected={"attach-stub-inapplicable":1}` | **GREEN** |
+
+**판정 근거 — 조합 4가 결정적이다.** 1~3은 누락 플래그 목록이 조합별로 **정확히 다르게** 나오고
+(둘 다 / confirm만 / allow-seed만), 4에서는 그 로그가 **아예 나오지 않으며** 거부 사유가
+`attach-seed-gate-closed` → `attach-stub-inapplicable`로 **바뀐다**. 즉 seed 게이트를 통과해
+다음 단계까지 진행했다는 뜻이다 — 차단된 후보는 애초에 그 단계에 도달하지 않는다. 이것이
+REQ-023 수용기준("0·1개는 seed 미적용·사유 기록, 2개일 때만 적용된다")의 실 환경 재현이고,
+REQ-030이 요구하는 것 전부다.
+
+**조합 4의 `status=500`은 결함이 아니다(REQ-025의 설계된 귀결).** 같은 실행이 남긴 로그:
+
+```
+attach EXTERNAL_RESPONSE stub inapplicable for post-api-transfers (REQ-025):
+  candidate stub skipped, attach WireMock routing is Phase C scope
+```
+
+`post-api-transfers`는 fraud-check 외부 호출에 `stubs.json`이 필요한데 attach 모드는 스텁 등록을
+**의도적으로 전혀 시도하지 않는다**(design spec §8 — attach egress 라우팅은 Phase C 백로그).
+스텁 없이 실제 외부 호출이 나가 500이 된 것이므로, 이는 REQ-023 판정과 무관하며 절차서가
+"부수적으로 기록해 두라"고 지시한 REQ-025 관측에 해당한다. **CI(AttachStubSkipIT)로만 확인되던
+REQ-025가 실 attach 환경에서도 동일하게 동작함이 이번에 함께 실증됐다.**
+
+**REQ-024(attach 역-DELETE 실패) 관측:** 발생하지 않았다 — 조합 4에서 후보 seed의 정리가
+실패했다는 로그가 없고 `attachRemainingRows`도 비어 있다.
+
+**산출물 보존 위치(전부 `.gitignore` 대상):** `.work/e2e-b3-{1,2,3,4}/`(조합별 그래프 산출 +
+`exploration-report.json`), 실행 로그는 세션 스크래치패드.
+
+**자원 정리(누수 검증 게이트).** 4회 모두 `trap cleanup EXIT INT TERM`이
+`docker compose -p grb-e2e-b3 … down -v --remove-orphans`를 수행했다. 스위트 종료 후 확인:
+
+```
+docker compose ls | grep grb-e2e-b3        → 0건
+docker ps -a --format '{{.Names}}' | grep grb-e2e-b3 → 0건
+docker volume ls -q --filter name=grb-e2e-b3         → 0건
+docker ps                                             → 0건(이 세션이 띄운 것 전부 없음)
+```
+
+이 실행에 앞서 E2E-B2가 띄웠던 `grmindgraph` compose 스택도
+`down -v --remove-orphans`로 내렸다(잔존 0). 무차별 정리(`docker system prune`, 광범위 `pkill`)는
+수행하지 않았다.
+
+**절차서 자체의 결함 1건(수정함).** §절차의 명령 골격이 `--sut-src samples/…` 등 **상대 경로**를
+쓰는데, `:graph-rag-builder:run`의 작업 디렉터리는 저장소 루트가 아니라 모듈 디렉터리라
+`--sut-src 'samples/order-service/src/main/java' matched no source directory`로 즉시 실패한다
+(실측 — 첫 시도가 이 오류로 1초 만에 종료됐다). 절차를 그대로 따르면 재현되지 않으므로 골격을
+절대 경로(`$W/…`)로 고쳤다.
+
+> **미확인 사항(고치지 않고 남김):** E2E-B1 §"통합 build 경로 재확인"의 명령 스니펫도 같은
+> 상대 경로 형태(`--sut-src samples/order-service/src/main/java`)를 쓴다. 같은 결함일
+> 가능성이 높지만, E2E-B1 실행 #2는 GREEN으로 기록돼 있어 **그때 실제로 무엇을 실행했는지**
+> (절대 경로로 바꿔 돌렸는지, 다른 cwd였는지)를 지금 확인할 수 없다. 추측으로 남의 실행 기록을
+> 고치지 않고 이 갭만 표시해 둔다 — E2E-B1을 다음에 재실행할 때 확인할 것.
 
 ### 완료 후 처리
 

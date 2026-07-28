@@ -1,0 +1,10 @@
+{
+  "status" : -2,
+  "outcomeKind" : "ATTACH_SEED_GATE_CLOSED",
+  "responseBody" : null,
+  "logExcerpt" : "attach seed gate closed(REQ-023 이중 opt-in 미충족) — missing: --attach-allow-seed",
+  "stackExcerpt" : null,
+  "mappedGuard" : null,
+  "toolSuggestion" : null,
+  "attachRemainingRows" : [ ]
+}
