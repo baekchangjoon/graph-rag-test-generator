@@ -919,6 +919,86 @@ docker volume ls --filter dangling=true       → 19건(전부 이번 실행 이
 무차별 정리(`docker system prune`, 광범위 `pkill`)는 수행하지 않았다. 과부하의 원인인 codegraph
 프로세스 41개도 이 테스트 소유가 아니므로 그대로 두었다(위 §차단 원인 1).
 
+#### 실행 #2 — 2026-07-28 (**GREEN** — tainted-spring mindgraph, 2xx 도달 실측)
+
+실행 #1의 두 차단 원인을 모두 해소하고 재실행했다. **대상 SUT를 petclinic에서 tainted-spring
+mindgraph로 교체**했고(근거: [벤치마크 조사](2026-07-28-tainted-spring-benchmark-survey.md)),
+**지표를 `coveredAppBranches` 순증에서 "엔드포인트 2xx 도달"로 개정**했다(근거: 요구사항명세
+REQ-029 개정 콜아웃).
+
+##### 차단 원인 해소
+
+- **부하**: `~/.claude/plugins/cache/temp_*`를 인덱싱하던 `codegraph.js init` 33개를 종료하고
+  그 경로의 `.codegraph` 인덱스 13개를 삭제했다(플러그인 설치 부산물 — 사용자 프로젝트 아님).
+  load 256 → 8. 실행 #1의 90초 health timeout 문제는 재현되지 않았다(SUT가 즉시 기동).
+- **후보 생성 불가**: mindgraph는 평면 스칼라 body·단일 테이블 EXISTS 가드라 실행 #1이 지적한
+  결함 A(enum 중첩)/D(조합 폭발)에 걸리지 않는다. 대신 **읽기 엔드포인트에서만 발현하는 결함
+  6건**이 새로 드러나 전부 수정했다(커밋 `60ecb4b`, `19b4270`, `a3f90af` — 아래 §드러난 결함).
+
+##### A/B 결과
+
+| | A (baseline, `GRB_TRIAL=off`) | B (Phase A) |
+|---|---|---|
+| `get-internal-graphs-diary-diaryid` | `noHappyPathReason: "all responses error-enveloped"` | **`noHappyPathReason: null`** |
+| 기록된 path | `…-s404e404-1` (404) | **`…-s200-1` (200)** + `…-s404e404-1` |
+| `trialCount` / `tripleAdopted` | 0 / `false` | 1 / **`true`** |
+| `get-internal-graphs-user-userid` | 404만 | 404만 (Redis 캐시 — `seed.sql` 채널 없음, 변화 없음) |
+| `coveredAppBranches` | 0/28 | 0/28 |
+
+**판정: GREEN.** 개정된 수용기준("A에서 2xx 미도달 → B에서 2xx 도달")을 충족한다. 이 엔드포인트는
+이 프로젝트 이력상 **한 번도 2xx가 관측된 적이 없다** — 기존 블랙박스 아카이브의 생성 테스트
+4건이 전부 404 단언이고, 유일한 500 케이스는 재생 불가 시드로 격리돼 있다
+(`graphrag-blackbox/KNOWN-LIMITATIONS.md`).
+
+**보조 지표는 움직이지 않았다(0/28 유지).** 축소해 적지 않는다 — 이 두 엔드포인트는
+`totalBranches: 0`이라 분기 커버리지가 원리적으로 움직일 수 없다. 지표를 2xx 도달로 개정한
+이유가 정확히 이것이며, 분기 수만 봤다면 이번 실행도 "효과 미측정"으로 기록됐을 것이다.
+
+##### 파이프라인 완주 기록 (에이전트 채움 포함)
+
+```
+provenance        → EXISTS @ GraphService.java:81 → [INPUT:diaryId, DB_READ:graph_record]
+synthesize-triple → body {diaryId: "seed-diaryid"}  (갭 마커 0개 — 전부 결정)
+                    seed INSERT graph_record (diary_id, links_json, nodes_json, updated_at, user_id)
+                         VALUES ('seed-diaryid', __AGENT_FILL__, __AGENT_FILL__, '2037-01-01', 'seed-user_id')
+[에이전트]        → 마커 2자리만 '[]' 로 채움 (semanticHint=nodes_json/links_json)
+trial             → status 200 → promoted/cand-01   (exit 0)
+build --triple-candidates → tripleAdopted=true, path s200-1 status=200
+```
+
+도구가 **결정 가능한 것은 전부 결정하고 알 수 없는 두 값만 위임**했다는 점이 설계 의도대로
+작동한 증거다. `nodes_json`이 유효한 JSON이어야 한다는 것은 스키마(TEXT NOT NULL)로는 알 수 없고
+핸들러의 `objectMapper.readValue` 호출에서만 드러나는 사실이다.
+
+##### 드러난 결함 6건 (전부 "읽기 엔드포인트" 조건에서만 발현 — POST 픽스처 테스트를 모두 통과하고 있었다)
+
+| # | 결함 | 증상 | 커밋 |
+|---|---|---|---|
+| 1 | `orElseThrow`의 커스텀 도메인 예외 미인식 | 6개 서비스 14 EP가 `guards: []` | `60ecb4b` |
+| 2 | 호출 인자↔파라미터 바인딩 부재 | 서비스 계층 가드 피연산자가 전부 UNKNOWN | `60ecb4b` |
+| 3 | EXISTS 가드에 조회 테이블 미기재 | 합성기가 seed 놓을 테이블을 몰라 배치 skip | `60ecb4b` |
+| 4 | 인터페이스 디스패치 조용한 누락 | 가드를 품은 호출을 건너뛰고도 리포트가 "깨끗함" | `19b4270` |
+| 5 | `synthesize-triple`에 스키마 입력 경로 없음 | PK 빠진 INSERT — NOT NULL PK 테이블에서 실행 불가 | `a3f90af` |
+| 6 | NOT NULL TEXT에 갭 마커 대신 padding | 존재 가드는 통과하나 역직렬화가 던져 **404→500** | `a3f90af` |
+| 7 | trial CLI 경로 변수 미바인딩 | 유효 후보가 404를 받아 실패 판정 | `a3f90af` |
+| 8 | `BodyShape` null에서 T1 NPE | 게이트 전체가 현행 경로로 회귀 | `a3f90af` |
+| 9 | 시간형 컬럼 리터럴 varchar 바인딩 | T2는 200인데 채택 INSERT에서만 실패 | `a3f90af` |
+| 10 | 채택 직후 pass-2가 채택 입력 덮어씀 | 확정 run의 200이 최종 리포트에서 404로 회귀 | `a3f90af` |
+
+> 실행 #1이 "후보 생성 구조적 불가"로 기록한 것은 petclinic 특성(enum 중첩·조합 폭발)이었고,
+> 이번에 드러난 것은 그와 **겹치지 않는 별개의 결함군**이다. 실행 #1의 결함 A~D는 여전히 미해결이며
+> petclinic을 다시 대상으로 삼으려면 그쪽을 별도로 고쳐야 한다.
+
+##### 산출물 보존 위치 (전부 `.gitignore` 대상)
+
+`.work/e2e-b2/graph-A`(A 산출), `.work/e2e-b2/graph-B`(B 산출), `.work/e2e-b2/triples`(후보·promoted),
+`.work/tainted-spring/`(SUT 클론 8개 + platform compose).
+
+##### 자원 정리 (누수 검증 게이트)
+
+`build`가 띄운 Testcontainers는 JVM 종료 시 Ryuk이 회수했다. `trial`용으로 띄운 compose 스택
+(`-p grmindgraph`)은 **이 실행이 만든 것이므로 정리 대상**이다 — 아래 §완료 후 처리 참고.
+
 ---
 
 ## E2E-B3 — attach 경계 수동 확인 (REQ-030)

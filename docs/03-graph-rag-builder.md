@@ -203,7 +203,7 @@ concolic 해를 어느 body 필드에 배치할지 결정하는 근거다(해가
 ### `synthesize-triple` — 후보 삼중 합성
 
 ```
-synthesize-triple --report <provenance-report.json> [--triple-store <dir>]
+synthesize-triple --report <provenance-report.json> [--triple-store <dir>] [--graph <dir>]
                   [--sut-jar <boot.jar>] [--sut-src <dir> [--sut-resources <dir>]]
 ```
 
@@ -211,9 +211,16 @@ synthesize-triple --report <provenance-report.json> [--triple-store <dir>]
 |---|---|---|---|
 | `--report` | 예 | — | `provenance`가 만든 리포트 경로 |
 | `--triple-store` | 아니오 | `.graphrag/triples` | 후보 트리플을 쓸 루트 디렉터리 |
+| `--graph` | 아니오 | — | `build`가 만든 그래프 자산 디렉터리(또는 `graph.json` 경로). 물리 스키마의 출처 — 아래 참고 |
 | `--sut-jar` | 아니오 | — | 입력 오라클용 SUT 부트 jar(ASM+Z3 concolic). `DERIVED` 파생 루트에 배치할 해를 여기서 도출한다 |
 | `--sut-src` | 아니오 | — | 입력 오라클용 SUT 소스 루트(소스 리터럴 오라클). `build`와 동일한 멀티 루트 glob 문법 |
 | `--sut-resources` | 아니오 | 각 루트의 형제 `resources` | `--sut-src`를 줄 때만 의미 있음 |
+
+**물리 스키마(`--graph`).** 존재 가드(`EXISTS`)를 `seed.sql` INSERT로 배치하려면 대상 테이블의
+PK 컬럼을 알아야 한다. 이 정보는 `build`가 이미 `graph.json`의 `tables`에 캡처해 두므로 그
+디렉터리를 넘기면 된다. 생략하면 스키마 없이 동작하는데, 그때는 EXISTS 배치를 건너뛰고
+(`notes.md`에 `대상 테이블/PK 미해결` 줄로 남는다) 배치되는 INSERT에서도 PK 컬럼이 빠져 NOT NULL
+PK 테이블에서는 실행되지 않는 SQL이 나온다 — 읽기 엔드포인트를 대상으로 할 때는 사실상 필수다.
 
 **입력 오라클(선택).** `--sut-jar`/`--sut-src`를 주면 `build`와 같은 조합(소스 리터럴 오라클 ∪
 ASM+Z3 concolic, `GRB_ORACLE=static`이면 concolic 제외)으로 입력 후보를 만들어 합성에 넘긴다.

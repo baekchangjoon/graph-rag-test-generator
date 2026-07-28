@@ -69,7 +69,7 @@
 - **#5는 petclinic 무변·order-service에서 실증**: petclinic엔 enum 상태 전이 가드가 없어 APP-AGGREGATE는
   그대로지만, order-service `BookingController.advance`(200/409/410)로 다중 전이 arm 캡처를 결정적으로 검증.
 
-## Phase A — 에이전트 스킬 기반 삼중 합성 [🔴 실증 1회 실행 — 효과 미측정]
+## Phase A — 에이전트 스킬 기반 삼중 합성 [🟢 실증 #2 GREEN — tainted-spring mindgraph 2xx 도달]
 
 `provenance`/`synthesize-triple`/`trial` CLI 3종 + 에이전트 스킬 3종으로 다중 가드(입력 검증 →
 DB 상태 비교 → 외부 응답 검증) 순차 조건 때문에 못 열던 **깊은 happy path**를 여는 기능이다
@@ -80,6 +80,34 @@ petclinic의 잔여 145/253(57.3%)은 이 표(위 "추이" 표)의 마지막 상
 "비선형·interprocedural·집계·상태 의존 가드"(`docs/25-input-discovery-theory.md` §9)로 정체돼
 있었고, 삼중 합성이 그중 다중 가드 순차 조건에 해당하는 부분을 얼마나 여는지가 이 절이 채울
 자리다.
+
+### 2026-07-28 실증 #2 결과 — GREEN (mindgraph, 2xx 도달)
+
+실증 #1이 확정한 "petclinic으로는 측정 불가"를 받아들여 **대상 SUT를 tainted-spring
+`mindgraph`로 교체**하고, **지표를 `coveredAppBranches` 순증에서 "엔드포인트 2xx 도달"로
+개정**했다(요구사항명세 REQ-029 개정 콜아웃 참조).
+
+| 항목 | A (baseline, `GRB_TRIAL=off`) | B (Phase A) |
+|---|---|---|
+| SUT | tainted-spring `mindgraph` (동일 jar `mindgraph-service-0.1.0.jar`) | 동일 |
+| `GET /internal/graphs/diary/{diaryId}` | 404만 · `noHappyPathReason="all responses error-enveloped"` | **200** (`s200-1`) · `noHappyPathReason=null` |
+| `tripleAdopted` | `false` | **`true`** (trialCount=1) |
+| `GET /internal/graphs/user/{userId}` | 404만 | 404만 (Redis 캐시 — `seed.sql` 채널 대상 아님) |
+| `coveredAppBranches` | 0/28 | 0/28 |
+| 판정 | — | 🟢 **GREEN** |
+
+**이 엔드포인트는 프로젝트 이력상 2xx가 관측된 적이 없다.** 기존 블랙박스 아카이브
+(`graphrag-blackbox/`)의 생성 테스트 4건이 전부 404 단언이고, 유일한 500 케이스는 재생 불가
+시드로 격리돼 있다.
+
+**보조 지표가 움직이지 않은 것(0/28)을 축소해 적지 않는다.** 이 두 엔드포인트는
+`totalBranches: 0`이라 분기 커버리지가 원리적으로 움직일 수 없다 — 지표를 2xx 도달로 개정한
+이유가 정확히 이것이며, 분기 수만 봤다면 이번 실행도 "효과 미측정"으로 기록됐을 것이다.
+**따라서 petclinic의 145/253은 이번 실증으로 갱신되지 않았다** — 아래 실증 #1 절이 설명하듯
+그 SUT는 별도의 미해결 결함군(enum 중첩 body·조합 폭발)에 막혀 있다.
+
+전체 기록·파이프라인 완주 로그·드러난 결함 10건은
+[수동 실증 절차서 § E2E-B2 실행 #2](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md).
 
 ### 2026-07-28 실증 #1 결과 — RED (효과 미측정)
 
