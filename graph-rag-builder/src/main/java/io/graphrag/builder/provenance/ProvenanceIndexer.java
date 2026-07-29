@@ -145,7 +145,7 @@ public class ProvenanceIndexer {
      * {@code prefix=[]}, {@code bareName=파라미터명}으로 시작하며(종전 동작과 동일), 피호출
      * 메서드의 파라미터는 호출 인자를 호출자 프레임에서 해석한 결과를 물려받는다.
      */
-    private record InputBinding(List<String> prefix, String bareName) {
+    private record InputBinding(List<String> prefix, String bareName, boolean bodyRoot) {
     }
 
     /**
@@ -187,9 +187,15 @@ public class ProvenanceIndexer {
             return new ProvenanceReport(endpoint.id(), guards, List.of(), unresolved);
         }
 
+        CtParameter<?> bodyParam = findRequestBodyParam(handler);
         Map<CtParameter<?>, InputBinding> handlerBindings = new LinkedHashMap<>();
         for (CtParameter<?> param : handler.getParameters()) {
-            handlerBindings.put(param, new InputBinding(List.of(), param.getSimpleName()));
+            // @RequestBody 파라미터는 <b>바디 그 자체</b>다 — 필드가 아니라 루트라 채울 자리가
+            // 없다. 표식을 달아 두지 않으면 `if (request == null)` 같은 바디 전체 가드가
+            // jsonPath="request"인 INPUT을 만들어, 합성 body에 존재하지 않는 유령 키가 생긴다
+            // (실측: petclinic ReservationRestController.create).
+            handlerBindings.put(param, new InputBinding(List.of(), param.getSimpleName(),
+                    param.equals(bodyParam)));
         }
         JpaColumnResolver columnResolver = new JpaColumnResolver(model);
 
@@ -305,7 +311,9 @@ public class ProvenanceIndexer {
             if (bareName == null) {
                 continue;
             }
-            bindings.put(params.get(i), new InputBinding(List.copyOf(prefix), bareName));
+            // 바디 루트를 그대로 넘긴 경우(service.create(request))에도 표식을 물려준다.
+            boolean calleeBodyRoot = prefix.isEmpty() && isBodyRootRead(arg, callerBindings);
+            bindings.put(params.get(i), new InputBinding(List.copyOf(prefix), bareName, calleeBodyRoot));
         }
         return bindings;
     }
@@ -375,6 +383,13 @@ public class ProvenanceIndexer {
         }
         CtType<?> declared = resolveType(model, type.getQualifiedName());
         if (declared == null) {
+            addLeafIfUnguarded(path, type, referencedInputPaths, out);
+            return;
+        }
+        if (declared instanceof spoon.reflect.declaration.CtEnum<?>) {
+            // enum은 상수 하나가 들어가는 스칼라다. 파생 getter(예: PriceTier.getNightlyRate())를
+            // 필드로 착각해 전개하면 body가 {"priceTier":{"nightlyRate":…}}가 되어, Jackson이
+            // enum에 객체를 매핑하지 못해 400이 확정된다(E2E-B2 실증 #1의 petclinic 차단 원인 A).
             addLeafIfUnguarded(path, type, referencedInputPaths, out);
             return;
         }
@@ -692,7 +707,10 @@ public class ProvenanceIndexer {
         Optional<List<String>> segments = getterSegments(expr, inputBindings, model);
         if (segments.isPresent()) {
             List<String> segs = segments.get();
-            String jsonPath = segs.isEmpty() ? bareParamName(expr, inputBindings) : String.join(".", segs);
+            // 바디 루트를 필드 접근 없이 그대로 읽은 자리는 jsonPath가 없다(채울 필드가 아니다).
+            String jsonPath = segs.isEmpty()
+                    ? (isBodyRootRead(expr, inputBindings) ? null : bareParamName(expr, inputBindings))
+                    : String.join(".", segs);
             if (jsonPath != null) {
                 referencedInputPaths.add(jsonPath);
             }
@@ -1220,6 +1238,16 @@ public class ProvenanceIndexer {
      * 필드 접근 없이 그대로 쓰인 변수의 jsonPath. 바인딩이 있으면 그 이름을 쓴다 — 서비스 계층의
      * 파라미터명({@code accountId})이 아니라 요청에서의 이름({@code id})이 jsonPath여야 하기 때문이다.
      */
+    /** {@code expr}이 (필드 접근 없이) 바디 루트 파라미터를 그대로 읽은 것인가. */
+    private static boolean isBodyRootRead(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings) {
+        if (!(expr instanceof CtVariableRead<?> vr)
+                || !(vr.getVariable().getDeclaration() instanceof CtParameter<?> param)) {
+            return false;
+        }
+        InputBinding binding = inputBindings.get(param);
+        return binding != null && binding.bodyRoot();
+    }
+
     private static String bareParamName(CtExpression<?> expr, Map<CtParameter<?>, InputBinding> inputBindings) {
         if (!(expr instanceof CtVariableRead<?> vr)) {
             return null;

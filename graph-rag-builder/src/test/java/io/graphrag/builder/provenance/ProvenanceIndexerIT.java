@@ -283,6 +283,48 @@ class ProvenanceIndexerIT {
                         && "amount".equals(v.jsonPath())));
     }
 
+
+    @Test
+    @DisplayName("REQ-001: enum 타입 필드는 리프로 남는다(파생 getter를 DTO처럼 전개하면 body가 객체가 되어 400)")
+    void req001_enumFieldStaysLeafInsteadOfBeingExpanded() {
+        // E2E-B2 실증 #1이 petclinic 차단 원인 A로 기록한 결함: enum PriceTier의 getNightlyRate()를
+        // 필드로 착각해 body가 {"priceTier":{"nightlyRate":…}}가 되면 Jackson이 enum에 객체를
+        // 매핑하지 못해 400이 확정된다. 그 자리는 상수 이름 하나가 들어가야 하는 스칼라다.
+        ProvenanceReport report = analyzeFixture(
+                "enum-leaf",
+                "io.graphrag.fixture.enumleaf.EnumLeafController",
+                "create",
+                3);
+
+        assertThat(report.unguarded())
+                .as("enum 필드는 그 자체가 리프여야 한다")
+                .anyMatch(u -> "priceTier".equals(u.jsonPath()));
+        assertThat(report.unguarded())
+                .as("enum의 파생 getter는 body 필드가 아니다 — 전개되면 안 된다")
+                .noneMatch(u -> u.jsonPath() != null && u.jsonPath().startsWith("priceTier."));
+    }
+
+
+    @Test
+    @DisplayName("REQ-001: 바디 전체 null 가드는 유령 필드를 만들지 않는다(@RequestBody 파라미터명은 필드가 아니다)")
+    void req001_requestBodyRootGuardDoesNotCreatePhantomField() {
+        // 실측(petclinic ReservationRestController.create): `if (request == null) throw`가
+        // jsonPath="request"인 INPUT 피연산자를 만들어, 합성 body에 DTO 타입 갭 마커를 가진
+        // 존재하지 않는 키가 생겼다. 바디 루트는 채울 필드가 아니다.
+        ProvenanceReport report = analyzeFixture(
+                "enum-leaf",
+                "io.graphrag.fixture.enumleaf.EnumLeafController",
+                "createWithBodyNullCheck",
+                3);
+
+        assertThat(report.guards().stream().flatMap(g -> g.operands().stream()))
+                .as("바디 루트(@RequestBody 파라미터명)는 jsonPath를 갖지 않아야 한다")
+                .noneMatch(v -> "req".equals(v.jsonPath()));
+        assertThat(report.unguarded())
+                .as("바디 루트가 참조됐다고 해서 실제 필드가 unguarded에서 빠지면 안 된다")
+                .anyMatch(u -> "guestName".equals(u.jsonPath()));
+    }
+
     @Test
     @DisplayName("REQ-004: @Table/@Column 오버라이드가 ValueRef.table/column에 반영")
     void req004_jpaOverrides() {
