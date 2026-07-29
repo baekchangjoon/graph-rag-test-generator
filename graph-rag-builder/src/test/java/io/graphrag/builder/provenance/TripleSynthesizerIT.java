@@ -770,4 +770,33 @@ class TripleSynthesizerIT {
                 .contains("INSERT INTO fund_account");
     }
 
+
+    @Test
+    @DisplayName("REQ-005: 하위 리프가 있는(=객체인) 경로에는 스칼라 갭 마커를 놓지 않는다"
+            + "(슬롯 처리 순서에 의존하지 않는다)")
+    void req005_objectValuedGuardOperandDoesNotGetScalarMarker() {
+        // req.getAddress() == null 같은 가드는 jsonPath="address", javaType="Address"인 INPUT을
+        // 만든다. 그 자리에 문자열 갭 마커를 놓으면 SUT Jackson이 객체 자리에 문자열을 받아 400이
+        // 된다. 현재는 unguarded 리프가 먼저 처리돼 bodyHasPath로 걸러지는 "순서" 덕에 가려져
+        // 있는데, 순서가 뒤집히면 그대로 발현한다 — 데이터로 판정해 순서 의존을 없앤다.
+        GuardFact objectGuard = new GuardFact("Fixture.java:10", "==",
+                List.of(new ValueRef(Origin.INPUT, "address", null, null, null, null,
+                        "Address", null, null)));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint",
+                List.of(objectGuard),
+                List.of(new UnguardedField("address.city", "String", "free-text")),
+                List.of());
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.body().get("address").isObject())
+                .as("하위 리프(address.city)가 있으므로 address는 객체여야 한다: " + candidate.body())
+                .isTrue();
+        assertThat(candidate.notes())
+                .as("스칼라 슬롯을 만들지 않은 사유가 기록돼야 한다(조용한 skip 금지)")
+                .contains("address")
+                .contains("하위 리프");
+    }
+
 }
