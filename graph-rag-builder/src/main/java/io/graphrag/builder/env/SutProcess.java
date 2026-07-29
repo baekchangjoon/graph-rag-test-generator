@@ -22,7 +22,20 @@ import java.time.Instant;
 public final class SutProcess implements SutHandle {
 
     private static final Logger log = LoggerFactory.getLogger(SutProcess.class);
-    private static final Duration BOOT_TIMEOUT = Duration.ofSeconds(90);
+    private static final Duration DEFAULT_BOOT_TIMEOUT = Duration.ofSeconds(90);
+
+    /**
+     * SUT health 대기 데드라인 오버라이드(초). env var가 운영 배선이고 system property는 test-only
+     * 폴백이다 — 다른 {@code GRB_*} 스위치({@code GRB_TRIAL}, {@code GRB_EXPLORER_EMPTY_BODY})와
+     * 동일 관례.
+     *
+     * <p>기본 90초는 한산한 머신 기준이다. 전체 스위트가 Testcontainers·SUT를 동시에 돌리거나
+     * 다른 작업으로 부하가 있으면 부팅이 데드라인을 넘겨, <b>코드와 무관하게 재현 불가능한
+     * 실패</b>가 난다(실측 기록:
+     * {@code docs/superpowers/followup/2026-07-29-full-suite-load-flakiness.md},
+     * {@code docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md} E2E-B2 실행 #1).
+     */
+    static final String BOOT_TIMEOUT_ENV = "GRB_SUT_BOOT_TIMEOUT_SECONDS";
 
     private final Process process;
     private final Path logFile;
@@ -79,10 +92,44 @@ public final class SutProcess implements SutHandle {
         }
     }
 
+    /**
+     * {@link #BOOT_TIMEOUT_ENV} 값을 Duration으로 해석한다. 미지정·해석 불가·비양수면 기본값
+     * 90초로 되돌아간다 — 잘못된 값 하나로 빌드를 죽이지 않되, 되돌아간 사실은 호출부가 로그로
+     * 남겨 조용히 넘어가지 않는다.
+     */
+    static Duration resolveBootTimeout(String rawSeconds) {
+        if (rawSeconds == null || rawSeconds.isBlank()) {
+            return DEFAULT_BOOT_TIMEOUT;
+        }
+        try {
+            long seconds = Long.parseLong(rawSeconds.trim());
+            return seconds > 0 ? Duration.ofSeconds(seconds) : DEFAULT_BOOT_TIMEOUT;
+        } catch (NumberFormatException e) {
+            return DEFAULT_BOOT_TIMEOUT;
+        }
+    }
+
+    /** env var(운영) → system property(test-only) 순으로 읽는다. */
+    private static Duration bootTimeout() {
+        String raw = System.getenv(BOOT_TIMEOUT_ENV);
+        if (raw == null || raw.isBlank()) {
+            raw = System.getProperty(BOOT_TIMEOUT_ENV);
+        }
+        Duration resolved = resolveBootTimeout(raw);
+        if (raw != null && !raw.isBlank() && !resolved.equals(DEFAULT_BOOT_TIMEOUT)) {
+            log.info("SUT boot timeout overridden to {} ({}={})", resolved, BOOT_TIMEOUT_ENV, raw);
+        } else if (raw != null && !raw.isBlank()) {
+            log.warn("{}='{}' 값을 쓸 수 없어 기본값 {}로 진행한다(양의 정수 초 단위여야 한다)",
+                    BOOT_TIMEOUT_ENV, raw, DEFAULT_BOOT_TIMEOUT);
+        }
+        return resolved;
+    }
+
     private void awaitHealthy() {
         HttpClient client = HttpClient.newHttpClient();
         URI health = URI.create(baseUri() + "/actuator/health");
-        Instant deadline = Instant.now().plus(BOOT_TIMEOUT);
+        Duration bootTimeout = bootTimeout();
+        Instant deadline = Instant.now().plus(bootTimeout);
         while (Instant.now().isBefore(deadline)) {
             if (!process.isAlive()) {
                 throw new IllegalStateException("SUT process died during boot; log: " + logFile);
@@ -101,7 +148,8 @@ public final class SutProcess implements SutHandle {
             sleep(500);
         }
         stop();
-        throw new IllegalStateException("SUT did not become healthy in " + BOOT_TIMEOUT);
+        throw new IllegalStateException("SUT did not become healthy in " + bootTimeout
+                + " (부하 상태라면 " + BOOT_TIMEOUT_ENV + "로 늘릴 수 있다); log: " + logFile);
     }
 
     @Override
