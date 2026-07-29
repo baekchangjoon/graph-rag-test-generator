@@ -152,6 +152,14 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 
 이 분석 환경은 **테스트가 실행될 환경과는 별개**. 혼동하지 않도록 분리.
 
+**SUT 부팅 데드라인(`GRB_SUT_BOOT_TIMEOUT_SECONDS`).** 도구가 SUT health를 기다리는 시간은
+기본 **90초**이고, 이 env var(양의 정수, 초)로 늘릴 수 있다. 기본값은 한산한 머신 기준이라,
+전체 스위트가 Testcontainers·SUT를 동시에 돌리거나 머신에 다른 부하가 있으면
+`SUT did not become healthy in PT1M30S`로 **코드와 무관한 실패**가 난다(실측:
+[followup](superpowers/followup/2026-07-29-full-suite-load-flakiness.md),
+[E2E-B2 실행 #1](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md)).
+값이 없거나 해석 불가·비양수면 기본값으로 되돌아가며 그 사실을 warn 로그로 남긴다.
+
 ### Attach 모드 (사용자 compose로 분석)
 
 위 기본 환경 대신, 사용자가 가진 `docker-compose.yml` 로 SUT를 띄워 분석할 수도 있다. 빌더가

@@ -24,7 +24,12 @@ java.lang.IllegalStateException: SUT did not become healthy in PT1M30S
 3회 연속 관측·기록됐다(그때는 codegraph 프로세스 41개로 load 217~410).
 
 **이것은 환경 결함이 아니라 도구 결함이다** — 부팅 데드라인이 조정 불가라 부하가 있는 CI/개발
-머신에서 재현 불가능한 실패를 만든다. 착수 시 `--sut-boot-timeout`(또는 env)로 노출할 것.
+머신에서 재현 불가능한 실패를 만든다.
+
+> **[해소됨 2026-07-29]** `GRB_SUT_BOOT_TIMEOUT_SECONDS`(env var, test-only 시스템 프로퍼티
+> 폴백)로 노출했다. 미지정 시 종전 90초를 유지하므로 회귀는 없다. 해석 불가·비양수 값은
+> 기본값으로 되돌아가되 warn 로그를 남긴다. 실패 메시지에도 이 env var를 안내한다.
+> 문서: [docs/03 §분석 환경](../../03-graph-rag-builder.md).
 
 ### 실패 2 — `BuilderIntegrationTest#build_exploresMultiplePathsAndCapturesBothOrms`
 
