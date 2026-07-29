@@ -273,6 +273,17 @@ public final class TripleSynthesizer {
                             + v.javaType() + ")이라 스칼라 슬롯을 만들지 않음(원소 필드 경로가 대신 배치된다)");
                     continue;
                 }
+                if (hasChildLeaf(report, path)) {
+                    // 하위 리프가 있다는 것은 이 경로가 객체라는 뜻이다 — 그 자리에 스칼라 갭
+                    // 마커(문자열)를 놓으면 SUT의 Jackson이 객체 자리에 문자열을 받아 400이 된다.
+                    // 리프들은 각자 슬롯으로 배치되므로 여기서 만들 것이 없다. bodyHasPath로도
+                    // 대부분 걸러지지만 그것은 "리프가 먼저 처리된다"는 순서에 기대는 것이라,
+                    // 순서가 바뀌면 조용히 깨진다.
+                    notes.add("guard-input(" + path + ") at " + guard.at()
+                            + " — 하위 리프가 있는 객체 경로라 스칼라 슬롯을 만들지 않음"
+                            + "(리프 경로가 대신 배치된다)");
+                    continue;
+                }
                 if (bodyHasPath(body, path, collectionPaths) || !claimed.add(path)) {
                     continue;
                 }
@@ -281,6 +292,28 @@ public final class TripleSynthesizer {
             }
         }
         return slots;
+    }
+
+    /**
+     * {@code path} 아래에 리프가 있는가(= 이 경로가 객체인가). 리포트의 {@code unguarded[]}와
+     * 가드 피연산자 jsonPath를 함께 본다 — 인덱서가 DTO를 리프 dot-path로 전개하므로,
+     * {@code path + "."}로 시작하는 경로가 하나라도 있으면 {@code path}는 스칼라가 아니다.
+     */
+    private static boolean hasChildLeaf(ProvenanceReport report, String path) {
+        String prefix = path + ".";
+        for (UnguardedField u : report.unguarded()) {
+            if (u.jsonPath() != null && u.jsonPath().startsWith(prefix)) {
+                return true;
+            }
+        }
+        for (GuardFact g : report.guards()) {
+            for (ValueRef v : g.operands()) {
+                if (v.origin() == Origin.INPUT && v.jsonPath() != null && v.jsonPath().startsWith(prefix)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** 컬렉션/Map 타입명(리포트의 {@code javaType}은 단순명) — body에 스칼라로 놓을 수 없는 자리. */
