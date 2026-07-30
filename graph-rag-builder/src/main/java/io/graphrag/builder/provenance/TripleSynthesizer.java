@@ -311,6 +311,16 @@ public final class TripleSynthesizer {
                 if (v.origin() == Origin.INPUT && v.jsonPath() != null && v.jsonPath().startsWith(prefix)) {
                     return true;
                 }
+                // DERIVED 피연산자는 jsonPath가 null이고 읽는 리프 경로가 derivedFrom에만 담긴다.
+                // 이걸 빼먹으면 자식이 파생식 안에서만 쓰일 때 부모를 스칼라로 오판하고, 슬롯 순서가
+                // DERIVED → guard-input이라 먼저 놓인 자식 객체를 부모 스칼라가 덮어써 400이 된다.
+                if (v.origin() == Origin.DERIVED && v.derivedFrom() != null) {
+                    for (String root : v.derivedFrom()) {
+                        if (root != null && root.startsWith(prefix)) {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         return false;

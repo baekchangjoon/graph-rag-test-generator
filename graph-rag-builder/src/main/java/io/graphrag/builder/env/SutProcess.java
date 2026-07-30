@@ -98,14 +98,24 @@ public final class SutProcess implements SutHandle {
      * 남겨 조용히 넘어가지 않는다.
      */
     static Duration resolveBootTimeout(String rawSeconds) {
+        return parseBootTimeout(rawSeconds).orElse(DEFAULT_BOOT_TIMEOUT);
+    }
+
+    /**
+     * 파싱 <b>성공 여부 자체</b>를 반환한다. {@link #resolveBootTimeout}의 결과가 기본값과 같은지로
+     * 성공을 판정하면, 사용자가 유효한 값 {@code "90"}을 명시해도 우연히 기본값과 같아져
+     * "값을 쓸 수 없다"는 거짓 경고가 찍히고 오버라이드가 안 먹혔다고 오인하게 된다.
+     * 부재({@code null}/공백)와 해석 불가를 둘 다 empty로 반환하고, 구분은 호출부가 한다.
+     */
+    static java.util.Optional<Duration> parseBootTimeout(String rawSeconds) {
         if (rawSeconds == null || rawSeconds.isBlank()) {
-            return DEFAULT_BOOT_TIMEOUT;
+            return java.util.Optional.empty();
         }
         try {
             long seconds = Long.parseLong(rawSeconds.trim());
-            return seconds > 0 ? Duration.ofSeconds(seconds) : DEFAULT_BOOT_TIMEOUT;
+            return seconds > 0 ? java.util.Optional.of(Duration.ofSeconds(seconds)) : java.util.Optional.empty();
         } catch (NumberFormatException e) {
-            return DEFAULT_BOOT_TIMEOUT;
+            return java.util.Optional.empty();
         }
     }
 
@@ -115,14 +125,17 @@ public final class SutProcess implements SutHandle {
         if (raw == null || raw.isBlank()) {
             raw = System.getProperty(BOOT_TIMEOUT_ENV);
         }
-        Duration resolved = resolveBootTimeout(raw);
-        if (raw != null && !raw.isBlank() && !resolved.equals(DEFAULT_BOOT_TIMEOUT)) {
-            log.info("SUT boot timeout overridden to {} ({}={})", resolved, BOOT_TIMEOUT_ENV, raw);
-        } else if (raw != null && !raw.isBlank()) {
-            log.warn("{}='{}' 값을 쓸 수 없어 기본값 {}로 진행한다(양의 정수 초 단위여야 한다)",
-                    BOOT_TIMEOUT_ENV, raw, DEFAULT_BOOT_TIMEOUT);
+        if (raw == null || raw.isBlank()) {
+            return DEFAULT_BOOT_TIMEOUT;   // 미지정 — 종전 동작, 로그 없음
         }
-        return resolved;
+        java.util.Optional<Duration> parsed = parseBootTimeout(raw);
+        if (parsed.isPresent()) {
+            log.info("SUT boot timeout overridden to {} ({}={})", parsed.get(), BOOT_TIMEOUT_ENV, raw);
+            return parsed.get();
+        }
+        log.warn("{}='{}' 값을 쓸 수 없어 기본값 {}로 진행한다(양의 정수 초 단위여야 한다)",
+                BOOT_TIMEOUT_ENV, raw, DEFAULT_BOOT_TIMEOUT);
+        return DEFAULT_BOOT_TIMEOUT;
     }
 
     private void awaitHealthy() {
