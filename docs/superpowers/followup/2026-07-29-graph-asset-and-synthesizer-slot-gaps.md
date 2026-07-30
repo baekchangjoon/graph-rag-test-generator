@@ -34,9 +34,15 @@
 > 리프 dot-path로 전개하므로 이 판정은 타입 목록 없이 성립하고, enum을 DTO로 오분류할 위험도
 > 없다(같은 커밋에서 enum을 리프로 고정했다). 순서 의존(3번)도 함께 사라진다.
 >
-> 남은 경계: 어떤 DTO의 리프가 **전부** 가드에 참조돼 unguarded가 비고 그 리프들도 아직
-> 배치되지 않은 경우에는 판정이 성립하지 않는다. 실측된 사례는 없고, 그 경우에도 리프 슬롯이
-> 뒤이어 배치되면 `bodyHasPath`가 걸러낸다.
+> 남은 경계: 어떤 DTO의 리프가 **전부** 가드에 참조돼 unguarded가 비는 경우에는 판정이
+> unguarded만으로는 성립하지 않는다. 그래서 가드 피연산자의 jsonPath와 **DERIVED의
+> `derivedFrom` 경로까지** 함께 본다.
+>
+> **[정정 2026-07-30]** 이 문단의 이전 판은 "리프 슬롯이 뒤이어 배치되면 `bodyHasPath`가
+> 걸러낸다"고 적었는데 **틀렸다.** 실제 슬롯 처리 순서는 DERIVED → guard-input이라 자식(리프)이
+> 부모보다 **먼저** 배치되고, 뒤이은 부모 스칼라가 앞서 만든 자식 객체를 덮어쓴다. 코드리뷰가
+> 이 괴리를 지적해 `hasChildLeaf`가 `derivedFrom`도 검사하도록 고쳤다
+> (회귀 테스트: `req005_derivedOnlyChildLeafAlsoMarksParentAsObject`).
 
 ## 3. `descendWithCollections`가 기존 스칼라 자식을 조용히 `{}`로 교체할 수 있다
 

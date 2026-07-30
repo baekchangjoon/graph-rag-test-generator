@@ -799,4 +799,29 @@ class TripleSynthesizerIT {
                 .contains("하위 리프");
     }
 
+
+    @Test
+    @DisplayName("REQ-005: DERIVED 식으로만 참조된 자식 리프가 있어도 부모 객체 경로에 스칼라 마커를 놓지 않는다")
+    void req005_derivedOnlyChildLeafAlsoMarksParentAsObject() {
+        // 코드리뷰 지적: hasChildLeaf가 INPUT jsonPath만 보므로, 자식이 DERIVED 식 안에서만
+        // 쓰이면(그 경로는 derivedFrom에만 담기고 jsonPath는 null) 부모를 스칼라로 오판한다.
+        // 그리고 슬롯 처리 순서가 DERIVED → guard-input이라, 먼저 놓인 자식 객체를 뒤이은
+        // 부모 스칼라가 덮어써 body.address가 문자열이 되고 SUT Jackson이 400을 낸다.
+        GuardFact objectGuard = new GuardFact("Fixture.java:10", "==",
+                List.of(new ValueRef(Origin.INPUT, "address", null, null, null, null,
+                        "Address", null, null)));
+        GuardFact derivedGuard = new GuardFact("Fixture.java:20", "<",
+                List.of(new ValueRef(Origin.DERIVED, null, null, null, null, null,
+                        "int", null, null, List.of("address.rate"))));
+        ProvenanceReport report = new ProvenanceReport("fixture-endpoint",
+                List.of(objectGuard, derivedGuard), List.of(), List.of());
+
+        TripleCandidate candidate = new TripleSynthesizer().synthesize(
+                report, BodyShape.empty(), List.of(), InputCandidates.empty()).get(0);
+
+        assertThat(candidate.body().get("address").isObject())
+                .as("자식이 DERIVED 경유로만 참조돼도 address는 객체여야 한다: " + candidate.body())
+                .isTrue();
+    }
+
 }
