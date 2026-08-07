@@ -43,5 +43,5 @@ jobs:
           else
             SONAR_ARGS="-Dsonar.branch.name=$REF_NAME"
           fi
-          $GRADLE -I /tmp/sonar-init.gradle assemble sonar -x test \
+          $GRADLE -I /tmp/sonar-init.gradle assemble sonar -x test -Dorg.gradle.java.home="$JAVA_HOME" \
             -Dsonar.projectKey=graph-rag-test-generator $SONAR_ARGS
