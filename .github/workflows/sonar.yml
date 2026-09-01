@@ -44,5 +44,11 @@ jobs:
             SONAR_ARGS="-Dsonar.branch.name=$REF_NAME"
           fi
           $GRADLE assemble -x test -Dorg.gradle.java.home="$JAVA_HOME"
+          # 커버리지 배선: coverage job과 동일 스코프(unit+docker, integration 제외)로 JaCoCo
+          # 집계 XML을 만든 뒤 스캔에 전달한다. 이게 없으면 Sonar는 커버리지 데이터를 전혀
+          # 받지 못해 "Coverage on New Code 0%"로 모든 PR이 품질 게이트에서 떨어진다.
+          $GRADLE jacocoAggregatedReport -PexcludeTags=integration -Dorg.gradle.java.home="$JAVA_HOME"
+          JACOCO_XML="$GITHUB_WORKSPACE/build/reports/jacoco/jacocoAggregatedReport/jacocoAggregatedReport.xml"
           $GRADLE -I /tmp/sonar-init.gradle sonar -Dorg.gradle.java.home="$JAVA_HOME" \
-            -Dsonar.projectKey=graph-rag-test-generator $SONAR_ARGS
+            -Dsonar.projectKey=graph-rag-test-generator \
+            -Dsonar.coverage.jacoco.xmlReportPaths="$JACOCO_XML" $SONAR_ARGS
