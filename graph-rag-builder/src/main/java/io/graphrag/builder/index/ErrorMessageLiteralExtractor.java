@@ -21,6 +21,10 @@ import java.util.TreeSet;
  * 문자열을, 연결식(concat) 인자는 길이 {@value #MIN_FRAGMENT_LENGTH}자 이상의 리터럴 조각을
  * 기록한다. 결과는 정렬·중복 제거되어 결정적이다(같은 소스 → 같은 graph.json).
  *
+ * <p>미지원 형태(조용히 미추출 — 보수적 방향이라 승격이 안 될 뿐 오탐은 없음):
+ * {@code String.format(...)}/{@code "...".formatted(...)}/{@code MessageFormat.format(...)}/
+ * {@code String.join(...)}, static final 상수 참조, 2단계 이상 호출 체인.
+ *
  * <p>생성부(test-generator {@code AssertionProvenanceUpgrader})는 이 목록과 관측 message의
  * 정확 일치 → equalTo, 조각 포함 → containsString으로 승격한다. message가 응답에 노출되지
  * 않는 SUT(Spring 기본 include-message=never)에서는 어설션 대상 필드가 없어 자연히 무효과다.
@@ -39,12 +43,24 @@ public final class ErrorMessageLiteralExtractor {
         TreeSet<String> out = new TreeSet<>();
         collectFromMethod(handler, out);
         // 동일 클래스 1단계 호출 메서드(가드를 헬퍼로 뽑아낸 관용) — 재귀 없음(v1).
+        // 선언부 해석(getExecutableDeclaration) 전에 참조 수준의 declaring-type FQN으로 선-필터한다:
+        // noClasspath 모델에서 라이브러리 호출마다 클래스로드 실패 경로를 타는 비용을 피하고,
+        // 동일 클래스 판정도 Spoon 심층 equals가 아니라 FQN 비교로 한다.
         CtType<?> owner = handler.getDeclaringType();
         if (handler.getBody() != null && owner != null) {
+            java.util.Set<String> visited = new java.util.HashSet<>();
             for (CtInvocation<?> inv : handler.getBody().getElements(new TypeFilter<>(CtInvocation.class))) {
-                CtExecutable<?> callee = inv.getExecutable() == null
-                        ? null : inv.getExecutable().getExecutableDeclaration();
-                if (callee instanceof CtMethod<?> m && owner.equals(m.getDeclaringType())) {
+                if (inv.getExecutable() == null || inv.getExecutable().getDeclaringType() == null) {
+                    continue;
+                }
+                if (!owner.getQualifiedName().equals(inv.getExecutable().getDeclaringType().getQualifiedName())) {
+                    continue;
+                }
+                if (!visited.add(inv.getExecutable().getSignature())) {
+                    continue;
+                }
+                CtExecutable<?> callee = inv.getExecutable().getExecutableDeclaration();
+                if (callee instanceof CtMethod<?> m) {
                     collectFromMethod(m, out);
                 }
             }

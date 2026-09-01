@@ -214,8 +214,8 @@ public class Generator {
             String json = jsonBodyFromInput(endpoint, path.sampleInput());
             bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         }
-        // 어설션 provenance 승격(REQ-A/B/D): 합성이 notNullValue()로 강등한 항목 중 프레임워크
-        // 계약·입력 유도·소스 메시지 리터럴로 결정성이 증명되는 것만 구체 매처로 올린다.
+        // 어설션 provenance 승격(REQ-A/D): 합성이 notNullValue()로 강등한 항목 중 프레임워크
+        // 계약·소스 메시지 리터럴로 결정성이 증명되는 것만 구체 매처로 올린다.
         boolean notFoundRead = readPath && path.expectedStatus() == 404;
         String requestPath = resolveLiteralPath(endpoint, path.sampleInput(), notFoundRead);
         List<ComposedFixture.Assertion> finalAssertions = AssertionProvenanceUpgrader.upgrade(

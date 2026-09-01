@@ -11,9 +11,9 @@ import java.util.Map;
 
 /**
  * 합성된 응답 어설션 중 notNullValue()로 강등된 항목을, 추가 provenance로 결정성이 증명되는
- * 경우에 한해 구체 매처로 승격한다 (REQ-A/B/D — 2026-09-01 assertion-provenance 명세).
+ * 경우에 한해 구체 매처로 승격한다 (REQ-A/D — 2026-09-01 assertion-provenance 명세).
  *
- * <p>세 가지 증명 경로만 쓴다 — 관측값 스냅샷은 하지 않는다:
+ * <p>두 가지 증명 경로만 쓴다 — 관측값 스냅샷은 하지 않는다:
  * <ul>
  *   <li><b>REQ-A</b> 프레임워크 계약: Spring 기본 에러 엔벨로프({timestamp,status,error,path})의
  *       status==HTTP 상태코드, error==표준 reason phrase, path==요청 URI. 관측값이 계약 기대와
@@ -32,7 +32,8 @@ public final class AssertionProvenanceUpgrader {
 
     private static final String NOT_NULL = "notNullValue()";
 
-    /** RFC 9110 표준 reason phrase (Spring 기본 에러 엔벨로프의 error 필드 값). */
+    /** Spring {@code HttpStatus.getReasonPhrase()} 값(기본 에러 엔벨로프의 error 필드가 쓰는 문구).
+     *  RFC 9110의 개명(422 "Unprocessable Content" 등)과 다르다 — Spring 값으로 유지해야 한다. */
     private static final Map<Integer, String> REASON_PHRASES = Map.ofEntries(
             Map.entry(400, "Bad Request"), Map.entry(401, "Unauthorized"),
             Map.entry(402, "Payment Required"), Map.entry(403, "Forbidden"),
@@ -45,16 +46,15 @@ public final class AssertionProvenanceUpgrader {
             Map.entry(501, "Not Implemented"), Map.entry(502, "Bad Gateway"),
             Map.entry(503, "Service Unavailable"), Map.entry(504, "Gateway Timeout"));
 
-    /** REQ-D 연결식 조각의 최소 길이 — 짧은 조각("a ", "id")의 우연 포함 오탐을 막는다. */
+    /** REQ-D 연결식 조각의 최소 길이 — 짧은 조각("a ", "id")의 우연 포함 오탐을 막는다.
+     *  캡처부(ErrorMessageLiteralExtractor)의 동명 상수와 같아야 한다. */
     private static final int MIN_FRAGMENT_LENGTH = 8;
 
-    private AssertionProvenanceUpgrader() {
-    }
+    /** path 어설션 승격 허용 문자(unreserved + '/') — 퍼센트 인코딩 불일치 방지. */
+    private static final java.util.regex.Pattern URL_SAFE_PATH =
+            java.util.regex.Pattern.compile("[A-Za-z0-9._~/-]*");
 
-    public static List<ComposedFixture.Assertion> upgrade(List<ComposedFixture.Assertion> assertions,
-                                                          ExploredPath path, Endpoint endpoint,
-                                                          String resolvedRequestPath) {
-        return upgrade(assertions, path, endpoint, resolvedRequestPath, false);
+    private AssertionProvenanceUpgrader() {
     }
 
     /**
@@ -122,8 +122,11 @@ public final class AssertionProvenanceUpgrader {
             }
             case "path" -> {
                 JsonNode v = response.get("path");
+                // URL_SAFE 가드: path 변수 값에 공백·비ASCII가 있으면 클라이언트의 퍼센트 인코딩과
+                // 서버 에코가 원본 문자열과 어긋난다 → unreserved 문자만일 때만 승격.
                 if (v != null && v.isTextual() && resolvedRequestPath != null
-                        && matchesTemplate(v.asText(), pathTemplate)) {
+                        && matchesTemplate(v.asText(), pathTemplate)
+                        && URL_SAFE_PATH.matcher(stripQuery(resolvedRequestPath)).matches()) {
                     return "equalTo(" + quote(stripQuery(resolvedRequestPath)) + ")";
                 }
             }
@@ -139,7 +142,7 @@ public final class AssertionProvenanceUpgrader {
      * 와일드카드로 취급한다. 일치하면 "path 필드 == 요청 URI" 계약이 이 path에서 성립함이
      * 증명되어, 생성 시점의 실제 요청 경로로 equalTo 할 수 있다.
      */
-    static boolean matchesTemplate(String observedPath, String pathTemplate) {
+    private static boolean matchesTemplate(String observedPath, String pathTemplate) {
         String[] observed = stripQuery(observedPath).split("/", -1);
         String[] template = stripQuery(pathTemplate).split("/", -1);
         if (observed.length != template.length) {
@@ -179,6 +182,7 @@ public final class AssertionProvenanceUpgrader {
     }
 
     private static String quote(String s) {
-        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
     }
 }

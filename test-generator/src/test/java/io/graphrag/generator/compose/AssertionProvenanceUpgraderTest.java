@@ -52,7 +52,7 @@ class AssertionProvenanceUpgraderTest {
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
                 List.of(notNull("timestamp"), notNull("status"), notNull("error"), notNull("path")),
-                p, e, "/api/orders");
+                p, e, "/api/orders", false);
 
         assertThat(out).containsExactly(
                 notNull("timestamp"),
@@ -72,7 +72,7 @@ class AssertionProvenanceUpgraderTest {
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
                 List.of(notNull("status"), notNull("error"), notNull("path")),
-                p, e, "/api/bookings/91567");
+                p, e, "/api/bookings/91567", false);
 
         assertThat(out).containsExactly(
                 new ComposedFixture.Assertion("status", "equalTo(422)"),
@@ -88,7 +88,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("delete-api-bookings-id", "DELETE", "/api/bookings/{id}", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("path")), p, e, "/api/bookings/91570?confirm=true");
+                List.of(notNull("path")), p, e, "/api/bookings/91570?confirm=true", false);
 
         assertThat(out).containsExactly(
                 new ComposedFixture.Assertion("path", "equalTo(\"/api/bookings/91570\")"));
@@ -102,7 +102,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("post-api-x", "POST", "/api/x", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("status"), notNull("error"), notNull("path")), p, e, "/api/x");
+                List.of(notNull("status"), notNull("error"), notNull("path")), p, e, "/api/x", false);
 
         assertThat(out).containsExactly(
                 new ComposedFixture.Assertion("status", "equalTo(400)"),
@@ -118,7 +118,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("post-api-orders", "POST", "/api/orders", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("status")), p, e, "/api/orders");
+                List.of(notNull("status")), p, e, "/api/orders", false);
 
         assertThat(out).containsExactly(notNull("status"));
     }
@@ -131,7 +131,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("post-api-x", "POST", "/api/x", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("status"), notNull("error")), p, e, "/api/x");
+                List.of(notNull("status"), notNull("error")), p, e, "/api/x", false);
 
         assertThat(out).containsExactly(notNull("status"), notNull("error"));
     }
@@ -147,7 +147,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("post-api-orders-batch", "POST", "/api/orders/batch", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("created")), p, e, "/api/orders/batch");
+                List.of(notNull("created")), p, e, "/api/orders/batch", false);
 
         assertThat(out).containsExactly(notNull("created"));
     }
@@ -163,7 +163,7 @@ class AssertionProvenanceUpgraderTest {
                 List.of("nights must be between 1 and 30", "tier is required"));
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("message")), p, e, "/api/bookings");
+                List.of(notNull("message")), p, e, "/api/bookings", false);
 
         assertThat(out).containsExactly(new ComposedFixture.Assertion(
                 "message", "equalTo(\"nights must be between 1 and 30\")"));
@@ -179,7 +179,7 @@ class AssertionProvenanceUpgraderTest {
                 List.of(" not found"));
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("message")), p, e, "/api/bookings/1");
+                List.of(notNull("message")), p, e, "/api/bookings/1", false);
 
         assertThat(out).containsExactly(new ComposedFixture.Assertion(
                 "message", "org.hamcrest.Matchers.containsString(\" not found\")"));
@@ -214,7 +214,7 @@ class AssertionProvenanceUpgraderTest {
                 List.of("nights must be between 1 and 30"));
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("message")), p, e, "/api/bookings");
+                List.of(notNull("message")), p, e, "/api/bookings", false);
 
         assertThat(out).containsExactly(notNull("message"));
     }
@@ -229,7 +229,7 @@ class AssertionProvenanceUpgraderTest {
         ComposedFixture.Assertion existing = new ComposedFixture.Assertion("status", "equalTo(999)");
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(existing), p, e, "/api/orders");
+                List.of(existing), p, e, "/api/orders", false);
 
         assertThat(out).containsExactly(existing);
     }
@@ -240,7 +240,7 @@ class AssertionProvenanceUpgraderTest {
         Endpoint e = endpoint("post-api-orders", "POST", "/api/orders", List.of());
 
         List<ComposedFixture.Assertion> out = AssertionProvenanceUpgrader.upgrade(
-                List.of(notNull("status")), p, e, "/api/orders");
+                List.of(notNull("status")), p, e, "/api/orders", false);
 
         assertThat(out).containsExactly(notNull("status"));
     }
