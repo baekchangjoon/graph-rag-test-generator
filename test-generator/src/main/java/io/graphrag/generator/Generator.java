@@ -220,16 +220,7 @@ public class Generator {
         String requestPath = resolveLiteralPath(endpoint, path.sampleInput(), notFoundRead);
         List<ComposedFixture.Assertion> finalAssertions = AssertionProvenanceUpgrader.upgrade(
                 fixture.assertions(), path, endpoint, requestPath, notFoundRead);
-        List<String> assertionParts = new ArrayList<>();
-        for (var a : finalAssertions) {
-            assertionParts.add("\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")");
-        }
-        // 커스텀 응답 헤더: 게이트웨이 프록시가 전파한 헤더가 있으면 notNullValue() 단언 추가.
-        // 빈 맵이면 기존 테스트에 영향 없음.
-        for (String h : path.responseHeaders().keySet()) {
-            assertionParts.add("\n            .header(\"" + h + "\", org.hamcrest.Matchers.notNullValue())");
-        }
-        String assertionsBlock = String.join("", assertionParts);
+        String assertionsBlock = renderAssertionsBlock(finalAssertions, path);
 
         List<Map<String, Object>> kafkaEmits = buildKafkaEmits(path, fixture);
 
@@ -244,6 +235,20 @@ public class Generator {
                 path.expectedStatus(),
                 assertionsBlock, endpoint.authRequired(),
                 mocks.propagationMissing(), path.validationWarnings(), kafkaEmits, postCreateCleanup);
+    }
+
+    /** 응답 어설션 체인 렌더: body 어설션 + 커스텀 응답 헤더(게이트웨이 전파 헤더) notNull 단언. */
+    private static String renderAssertionsBlock(List<ComposedFixture.Assertion> assertions,
+                                                ExploredPath path) {
+        List<String> parts = new ArrayList<>();
+        for (var a : assertions) {
+            parts.add("\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")");
+        }
+        // 빈 맵이면 기존 테스트에 영향 없음.
+        for (String h : path.responseHeaders().keySet()) {
+            parts.add("\n            .header(\"" + h + "\", org.hamcrest.Matchers.notNullValue())");
+        }
+        return String.join("", parts);
     }
 
     /** Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성. */
