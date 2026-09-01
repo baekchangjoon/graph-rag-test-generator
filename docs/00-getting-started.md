@@ -126,6 +126,7 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 | `--semantic-status-field <field>` | (기본 `errorCode`) 에러 엔벨로프의 의미론적 상태코드 필드 |
 | `--error-detail-field <field>` | FAILURE 경로 테스트에 추가할 바디 어설션 대상 필드 (`--error-when-present` 와 함께 사용) |
 | `--error-detail-contains <substr>` | `--error-detail-field` 와 함께 지정 시 `containsString` 어설션 생성 (`--error-detail-field` 없이는 효과 없음) |
+| `--sut-env SERVER_ERROR_INCLUDE_MESSAGE=always` | (옵트인) 에러 응답에 `message`를 노출시켜, 실패 경로 테스트에 핸들러 소스 리터럴 기반 `message` 어설션을 합성 ([docs/04](04-test-generator.md) "Assertion 합성 규칙"). 생성 테스트를 돌리는 실행 환경 compose에도 **같은 env를 넣어야** 한다. ⚠️ 운영이 message를 숨긴다면 테스트 환경≠운영 환경 드리프트가 생기는 옵트인이다 |
 
 끝나면 `./out/graph/graph.json`이 생긴다.
 
