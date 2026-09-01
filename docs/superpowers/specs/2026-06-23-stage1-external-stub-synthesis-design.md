@@ -2,7 +2,7 @@
 
 - 일자: 2026-06-23
 - 브랜치: feat-external-stub-synthesis
-- 관련 로드맵: [docs/27](../../27-roadmap-otel-capture-stub-seeding.md) ② "외부 stub seeding"의 무-LLM·무-OpenAPI 1순위 구현
+- 관련 로드맵: [docs/27](../../archive/27-roadmap-otel-capture-stub-seeding.md) ② "외부 stub seeding"의 무-LLM·무-OpenAPI 1순위 구현
 - 결정 경로: 대화형 brainstorming(B2 캡처→재주입, 옵션 X 모드-중립 trace-id 격리, provenance (c) 태깅)을 사용자가 섹션별로 승인
 
 ## 비목표 경계 (먼저 못박는다)

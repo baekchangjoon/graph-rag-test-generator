@@ -2,7 +2,7 @@
 
 소스 코드에서 사실을 추출해 그래프 RAG 자산(`graph.json`)을 만들고, 증분 갱신한다. CLI 전용 — 조회 서버는 없다.
 
-LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람이거나 무관하게, 도구 1은 결정적이고 재현 가능하다.
+용어는 [glossary](glossary.md) 참조. LLM은 기본 경로의 도구 안에 없다(옵트인 `--llm-oracle`만 예외, 출력은 캐시로 고정). 외부 오케스트레이터가 LLM이거나 사람이거나 무관하게, 도구 1은 결정적이고 재현 가능하다.
 
 빌더 파이프라인(`build` 서브커맨드)은 아래 순서로 진행된다.
 
@@ -472,7 +472,7 @@ T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore) 순�
   처음 2xx에 도달한 엔드포인트의 파생 시나리오(happy body 변이)가 FK 존재-가드에 필요한 시드를
   물려받지 못해 기대 4xx 대신 404로 실패하던 갭(REQ-037)은 **해소됐다** — 같은 endpoint의 2xx
   시나리오가 존재를 증명한 키 값에 대해 파생 시나리오가 부모 행 시드를 상속한다
-  (`Generator.provenExistingKeyValues` → `FixtureComposer`). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
+  (`Generator.provenExistingKeys` → `FixtureComposer`). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   REQ-032/REQ-036/REQ-037 각주 참조.
 
 ## CLI 레시피

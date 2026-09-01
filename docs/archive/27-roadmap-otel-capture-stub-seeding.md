@@ -17,7 +17,7 @@ seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.
 > plan [docs/superpowers/plans/2026-06-18-otel-sql-capture.md]. `SqlCaptureBackend`(`OtelSpanCapture`
 > 1순위 + `LogParserCapture` 폴백), in-process OTLP/protobuf 리시버, 요청별 `traceparent` 주입(HTTP 헤더 /
 > Kafka 레코드 헤더)으로 trace-id 귀속. 기본값을 `otel`로 전환했고 `--trace-mode none` 으로 폴백한다
-> ([docs/06](06-test-environment.md) "trace 모드" 절, [docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
+> ([docs/06](../06-test-environment.md) "trace 모드" 절, [docs/26](../26-attach-mode.md) "attach OTEL 네트워킹" 절).
 >
 > **PoC·구현에서 확정/정정된 사실:**
 > - **SQL 텍스트 속성** — agent 2.16.0은 stable DB semconv opt-in 없이는 SQL을 **`db.statement`(구 키)**로
@@ -29,7 +29,7 @@ seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.
 >   환원한다. 동시 요청은 trace-id로 격리 귀속된다.
 > - **OTLP transport** — agent OTLP exporter는 `http/json` 미지원 → 리시버는 `http/protobuf` 로 수신.
 > - **attach 보안** — 컨테이너 도달을 위해 리시버를 `0.0.0.0` 에 bind하고, 넓어진 노출은 실행마다 1회용
->   토큰 헤더 인증으로 보상한다([docs/26](26-attach-mode.md) "attach OTEL 네트워킹" 절).
+>   토큰 헤더 인증으로 보상한다([docs/26](../26-attach-mode.md) "attach OTEL 네트워킹" 절).
 
 ### 문제
 
@@ -39,12 +39,12 @@ seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.
 
 - **동시성 취약** — byte-offset 창은 단일 직렬 실행을 전제한다. 병렬 요청/비동기 작업이 끼면 구간이 섞인다.
 - **로그 접근 의존** — attach 모드는 컨테이너 로그를 `docker compose logs` 스트림으로 끌어와야만 SQL을
-  본다([docs/26](26-attach-mode.md)). 로그 포맷/버퍼링에 민감하다.
+  본다([docs/26](../26-attach-mode.md)). 로그 포맷/버퍼링에 민감하다.
 - **ORM 결합** — Hibernate/MyBatis 로그 형식별 파서가 필요하다(raw JDBC 등은 비대상).
 
 ### 제안 방향
 
-SQL 캡처를 **교체 가능한 인터페이스**(`InputOracle` 선례 — [docs/24](24-exploration-backends-and-input-oracle.md))로
+SQL 캡처를 **교체 가능한 인터페이스**(`InputOracle` 선례 — [docs/24](../24-input-discovery-internals.md))로
 추상화한다.
 
 ```
@@ -118,17 +118,17 @@ interface SqlCaptureBackend {
 ## 2. OpenAPI 기반 외부 stub seeding + 커버리지 유도형 응답 fuzzing
 
 > **상태(2026-06-23): 무-LLM 1순위 = 단계1로 커버됨.** 운영자 수동 stub 작성((가))을 없애는
-> **무-LLM·무-OpenAPI 형상-only 합성**은 [단계1](superpowers/specs/2026-06-23-stage1-external-stub-synthesis-design.md)에서
+> **무-LLM·무-OpenAPI 형상-only 합성**은 [단계1](../superpowers/specs/2026-06-23-stage1-external-stub-synthesis-design.md)에서
 > 구현·검증 완료(REQ-001~014 100% green). SUT 응답 DTO 형상에서 minimal valid 200 응답을 결정적으로
 > 합성해 외부-의존 경로(예: order-service `GET /inventory/stock` → 외부 직후 409 분기)를 통과시킨다.
 > 따라서 본 §2의 나머지 — **OpenAPI 기반 합성**은 **단계3**, **커버리지 유도형 응답 값 fuzzing**(enum/상태코드
 > 전환 등 외부-응답-의존 분기 전체 열기)은 **단계2**로 이연한다. 수동 `--external-stubs`는 escape hatch로 유지.
 >
 > **상태(2026-06-24): 단계2 = enum 응답 변형 완료(PR #92).** enum 타입 응답 필드의 정적-완전 상수 집합을
-> 변형 stub으로 갈아끼워 모든 arm을 결정적으로 연다([설계](superpowers/specs/2026-06-24-stage2-enum-response-fuzzing-design.md),
+> 변형 stub으로 갈아끼워 모든 arm을 결정적으로 연다([설계](../superpowers/specs/2026-06-24-stage2-enum-response-fuzzing-design.md),
 > REQ-001~011 green). **단계2-A = status-style String 리터럴 변형**은 그 변형 루프 위에 후보 출처만 교체해
 > (소비 코드 equals-family 분기 리터럴 추출) String 응답 분기의 arm을 연다
-> ([설계](superpowers/specs/2026-06-24-stage2-string-literal-response-fuzzing-design.md), REQ-001~012 green).
+> ([설계](../superpowers/specs/2026-06-24-stage2-string-literal-response-fuzzing-design.md), REQ-001~012 green).
 > 남은 후속: **concolic 숫자 경계(단계2-B)**, **OpenAPI/LLM(단계3)**.
 
 ### 문제
@@ -160,7 +160,7 @@ SUT가 외부 HTTP 의존(결제·재고 등)을 호출할 때:
 
 > **범위: analysis 모드 우선.** `HttpCaptureServer`(임베디드 WireMock)·`{{wiremock}}` 치환은
 > `AnalysisEnvironment` 에 있고, **attach v1은 외부 HTTP 캡처를 미지원**(`AttachedComposeEnvironment.httpCapture()`
-> = null, [docs/26](26-attach-mode.md))한다. 따라서 이 항목은 analysis 모드 대상이다. attach까지 넓히려면
+> = null, [docs/26](../26-attach-mode.md))한다. 따라서 이 항목은 analysis 모드 대상이다. attach까지 넓히려면
 > compose 내부 WireMock 서비스 주입 + `{{wiremock}}` 치환 재설계가 **별도 범위**로 필요하다.
 
 ### 통합 지점
@@ -197,7 +197,7 @@ SUT가 외부 HTTP 의존(결제·재고 등)을 호출할 때:
 attach 모드의 `OverrideComposeGenerator` 는 app 서비스에 `SPRING_APPLICATION_JSON`(SQL 로깅)과
 `JAVA_TOOL_OPTIONS`(에이전트)를 **set** 한다. docker compose는 `environment` 의 **스칼라 값을 머지하지
 않고 치환**하므로, 사용자 compose의 app 서비스가 같은 키를 이미 쓰고 있으면 **조용히 소실**된다
-([docs/26](26-attach-mode.md) v1 한계).
+([docs/26](../26-attach-mode.md) v1 한계).
 
 > **흔한 셋업은 무해** — SUT 설정을 `--spring.config.location=file:...` (Dockerfile ENTRYPOINT args)나
 > `SPRING_CONFIG_LOCATION` env, compose `command:` 로 주입하는 경우, override는 `environment` 키만 더하고

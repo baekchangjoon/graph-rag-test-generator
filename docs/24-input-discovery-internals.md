@@ -329,7 +329,7 @@ flowchart TD
 ### 5.3 Stage 4 — 상태 의존 가드의 여러 arm을 여는 시드 변종
 
 저장된 행의 상태에 갈리는 가드는 입력만으로는 반대 arm을 못 연다. 정적
-`StateGuardOracle`(`extractStateGuards`)이 다음 가드를 인식하고,
+상태 가드 추출기(`ConstraintExtractor.extractStateGuards`)가 다음 가드를 인식하고,
 `ReadInputSynthesizer.synthesizeVariants`가 반대 arm을 여는 **대체 시드 행 변종**을
 합성해 by-id 요청으로 구동한다:
 

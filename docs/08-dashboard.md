@@ -82,7 +82,7 @@ leak-detector:
 
 ## 대시보드 API
 
-스펙의 근거는 `shared-model/src/main/java/io/graphrag/model/` 의 이벤트 DTO다.
+스펙의 근거는 `test-state-dashboard/src/main/java/io/graphrag/dashboard/DashboardController.java`다.
 
 읽기:
 - `GET /active`                       현재 ACTIVE 테스트
