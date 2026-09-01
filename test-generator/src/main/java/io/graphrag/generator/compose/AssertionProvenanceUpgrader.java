@@ -31,6 +31,10 @@ import java.util.Map;
 public final class AssertionProvenanceUpgrader {
 
     private static final String NOT_NULL = "notNullValue()";
+    private static final String EQUAL_TO = "equalTo(";
+    private static final String FIELD_STATUS = "status";
+    private static final String FIELD_ERROR = "error";
+    private static final String FIELD_PATH = "path";
 
     /** Spring {@code HttpStatus.getReasonPhrase()} 값(기본 에러 엔벨로프의 error 필드가 쓰는 문구).
      *  RFC 9110의 개명(422 "Unprocessable Content" 등)과 다르다 — Spring 값으로 유지해야 한다. */
@@ -95,7 +99,7 @@ public final class AssertionProvenanceUpgrader {
 
     /** Spring 기본 에러 엔벨로프 형상인지 — 4필드가 모두 non-null로 존재해야 한다. */
     private static boolean isSpringErrorEnvelope(JsonNode response) {
-        for (String f : new String[] {"timestamp", "status", "error", "path"}) {
+        for (String f : new String[] {"timestamp", FIELD_STATUS, FIELD_ERROR, FIELD_PATH}) {
             JsonNode v = response.get(f);
             if (v == null || v.isNull()) {
                 return false;
@@ -107,27 +111,27 @@ public final class AssertionProvenanceUpgrader {
     private static String envelopeMatcher(String field, JsonNode response, int expectedStatus,
                                           String pathTemplate, String resolvedRequestPath) {
         switch (field) {
-            case "status" -> {
-                JsonNode v = response.get("status");
+            case FIELD_STATUS -> {
+                JsonNode v = response.get(FIELD_STATUS);
                 if (v != null && v.isIntegralNumber() && v.asInt() == expectedStatus) {
-                    return "equalTo(" + expectedStatus + ")";
+                    return EQUAL_TO + expectedStatus + ")";
                 }
             }
-            case "error" -> {
+            case FIELD_ERROR -> {
                 String phrase = REASON_PHRASES.get(expectedStatus);
-                JsonNode v = response.get("error");
+                JsonNode v = response.get(FIELD_ERROR);
                 if (phrase != null && v != null && v.isTextual() && phrase.equals(v.asText())) {
-                    return "equalTo(" + quote(phrase) + ")";
+                    return EQUAL_TO + quote(phrase) + ")";
                 }
             }
-            case "path" -> {
-                JsonNode v = response.get("path");
+            case FIELD_PATH -> {
+                JsonNode v = response.get(FIELD_PATH);
                 // URL_SAFE 가드: path 변수 값에 공백·비ASCII가 있으면 클라이언트의 퍼센트 인코딩과
                 // 서버 에코가 원본 문자열과 어긋난다 → unreserved 문자만일 때만 승격.
                 if (v != null && v.isTextual() && resolvedRequestPath != null
                         && matchesTemplate(v.asText(), pathTemplate)
                         && URL_SAFE_PATH.matcher(stripQuery(resolvedRequestPath)).matches()) {
-                    return "equalTo(" + quote(stripQuery(resolvedRequestPath)) + ")";
+                    return EQUAL_TO + quote(stripQuery(resolvedRequestPath)) + ")";
                 }
             }
             default -> {
@@ -164,7 +168,7 @@ public final class AssertionProvenanceUpgrader {
         }
         String observed = v.asText();
         if (literals.contains(observed)) {
-            return "equalTo(" + quote(observed) + ")";
+            return EQUAL_TO + quote(observed) + ")";
         }
         String best = null;
         for (String fragment : literals) {
