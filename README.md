@@ -1,265 +1,77 @@
 # graph-rag
 
-Java/Spring 애플리케이션의 블랙박스 REST 테스트 자산(테스트 코드 + DB 픽스처 +
-mock 데이터)을 **결정적으로 생성**하는 시스템.
+Java/Spring 애플리케이션의 블랙박스 REST 테스트 자산(테스트 코드 + DB 픽스처 + mock 데이터)을
+**결정적으로 생성**하는 시스템. 같은 입력이면 항상 같은 결과가 나온다. 기본 경로에 LLM은 없다(선택 기능 `--llm-oracle`을 켠 경우만 예외이며, 그때도 출력이 캐시로 고정된다).
 
-도구 두 개로 동작한다. **graph-rag-builder**(도구 1)가 대상 앱을 외부 프로세스로 띄워
-호출해 보며 코드의 사실(엔드포인트·분기·발행 SQL·외부 호출·DB 스키마)을 `graph.json`으로
-캡처하고, **test-generator**(도구 2)가 그 `graph.json`으로 RestAssured 테스트를 합성한다.
-두 도구 안에 LLM은 없다.
+```mermaid
+flowchart LR
+    subgraph 입력["분석 대상 (내 앱)"]
+        SRC["소스 + boot jar<br/>+ docker-compose.yml"]
+    end
+    subgraph T1["도구 1 · graph-rag-builder"]
+        EXPLORE["SUT를 외부 프로세스로 띄우고<br/>HTTP로 호출하며 분기 탐색"]
+    end
+    GRAPH[("graph.json<br/>엔드포인트 · 분기 · SQL<br/>외부 호출 · DB 스키마")]
+    subgraph T2["도구 2 · test-generator"]
+        GEN["path마다 RestAssured/JUnit5<br/>테스트 결정적 합성"]
+    end
+    OUT["생성 테스트 + 시드 SQL<br/>+ WireMock 스텁 + Kafka 어설션"]
+    SRC --> EXPLORE --> GRAPH --> GEN --> OUT
+```
 
-## 처음이신가요?
+## 시작하기
 
-→ **[docs/00-시작하기](docs/00-getting-started.md)** 부터 본다. 데모를 한 번 돌려보고
-(`./e2e/run-e2e.sh`) 자기 앱에 적용하는 순서다.
+**[docs/00-getting-started](docs/00-getting-started.md)** 를 따라간다 — 데모 한 번(트랙 A) 후
+자기 앱 적용(트랙 B) 순서다.
 
-자기 앱에 쓰려면 소스 빌드 없이 prebuilt를 받는다 — **[Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases)의
-zip** 또는 **GHCR 이미지**(`ghcr.io/baekchangjoon/{test-generator,graph-rag-builder}`).
-`test-generator`는 JRE 17만, `graph-rag-builder`는 +Docker. 상세는 시작하기의 트랙 B.
+```bash
+./e2e/run-e2e.sh   # 데모 전 사이클. 성공 시: ✅ E2E PASS — tests=N skipped=0 failures=0 errors=0
+```
 
-전체 문서 지도는 [docs/README.md](docs/README.md), 용어는 [docs/glossary.md](docs/glossary.md).
-요구사항은 [docs/01-overview](docs/01-overview.md), 아키텍처는
-[docs/02-architecture](docs/02-architecture.md).
+자기 앱에는 소스 빌드 없이 prebuilt를 쓴다 —
+[Releases](https://github.com/baekchangjoon/graph-rag-test-generator/releases) zip 또는 GHCR 이미지
+(`ghcr.io/baekchangjoon/{test-generator,graph-rag-builder}`). `test-generator`는 JRE 17만,
+`graph-rag-builder`는 JRE 17 + Docker.
+
+빌더/제너레이터의 모든 CLI 사용 예(기본·attach·Kafka·레거시 Sleuth·증분·에러 엔벨로프·삼중 합성)는
+**[docs/03 "CLI 레시피"](docs/03-graph-rag-builder.md)** 에 있다.
+
+## 입력을 어떻게 만드나 (요약)
+
+happy 입력을 합성한 뒤 경계 변이와 입력 오라클(소스 리터럴 비교 + 바이트코드 심볼릭 실행/Z3,
+선택적으로 LLM 값 오라클)로 후보를 만들어 호출하고, 새 분기를 연 입력만 path로 채택한다.
+단계별 발견(Stage 0~4)이 유효 happy → 다필드 가드 → by-id 경로 → 저장된 행 상태 가드를 차례로 연다.
+원리는 [docs/23-input-generation-flow](docs/23-input-generation-flow.md),
+심화는 [docs/24-input-discovery-internals](docs/24-input-discovery-internals.md).
 
 ## 모듈
 
 | 모듈 | 역할 |
 |---|---|
-| `shared-model` | 그래프 사실 / 생성 계약 / 이벤트 DTO (JSON 직렬화) |
-| `graph-rag-builder` | 도구 1: SUT 분석 → 사실 캡처 → JSON 그래프 (LLM 없음) |
-| `test-generator` | 도구 2: 그래프 + 요청 → RestAssured 테스트 결정적 합성 (LLM 없음) |
-| `testlib` | 생성 테스트가 의존하는 helper (TestScope, SPI 어댑터) |
+| `graph-rag-builder` | 도구 1: SUT 분석 → 사실 캡처 → graph.json |
+| `test-generator` | 도구 2: graph.json + 요청 → 테스트 합성 |
+| `shared-model` | 두 도구가 공유하는 JSON 계약(그래프 사실·생성 요청) |
+| `testlib` | 생성 테스트가 쓰는 helper (TestScope, SPI 어댑터) |
 | `test-state-dashboard` | 테스트 자원 추적 + TTL 누수 감지 |
 | `socket-mock-server` | Netty TCP mock + admin REST |
-| `samples/order-service` | 샘플 SUT (Spring Boot + JPA + Postgres). orders/search/WS/promo + **Booking**(by-id PUT/DELETE·enum·날짜·다필드 가드 — Stage 0–3b 회귀 커버) + **Kafka outbound produce** 캡처 데모 |
-| `samples/legacy-tram` | 레거시 async MSA 샘플 (Java 8 + Spring Boot 2.7 + Sleuth(B3) + Eventuate Tram 0.35 + MySQL binlog/CDC + Kafka, order-web→reservation→ledger 3개 앱). `--trace-mode sleuth` 의 비동기·서비스간 SQL 캡처 라이브 E2E 검증용. **루트 Gradle 빌드 미포함** — docker compose로 별도 빌드/실행. 런북: `e2e/run-legacy-tram-sleuth-e2e.sh` |
-| `samples/error-envelope-service` | BizException을 HTTP 200 + 에러 엔벨로프(errorCode/errorDetail)로 감싸는 샘플 SUT — 성공 오라클 검증용 |
-| `e2e` | E2E·attach·dist·legacy-tram 수용/회귀 런북 모음 (`run-e2e.sh` 외 `run-attach-*.sh`·`run-dist-e2e.sh`·`run-legacy-tram-sleuth-e2e.sh` 등) |
+| `samples/*` | 데모·검증용 SUT 4종 — [docs/02 모듈 구성](docs/02-architecture.md) 참조 |
+| `e2e` | 수용·회귀 런북 15종 — 분류는 [docs/05](docs/05-testing.md) |
 
 ## 요구 환경
 
 - JDK 17 (`gradle.properties`의 `org.gradle.java.home` 또는 `JAVA_HOME`)
 - Docker (Testcontainers + docker-compose)
 
-## 전 사이클 실행
-
-```bash
-./e2e/run-e2e.sh
-```
-
-흐름: SUT jar 빌드 → 도구 1이 SUT를 **외부 프로세스**로 띄운 Testcontainers + JaCoCo 분석
-환경에서 분기 탐색 후 graph.json + exploration-report.json 생성 → 도구 2가 endpoint별 전 path
-테스트 생성(`e2e/request-*.json`) → docker-compose 기동 → 생성 테스트 전부 실행 → 정리.
-
-탐색 단계에서 요청 단위 JaCoCo exec 데이터가 수집된 경우, 도구 1은 `<out>/coverage-by-path.json`도
-함께 생성한다. 이 파일은 각 path가 담고 있는 `coverageTraceIds` 필드(그 path를 정의한 탐색 probe의
-W3C traceId 목록)를 역참조 키로 삼아, `<out>/work/pjacoco-exec/<traceId>.exec` 파일을 pathId →
-endpointId → execFiles 형태로 매핑한다. `work/pjacoco-exec/`에 `.exec` 파일이 없으면 생성하지 않는다.
-성공 시 `✅ E2E PASS — tests=N skipped=0 failures=0 errors=0` (skipped·errors도 0이어야 한다).
-
-입력 생성: happy 입력 + (generic 경계 변이 ⊕ **InputOracle** 후보)를 HTTP로 호출한다. 오라클은
-교체 가능하며 현재 두 구현을 합집합으로 쓴다 — `StaticLiteralOracle`(Spoon, 소스 리터럴 비교·문자열
-동치) + `ConcolicOracle`(**ASM 바이트코드 심볼릭 스캔 + Z3**, 소스에 없는 값 도출: `amount*3==21→7`,
-`code.length()==5→"xxxxx"`). 선택적으로 `LlmOracle`(**LLM 값 오라클**, `--llm-oracle` 플래그)을 union에
-더할 수 있다 — @Pattern/@Email·도메인 코드 같은 **엄격 검증 필드**에 도메인 그럴듯한 문자열(예
-`[A-Z]{4}-\d{4}`+`startsWith("GOLD")`→`"GOLD-1234"`)을 생성해 깊은/해피 경로를 연다. 값(구조 아님,
-strings 채널만). 결정성: LLM 출력을 `(endpoint.id+핸들러 본문+필드셋+모델ID)` 키로
-`src/main/resources/llm-oracle-cache/`에 커밋 → CI·재실행은 **캐시 우선·오프라인**(`ANTHROPIC_API_KEY`
-없고 캐시 miss면 skip). 기본 모델 Haiku 4.5(`--llm-model claude-sonnet-4-6`로 에스컬레이션), 단일
-structured 호출(temperature 0). 백엔드 교체 가능 — `--llm-backend api`(기본, 1st-party
-`ANTHROPIC_API_KEY`) | `bedrock`(AWS 자격증명) | `cli`(`--llm-cli`로 로컬 CLI: `claude`/`cursor-agent`/
-`agy`는 `-p --model`, `kiro-cli`는 `chat --no-interactive --model`; CLI별 모델명 상이). **내부 SUT 전용
-권고**(핸들러 소스를 프롬프트에 포함). `ANTHROPIC_API_KEY`는
-env로만, **커밋 금지**. 커버리지는 요청 단위 JaCoCo exec data를 누적 병합한 **arm-level**이고,
-path 식별은 probe 지문(arm-aware)이라 발견 입력이 distinct 테스트로 보존된다.
-
-그 위에 단계별 입력 발견(Stage 0–3b)을 쌓았다: **Stage 0** 유효 happy 합성(enum 첫 상수·날짜 ISO·이메일),
-**Stage 1/2** 메서드 내 `&&` 다필드 가드 추출 + joint/enum 변이(`tier==VIP && loyaltyPoints<500` 등),
-**Stage 3** by-id(GET/PUT/DELETE /{id}) path-id+리소스 시드·boolean 파라미터·enum 컬럼 시드,
-**Stage 3b** mutating by-id 요청별 시드 리셋 + 결정성 인지 구체 어설션(생성 by-id 테스트가 빈 DB 재현).
-원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`, 이론: `docs/25-input-discovery-theory.md`.
-
-개별 실행:
-
-```bash
-# 전체 단위/통합 테스트
-./gradlew check
-
-# 도구 1 단독 (기본) — --sut-compose 는 필수(여기서 DB 종류를 자동 탐지한다)
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir>"
-
-# 도구 1 — DB 타입을 SUT compose에서 자동 탐지 (Phase 7)
-#   --db-service/--db-image 로 compose 자동탐지를 오버라이드 가능, --with-redis 로 Redis 부착
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir>"
-
-# 도구 1 — JWT 인증 주입 (Phase 7) — 필요 시 --auth-token-field/--auth-header/--auth-scheme 추가
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --auth-login-path /api/auth/login --auth-user admin --auth-pass secret \
-  --out <dir>"
-
-# 도구 1 — SUT별 JDK 지정(heterogeneous MSA) / 외부 HTTP 스텁·env 주입
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-java-home /path/to/jdkXX --external-stubs <dir> --sut-env KEY=VAL --out <dir>"
-
-# 도구 1 — attach 모드: 사용자 docker-compose로 SUT를 띄워 분석 (docs/26)
-#   빌더가 override compose를 생성해 로깅·에이전트·포트를 주입하고 up/down을 소유
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir> \
-  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
-  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres"
-
-# 도구 1 — Kafka outbound produce 캡처 (attach 모드)
-#   --kafka-bootstrap 지정 시 백그라운드 KafkaCaptureReceiver가 SUT 발행 메시지를
-#   요청별 trace-id로 귀속 캡처(CapturedEventEmit) → 생성 테스트가 JSONAssert 어설션 합성
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir> \
-  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
-  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres \
-  --kafka-bootstrap localhost:9092"
-
-# 도구 1 — 레거시 Sleuth trace 모드 + 멀티서비스 로그 수집 (Java8 + Eventuate Tram)
-#   --trace-mode sleuth: B3 trace-id로 비동기·서비스간 SQL 상관 (OTEL agent 미부착)
-#   --capture-services: 여러 컨테이너 로그를 인터리브 tail해 A→B→C SQL 회수 (attach 전용)
-#   동작 데모는 samples/legacy-tram + e2e/run-legacy-tram-sleuth-e2e.sh 참고
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir> \
-  --attach --app-service order-web --app-port 58080 --jacoco-port 16300 \
-  --jdbc-url jdbc:mysql://localhost:53306/orderdb --db-service mysql \
-  --trace-mode sleuth --capture-services order-web,reservation,ledger"
-
-# 도구 1 증분 빌드 (Phase 6.2 — 클린 파티션은 이전 그래프에서 이월)
-git diff --name-only main > changed.txt
-./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
-
-# 도구 1 — 정적 인덱싱 증분 캐시 (Phase 6.3)
-#   <out>/index-cache/에 Spoon 파싱 결과를 캐시. 소스 무변경 시 캐시 복원으로 Spoon 0회.
-#   --no-incremental으로 캐시 무시하고 강제 풀 리빌드 (schema 변경·동적 모델 확장 시).
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
-  [--no-incremental]"
-
-# 도구 1 — 에러 엔벨로프 SUT (HTTP 200 + 에러 필드로 FAILURE를 표현하는 앱)
-#   --error-when-present: 응답 바디에 해당 필드가 있으면 HTTP 200이어도 FAILURE 분류
-#   --semantic-status-field: 에러 엔벨로프의 의미론적 상태코드 필드 (기본 errorCode)
-#   --error-detail-field / --error-detail-contains: FAILURE 경로 테스트에 바디 어설션 추가
-#   동작 데모: samples/error-envelope-service (BizException → errorCode/errorDetail 패턴)
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
-  --sut-compose <path/to/docker-compose.yml> --out <dir> \
-  --error-when-present errorCode \
-  --semantic-status-field errorCode \
-  --error-detail-field errorDetail \
-  --error-detail-contains BizException"
-
-# 도구 1 — 특정 엔드포인트만 탐색 (--endpoint, 콤마로 여러 개 + glob, 정확/glob 혼용)
-#   각 셀렉터: 정확 id(post-api-orders) → 정확 "METHOD /path" → glob 순으로 해석.
-#   glob 문법: *=세그먼트 내(/ 미횡단), **=재귀, {a,b}=택일, ?, [abc]. 상세 docs/03.
-#   --incremental-base 동반 시 나머지는 base에서 이월, 없으면 선택 단위만 담은 부분
-#   그래프(정적 엔드포인트 목록은 풀 유지)
-./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
-  --endpoint 'POST /api/orders/**, post-api-orders-*, GET /api/users/**'"
-
-# 도구 1 — 거대 SUT를 소스 루트로 좁혀 분석 (--sut-src 멀티 루트, 리터럴/glob/혼용)
-#   여러 명시적 소스 루트의 합집합만 정확히 파싱(공통 조상으로 끌어올리지 않음) → 피처
-#   패키지 + 공통 단위만 인덱싱·탐색하는 부분 그래프. 형제 패키지(d/f)는 제외. 상세 docs/03.
-#   콤마는 brace 깊이 0에서만 구분자({e,common}의 콤마는 보존). --sut-resources 미지정 시
-#   각 루트의 sibling resources를 스캔. (멀티 루트 + --incremental-base 조합은 v1 미지원)
-./gradlew :graph-rag-builder:run --args="build \
-  --sut-src 'src/main/java/com/app/{feature,common}' --sut-jar <jar> --out <dir> \
-  --sut-compose <path/to/docker-compose.yml>"
-
-# 도구 2 단독
-./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
-
-# 도구 1 — 삼중 합성(Phase A): 다중 가드 순차 조건이 막던 깊은 happy path를 에이전트 스킬 +
-#   3개 CLI 서브커맨드(provenance/synthesize-triple/trial)로 연다. 사용법·플래그 전체는 docs/03
-#   "삼중 합성" 절, 스킬 절차는 .claude/skills/{provenance-analysis,triple-synthesis,trial-loop}.
-./gradlew :graph-rag-builder:run --args="provenance --sut-src <src> --endpoint 'POST /api/x' \
-  --out <dir>/provenance-report.json"
-./gradlew :graph-rag-builder:run --args="synthesize-triple --report <dir>/provenance-report.json \
-  --triple-store <dir>/triples"
-./gradlew :graph-rag-builder:run --args="trial --endpoint post-api-x --http-method POST --path /api/x \
-  --sut-base-url http://localhost:8080 --jdbc-url <jdbc-url> --db-type postgres \
-  --triple-store <dir>/triples"
-# ⚠️ trial 단독 CLI는 attach 이중 opt-in 게이트(REQ-023)와 T1 마커-diff 검증을 거치지 않고
-#   --jdbc-url이 가리키는 DB에 즉시 seed INSERT/DELETE를 실행한다. 실 DB·공유 DB의 URL을 이
-#   --jdbc-url에 직접 넘기지 말 것 — 분석용 일회성 DB(Testcontainers 등)에만 쓴다. 실 SUT에
-#   attach해 안전하게 시도하려면 아래 build 경로(둘 다 있어야 seed 적용)를 쓴다 — 상세 경계는
-#   docs/03 "attach 모드에서의 안전 경계" 참조.
-#   build --attach ... --triple-candidates <dir>/triples \
-#     --attach-allow-seed --confirm-non-production
-# build가 promoted 후보를 소비하려면 --triple-candidates <dir>/triples 를 추가한다
-# (GRB_TRIAL=off 로 이 게이트를 끄면 현행과 정규화-동등, 회귀 0).
-```
-
 ## 문서
 
 - **전체 지도: [docs/README.md](docs/README.md)** · 시작하기 [docs/00](docs/00-getting-started.md) · 용어 [docs/glossary.md](docs/glossary.md)
-- 아키텍처: `docs/02-architecture.md` · 빌더 `docs/03` · 제너레이터 `docs/04`
-- attach 모드(사용자 compose로 분석) + 커스텀 요청 헤더: `docs/26-attach-mode.md`
-- 입력 생성·탐색 원리: `docs/23-input-generation-flow.md`, `docs/24-exploration-backends-and-input-oracle.md`
-- 정적 분석 한계 + concolic 적용 범위: `docs/22-static-discovery-limits.md`
-- 기능 단위 의사결정: `docs/decisions/`
-- 개발 내력(specs/plans/progress, 시점 스냅샷): `docs/archive/`
+- 아키텍처 [docs/02](docs/02-architecture.md) · 빌더(+CLI 레시피) [docs/03](docs/03-graph-rag-builder.md) · 제너레이터 [docs/04](docs/04-test-generator.md)
+- attach 모드(사용자 compose로 분석) [docs/26](docs/26-attach-mode.md)
+- 생성된 테스트 코드 예제(해피패스 해부) [docs/generated-test-examples.html](docs/generated-test-examples.html)
+- 현재 상태·다음 단계 [docs/09](docs/09-implementation-roadmap.md) · 개발 내력 [CHANGELOG.md](CHANGELOG.md)
+- 기능 단위 의사결정 [docs/decisions/](docs/decisions/) · 과거 스냅샷 [docs/archive/](docs/archive/)
 
-## 외부 SUT 회귀·커버리지 (개발용)
+## 개발용 (외부 SUT 회귀)
 
-> `.work/` 스크립트는 **로컬 개발 전용**이라 저장소에 포함되지 않는다(`.gitignore`). 클론 직후엔 없으며, 외부 SUT를 로컬에 둔 개발 환경에서만 동작한다.
-
-```bash
-# 외부 SUT 1종 격리 실행 (petclinic | auth-user | diary)
-.work/run-suites.sh petclinic
-# 4개 SUT 재생성 + handler/app-aggregate 커버리지 보고
-.work/reg-coverage.sh
-```
-
-## 현재 상태 / 다음 단계
-
-- **Phase 0 완료** (2026-06-10): 단일 JPA endpoint의 build → graph → generate →
-  run → pass 사이클 통과 (메트릭 1/1)
-- **Phase 1 완료** (2026-06-10): 분기 탐색(휴리스틱 + fuzzer + JaCoCo) + MyBatis.
-  still_missing 리포트 + `--manual-paths` 수동 보강 경로 포함
-- **Phase 2 완료** (2026-06-10): WireMock 통합. 외부 HTTP 캡처(임베디드 WireMock +
-  `--external-stubs`/`--sut-env`), OTEL javaagent baggage 전파 실측, 생성 테스트의
-  스텁 합성(baggage 격리 + consumedFields 투영), 병렬 안전 보고.
-  14 path → 14 테스트 → 14/14 통과 (EXPRESS 201/재고부족 409 포함)
-- **Phase 3 완료** (2026-06-10): WebSocket/STOMP. WsEndpoint 인덱싱, 자체 최소
-  STOMP 클라이언트로 메시지 교환 캡처, testlib StompHelper, echo 마커 기반
-  병렬 격리 합성. 16 테스트(HTTP 14 + STOMP 2) 16/16 통과
-- **Phase 4·5 홀딩** (2026-06-11 사용자 결정): Netty/Raw Socket은 보류하고
-  Phase 6을 선행
-- **Phase 6.1·6.2 완료** (2026-06-11): 파티션 샤드 그래프 스토어
-  (`PartitionedGraphStore`, Neo4j 보류 — `docs/decisions/graph-store-phase6.md`) +
-  증분 빌드 (`--incremental-base`/`--changed-files`, 더티 파티션만 재탐색)
-- **Phase 7 완료** (2026-06-14): 다중 HTTP method + JWT 인증 + DB 비종속 + GET read-path.
-  GET/PUT/DELETE/PATCH 인덱싱, `--sut-compose` 기반 DB 타입 자동 탐지(Postgres·MySQL·MariaDB),
-  `--auth-*` JWT 인증 주입(탐색·생성 테스트 양쪽), GET 조회 경로 시드+결정적 합성.
-- **입력 발견 Stage 0–3b 완료** (2026-06-15): 유효 happy 합성(enum/날짜/이메일) → 다필드 `&&`
-  conjunction joint/enum 변이 → by-id(PUT/DELETE/{id}) 진입(path-id 시드·boolean·enum 컬럼) →
-  mutating by-id 시드 리셋·구체 어설션. 외부 spring-petclinic 적용 실측(coveredAppBranches 33→113/253,
-  by-id 생성 테스트 fresh DB 16/16). order-service에 **Booking** 추가로 CI 회귀화 → **e2e 53 테스트 GREEN**.
-- **OTEL SQL 캡처 완료** (2026-06-18): SQL 캡처를 교체 가능한 `SqlCaptureBackend` 뒤로 추상화하고
-  OTEL agent의 DB span을 요청별 `traceparent`로 trace-id 귀속하는 `OtelSpanCapture`를 기본 backend로
-  도입(로그 byte-offset 경로는 `--trace-mode none` 폴백). HTTP·Kafka·attach 배선, attach는 호스트
-  OTLP 리시버 + per-run 토큰 인증. 기본값 `otel`. petclinic·tainted-spring MSA(Postgres·MySQL,
-  JDK 8/11/17/23)까지 교차 검증. ([docs/06](docs/06-test-environment.md) "SQL 캡처 모드")
-- **Kafka outbound produce 캡처 완료** (2026-06-18): SUT가 발행하는 Kafka 메시지를 요청별
-  trace-id로 귀속 캡처(`KafkaCaptureReceiver` → `CapturedEventEmit`)하고, 생성 테스트가
-  `KafkaHelper.consumeNextRecord` + `JSONAssert`로 어설션을 합성한다. 비결정 필드 제거 +
-  토픽/키 필터로 복수 emit 다중 검증. attach 모드는 `--kafka-bootstrap`, 분석 모드는
-  `--with-kafka` 로 활성. order-service 데모 e2e 53 테스트 GREEN. (PR #61)
-- **레거시 Sleuth trace 모드 + legacy-tram 라이브 E2E 완료** (2026-06-19): Java8+Sleuth(B3)+
-  Eventuate Tram MSA에서 `--trace-mode sleuth --capture-services a,b,c` 로 order-web→reservation
-  →ledger 동기/비동기 홉의 SQL을 요청 단위로 회수. `samples/legacy-tram`(Boot 2.7·MySQL binlog/CDC)
-  에서 R1(B3 전파)·CAP(캡처)·NOISE(노이즈 배제) 3종 수용 기준 라이브 PASS.
-  런북 `e2e/run-legacy-tram-sleuth-e2e.sh`. (PR #60·#63)
-- **삼중 합성(agent-skill-triple-synthesis) Phase A** (2026-07-26~27): 다중 가드(입력 검증→DB
-  상태 비교→외부 응답 검증) 순차 조건이 막던 깊은 happy path를 열기 위해 `provenance`/
-  `synthesize-triple`/`trial` CLI 3종 + 에이전트 스킬 3종(`.claude/skills/`) + 결정적 검증
-  게이트(T1: 마커 계약·seed.sql 화이트리스트·스키마·PII)를 도입. order-service fixture EP 4종
-  (fulfillment/transfers/invoices/quotas)으로 CI 회귀화(REQ-018 완주 E2E green). **에이전트
-  완주 실증(E2E-B1)·petclinic 커버리지 실측(E2E-B2)·attach 실 환경 재확인(E2E-B3)은 절차서만
-  준비되고 실행은 후속 세션**(`docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md`,
-  `docs/coverage-progress.md` "Phase A" 절 🟡).
-- 다음: **Stage 4**(상태 의존 가드 양 arm을 in-process concolic 시드 변종으로 — PoC 검증됨),
-  Phase 6.3 야간 풀 + PR 증분 운영, 6.4 raw socket 보강. (`docs/09-implementation-roadmap.md`)
+`.work/` 스크립트는 로컬 개발 전용이라 저장소에 포함되지 않는다(`.gitignore`). 외부 SUT를 로컬에
+둔 개발 환경에서만 동작한다: `.work/run-suites.sh petclinic`, `.work/reg-coverage.sh`.

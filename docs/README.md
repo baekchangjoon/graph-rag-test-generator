@@ -18,15 +18,12 @@
 | 테스트 자원 추적·누수 감지 대시보드 | [08-dashboard](08-dashboard.md) |
 | phase별 진행과 다음 단계 | [09-implementation-roadmap](09-implementation-roadmap.md) |
 | 500만 라인 레거시 적용 전략 | [10-legacy-scaling](10-legacy-scaling.md) |
-| 정적 분석만으로 못 찾는 입력의 한계 | [22-static-discovery-limits](22-static-discovery-limits.md) |
 | 입력을 어떻게 만들어 분기를 여는가 | [23-input-generation-flow](23-input-generation-flow.md) |
-| 탐색 엔진과 입력 오라클(ASM+Z3) | [24-exploration-backends-and-input-oracle](24-exploration-backends-and-input-oracle.md) |
-| 입력 발견의 이론적 근거 | [25-input-discovery-theory](25-input-discovery-theory.md) |
+| 입력 발견 심화(이론·탐색 엔진·오라클·정적 한계 통합) | [24-input-discovery-internals](24-input-discovery-internals.md) |
 | 사용자 compose로 SUT 분석(attach 모드) + 커스텀 요청 헤더 | [26-attach-mode](26-attach-mode.md) |
 | trace/SQL 캡처 모드 (`--trace-mode` otel·sleuth·none) + 레거시 Java8+Sleuth MSA | [06-test-environment](06-test-environment.md) "trace 모드" 절 |
 | Kafka outbound produce 캡처 (SUT 발행 메시지 귀속 + 어설션 합성) | [06-test-environment](06-test-environment.md) "Kafka outbound produce 캡처" 절 |
 | 성공 오라클 / 에러 엔벨로프 (HTTP 200+에러 필드 → FAILURE 분류 + 어설션 합성) | [03-graph-rag-builder](03-graph-rag-builder.md) "성공 오라클" 절, [00-getting-started](00-getting-started.md) 옵션 표 |
-| 로드맵: OTEL SQL 캡처(완료)·외부 stub seeding·override 키 경고 | [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) |
 | 핸들러/앱 커버리지 진행 현황(개발 트래킹) | [coverage-progress](coverage-progress.md) |
 | 기능별 설계 결정 기록 | [decisions/](decisions/) |
 | 개발 내력(과거 시점 스냅샷) | [archive/](archive/) |
@@ -36,7 +33,7 @@
 1. [00-getting-started](00-getting-started.md) — 직접 돌려보기
 2. [01-overview](01-overview.md) → [02-architecture](02-architecture.md) — 무엇을·왜, 전체 그림
 3. 깊이 들어갈 때: 도구 1은 [03](03-graph-rag-builder.md), 도구 2는 [04](04-test-generator.md)
-4. 입력 생성이 궁금하면: [23](23-input-generation-flow.md) → [24](24-exploration-backends-and-input-oracle.md) → [25](25-input-discovery-theory.md)
+4. 입력 생성이 궁금하면: [23 개요](23-input-generation-flow.md) → [24 심화](24-input-discovery-internals.md)
 
 ## 번호에 빈 곳이 있는 이유
 

@@ -38,7 +38,7 @@ TestRun:
 
 ## 이벤트 스키마
 
-자세히는 `SCHEMAS.md` 4절.
+이벤트 필드의 근거는 `shared-model/src/main/java/io/graphrag/model/` 의 이벤트 DTO다.
 
 핵심 이벤트:
 - `SCOPE_CREATED` / `SCOPE_CLEANED`
@@ -82,7 +82,7 @@ leak-detector:
 
 ## 대시보드 API
 
-자세한 스펙: `SCHEMAS.md` 4절.
+스펙의 근거는 `shared-model/src/main/java/io/graphrag/model/` 의 이벤트 DTO다.
 
 읽기:
 - `GET /active`                       현재 ACTIVE 테스트

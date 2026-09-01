@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A-EXT-HTTP-E2E: attach 모드 — SUT의 외부 HTTP 호출(EXTERNAL_INVENTORY_URL)이
 # 빌더의 capture WireMock 으로 redirect 되어 graph.json httpCalls 에 캡처되는지 검증.
-# (outer-loop acceptance test) 현재 attach httpCapture()=null 이라 외부 캡처 0 → RED.
+# (outer-loop acceptance test)
 #
 # 주의: 이 스크립트는 run-attach-e2e.sh / run-attach-otel-e2e.sh 와 동일한
 # e2e/docker-compose.yml 의 고정 호스트 포트(postgres 56432, kafka 59092 등)를 공유하므로
