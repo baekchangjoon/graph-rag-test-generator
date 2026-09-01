@@ -1,7 +1,7 @@
 # graph-rag
 
 Java/Spring 애플리케이션의 블랙박스 REST 테스트 자산(테스트 코드 + DB 픽스처 + mock 데이터)을
-**결정적으로 생성**하는 시스템. 같은 입력이면 항상 같은 결과가 나온다. 기본 경로에 LLM은 없다(선택 기능 `--llm-oracle`을 켠 경우만 예외이며, 그때도 출력이 캐시로 고정된다).
+**결정적으로 생성**하는 시스템. 분석 대상 앱을 SUT(System Under Test)라 부른다([용어집](docs/glossary.md)). 같은 입력이면 항상 같은 결과가 나온다. 기본 경로에 LLM은 없다(선택 기능 `--llm-oracle`을 켠 경우만 예외이며, 그때도 출력이 캐시로 고정된다).
 
 ```mermaid
 flowchart LR
@@ -74,4 +74,4 @@ happy 입력을 합성한 뒤 경계 변이와 입력 오라클(소스 리터럴
 ## 개발용 (외부 SUT 회귀)
 
 `.work/` 스크립트는 로컬 개발 전용이라 저장소에 포함되지 않는다(`.gitignore`). 외부 SUT를 로컬에
-둔 개발 환경에서만 동작한다: `.work/run-suites.sh petclinic`, `.work/reg-coverage.sh`.
+둔 개발 환경에서만 동작한다 — `.work/run-suites.sh <petclinic|auth-user|diary>`(외부 SUT 1종 격리 실행), `.work/reg-coverage.sh`(4개 SUT 재생성 + 핸들러/앱 집계 커버리지 보고).

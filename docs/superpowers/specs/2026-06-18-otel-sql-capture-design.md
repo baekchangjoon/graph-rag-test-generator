@@ -1,7 +1,7 @@
 # OTEL Agent 기반 SQL 캡처 — 설계 (spec)
 
 - 작성일: 2026-06-18
-- 상위 로드맵: [docs/27 — 항목 1](../../27-roadmap-otel-capture-stub-seeding.md)
+- 상위 로드맵: [docs/27 — 항목 1](../../archive/27-roadmap-otel-capture-stub-seeding.md)
 - 관련 문서: [docs/06 테스트 환경(OTEL propagation/isolation)](../../06-test-environment.md), [docs/24 exploration backends & InputOracle](../../24-exploration-backends-and-input-oracle.md), [docs/26 attach mode](../../26-attach-mode.md)
 
 ---

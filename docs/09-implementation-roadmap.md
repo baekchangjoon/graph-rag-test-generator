@@ -14,7 +14,7 @@ TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 | 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`archive/progress/6-2.md`) |
 | 6.3, 6.4 | 미착수 |
 | 7 (auth · DB-agnostic · multi-method/GET read-path · constraint-directed input + 콘콜릭 oracle) | 완료 (`archive/progress/7-*.md`) |
-| 입력 발견 Stage 0–3b (2026-06-15) | 완료 — happy 합성 → 다필드 가드 변이 → by-id 진입·시드 리셋 ([23](23-input-generation-flow.md)) |
+| 입력 발견 Stage 0–4 | 완료 — happy 합성 → 다필드 가드 변이 → by-id 진입·시드 리셋(2026-06-15) → 저장된 행 상태 가드 시드(`ConstraintExtractor.extractStateGuards`) ([23](23-input-generation-flow.md)) |
 | OTEL SQL 캡처 (2026-06-18) | 완료 — `SqlCaptureBackend` 추상화 + `OtelSpanCapture` 기본 백엔드 ([06](06-test-environment.md) "trace 모드") |
 | Kafka outbound produce 캡처 (2026-06-18) | 완료 — 요청별 trace-id 귀속 + 생성 테스트 어설션 합성 |
 | 레거시 Sleuth trace 모드 (2026-06-19) | 완료 — `samples/legacy-tram` 라이브 검증 (`e2e/run-legacy-tram-sleuth-e2e.sh`) |
@@ -43,7 +43,8 @@ Phase 7의 입력 생성을 "더 흔한 분기 종류"로 넓히는 단계별 �
 | 3 | by-id 진입(PUT/DELETE path-id 시드, boolean, enum 컬럼 시드) | 완료 (69→113) |
 | 3b | mutating by-id 요청별 시드 리셋 + 결정성 구체 어설션 | 완료 (생성 by-id 빈 DB 재현, 16/16) |
 | — | CI 회귀 보호: order-service Booking 리소스로 Stage 0–3b 라이브 검증 | 완료 (e2e 22→53) |
-| 4(예정) | 상태 의존 가드 양 arm concolic 시드 변종(stale 과거날짜, capacity 다중행) | 미착수 |
+| 4 | 저장된 행 상태 가드 인식 + 시드 합성(`ConstraintExtractor.extractStateGuards`) | 완료 |
+| 4 확장(예정) | 상태 의존 가드 **양 arm** concolic 시드 변종(stale 과거날짜, capacity 다중행) | 미착수 |
 
 ## 권장 순서 원칙
 

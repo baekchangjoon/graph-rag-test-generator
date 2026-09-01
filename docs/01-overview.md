@@ -37,7 +37,7 @@ Java/Spring으로 작성된 기존 애플리케이션을 대상으로,
 
 ## 범위 외 (out-of-scope)
 
-- SUT 소스코드 수정 (분석 도구는 외부에서 부착)
+- SUT(System Under Test — 분석 대상 앱, [용어집](glossary.md)) 소스코드 수정 (분석 도구는 외부에서 부착)
 - 운영/스테이징 실 트래픽 데이터 사용
 - 화이트박스 단위 테스트 자동 생성
 - UI 테스트, Selenium 등
