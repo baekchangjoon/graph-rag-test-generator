@@ -8,7 +8,7 @@ LLM은 도구 안에 없다. 입력이 같으면 출력이 같다.
 
 ```
 입력:
-  - GenerationRequest (SCHEMAS.md 참조)
+  - GenerationRequest (스키마의 근거는 `shared-model/src/main/java/io/graphrag/model/GenerationRequest.java`)
   - Graph RAG 사실 (도구 1 API 조회)
   - 기존 산출물 (이전 iteration 결과)
 

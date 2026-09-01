@@ -1,5 +1,8 @@
 # 27 — 로드맵: OTEL SQL 캡처 · 외부 stub seeding · override 키 치환 경고
 
+> **아카이브(2026-09-01 이동).** ① OTEL SQL 캡처는 2026-06-18 구현 완료([CHANGELOG](../../CHANGELOG.md)).
+> ②·③은 미착수 — 착수 시 이 문서를 spec의 출발점으로 쓴다. 현재 상태는 [docs/09](../09-implementation-roadmap.md).
+
 착수 전 "앞으로 할 일" 3건. 각 항목은 실제 착수 시점에 각자 `spec → plan`으로 확장한다(이 문서는
 방향·통합 지점·리스크를 못 박는 로드맵이지, 구현 스펙이 아니다). 우선순위 순서: ① OTEL, ② stub
 seeding, ③ JAVA_TOOL_OPTIONS 치환 경고.

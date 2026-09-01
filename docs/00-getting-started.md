@@ -14,7 +14,7 @@
 2. **test-generator**(도구 2)가 그 `graph.json`과 요청 한 건(어느 엔드포인트의 테스트를
    원하는지)을 입력받아 RestAssured/JUnit5 테스트 코드를 만든다.
 
-두 도구 안에 LLM은 없다. 같은 입력이면 같은 결과가 나온다. 자세한 구조는
+기본 경로에 LLM은 없다(선택 기능 `--llm-oracle` 제외). 같은 입력이면 같은 결과가 나온다. 자세한 구조는
 [02-architecture](02-architecture.md).
 
 ## 사전 준비
@@ -37,6 +37,15 @@
 
 이 스크립트가 하는 일(5단계):
 
+```mermaid
+flowchart LR
+    A["1 · SUT jar 빌드"] --> B["2 · 도구 1: 분기 탐색<br/>(Testcontainers DB·Kafka<br/>+ WireMock + JaCoCo)"]
+    B --> G[("graph.json")]
+    G --> C["3 · 도구 2: 요청 파일마다<br/>테스트 클래스 생성"]
+    C --> D["4 · docker compose 기동<br/>+ 생성 테스트 전부 실행"]
+    D --> E["5 · 컨테이너 정리"]
+```
+
 1. 샘플 SUT와 보조 서비스의 jar를 빌드한다.
 2. **도구 1**: SUT를 외부 프로세스로 띄우고(Testcontainers DB·Kafka + 분석용 WireMock +
    JaCoCo) 엔드포인트를 호출해 분기를 탐색하고 `graph.json`을 만든다.
@@ -47,7 +56,7 @@
 성공하면 마지막 줄에 다음이 나온다.
 
 ```
-✅ E2E PASS — tests=53 skipped=0 failures=0 errors=0
+✅ E2E PASS — tests=N skipped=0 failures=0 errors=0
 ```
 
 산출물 위치:
@@ -59,6 +68,16 @@
 | `e2e/out/generated/` | 도구 2가 생성한 테스트 `.java` |
 
 ## 트랙 B — 내 Spring 앱에 적용
+
+```mermaid
+flowchart LR
+    P["§1 준비<br/>소스 · boot jar · compose"] --> B1["§2 도구 1 build"]
+    B1 --> G[("graph.json")]
+    G --> ID["§3 endpointId 확인"]
+    ID --> RQ["§4 요청 파일 작성<br/>(엔드포인트당 1개)"]
+    RQ --> B2["§5 도구 2 generate"]
+    B2 --> RUN["§6 testlib 의존 추가<br/>+ 실행 환경에서 실행"]
+```
 
 자기 앱에는 도구 1·2를 직접 호출한다. 받는 방법은 두 가지이고 **둘 다 소스 빌드가 필요 없다**.
 요구사항은 도구별로 다르다 — **test-generator는 Docker 불필요**, **graph-rag-builder는 Docker 데몬 필요**.
@@ -99,6 +118,10 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 - **소스 디렉터리**(`src/main/java`). 리소스는 생략 시 소스 옆 `src/main/resources`로 가정한다(`--sut-resources`로 지정).
 - 앱이 쓰는 DB를 정의한 **docker-compose.yml** (도구 1이 여기서 DB 종류를 감지한다)
 
+> 이미 docker-compose로 앱 전체(앱 컨테이너 포함)를 띄워 쓰고 있다면, 그 compose를 그대로
+> 써서 분석하는 **attach 모드**가 있다 — [26-attach-mode](26-attach-mode.md). 아래 기본
+> 경로는 도구가 DB·Kafka를 Testcontainers로 직접 띄우는 분석 모드다.
+
 ### 2. 도구 1 — 사실 캡처
 
 ```bash
@@ -117,8 +140,8 @@ docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
 | `--auth-login-path /api/auth/login --auth-user U --auth-pass P` | 로그인 토큰이 필요한 보호된 엔드포인트가 있을 때 |
 | `--external-stubs <dir> --sut-env KEY={{wiremock}}` | 앱이 외부 HTTP를 호출해서 스텁이 필요할 때 |
 | `--with-redis` / `--with-kafka` | 앱이 Redis·Kafka를 쓸 때 (분석 모드) |
-| `--kafka-bootstrap <host:port>` | (attach 모드) SUT가 outbound Kafka 메시지를 발행할 때. 요청별 trace-id로 produce 캡처([docs/06](06-test-environment.md) "Kafka outbound produce 캡처") |
-| `--capture-services <a,b,c>` | (attach 모드) 멀티서비스 SUT의 여러 컨테이너 로그를 인터리브 tail해 비동기·서비스간 SQL 회수 ([docs/06](06-test-environment.md) "trace 모드") |
+| `--kafka-bootstrap <host:port>` | ([attach 모드](26-attach-mode.md)) SUT가 outbound Kafka 메시지를 발행할 때. 요청별 trace-id로 produce 캡처([docs/06](06-test-environment.md) "Kafka outbound produce 캡처") |
+| `--capture-services <a,b,c>` | ([attach 모드](26-attach-mode.md)) 멀티서비스 SUT의 여러 컨테이너 로그를 인터리브 tail해 비동기·서비스간 SQL 회수 ([docs/06](06-test-environment.md) "trace 모드") |
 | `--sut-java-home <jdk>` | SUT를 다른 JDK로 띄워야 할 때 |
 | `--trace-mode none` | SQL 캡처를 로그 파싱으로(기본은 OTEL DB span 기반 `otel`). OTEL 캡처가 안 되는 환경의 폴백 ([docs/06](06-test-environment.md) "trace 모드") |
 | `--trace-mode sleuth` | 레거시 Java8+Sleuth SUT. B3 trace-id로 비동기·서비스간 SQL까지 로그 상관 ([docs/06](06-test-environment.md) "trace 모드"). 동작 데모: `samples/legacy-tram` |

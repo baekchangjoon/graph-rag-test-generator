@@ -4,6 +4,17 @@
 
 LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람이거나 무관하게, 도구 1은 결정적이고 재현 가능하다.
 
+빌더 파이프라인(`build` 서브커맨드)은 아래 순서로 진행된다.
+
+```mermaid
+flowchart LR
+    A["정적 인덱싱 (index)<br/>Spoon AST"] --> B["입력 오라클 (oracle)<br/>소스 리터럴 + ASM/Z3 concolic"]
+    B --> C["분석 환경 기동 (env)<br/>SUT 외부 프로세스 + Testcontainers + WireMock"]
+    C --> D["분기 탐색 (explore)<br/>HTTP 호출 + JaCoCo 커버리지 피드백"]
+    D --> E["sink 캡처 (capture)<br/>SQL·외부 HTTP·Kafka·WS"]
+    E --> F["그래프 저장 (store)<br/>graph.json + 파티션 샤드"]
+```
+
 ## 5개 레이어
 
 ```
@@ -23,10 +34,12 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 │    → ExplorationOrchestrator가 예산 분할·순차 구동           │
 │  - 입력 발견: InputOracle (StaticLiteralOracle + ConcolicOracle) │
 │  - JaCoCo arm-level 커버리지 피드백                          │
-│  - Execution harness: Spring TestContext + Testcontainers   │
+│  - Execution harness: SUT 외부 프로세스 + Testcontainers    │
 ├───────────────────────────────────────────────────────────┤
 │ Layer 2: Framework Introspection                            │
-│  - Spring TestContext 부팅 → 실제 빈 그래프                   │
+│  - 빈 와이어링 introspection — 보류(외부 프로세스 결정으로     │
+│    in-process 부팅 미채택, decisions/builder-analysis-      │
+│    environment.md)                                          │
 │  - Hibernate SchemaExport → 물리 스키마                      │
 │  - MyBatis Mapper 인벤토리                                    │
 │  - Flyway/Liquibase 마이그레이션 파싱                          │
@@ -39,14 +52,14 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 ```
 
 자세한 입력 생성 흐름은 [docs/23](23-input-generation-flow.md),
-오라클·탐색 백엔드는 [docs/24](24-exploration-backends-and-input-oracle.md) 참조.
+오라클·탐색 백엔드는 [docs/24](24-input-discovery-internals.md) 참조.
 
 ## 핵심 도구
 
 | 레이어 | 도구 | 역할 |
 |---|---|---|
-| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer` — `@RestController`(JSON/`@RequestBody`) + `@Controller`(폼/커맨드 객체, `ParamKind.FORM`) 모두), 바디 구조(`BodyShapeExtractor`), 제약(`ConstraintExtractor`: `extractComparisons` 비교식 / `extractConjunctions` 메서드 내 `&&` 다필드 가드 / `extractEnumColumns` 가드 유래 enum 컬럼값 / `extractStringEqualities` 문자열 동치 / `extractStateGuards` 저장-행 상태 가드(TEMPORAL · ENUM `!=`(negated)/`==`(positive) · BOOLEAN(`getX()`/`!getX()`/`==true|false`) · NULLITY(`getX()==null`/`!=null`, nullable 컬럼) · NUMERIC(`getX() OP 정수리터럴` 음수 포함 / `getX() OP 파라미터` 직접참조) — 다-arm 변종 시드; NUMERIC-파라미터는 입력값 V와 시드 컬럼을 함께 정하는 **입력-시드 공동 합성**으로 양 arm을 연다)), enum 상수(`EnumConstantExtractor`: FQN→상수), Bean Validation(`ValidationConstraintExtractor`) |
-| L2 | Spring Boot TestContext | 실제 빈 와이어링 introspection |
+| L1 | Spoon | AST 기반 구조 인덱싱: 엔드포인트(`EndpointIndexer` — `@RestController`(JSON/`@RequestBody`) + `@Controller`(폼/커맨드 객체, `ParamKind.FORM`) 모두), 바디 구조(`BodyShapeExtractor`), 제약(`ConstraintExtractor`: `extractComparisons` 비교식 / `extractConjunctions` 메서드 내 `&&` 다필드 가드 / `extractEnumColumns` 가드 유래 enum 컬럼값 / `extractStringEqualities` 문자열 동치 / `extractStateGuards` 저장-행 상태 가드(TEMPORAL · ENUM `!=`(negated)/`==`(positive) · BOOLEAN(`getX()`/`!getX()`/`==true\|false`) · NULLITY(`getX()==null`/`!=null`, nullable 컬럼) · NUMERIC(`getX() OP 정수리터럴` 음수 포함 / `getX() OP 파라미터` 직접참조) — 다-arm 변종 시드; NUMERIC-파라미터는 입력값 V와 시드 컬럼을 함께 정하는 **입력-시드 공동 합성**으로 양 arm을 연다)), enum 상수(`EnumConstantExtractor`: FQN→상수), Bean Validation(`ValidationConstraintExtractor`) |
+| L2 | (빈 와이어링 introspection — 보류) | in-process Spring TestContext 부팅은 외부 프로세스 결정으로 미채택. 필요 시 actuator 기반 조회를 우선 검토([decisions/builder-analysis-environment.md](decisions/builder-analysis-environment.md)) |
 | L2 | Hibernate SchemaExport | JPA Entity → DDL |
 | L2 | Flyway/Liquibase parser | 마이그레이션 → DDL truth |
 | L2 | MyBatis Configuration | mapper 인벤토리 |
@@ -147,7 +160,10 @@ LLM은 도구 안에 없다. 외부 오케스트레이터가 LLM이거나 사람
 - DB: Testcontainers (운영 동일 DBMS/버전). 인메모리 DB는 보조.
 - HTTP downstream: 임베디드 WireMock + recorder (base URL 리다이렉트 기반). 추가로 **트레이싱 기반 egress 발견**(리다이렉트 비의존) — SUT에 이미 붙은 트레이싱(OTEL javaagent의 OTLP CLIENT span / Sleuth·Brave의 Zipkin CLIENT span)에서 외부 호출(method+path)을 요청 trace-id로 귀속해 발견한다. 리다이렉트가 불가능한 SUT(독자 HTTP 클라이언트·placeholder URL 등)에서도 외부 호출을 잡는다. 설계: [docs/superpowers/specs/2026-06-24-egress-span-capture-design.md]. 발견된 호출은 정적 인덱스(`ExternalCallSite`)에 매칭되면 형상-시드 body로 생성 테스트 stub에 등록된다(REQ-015, [docs/superpowers/specs/2026-06-24-egress-status-agnostic-stub-design.md]). 매칭/형상 실패는 빈-body + loud-fail. (실측 body 충실도는 별도 작업.)
 - Socket downstream: 임베디드 자체 Netty mock + byte recorder
-- Spring TestContext로 SUT 부팅 (실제 빈 와이어링)
+- SUT 기동: **운영 boot jar를 외부 JVM 프로세스로 실행**(in-process Spring TestContext 부팅
+  아님). DB 접속·포트·SQL 로깅은 환경변수(`SPRING_DATASOURCE_*`, `SERVER_PORT`,
+  `SPRING_APPLICATION_JSON`)로 주입한다. 결정 근거:
+  [decisions/builder-analysis-environment.md](decisions/builder-analysis-environment.md)
 - JaCoCo 에이전트로 arm-level coverage 측정 (엔드포인트별 누적 exec data를 probe OR 병합 + 요청마다 probe 지문으로 distinct path 식별 — `BranchCoverageAnalyzer`, `CoverageFingerprint`, `EndpointExplorationRunner.cumulativeCoverage`)
 
 이 분석 환경은 **테스트가 실행될 환경과는 별개**. 혼동하지 않도록 분리.
@@ -170,7 +186,7 @@ override compose를 생성해 app 서비스에 SQL 로깅·jacoco/otel 에이전
 
 `build`(위 기본 서브커맨드)는 다중 가드(입력 검증 → DB 상태 비교 → 외부 응답 검증)를 모두
 통과해야 하는 **깊은 happy path**를 구조적으로 못 여는 경우가 있다(비선형·interprocedural·집계·
-상태 의존 가드 — `docs/25-input-discovery-theory.md` §9). 이를 열기 위해 **결정적 코드가 재귀
+상태 의존 가드 — [docs/24 심화](24-input-discovery-internals.md) "남은 한계"). 이를 열기 위해 **결정적 코드가 재귀
 분석·합성·시험을 수행하고, 코드가 못 정하는 값(자유 텍스트·의미값)만 에이전트가 채우는** 3개
 독립 CLI 서브커맨드와 대응하는 에이전트 스킬 3종을 제공한다. 설계:
 [design spec](superpowers/specs/2026-07-26-agent-skill-triple-synthesis-design.md).
@@ -403,6 +419,18 @@ T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore) 순�
 실 환경 재확인은 결정적 CI로 대체할 수 없어 별도 절차서로 관리한다 —
 [docs/superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md](superpowers/reports/2026-07-26-triple-synthesis-manual-evidence.md).
 
+## 산출물: path별 커버리지 매핑 (coverage-by-path.json)
+
+탐색 단계에서 요청 단위 JaCoCo exec 데이터가 수집된 경우, 빌더는 `graph.json` 외에
+`<out>/coverage-by-path.json`도 생성한다.
+
+| 항목 | 내용 |
+|---|---|
+| 생성 조건 | `<out>/work/pjacoco-exec/`에 `.exec` 파일이 있을 때만 |
+| 역참조 키 | 각 path의 `coverageTraceIds`(그 path를 정의한 탐색 probe의 W3C traceId 목록) |
+| 매핑 형태 | pathId → endpointId → execFiles (`work/pjacoco-exec/<traceId>.exec`) |
+| 용도 | "이 테스트(path)가 어느 커버리지 데이터에서 나왔나"를 추적 |
+
 ## 외부에서 가져오지 않는 데이터
 
 - 운영/스테이징 실 트래픽 로그
@@ -414,13 +442,15 @@ T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore) 순�
 ## 한계 (정직하게)
 
 - **리플렉션, Class.forName**: 정적으로 못 잡음. 일부 누락 가능.
-- **`@Conditional`, profile 기반 빈**: TestContext 부팅에서 일부만 해소
+- **`@Conditional`, profile 기반 빈**: 정적으로 못 잡음. 실제 활성 빈은 외부 프로세스로 뜬
+  SUT의 런타임 동작으로만 간접 관측된다(빈 인벤토리 introspection은 보류 —
+  `decisions/builder-analysis-environment.md`)
 - **MyBatis `<foreach>` 실 카디널리티**: 1/N 가정으로 합성
 - **컬렉션 바디 — happy-only(원소 1개)**: 컬렉션 `@RequestBody`/Kafka/WS 페이로드는 유효 원소 1개 배열로 happy-path만 탐색한다. 다음은 이번 범위에서 의도적으로 제외(deferred — 확장 진입점은 [list-dto-body-shape 설계](superpowers/specs/2026-06-18-list-dto-body-shape-design.md)의 후속 작업 표 참조): 원소별 음수-검증 arm(`@Valid List<@Valid DTO>` 위반), 빈 배열 `[]` arm, 다중 원소 배열, 컬렉션 바디 필드 변이/coverage-guided fuzzing, 컬렉션 바디 + PATH param 조합, 중첩 컬렉션 `List<List<..>>`/`Map` 바디. 인자 없는 raw `List`는 원소 타입 불명이라 인덱싱하지 않는다(현행 유지).
 - **외부 시스템 응답 enum/range**: 임베디드 mock의 minimal valid 응답에서 출발
 - **비결정적 분기 (시간/Random)**: 분석 시점 `Clock.fixed`, seeded Random 사용
 - **민감 정보**: 캡처 시 패턴 기반 마스킹 필수
-- **`@Controller` 폼 — 클래스-레벨 path 변수**: `@RequestMapping("/owners/{ownerId}")`의 `{ownerId}`가 핸들러 파라미터가 아니라 `@ModelAttribute` 헬퍼 메서드(`findOwner(@PathVariable ownerId)`)에서만 해석되는 경우(petclinic 패턴), 인덱서는 **같은 컨트롤러의 모든 메서드에서 `@PathVariable` 타입 신호를 역추출**해 그 path 변수를 PATH 파라미터로 등록한다(`collectPathVarTypes`+`extractPlaceholders`). 등록되면 `ReadInputSynthesizer`가 해당 리소스(+FK 부모)를 시드해 `@ModelAttribute` 헬퍼가 성공하고 폼 핸들러에 진입한다. path 변수 이름은 `@PathVariable` value/name으로 정규화(`pathVarName`)해 path 템플릿 `{x}`와 일치시킨다(치환 정확). **단일** 추가-PATH(예: petclinic `/owners/{ownerId}/pets/new`, order-service `UserOrderWebController`)는 양 arm까지 완전 탐색된다. **다중** 추가-PATH(`/owners/{ownerId}/pets/{petId}/edit`)는 `ReadInputSynthesizer.mapParamToColumn`이 PATH를 일괄 target PK에 매핑하는 한계로 정밀 시드가 부분적이며(별도 후속 예정), 타입 신호 없는 placeholder는 센티널("0")로 graceful fallback(`buildPathAndQuery`). 캡처(builder `buildPathAndQuery`)와 재현(generator `resolveLiteralPath`)이 **동일한 잔여-placeholder 센티널 정리**(`replaceAll("\\{[^/}]+}", "0")`)를 적용한다 — generator에 이 fallback이 없으면 다중 path 변수에서 미바인딩 placeholder(`{e}` 등)가 리터럴로 남아 RestAssured `Invalid number of path parameters` 예외가 난다([docs/22 §7](22-static-discovery-limits.md) 참고). `@Controller` 폼은 현재 **커버리지 전용**(테스트 생성 미지원 — `Generator`가 `ParamKind.FORM` 엔드포인트를 스킵)이다.
+- **`@Controller` 폼 — 클래스-레벨 path 변수**: `@RequestMapping("/owners/{ownerId}")`의 `{ownerId}`가 핸들러 파라미터가 아니라 `@ModelAttribute` 헬퍼 메서드(`findOwner(@PathVariable ownerId)`)에서만 해석되는 경우(petclinic 패턴), 인덱서는 **같은 컨트롤러의 모든 메서드에서 `@PathVariable` 타입 신호를 역추출**해 그 path 변수를 PATH 파라미터로 등록한다(`collectPathVarTypes`+`extractPlaceholders`). 등록되면 `ReadInputSynthesizer`가 해당 리소스(+FK 부모)를 시드해 `@ModelAttribute` 헬퍼가 성공하고 폼 핸들러에 진입한다. path 변수 이름은 `@PathVariable` value/name으로 정규화(`pathVarName`)해 path 템플릿 `{x}`와 일치시킨다(치환 정확). **단일** 추가-PATH(예: petclinic `/owners/{ownerId}/pets/new`, order-service `UserOrderWebController`)는 양 arm까지 완전 탐색된다. **다중** 추가-PATH(`/owners/{ownerId}/pets/{petId}/edit`)는 `ReadInputSynthesizer.mapParamToColumn`이 PATH를 일괄 target PK에 매핑하는 한계로 정밀 시드가 부분적이며(별도 후속 예정), 타입 신호 없는 placeholder는 센티널("0")로 graceful fallback(`buildPathAndQuery`). 캡처(builder `buildPathAndQuery`)와 재현(generator `resolveLiteralPath`)이 **동일한 잔여-placeholder 센티널 정리**(`replaceAll("\\{[^/}]+}", "0")`)를 적용한다 — generator에 이 fallback이 없으면 다중 path 변수에서 미바인딩 placeholder(`{e}` 등)가 리터럴로 남아 RestAssured `Invalid number of path parameters` 예외가 난다([docs/24 심화](24-input-discovery-internals.md) "정적 발견의 한계" 참고). `@Controller` 폼은 현재 **커버리지 전용**(테스트 생성 미지원 — `Generator`가 `ParamKind.FORM` 엔드포인트를 스킵)이다.
 
 - **에러 엔벨로프 SUT (성공 오라클)**: 일부 SUT는 비즈니스 오류를 HTTP 200으로 감싸 반환한다(예: `BizException` 핸들러가 `{"errorServer":"...", "errorCode":"404", "errorDetail":"...BizException..."}` + HTTP 200 응답). 빌더가 HTTP 상태 코드만으로 성공/실패를 판단하면 이 경로를 happy path로 오인해 어설션이 약해지고 진짜 성공 경로에 도달하지 못한다. `--error-when-present <필드>` 플래그를 쓰면 지정 필드가 응답 바디에 존재(non-null, non-empty)할 때 HTTP 200이라도 FAILURE로 분류한다. `--semantic-status-field`는 그 필드 값을 의미론적 상태코드(예: `"404"`)로 회수해 경로의 `semanticStatus`에 기록한다. `--error-detail-field` + `--error-detail-contains`는 에러-계약 경로에 `containsString` 어설션을 생성하게 한다. 동작 데모: `samples/error-envelope-service`, `e2e/run-error-envelope-e2e.sh`.
 
@@ -444,3 +474,197 @@ T1 재검증 → trial 1회 재확인 → 확정 run(캡처-on 재explore) 순�
   시나리오가 존재를 증명한 키 값에 대해 파생 시나리오가 부모 행 시드를 상속한다
   (`Generator.provenExistingKeyValues` → `FixtureComposer`). 상세 근거는 [요구사항명세](superpowers/requirements/2026-07-26-agent-skill-triple-synthesis-requirements.md)
   REQ-032/REQ-036/REQ-037 각주 참조.
+
+## CLI 레시피
+
+빌더·제너레이터를 상황별로 호출하는 예 모음이다. 모든 명령은 저장소 루트에서 실행한다.
+
+| # | 언제 쓰나 |
+|---|---|
+| 1 | 레포 자체의 전체 단위/통합 테스트를 돌릴 때 |
+| 2 | 도구 1 기본 실행 (compose에서 DB 자동 탐지) |
+| 3 | DB 탐지 오버라이드·Redis 부착이 필요할 때 |
+| 4 | JWT 인증이 있는 SUT를 분석할 때 |
+| 5 | SUT별 JDK 지정 / 외부 HTTP 스텁·env 주입 |
+| 6 | attach 모드 — 사용자 docker-compose로 SUT를 띄워 분석 |
+| 7 | attach 모드에서 Kafka outbound produce까지 캡처할 때 |
+| 8 | 레거시 Java8+Sleuth SUT (멀티서비스 로그 수집) |
+| 9 | 증분 빌드 — 바뀐 파일의 파티션만 재탐색 |
+| 10 | 정적 인덱싱 캐시 — 소스 무변경 시 Spoon 생략 |
+| 11 | 에러 엔벨로프 SUT (HTTP 200 + 에러 필드) |
+| 12 | 특정 엔드포인트만 탐색 (`--endpoint` glob) |
+| 13 | 거대 SUT를 소스 루트로 좁혀 분석 (`--sut-src` 멀티 루트) |
+| 14 | 도구 2 단독 실행 (그래프 → 테스트 생성) |
+| 15 | 삼중 합성 — 다중 가드가 막는 깊은 happy path 열기 |
+
+### 1. 레포 자체의 전체 단위/통합 테스트
+
+```bash
+./gradlew check
+```
+
+> 표기 전제: 레시피 #2의 필수 인자(`--sut-src`/`--sut-jar`/`--sut-compose`/`--out`)는 모든
+> 레시피에 늘 포함해야 한다. 일부 레시피는 지면상 그 줄을 생략하고 해당 기능의 플래그만 보여준다.
+
+### 2. 도구 1 기본 실행
+
+`--sut-compose`는 필수다 — 여기서 DB 종류를 자동 탐지한다.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir>"
+```
+
+### 3. DB 자동 탐지 오버라이드·Redis 부착
+
+`--db-service`/`--db-image`로 compose 자동탐지를 오버라이드할 수 있고, `--with-redis`로 Redis를 부착한다.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --db-service postgres --db-image postgres:15 --with-redis"
+```
+
+### 4. JWT 인증 주입
+
+필요 시 `--auth-token-field`/`--auth-header`/`--auth-scheme`을 추가한다.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --auth-login-path /api/auth/login --auth-user admin --auth-pass secret \
+  --out <dir>"
+```
+
+### 5. SUT별 JDK 지정 / 외부 HTTP 스텁·env 주입
+
+이기종 MSA에서 SUT가 빌더(Java 17)와 다른 JDK로 동작할 때 쓴다.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-java-home /path/to/jdkXX --external-stubs <dir> --sut-env KEY=VAL --out <dir>"
+```
+
+### 6. attach 모드 — 사용자 docker-compose로 분석
+
+빌더가 override compose를 생성해 로깅·에이전트·포트를 주입하고 스택의 up/down을 소유한다.
+상세: [docs/26](26-attach-mode.md).
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres"
+```
+
+### 7. Kafka outbound produce 캡처 (attach 모드)
+
+`--kafka-bootstrap` 지정 시 백그라운드 `KafkaCaptureReceiver`가 SUT 발행 메시지를 요청별
+trace-id로 귀속 캡처(`CapturedEventEmit`)하고, 생성 테스트가 JSONAssert 어설션을 합성한다.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service app --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:postgresql://localhost:56432/app --db-service postgres \
+  --kafka-bootstrap localhost:9092"
+```
+
+### 8. 레거시 Sleuth trace 모드 + 멀티서비스 로그 수집
+
+`--trace-mode sleuth`는 B3 trace-id로 비동기·서비스간 SQL을 상관한다(OTEL agent 미부착).
+`--capture-services`는 여러 컨테이너 로그를 인터리브 tail해 A→B→C SQL을 회수한다(attach 전용).
+동작 데모: `samples/legacy-tram` + `e2e/run-legacy-tram-sleuth-e2e.sh`.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --attach --app-service order-web --app-port 58080 --jacoco-port 16300 \
+  --jdbc-url jdbc:mysql://localhost:53306/orderdb --db-service mysql \
+  --trace-mode sleuth --capture-services order-web,reservation,ledger"
+```
+
+### 9. 증분 빌드 (클린 파티션은 이전 그래프에서 이월)
+
+```bash
+git diff --name-only main > changed.txt
+./gradlew :graph-rag-builder:run --args="build ... --incremental-base <prev-graph-dir> --changed-files changed.txt"
+```
+
+### 10. 정적 인덱싱 증분 캐시
+
+`<out>/index-cache/`에 Spoon 파싱 결과를 캐시한다. 소스 무변경 시 캐시 복원으로 Spoon 0회.
+`--no-incremental`으로 캐시를 무시하고 강제 풀 리빌드한다(schema 변경·동적 모델 확장 시).
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
+  [--no-incremental]"
+```
+
+### 11. 에러 엔벨로프 SUT (HTTP 200 + 에러 필드로 FAILURE를 표현하는 앱)
+
+플래그 의미는 위 "갱신 전략"의 성공 오라클 표 참조. 동작 데모: `samples/error-envelope-service`.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> \
+  --sut-compose <path/to/docker-compose.yml> --out <dir> \
+  --error-when-present errorCode \
+  --semantic-status-field errorCode \
+  --error-detail-field errorDetail \
+  --error-detail-contains BizException"
+```
+
+### 12. 특정 엔드포인트만 탐색 (`--endpoint`, 콤마로 여러 개 + glob 혼용)
+
+각 셀렉터는 정확 id(`post-api-orders`) → 정확 `METHOD /path` → glob 순으로 해석된다.
+glob 문법: `*`=세그먼트 내(`/` 미횡단), `**`=재귀, `{a,b}`=택일, `?`, `[abc]`.
+`--incremental-base` 동반 시 나머지는 base에서 이월, 없으면 선택 단위만 담은 부분 그래프가
+된다(정적 엔드포인트 목록은 풀 유지). 상세는 위 "갱신 전략" 절.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build --sut-src <src> --sut-jar <jar> --out <dir> \
+  --endpoint 'POST /api/orders/**, post-api-orders-*, GET /api/users/**'"
+```
+
+### 13. 거대 SUT를 소스 루트로 좁혀 분석 (`--sut-src` 멀티 루트)
+
+여러 명시적 소스 루트의 합집합만 정확히 파싱한다(공통 조상으로 끌어올리지 않음) — 피처
+패키지 + 공통 단위만 인덱싱·탐색하는 부분 그래프가 된다. 콤마는 brace 깊이 0에서만
+구분자다(`{e,common}`의 콤마는 보존). `--sut-resources` 미지정 시 각 루트의 sibling
+`resources`를 스캔한다. 멀티 루트 + `--incremental-base` 조합은 v1 미지원.
+
+```bash
+./gradlew :graph-rag-builder:run --args="build \
+  --sut-src 'src/main/java/com/app/{feature,common}' --sut-jar <jar> --out <dir> \
+  --sut-compose <path/to/docker-compose.yml>"
+```
+
+### 14. 도구 2 단독 실행
+
+```bash
+./gradlew :test-generator:run --args="generate --request <req.json> --graph <dir> --out <dir>"
+```
+
+### 15. 삼중 합성 — 깊은 happy path 열기
+
+다중 가드 순차 조건이 막던 깊은 happy path를 에이전트 스킬 + 3개 CLI 서브커맨드
+(provenance/synthesize-triple/trial)로 연다. 플래그 전체는 위 "삼중 합성" 절, 스킬 절차는
+`.claude/skills/{provenance-analysis,triple-synthesis,trial-loop}` 참조.
+
+```bash
+./gradlew :graph-rag-builder:run --args="provenance --sut-src <src> --endpoint 'POST /api/x' \
+  --out <dir>/provenance-report.json"
+./gradlew :graph-rag-builder:run --args="synthesize-triple --report <dir>/provenance-report.json \
+  --triple-store <dir>/triples"
+./gradlew :graph-rag-builder:run --args="trial --endpoint post-api-x --http-method POST --path /api/x \
+  --sut-base-url http://localhost:8080 --jdbc-url <jdbc-url> --db-type postgres \
+  --triple-store <dir>/triples"
+# ⚠️ trial 단독 CLI는 attach 이중 opt-in 게이트(REQ-023)와 T1 마커-diff 검증을 거치지 않고
+#   --jdbc-url이 가리키는 DB에 즉시 seed INSERT/DELETE를 실행한다. 실 DB·공유 DB의 URL을 이
+#   --jdbc-url에 직접 넘기지 말 것 — 분석용 일회성 DB(Testcontainers 등)에만 쓴다. 실 SUT에
+#   attach해 안전하게 시도하려면 아래 build 경로(둘 다 있어야 seed 적용)를 쓴다 — 상세 경계는
+#   위 "attach 모드에서의 안전 경계" 절 참조.
+#   build --attach ... --triple-candidates <dir>/triples \
+#     --attach-allow-seed --confirm-non-production
+# build가 promoted 후보를 소비하려면 --triple-candidates <dir>/triples 를 추가한다
+# (GRB_TRIAL=off 로 이 게이트를 끄면 현행과 정규화-동등, 회귀 0).
+```

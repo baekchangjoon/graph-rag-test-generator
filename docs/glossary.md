@@ -12,7 +12,7 @@
 | **endpointId** | 엔드포인트 식별자. HTTP 메서드 + 경로를 소문자로 바꾸고 영숫자가 아닌 구간을 `-`로 바꾼 값(예: `POST /api/orders` → `post-api-orders`). |
 | **GenerationRequest** | 도구 2 입력 JSON. 어느 `endpointId`의 테스트를, 어떤 클래스/패키지 이름으로, 어떤 `authMode`로 만들지 지정. |
 | **분기 탐색 (exploration)** | 도구 1이 입력을 바꿔 가며 SUT를 호출해 코드의 여러 분기를 실행해 보는 과정. |
-| **InputOracle** | 분기를 여는 입력 후보를 찾는 교체 가능한 구성요소. 현재 두 구현을 합집합으로 쓴다. |
+| **InputOracle** | 분기를 여는 입력 후보를 찾는 교체 가능한 구성요소. 현재 기본 두 구현(+옵트인 `LlmOracle`)을 합집합으로 쓴다. |
 | **StaticLiteralOracle** | 소스의 리터럴 값을 Spoon으로 읽어 입력 후보로 삼는 오라클. |
 | **ConcolicOracle** | ASM으로 바이트코드를 심볼릭 스캔하고 Z3로 풀어, 소스에 없는 값을 도출하는 오라클(예: `amount*3==21`이면 `7`, `code.length()==5`면 `"xxxxx"`). |
 | **arm-level coverage** | 한 분기의 true/false 같은 각 갈래(arm) 단위로 측정한 커버리지. 요청 단위 JaCoCo 실행 데이터를 누적 병합해 얻는다. |
@@ -21,4 +21,8 @@
 | **fixture** | 생성된 테스트가 실행 전에 DB에 넣는 사전 데이터(INSERT)와 끝나고 지우는 정리(DELETE) 코드. FK 순서를 지켜 합성한다. |
 | **baggage isolation** | 병렬 테스트가 서로의 mock 응답을 침범하지 않도록, 추적 헤더(baggage)의 test-id로 요청과 스텁을 짝짓는 격리 방식. |
 | **분석 환경 vs 실행 환경** | 도구 1이 사실을 *관측하려고* 띄우는 환경과, 생성된 테스트가 *실행되는* 환경은 별개다. 혼동하지 않는다([02-architecture](02-architecture.md)). |
-| **결정적 합성** | 같은 입력이면 항상 같은 결과를 내는 생성. 두 도구 안에 LLM이 없어서 가능하다. |
+| **결정적 합성** | 같은 입력이면 항상 같은 결과를 내는 생성. 기본 경로에 LLM이 없고, 선택 기능인 LLM 오라클도 출력을 캐시로 고정하기 때문에 가능하다. |
+
+- **attach 모드** — 도구가 DB·Kafka를 직접 띄우는 대신, 사용자가 이미 쓰는 docker-compose로
+  SUT 전체를 띄워 분석하는 모드. 빌더가 override compose를 생성해 로깅·에이전트·포트를 주입하고
+  up/down을 소유한다. 상세: [26-attach-mode](26-attach-mode.md).

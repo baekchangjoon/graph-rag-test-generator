@@ -1,5 +1,9 @@
 # graph-rag 도구 개선 제안 — tainted-spring MSA Method 1 적용에서 드러난 한계점
 
+> **아카이브(2026-09-01 이동).** 2026-06-20 시점의 제안 문서로, 이후 다수 항목(OTEL SQL 캡처,
+> Sleuth trace 모드, attach 개선 등)이 구현되었다. 현재 상태는 [docs/09](../09-implementation-roadmap.md)와
+> [CHANGELOG](../../CHANGELOG.md)를 보라. 본문은 작성 시점 그대로다.
+
 > 작성일: 2026-06-20 · 대상 레포: `graph-rag-test-generator` (이하 graph-rag)
 > 작성 배경: tainted-spring MSA 8개 서비스에 graph-rag(Method 1, 블랙박스 REST 테스트
 > 생성)를 적용하며 발견한 도구 한계를 graph-rag 측에서 수정할 수 있도록 정리한 제안 문서.

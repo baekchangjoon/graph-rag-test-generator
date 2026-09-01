@@ -87,7 +87,7 @@ testlib/
 
 ## 핵심 인터페이스 (요약)
 
-자세한 시그니처: `SCHEMAS.md`의 3절.
+자세한 시그니처: `testlib/src/main/java/io/graphrag/testlib/api/` 의 각 helper 클래스가 근거다.
 
 ```java
 TestScope.create() {
@@ -138,6 +138,6 @@ testlib는 다음 상황에서 즉시 fail (테스트 시작 시):
 
 ## 컨벤션 정리
 
-- 환경변수는 도구 전체에서 동일 명명 (`SCHEMAS.md`의 3절)
+- 환경변수는 도구 전체에서 동일 명명 (근거: `testlib` 의 env 로더와 `e2e/run-e2e.sh` 의 export 목록)
 - 어댑터는 SPI 인터페이스만 알면 swap 가능
 - 테스트 코드는 어댑터를 직접 import하지 않음

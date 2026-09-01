@@ -1,162 +1,155 @@
-# 입력 조합 생성 흐름 — "의미있는 결과" 판정과 환류
+# 입력 생성 개요 — 도구가 분기를 여는 입력을 만드는 방법
 
-작성일: 2026-06-14
-대상: graph-rag-builder 탐색 엔진 (`io.graphrag.builder.explore`, `...run`, `...index`)
+graph-rag-builder(도구 1)는 [SUT](glossary.md)(테스트 대상 앱)를 외부 프로세스로 띄우고,
+입력을 바꿔 가며 HTTP로 호출해 코드의 여러 분기를 실행해 본다. 이 문서는 그 입력이
+**어디서 나오고, 어떻게 점점 깊은 분기까지 도달하는지**를 설명한다.
 
-이 문서는 graph-rag-builder가 SUT를 실행하며 **입력 조합을 생성하는 과정**과, 매 입력의
-실행 결과가 **"의미있다(novel)"고 판정되는 순간** 무엇이 환류되어 다음 조합을 만드는지를
-기술한다. (배경 결정: `docs/decisions/explorer-engines.md`, 백엔드 전략: `docs/24-exploration-backends-and-input-oracle.md`)
+구현 세부(오라클 내부 구조, 콘콜릭 이론, 정적 분석의 한계 목록)는
+[docs/24-input-discovery-internals.md](24-input-discovery-internals.md)에 있다.
 
-## 한눈에 보기
+## 왜 정적 분석만으로는 안 되나
 
+정적 분석(코드를 실행하지 않고 소스·바이트코드를 읽는 것)만으로 입력을 만들 수 없는
+이유는 두 가지다. 첫째, 소스를 읽으면 `if (amount * 2 == 84)`의 `84`와 `2`는 보이지만,
+이 분기를 여는 값 `42`는 소스 어디에도 없다 — 리터럴을 *읽는* 것과 조건을 만족하는 값을
+*유도*하는 것은 다른 일이다. 둘째, 무엇이 실행되는지 자체가 런타임에 정해지는 코드가
+있다 — Spring Data가 메서드 이름에서 합성하는 SQL, 인터페이스에 주입되는 구현체,
+리플렉션 dispatch 등. 그래서 이 도구는 **값 유도는 입력 오라클에**, **실제 동작 확인은
+SUT를 띄운 런타임 관측에** 맡긴다.
+
+## 전체 파이프라인 한눈에
+
+```mermaid
+flowchart TD
+    A["정적 분석 1회<br/>엔드포인트·바디 구조·제약 추출"] --> B["happy 입력 합성<br/>유효 enum·날짜·이메일 + DB 시드"]
+    A --> C["입력 후보 도출<br/>오라클 합집합 + 변이 카탈로그"]
+    B --> D["HTTP 호출"]
+    C --> D
+    D --> E["요청 단위 JaCoCo 분기 관측<br/>probe 지문으로 경로 식별"]
+    E --> F{"새 분기를 열었는가<br/>(novel)?"}
+    F -->|예| G["경로(path)로 채택<br/>+ 시드 큐에 환류"]
+    F -->|아니오| H["버림"]
+    G --> I["그 입력 위에 변이를 다시 적용<br/>조합이 깊어짐"]
+    I --> D
 ```
-[정적 분석: SUT 소스 1회 빌드]            [SUT 프로세스: 외부 HTTP + JaCoCo agent]
- ├ EndpointIndexer (엔드포인트/바디shape)        ▲ 요청           │ 요청단위 분기 dump
- ├ LiteralCandidateExtractor (enum 리터럴)       │                ▼
- ├ ValidationConstraintExtractor (@Min/@Size…)   │      InvocationOutcome(status, coveredBranches)
- └ ConstraintExtractor.extractComparisons        │                │
-       (전 계층 field op literal)                 │                │
-                  │                               │                ▼
-                  ▼                               │      ┌─────────────────────────┐
-        EndpointTarget                            │      │ "의미있는가?" 판정       │
-   (baseInput, mutableFields,                     │      │ KnownCoverage.isNovel()  │
-    literalCandidates,                            │      │  = 새 분기를 열었는가     │
-    fieldConstraints, conditionBounds)            │      └───────────┬─────────────┘
-                  │                               │         novel일 때만 │
-                  ▼                               │                     ▼
-        InputMutator.forTarget(target)            │      merge(분기 누적) + addSeed(이 입력)
-   = constraintDirected ++ enumValues ++ joint    │                     │
-     ++ firstOrder(generic)                        │
-                  │ 변이 목록                      │     CoverageGuidedFuzzer가 시드에
-                  ▼                               │     다시 변이 적용 → 다음 조합
-        엔진이 입력 생성 ──────────────────────────┘     (2nd-order 이상)
-```
 
-핵심: **입력의 실행 결과가 "새 분기를 열었다(novel)"고 판정되는 순간이 곧 다음 입력 조합을
-만드는 트리거**다. novel하지 않은 입력은 버려지고(시드가 되지 않음), novel한 입력만 시드 큐에
-환류되어 그 위에 다시 변이가 쌓인다.
+핵심은 오른쪽 아래의 되먹임이다. **어떤 입력이 새 분기를 열었다(novel)고 판정되는 순간이
+곧 다음 입력 조합을 만드는 트리거**다. novel하지 않은 입력은 버려지고, novel한 입력만
+시드가 되어 그 위에 다시 변이가 쌓인다. 모든 단계는 결정적이다 — Random·시간을 쓰지
+않으므로 같은 코드에서 항상 같은 입력이 나온다.
 
-## 1. 입력의 출발점 — happy 합성 + 시드
+## 출발점: happy 입력 하나를 합성한다
 
-엔드포인트마다 `EndpointExplorationRunner.run(...)` → `happyInput(...)`이:
-- GET 또는 **비-GET by-id**(PATH 파라미터 보유): `ReadInputSynthesizer`로 path/query + 리소스 시드
-  (유효 PK) 합성. 비-GET by-id면 body(`SampleInputSynthesizer`)와 병합 → PUT/DELETE `{id}`가
-  유효 id로 service에 진입(Stage 3).
-- 그 외(POST 등): `SampleInputSynthesizer`로 body만.
-- **합성 유효값(Stage 0)**: enum 필드 → enum 첫 상수(`EnumConstantExtractor` 유래), `LocalDate` → ISO,
-  `*email` → 유효 이메일, boolean 파라미터 → `"true"`. 시드 행의 enum 컬럼은 가드 유래 유효 상수
-  (`extractEnumColumns`)로 채워 읽기 500을 막음(Stage 3).
-- 시드 행을 DB에 INSERT한 뒤 `coverage.dump(true)`로 부팅·시드 구간 분기를 잘라내고 baseline 확보.
-- 변이 대상 필드 `mutableFields`: 바디 필드(POST/PUT) 또는 PATH/QUERY 파라미터(GET).
-- **mutating by-id(PUT/DELETE /{id})**: 탐색이 공유 시드 행을 변이·누적하지 않도록, 래핑된 invoker가
-  **각 요청 전에 리소스를 fresh 시드로 리셋**(`resetSeeds` = reverse-DELETE 후 재-INSERT). 각 path 응답이
-  (fresh 시드, 그 요청)의 순수 함수가 되어 생성 테스트가 빈 DB에서 재현된다(Stage 3b).
+탐색은 엔드포인트마다 **유효한 입력 한 벌**(happy 입력)에서 시작한다. 이게 있어야
+역직렬화·기본 검증을 통과해 깊은 가드에 도달할 수 있다.
 
-### 1.1 SQL-기반 시드 타깃 해석 (보정형 2-pass)
+- enum 필드는 선언된 첫 상수, `LocalDate`는 ISO 날짜, 이름이 `*email`인 필드는 유효
+  이메일, boolean 파라미터는 `"true"`로 채운다.
+- `GET`이나 path 파라미터가 있는 엔드포인트(`/{id}` 형태)는 DB에 리소스 행(시드)을 먼저
+  넣고, 그 유효 PK로 경로를 채운다.
+- 수정·삭제 엔드포인트(`PUT`/`DELETE /{id}`)는 요청마다 시드를 새로 복원해, 각 응답이
+  (시드, 요청)만으로 재현되게 한다.
 
-`ReadInputSynthesizer.resolveTargetTable`은 기본적으로 **path-string 휴리스틱**(경로에 테이블명/단수형이
-등장하는 첫 매칭)으로 시드 테이블을, PATH 변수는 PK로 매핑한다. 그러나 **REST 리소스명 ≠ 테이블명**
-(`/internal/analytics/mood`→`mood_point`, `/internal/graphs/diary`→`graph_record`, `/api/profiles`→`users`)
-이거나 **비-PK 컬럼으로 조회**(`getUserMood`→`user_id`)하는 엔드포인트는 휴리스틱이 테이블을 못 찾아
-시드가 비고 조회가 빈 결과/404가 된다(커버리지 바닥).
+## 입력 후보를 만드는 오라클 — 합집합으로 쓴다
 
-이때 `EndpointExplorationRunner`는 **보정형 2-pass**를 쓴다:
-1. **게이트**: `heuristic.table()==null`(휴리스틱이 테이블 미해석)일 때만 보정한다. 휴리스틱이 이미
-   테이블을 해석한 엔드포인트(`/api/orders`→`orders` 등)는 재탐색을 **아예 하지 않아** baseline과
-   byte-identical(회귀 0). — 다중 SELECT(부모 엔티티+컬렉션 로드)에서 param명이 자식 FK 컬럼명과
-   우연히 일치해 자식 테이블을 오선택하는 회귀, 동일-시드 재탐색의 측정 흔들림을 원천 차단.
-2. **hint 도출**(`SqlSeedResolver`): pass-1이 캡처한 SELECT의 `tableName()`(FROM)→시드 테이블,
-   WHERE `col=?` 바인딩(컬럼명=`camelToSnake(param)` 1순위, 바인딩값=보낸값 2순위)→param 시드 컬럼.
-   스키마에 없는 FROM/Redis(SELECT 없음)는 `null`.
-3. **pass-2**: pass-1 시드 DELETE → `synthesize(.,.,hint)`로 재시드(INSERT+identity resync) →
-   `coverage.dump(true)` + `cumulativeCoverage` 리셋 → 재탐색. INSERT 실패 시 pass-1로 폴백.
+"어떤 값을 넣어야 이 분기가 열리나"에 답하는 구성요소가
+[InputOracle](glossary.md)이다. 교체 가능하며, 현재 구현들의 후보를 **합집합(merge)** 으로
+합쳐 쓴다.
 
-해석 대상이 아닌 백엔드(Redis 캐시 조회: mindgraph `byUser`, notification)는 pass-1에 SELECT가 없어
-hint=null → 보정 안 함(현행 유지). **회귀 가드**: order-service `GET /api/profiles/by-name/{name}`
-(resource `profiles`≠table `users`, 비-PK `name` 조회)이 CI(`BuilderIntegrationTest` + e2e)에서 `users`/`name`
-시드 해석을 라이브 검증한다.
+| 오라클 | 원리 | 도출 예 | 한계 |
+|---|---|---|---|
+| `StaticLiteralOracle` | Spoon으로 소스를 읽어 리터럴 비교·문자열 동치(`==`/`equals`)의 값을 추출, 경계값(`L-1, L, L+1`)으로 펼침 | `if (nights > 30)` → `29, 30, 31` | 소스에 적힌 값만. 계산·파생 값은 못 만든다 |
+| `ConcolicOracle` | ASM으로 바이트코드를 심볼릭 스캔하고, 분기 경계식을 Z3(제약식을 만족하는 값을 찾는 SMT 솔버)로 풀어 **소스에 없는 값**을 도출 | `score*2==84` → `42`, `code.length()==5` → `"xxxxx"` | 메서드 내부, 최대 2필드 선형식까지. 비선형·3변수 이상은 보류 |
+| `LlmOracle` (선택, `--llm-oracle`) | LLM이 엄격 검증 필드에 도메인에 맞는 문자열을 생성. 출력은 캐시에 커밋해 재실행은 캐시 우선·오프라인 | `@Pattern("[A-Z]{4}-\d{4}")` + `startsWith("GOLD")` → `"GOLD-1234"` | 문자열 값 후보만 더한다(구조는 안 바꿈). 내부 SUT 전용 권고 |
 
-## 2. 정적 분석 결과를 입력 생성에 환류 (BuilderCli, 1회 빌드)
+## 변이 카탈로그 — 후보를 입력에 적용하는 규칙
 
-`BuilderCli.build()`가 엔드포인트 루프 전/중에 Spoon으로 다음을 추출해 `EndpointTarget`에 싣는다:
+오라클과 정적 분석이 낸 후보들은 "happy 입력의 한 곳(또는 여러 곳)을 바꾸는 변형(mutation)
+목록"으로 바뀐다. 고신호 변이를 앞에 두어, 예산이 적을 때 일반 변이가 의미 있는 변이를
+밀어내지 않게 한다.
 
-| 추출기 | 산출 | 범위 |
+| 변이 계열 | 무엇을 바꾸나 | 예 |
 |---|---|---|
-| `LiteralCandidateExtractor` | enum-스타일 문자열 리터럴(`"EXPRESS"`) | handler 클래스 |
-| `ValidationConstraintExtractor` | `@Min/@Max/@Size/@Email/@Positive…` → `FieldConstraint` | `@RequestBody` DTO 타입 |
-| `ConstraintExtractor.extractComparisons(srcDir)` | `field op literal` 비교식 → `Comparison(classFqn,method,fieldRef,op,literal,line)` | **SUT 소스 전 계층(컨트롤러/서비스/공통/도메인) 1회 빌드** |
-| `ConstraintExtractor.extractConjunctions(srcDir)` | 메서드 내 `&&` 다필드 가드 → `Conjunction(atoms)` (원자: NUMERIC/ENUM_EQ/STRING_EQ, 서로 다른 2필드+) | **전 계층 1회** (joint 변이용, Stage 1/2) |
-| `ConstraintExtractor.extractEnumColumns(srcDir)` | `accessor()==Type.CONST` 가드 → 컬럼(snake)→유효 enum 상수 | **전 계층 1회** (enum 컬럼 시드, Stage 3) |
-| `EnumConstantExtractor.extract(srcDir)` | enum FQN → 선언 순서 상수 | SUT 소스 1회 (enum 값 합성/변이) |
-| `ConstraintExtractor.extract(class,method)` | 분기 조건 텍스트 `ConditionSpan` | handler 메서드 (리포트용 `ExploredPath.constraints`, 입력 생성 아님) |
+| constraint-directed | Bean Validation·비교식의 경계값 | `@Min(1)` → `0`/`1`, `nights` → `31` |
+| enum values | enum 필드에 선언된 각 상수 | `tier` → `VIP` |
+| joint | 한 메서드의 `&&` 다필드 가드의 조건들을 **동시에** 만족값으로 | `{tier: "VIP", loyaltyPoints: 499}` |
+| first-order (generic) | 필드별 일반 경계 | `remove`/`null`/`zero`/`negative`/`large`/`empty` |
 
-비교식은 **전역 1회 추출** 후 모든 엔드포인트가 공유한다. `ConditionBoundarySolver.solve(comparisons)`가
-각 리터럴 L을 `{L-1, L, L+1}`로 펼쳐 `Map<field, Set<Long>>`(conditionBounds)를 만든다.
-전역이지만 안전한 이유: `constraintDirected`가 **엔드포인트의 `mutableFields` ∩ 숫자 필드**에만
-bound를 적용하므로, 무관한 필드명의 전역 비교식은 자동 무시된다(거짓 입력 없음).
+## 두 탐색 엔진 — 조합이 깊어지는 방식
 
-## 3. 변이 카탈로그 — `InputMutator.forTarget(target)`
+두 엔진이 같은 변이 카탈로그를 쓰되, 적용 대상이 다르다.
 
-두 탐색 엔진은 동일하게 `forTarget`를 쓴다. 여러 목록을 이어붙여 이름 기준 dedupe한 것:
+| 엔진 | 변이 적용 대상 | 여는 것 |
+|---|---|---|
+| `HeuristicExplorer` (1차) | happy 입력 하나에 각 변이를 1회씩 | 한 필드만 바꾸면 열리는 분기 |
+| `CoverageGuidedFuzzer` (2차 이상) | novel 입력(시드) 위에 같은 변이를 **다시** 적용 | 여러 필드가 동시에 맞아야 열리는 깊은 분기 |
 
-- **`constraintDirected` (제약 지향)** —
-  - Bean Validation: `@Min(v)`→`v-1`/`v`, `@Max(v)`→`v+1`/`v`, `@Size`→too-short/too-long+경계,
-    `@Email`→`"not-an-email"`, `@Positive/@Negative…`→위반값. (`@NotNull/@NotBlank`는 generic이
-    덮으므로 no-op, `@Pattern`은 인식만)
-  - 비교식 경계: conditionBounds의 각 `(field, v)`마다 `bound-<field>-<v>` (숫자 필드).
-- **`enumValues` (Stage 1/2)** — enum 필드별로 선언된 각 상수 세팅: `enum-<field>-<상수>`. enum 값에
-  갈리는 분기(예 `tier==VIP`)를 연다.
-- **`joint` (Stage 1/2)** — `extractConjunctions`의 각 conjunction을, 원자들을 **동시에** 만족값으로
-  세팅하는 단일 변이: `joint-<class>-<line>-<fields>`. NUMERIC은 op별 만족값(`<`→L-1 등), ENUM_EQ/
-  STRING_EQ는 상수. 다필드 동시 가드(예 `tier==VIP && loyalty<500`)를 연다(seed 누적 위에서 도달).
-- **`firstOrder` (generic boundary)** — 필드별: `remove`/`null`(전 타입), `zero`/`negative`/
-  `large(1,000,000)`(숫자), `empty`/`missing-ref`/`literal-<후보>`(문자열).
+깊은 분기가 시드 누적으로 열리는 예: 가드가 순차라서 `roomNumber`가 유효해야만 `tier`
+가드에 도달하는 코드가 있다고 하자. 1차에서 `roomNumber`를 유효 경계값으로 바꾼 입력이
+새 분기를 열어 시드가 되고, 2차에서 그 시드 위에 `tier=VIP` 변이를 얹으면 두 조건이
+동시에 성립해 깊은 가드의 true-arm에 도달한다. 새 분기가 이어서 나오지 않으면(포화)
+그 엔드포인트 탐색을 끝낸다.
 
-**우선순위**: 예산이 적을 때 generic firstOrder가 고신호 변이를 굶지 않도록, constraint-directed/enum/joint를
-firstOrder **앞**에 둔다. 모든 순서는 필드 선언/리터럴 정렬로 고정 — **Random/시간 금지(결정성, docs/04)**.
+## Stage 0~4 — 단계별로 여는 분기 종류
 
-## 4. "의미있는 결과" 판정과 환류 — 엔진별
+happy 합성과 변이 파이프라인 위에, 더 흔한 분기 종류를 여는 단계들이 쌓여 있다.
 
-### 엔진 1: `HeuristicExplorer` (1차)
-happy 입력 + 각 변이를 baseInput에 1회씩 적용. 입력마다 `tryInput`:
-1. `KnownCoverage.markTried(body)` — 이미 시도한 body면 skip(중복·예산 절약·결정성).
-2. `ExplorationBudget.tryConsume()` — 예산 소진 시 종료.
-3. `target.invoker().invoke(body)` — SUT에 HTTP 호출, 요청단위 JaCoCo dump →
-   `InvocationOutcome(status, coveredBranches)`.
-4. **의미있음 판정**: `KnownCoverage.isNovel(coveredBranches)` = 누적 `covered`에 없는 분기를
-   하나라도 열었는가. **novel이면** `merge`(분기 누적) + `addSeed(body, status)`.
+| Stage | 여는 것 | 입력·시드 예 | 대응 가드 예 |
+|---|---|---|---|
+| 0 | 역직렬화·기본 검증을 통과해 서비스 로직에 진입 | enum 첫 상수, ISO 날짜, 유효 이메일 | `@Valid` 통과, `tier == null` 거부를 피함 |
+| 1/2 | enum 값 분기와 다필드 `&&` 가드 | `tier=VIP`, `{tier: VIP, loyaltyPoints: 499}` 동시 세팅 | `tier==VIP && loyaltyPoints<500` |
+| 3 | by-id 엔드포인트(`/{id}`) 진입 | 유효 PK + 리소스 시드 행, 가드 유래 enum 컬럼 값 | `GET /{id}`가 404·500 없이 조회 |
+| 3b | 수정·삭제 by-id의 재현성 | 요청마다 시드 리셋 | `PUT/DELETE /{id}`가 상태 누적 없이 동작 |
+| 4 | 저장된 행의 **상태**에 갈리는 가드의 여러 arm | 과거 날짜 시드 변종, 다른 enum 상태의 시드 변종 | stale 검사 404, 상태머신 전이 409/410 |
 
-### 엔진 2: `CoverageGuidedFuzzer` (2차+)
-엔진 1이 남긴 **시드 큐**(= novel 입력들)를 2xx 우선 정렬 후, 각 시드에 **같은 변이 카탈로그를
-다시 적용** → 조합이 누적된다(예: "필드 A를 경계값으로 만든 novel 입력" 위에 "필드 B 변이"). 동일
-루프(markTried→budget→invoke→isNovel→merge+addSeed). 한 시드 패스가 연속 `saturationLimit`
-(코드 상수 `FUZZER_SATURATION = 2`)회 novelty 없으면 **포화 종료**.
+여기서 arm(분기 갈래)이란 `if (cond)`의 참일 때 실행되는 true-arm과 거짓일 때의
+false-arm이다. 한 입력은 보통 한 arm만 지나가므로, 반대 arm을 열려면 다른 입력이나 다른
+시드 데이터가 따로 필요하다 — 위 단계들이 그 "다른 입력·시드"를 만드는 방법이다.
 
-`ExplorationOrchestrator`가 두 엔진을 순차 실행하며 예산을 분할(첫 엔진 cap=총예산 절반, 미사용분
-다음 엔진 양도)하고 `KnownCoverage`를 공유, 분기 집합 기준으로 path를 dedupe한다.
+## 예제로 따라가기 — `POST /api/bookings`
 
-## 5. 산출물 (그래프 + 리포트)
+order-service의 Booking 엔드포인트로 위 흐름을 처음부터 끝까지 따라가 본다:
 
-- 발견된 distinct path → `ExploredPath`(body, status, response, 캡처 SQL/HTTP id, `branchesTaken`,
-  `discoveredBy`, `constraints`, `validationWarnings`, `seedIds`).
-- `ExplorationReport.EndpointExploration`: handler-method `covered/total/missedBranches`,
-  `pathsByEngine`, **`solverRelevantMissed`**(미커버 분기 중 같은 handler의 `field op literal`
-  비교식 라인과 겹치는 수 — 콘콜릭 복귀 트리거 지표). 앱 전체는 `coveredAppBranches/totalAppBranches`.
+```java
+record CreateBookingRequest(String customerEmail, Integer nights, Integer loyaltyPoints,
+                            BookingTier tier, LocalDate checkInDate) {}   // tier = {BASIC, VIP}
 
-## 부록: 현재 코퍼스에서의 관찰 (2026-06-14)
+if (nights < 1 || nights > 30)              throw 422;   // ① 단일 숫자 범위
+if (tier == null)                           throw 422;   // ②
+if (tier == VIP && loyaltyPoints < 500)     throw 422;   // ③ 다필드 가드
+if (!EMAIL.matches(customerEmail))          throw 422;   // ④ 이메일
+if (!checkInDate.isAfter(now()))            throw 422;   // ⑤ 날짜
+// 모두 통과 → 201 created
+```
 
-전 계층 비교식 추출을 적용했음에도, order-service(샘플) + petclinic + tainted-spring 8개 MSA
-서비스 전체에서 **HTTP 요청 필드에 대한 `field op literal` 분기는 0건**이다(존재하는 비교식은
-`totalElements`/`idx`/`count`/`added` 등 내부·파생 변수). 또한 Bean Validation 숫자 제약은
-diary의 `@Min(1) @Max(10) energyScore` 1건뿐이며 diary는 Java23 커버리지 측정이 별도로 깨져 있다.
+1. **happy 합성(Stage 0)**: `{customerEmail: "probe@example.com", nights: 1,
+   loyaltyPoints: 1, tier: "BASIC", checkInDate: "2999-01-01"}` → 201. 이게 안 되면
+   ④·⑤에서 막혀 ③ 같은 깊은 가드에 도달조차 못 한다.
+2. **후보 도출**: 비교식 경계에서 `nights ∈ {0, 1, 2, 29, 30, 31}`, enum 상수에서
+   `tier ∈ {BASIC, VIP}`, conjunction 추출에서 `{tier==VIP, loyaltyPoints<500}` 묶음.
+3. **1차 탐색**: happy 입력에 변이를 하나씩 적용한다. `nights=31` → 422(①),
+   `tier=VIP` → 422(③ — happy의 loyaltyPoints=1이 이미 500 미만), 잘못된 이메일 →
+   422(④), 변이 없는 happy → 201. 요청마다 어떤 분기가 열렸는지 관측한다.
+4. **2차 탐색**: 새 분기를 연 입력들 위에 변이를 다시 쌓아, 여러 필드가 동시에 맞아야
+   열리는 조합까지 도달한다. 새 분기가 이어서 나오지 않으면 종료한다.
 
-따라서 이 코퍼스에서 `constraintDirected`의 고유 기여는 실측상 0이다 — generic 변이
-(`0`/`-1`/`large`/`empty`/`null`) + 리터럴 후보가 이 앱들의 분기를 이미 덮기 때문이다.
-이 기능의 고유 가치(등치 `== literal`, 비-0 임계값, 숫자 `@Min/@Max/@Size` 경계)를 실증하려면
-해당 구조를 가진 SUT(또는 통제된 엔드포인트)가 필요하다. 메커니즘 자체는 단위 테스트로 입증됨.
+결과적으로 ①~⑤ 각 가드의 통과/거부 양쪽을 실행한 입력들이 경로로 남고, 각 경로가
+테스트 하나가 된다.
 
-**갱신(2026-06-15)**: 위 공백을 메우려 order-service에 **Booking 리소스**(통제된 엔드포인트)를 추가했다 —
-enum 컬럼(tier/status), `LocalDate`, 이메일, 다필드 가드(`tier==VIP && loyaltyPoints<500`),
-by-id PUT/DELETE(boolean param 포함). 이로써 Stage 0/1/2/3/3b가 **CI(order-service e2e)에서 라이브로
-실증·회귀 보호**된다(e2e 22→45 tests). petclinic boarding에서도 실측: enum/joint 변이로
-`tier==VIP` arm 도달, by-id 생성 테스트가 fresh DB에서 통과. 비-Booking 기존 앱들에선 위 한계 그대로.
+## "seed"는 두 가지다
+
+이름이 같아 헷갈리기 쉬운 두 개념을 구분한다.
+
+| 종류 | 무엇 | 쓰임 |
+|---|---|---|
+| DB seed | 분석 DB에 미리 넣는 **행** | `GET/PUT/DELETE /{id}`가 읽고 수정할 데이터 |
+| explorer seed | **새 분기를 연 입력**(요청 body) | 다음 변이를 쌓는 발판 |
+
+## 산출물
+
+- 발견된 경로마다 `ExploredPath` — 입력 body, 응답 status, 캡처된 SQL·외부 HTTP 호출,
+  지나간 분기 목록, 필요한 DB 시드. test-generator(도구 2)가 이것으로 테스트를 만든다.
+- `exploration-report.json` — 엔드포인트별 covered/total 분기, 미도달 분기 목록. 분기가
+  미도달로 남는 이유와 대처는
+  [docs/24-input-discovery-internals.md](24-input-discovery-internals.md)의
+  "정적 발견의 한계" 절을 참고.

@@ -2,9 +2,9 @@
 
 TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 
-## 현황 (2026-06-19)
+## 현황 (2026-09-01)
 
-| Phase | 상태 |
+| 단계 | 상태 |
 |---|---|
 | 0, 1 | 완료 (`archive/progress/` 참조) |
 | 2 (WireMock/외부 HTTP 캡처) | 완료 — `HttpCaptureServer` (`archive/progress/2-*.md`) |
@@ -14,6 +14,14 @@ TDD 기반. 매 phase 끝에 E2E 통합 동작 확인.
 | 6.2 증분 빌드 | 완료 — `--incremental-base`/`--changed-files` (`archive/progress/6-2.md`) |
 | 6.3, 6.4 | 미착수 |
 | 7 (auth · DB-agnostic · multi-method/GET read-path · constraint-directed input + 콘콜릭 oracle) | 완료 (`archive/progress/7-*.md`) |
+| 입력 발견 Stage 0–3b (2026-06-15) | 완료 — happy 합성 → 다필드 가드 변이 → by-id 진입·시드 리셋 ([23](23-input-generation-flow.md)) |
+| OTEL SQL 캡처 (2026-06-18) | 완료 — `SqlCaptureBackend` 추상화 + `OtelSpanCapture` 기본 백엔드 ([06](06-test-environment.md) "trace 모드") |
+| Kafka outbound produce 캡처 (2026-06-18) | 완료 — 요청별 trace-id 귀속 + 생성 테스트 어설션 합성 |
+| 레거시 Sleuth trace 모드 (2026-06-19) | 완료 — `samples/legacy-tram` 라이브 검증 (`e2e/run-legacy-tram-sleuth-e2e.sh`) |
+| 삼중 합성 Phase A (2026-07-27) | 완료 — `provenance`/`synthesize-triple`/`trial` CLI + 에이전트 스킬, CI 회귀화 ([03](03-graph-rag-builder.md) "삼중 합성") |
+| 어설션 provenance 승격 (2026-09-01) | 완료 — 에러 엔벨로프 계약·메시지 리터럴 기반 `equalTo` 승격 ([04](04-test-generator.md) "Assertion 합성 규칙") |
+
+내력 상세와 날짜별 기록은 [CHANGELOG.md](../CHANGELOG.md).
 
 ### 캡처 백엔드 확장 (Phase 7 이후, 2026-06)
 
@@ -162,14 +170,6 @@ Phase 7 메트릭: 이기종 MSA(예: diary=Java23, mindgraph=Java11, auth-user=
 
 각 Phase 끝에 docker-compose 환경에서 전 사이클 통합 실행. 통과율을 메트릭으로 기록.
 
-## 미결 의사결정의 영향
-
-OPEN-DECISIONS.md 항목 중 일부는 phase 진입을 막을 수 있음:
-
-- Phase 0 진입 전 필수: 빌드 시스템, 언어, Java 버전, Phase 0 PoC endpoint 선택
-- Phase 1 진입 전: graph store / vector store 선택 (Phase 0은 file-system 임시 영속으로 시작 가능)
-- Phase 4 진입 전: socket 프로토콜 사양 확보 여부
-
 ## 위험 관리
 
 | 위험 | 대응 |
@@ -182,9 +182,10 @@ OPEN-DECISIONS.md 항목 중 일부는 phase 진입을 막을 수 있음:
 
 ## 구체화된 앞으로 할 일
 
-착수 전 방향·통합 지점·리스크를 못 박은 3건(OTEL 기반 SQL/bind 캡처·OpenAPI 외부 stub seeding·override
-키 치환 경고)은 [27-roadmap-otel-capture-stub-seeding](27-roadmap-otel-capture-stub-seeding.md) 참조. 각 항목은
-착수 시 각자 spec→plan으로 확장한다.
+- **OpenAPI 기반 외부 stub seeding**과 **override 키(JAVA_TOOL_OPTIONS 등) 치환 경고** 2건은
+  착수 전 로드맵으로 방향·통합 지점·리스크를 정리해 두었다 —
+  [archive/27-roadmap-otel-capture-stub-seeding](archive/27-roadmap-otel-capture-stub-seeding.md)
+  (같은 문서의 ① OTEL SQL 캡처는 2026-06-18 완료). 각 항목은 착수 시 spec→plan으로 확장한다.
 
 폼/ParamMap 엔드포인트 테스트 생성(현재 미지원)은
 [superpowers/followup/2026-06-25-form-parammap-test-generation](superpowers/followup/2026-06-25-form-parammap-test-generation.md)

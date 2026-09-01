@@ -7,6 +7,21 @@
 사용자 compose 위에 머지할 **override compose** 를 생성해, SQL 캡처용 로깅·커버리지 에이전트·포트
 publish를 app 서비스에 주입한 뒤 `docker compose up` 으로 스택을 올리고 분석이 끝나면 내린다.
 
+```mermaid
+sequenceDiagram
+    participant B as graph-rag-builder
+    participant C as docker compose 스택
+    participant A as app 컨테이너(SUT)
+    B->>B: override compose 생성<br/>(SQL 로깅·jacoco/otel 에이전트·포트 publish 주입)
+    B->>C: docker compose -p grb-attach-{sut-id}<br/>-f 사용자compose -f override up -d --wait app
+    C->>A: app 서비스(+ depends_on) 기동
+    B->>A: health 폴링 (기본 /actuator/health)
+    B->>A: published app 포트로 엔드포인트 탐색
+    A-->>B: 컨테이너 로그 tail → SQL + 바인딩 캡처
+    A-->>B: published jacoco 포트 → 커버리지 회수
+    B->>C: docker compose down -v (컨테이너·볼륨 제거)
+```
+
 ## 언제 쓰나
 
 - 운영/CI에서 쓰는 docker-compose 구성 그대로 분석하고 싶을 때 (Testcontainers가 재현하지 못하는
@@ -198,7 +213,19 @@ docker compose -p grb-attach-order -f e2e/docker-compose.yml build app
 프로젝트명은 `grb-attach-<sut-id>` 로 정해진다(위 예에서 `grb-attach-order`). teardown 후 잔여 컨테이너가
 없어야 한다.
 
-## 커스텀 요청 헤더 (attach·분석 공통)
+## attach 계열 e2e는 순차 실행 (동시 실행 금지)
+
+attach 계열 e2e 스크립트 4종(`e2e/run-attach-e2e.sh`, `run-attach-otel-e2e.sh`,
+`run-attach-multiroot-e2e.sh`, `run-attach-ext-http-e2e.sh`)은 모두 같은
+`e2e/docker-compose.yml` 을 사용자 compose로 쓴다. 이 compose는 호스트 포트를 **고정**으로
+publish하므로(postgres `56432`, kafka `59092`, app `58080` 등), compose 프로젝트명이 서로
+달라도 두 스크립트를 동시에 돌리면 호스트 포트가 충돌한다.
+
+- **동시 실행 금지 — 반드시 순차로 실행한다.** (스크립트끼리는 app-port/jacoco-port/프로젝트명/
+  출력 디렉터리를 서로 다르게 잡아 두었지만, compose가 publish하는 DB·Kafka 등의 고정 포트는
+  공유된다.)
+- `run-attach-sleuth-egress-e2e.sh` 는 `samples/legacy-tram` 의 compose를 쓰지만 app `58080`·
+  kafka `59092` 포트가 위와 겹치므로 이것도 같은 순차 규칙에 넣는다.
 
 attach 모드와 무관하게, 탐색이 보내는 모든 REST 요청에 커스텀 헤더를 주입할 수 있다. 매 요청마다
 시각이 바뀌는 인증 헤더(예: `X-AuthorizationTime`)를 요구하는 SUT를 위한 기능이다.

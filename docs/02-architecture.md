@@ -1,8 +1,36 @@
 # 02 — 아키텍처
 
-두 개의 **CLI 도구**(REST 서버 아님)와 런타임 보조 인프라로 구성된다. 도구 1이 SUT를 분석해
-그래프(`graph.json`)를 만들고, 도구 2가 그 그래프로 JUnit 통합 테스트를 결정적으로 생성한다.
-둘은 **그래프 포맷으로만 결합**되어 독립적으로 교체·실행 가능하다.
+두 개의 **CLI 도구**(REST 서버 아님)와 런타임 보조 인프라로 구성된다. 도구 1이 SUT(System
+Under Test — 분석 대상 애플리케이션)를 분석해 그래프(`graph.json`)를 만들고, 도구 2가 그
+그래프로 JUnit 통합 테스트를 결정적으로 생성한다. 둘은 **그래프 포맷으로만 결합**되어
+독립적으로 교체·실행 가능하다.
+
+```mermaid
+flowchart LR
+    subgraph IN["입력"]
+        SRC["SUT 소스(.java)"]
+        JAR["운영 boot jar"]
+        DC["docker-compose.yml"]
+    end
+    subgraph T1["도구 1: graph-rag-builder (CLI)"]
+        IDX["정적 인덱싱<br/>(Spoon)"] --> ORC["입력 오라클<br/>(리터럴 + concolic)"]
+        ORC --> EXP["분기 탐색<br/>(HTTP 호출 + JaCoCo)"]
+        EXP --> CAP["sink 캡처<br/>(SQL·외부 HTTP·Kafka·WS)"]
+    end
+    GRAPH[("graph.json<br/>+ exploration-report.json")]
+    subgraph T2["도구 2: test-generator (CLI)"]
+        GEN["결정적 합성<br/>(Mustache + composer)"]
+    end
+    TESTS["생성된 JUnit 테스트<br/>+ 픽스처"]
+    ENV["테스트 실행 환경<br/>(docker-compose: DB·WireMock·<br/>socket-mock·dashboard)"]
+    SRC --> T1
+    JAR --> T1
+    DC --> T1
+    CAP --> GRAPH
+    GRAPH --> GEN
+    GEN --> TESTS
+    TESTS --> ENV
+```
 
 ## 전체 흐름
 
@@ -42,7 +70,7 @@
 =====================================================================
 ```
 
-LLM은 어느 도구에도 없다. 외부 오케스트레이터(사람/LLM)가 도구 1 산출물을 보고 도구 2를 호출하는
+LLM은 기본 경로의 어느 도구에도 없다(선택 기능 `--llm-oracle`을 켠 경우만 예외, 출력은 캐시로 고정). 외부 오케스트레이터(사람/LLM)가 도구 1 산출물을 보고 도구 2를 호출하는
 것은 이 시스템 밖의 일이다.
 
 ## 컴포넌트 책임 경계
@@ -56,7 +84,7 @@ LLM은 어느 도구에도 없다. 외부 오케스트레이터(사람/LLM)가 �
 - 산출물: `graph.json`(+ 파티션 샤드) + `exploration-report.json`. 증분 빌드 지원
   (`--incremental-base`/`--changed-files`).
 - 자세히: `docs/03-graph-rag-builder.md`, `docs/23-input-generation-flow.md`,
-  `docs/24-exploration-backends-and-input-oracle.md`.
+  `docs/24-input-discovery-internals.md`.
 
 ### 도구 2: test-generator  (`io.graphrag.generator.*`)
 - LLM 없음. 그래프 사실 → 결정적 합성. 큰 골격은 Mustache 템플릿(`test-class.mustache`,
@@ -88,9 +116,16 @@ repo/
 ├── testlib/                     # 생성 테스트 런타임 helper (SPI + 어댑터)
 ├── test-state-dashboard/        # standalone 누수 감지 서비스
 ├── socket-mock-server/          # standalone TCP mock
-├── samples/order-service/       # 인-레포 샘플 SUT (Spring Boot 3, JPA+MyBatis, 자기검증용 시나리오 포함)
+├── samples/order-service/       # 기본 샘플 SUT (Spring Boot 3, JPA+MyBatis, 자기검증용 시나리오 포함)
+├── samples/gateway-service/     # Spring Cloud Gateway 프록시 샘플 SUT (e2e/run-gateway-e2e.sh 대상)
+├── samples/error-envelope-service/ # HTTP 200 + 에러 엔벨로프 샘플 SUT (성공 오라클 검증용)
 └── e2e/                         # 전 사이클 e2e (build → generate → compose up → 생성 테스트 실행)
 ```
+
+`samples/legacy-tram/`은 저장소에 있지만 **루트 Gradle 빌드(settings.gradle.kts)에 포함되지
+않는다** — Java 8 + Spring Boot 2.7/Sleuth 멀티서비스 샘플이라 자체 docker-compose와
+`gradle:7.6-jdk8` 컨테이너 빌드로만 동작한다(`e2e/run-legacy-tram-sleuth-e2e.sh`,
+`e2e/run-attach-sleuth-egress-e2e.sh` 대상).
 
 (주의: `oracle`의 입력 발견을 위해 빌더는 Spoon 외에 **ASM + Z3(`tools.aqua:z3-turnkey`)**도 의존한다 —
 `docs/decisions/builder-spoon-only.md` 참조.)
@@ -116,10 +151,10 @@ SUT 소스 + boot jar + compose
 - 분석 환경(도구 1)과 생성 테스트가 실행되는 환경은 **별개**다(아래).
 
 ## 환경 분리
-- **분석 환경 (도구 1)**: SUT를 **운영 boot jar 그대로 외부 프로세스**로 띄우고(in-process Spring
-  TestContext 아님) env로 DB/외부URL/로깅을 주입. Testcontainers DB + 임베디드 WireMock +
-  JaCoCo/OTEL agent. 자세히: `docs/decisions/builder-analysis-environment.md`.
-- **테스트 실행 환경 (생성된 테스트)**: docker-compose로 운영 동일 DBMS + WireMock + socket-mock +
-  dashboard를 띄우고 RestAssured로 실행. 자세히: `docs/06-test-environment.md`.
 
 두 환경을 혼동하지 말 것 — 도구 1이 *관측*하는 환경과 도구 2 산출물이 *실행*되는 환경은 다르다.
+
+| 환경 | 누가 띄우나 | 구성 | 자세히 |
+|---|---|---|---|
+| **분석 환경** (도구 1) | 빌더가 직접 | SUT를 **운영 boot jar 그대로 외부 프로세스**로 실행(in-process Spring TestContext 아님), env로 DB/외부URL/로깅 주입. Testcontainers DB + 임베디드 WireMock + JaCoCo/OTEL agent | `docs/decisions/builder-analysis-environment.md` |
+| **테스트 실행 환경** (생성된 테스트) | docker-compose | 운영 동일 DBMS + WireMock + socket-mock + dashboard. 테스트는 RestAssured로 실행 | `docs/06-test-environment.md` |
