@@ -11,6 +11,7 @@
 | 두 도구가 어떻게 맞물리는가(전체 흐름) | [02-architecture](02-architecture.md) |
 | 도구 1(사실 캡처)의 내부 | [03-graph-rag-builder](03-graph-rag-builder.md) |
 | 도구 2(테스트 합성)의 내부 | [04-test-generator](04-test-generator.md) |
+| 생성된 테스트 코드 예제(해피패스 38건 해부, 합성 단계별 색 구분) | [generated-test-examples.html](generated-test-examples.html) |
 | 테스트 분류 체계(unit/integration/docker/e2e · 접미사·`@Tag`·CI 샤드) | [05-testing](05-testing.md) |
 | 생성된 테스트가 실행되는 환경 | [06-test-environment](06-test-environment.md) |
 | WireMock·socket-mock 등 mock 인프라 | [07-mock-infrastructure](07-mock-infrastructure.md) |

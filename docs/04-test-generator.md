@@ -156,8 +156,20 @@ DB 상태 검증은 없다. 응답 검증만.
 | 서버 생성 필드 → `notNullValue` | 시퀀스 id·count·timestamp·UUID 등(입력/시드에 없음, 또는 `looksServerGenerated`) |
 | 필드명 매칭 | `knownByField`는 필드명-keyed라 우연한 값 충돌(id=1 vs amount=1)로 인한 오탐 없음 |
 
+합성 후 `AssertionProvenanceUpgrader`가 `notNullValue()`로 강등된 항목만 추가 증명으로 승격한다
+(어설션 추가·기존 구체 매처 변경 없음 — 요구사항명세
+`docs/superpowers/requirements/2026-09-01-assertion-provenance-requirements.md`):
+
+| 승격 규칙 | 동작 |
+|---|---|
+| 엔벨로프 계약 (REQ-A) | FAILURE path의 응답이 Spring 기본 에러 바디(`timestamp/status/error/path` 4필드)면, 관측값이 계약 기대와 일치할 때 `status`→`equalTo(<HTTP 상태>)`, `error`→`equalTo("<reason phrase>")`, `path`→관측 URI가 endpoint 템플릿과 세그먼트 일치 시 생성 시점 요청 경로(query 제거)로 `equalTo`. `timestamp`는 notNull 유지 |
+| 메시지 리터럴 (REQ-D) | FAILURE path 응답에 `message`가 노출된 경우(SUT가 `server.error.include-message=always` 등으로 옵트인 — 탐색은 `--sut-env`, 실행 환경은 사용자 compose에 동일 env), 도구 1이 핸들러 소스에서 추출한 `Endpoint.errorMessageLiterals`와 대조해 정확 일치→`equalTo`, 조각(≥8자) 포함→`containsString`(최장 조각). 생성이 요청을 변형한 path(404 read의 부재-id 센티널)는 arm이 달라질 수 있어 승격하지 않음 |
+
 요청 경로 치환은 mustache `{{{requestPath}}}`(unescaped)로 — 쿼리 `=`가 HTML escape(`&#61;`)되면
 boolean 파라미터 바인딩이 깨진다.
+
+생성 결과물의 실제 모습은 [generated-test-examples.html](generated-test-examples.html)
+(해피패스 38건 전체 소스를 합성 단계별로 색 구분한 해부 페이지) 참고.
 
 ### Mock 격리 규칙
 
