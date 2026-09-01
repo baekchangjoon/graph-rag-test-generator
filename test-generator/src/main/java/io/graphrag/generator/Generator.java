@@ -4,6 +4,7 @@ import com.github.mustachejava.DefaultMustacheFactory;
 import com.github.mustachejava.Mustache;
 import io.graphrag.generator.client.FileGraphRagClient;
 import io.graphrag.generator.client.GraphRagClient;
+import io.graphrag.generator.compose.AssertionProvenanceUpgrader;
 import io.graphrag.generator.compose.ComposedFixture;
 import io.graphrag.generator.compose.FixtureComposer;
 import io.graphrag.generator.compose.HttpMockComposer;
@@ -213,8 +214,14 @@ public class Generator {
             String json = jsonBodyFromInput(endpoint, path.sampleInput());
             bodyExpr = "\"" + json.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         }
+        // 어설션 provenance 승격(REQ-A/B/D): 합성이 notNullValue()로 강등한 항목 중 프레임워크
+        // 계약·입력 유도·소스 메시지 리터럴로 결정성이 증명되는 것만 구체 매처로 올린다.
+        boolean notFoundRead = readPath && path.expectedStatus() == 404;
+        String requestPath = resolveLiteralPath(endpoint, path.sampleInput(), notFoundRead);
+        List<ComposedFixture.Assertion> finalAssertions = AssertionProvenanceUpgrader.upgrade(
+                fixture.assertions(), path, endpoint, requestPath, notFoundRead);
         List<String> assertionParts = new ArrayList<>();
-        for (var a : fixture.assertions()) {
+        for (var a : finalAssertions) {
             assertionParts.add("\n            .body(\"" + a.jsonPath() + "\", " + a.matcher() + ")");
         }
         // 커스텀 응답 헤더: 게이트웨이 프록시가 전파한 헤더가 있으면 notNullValue() 단언 추가.
@@ -246,12 +253,12 @@ public class Generator {
 
         Map<String, Object> postCreateCleanup = postCreateCleanup(
                 endpoint.httpMethod(), path.expectedStatus(), path.outcome(), sql, client.tables(),
-                fixture.assertions(), fixture.deletes());
+                finalAssertions, fixture.deletes());
         return new ScenarioMethod(
                 deriveMethodName(endpoint.id(), path.id()),
                 fixture.vars(), fixture.inserts(), fixture.deletes(),
                 mocks.block(), readPath, bodyExpr, endpoint.httpMethod().toLowerCase(),
-                resolveLiteralPath(endpoint, path.sampleInput(), readPath && path.expectedStatus() == 404),
+                requestPath,
                 path.expectedStatus(),
                 assertionsBlock, endpoint.authRequired(),
                 mocks.propagationMissing(), path.validationWarnings(), kafkaEmits, postCreateCleanup);
