@@ -20,7 +20,8 @@ import java.util.stream.Stream;
 /** 정적 인덱싱 whole-result 캐시(manifest.json + static-index.json). */
 public final class IndexCache {
 
-    public static final int SCHEMA_VERSION = 3;
+    // v4: Endpoint.errorMessageLiterals 추가(REQ-D) — 구 캐시 복원 시 빈 목록으로 굳는 것을 방지.
+    public static final int SCHEMA_VERSION = 4;
     private static final String MANIFEST = "manifest.json";
     private static final String INDEX = "static-index.json";
 

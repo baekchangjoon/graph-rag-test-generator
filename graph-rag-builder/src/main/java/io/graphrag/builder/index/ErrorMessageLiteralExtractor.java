@@ -1,0 +1,84 @@
+package io.graphrag.builder.index;
+
+import spoon.reflect.code.CtBinaryOperator;
+import spoon.reflect.code.CtConstructorCall;
+import spoon.reflect.code.CtExpression;
+import spoon.reflect.code.CtInvocation;
+import spoon.reflect.code.CtLiteral;
+import spoon.reflect.declaration.CtExecutable;
+import spoon.reflect.declaration.CtMethod;
+import spoon.reflect.declaration.CtType;
+import spoon.reflect.visitor.filter.TypeFilter;
+
+import java.util.List;
+import java.util.TreeSet;
+
+/**
+ * 핸들러 소스의 {@code ResponseStatusException} 생성자 인자에서 예외 메시지 문자열 리터럴을
+ * 추출한다 (REQ-D 캡처부 — 2026-09-01 assertion-provenance 명세).
+ *
+ * <p>추출 범위: 핸들러 메서드 본문 + 동일 클래스 1단계 호출 메서드. 순수 리터럴 인자는 전체
+ * 문자열을, 연결식(concat) 인자는 길이 {@value #MIN_FRAGMENT_LENGTH}자 이상의 리터럴 조각을
+ * 기록한다. 결과는 정렬·중복 제거되어 결정적이다(같은 소스 → 같은 graph.json).
+ *
+ * <p>생성부(test-generator {@code AssertionProvenanceUpgrader})는 이 목록과 관측 message의
+ * 정확 일치 → equalTo, 조각 포함 → containsString으로 승격한다. message가 응답에 노출되지
+ * 않는 SUT(Spring 기본 include-message=never)에서는 어설션 대상 필드가 없어 자연히 무효과다.
+ */
+public final class ErrorMessageLiteralExtractor {
+
+    private static final String TARGET_EXCEPTION = "ResponseStatusException";
+
+    /** 연결식 조각 최소 길이 — 생성부의 containment 최소 길이와 동일해야 한다. */
+    private static final int MIN_FRAGMENT_LENGTH = 8;
+
+    private ErrorMessageLiteralExtractor() {
+    }
+
+    public static List<String> extract(CtMethod<?> handler) {
+        TreeSet<String> out = new TreeSet<>();
+        collectFromMethod(handler, out);
+        // 동일 클래스 1단계 호출 메서드(가드를 헬퍼로 뽑아낸 관용) — 재귀 없음(v1).
+        CtType<?> owner = handler.getDeclaringType();
+        if (handler.getBody() != null && owner != null) {
+            for (CtInvocation<?> inv : handler.getBody().getElements(new TypeFilter<>(CtInvocation.class))) {
+                CtExecutable<?> callee = inv.getExecutable() == null
+                        ? null : inv.getExecutable().getExecutableDeclaration();
+                if (callee instanceof CtMethod<?> m && owner.equals(m.getDeclaringType())) {
+                    collectFromMethod(m, out);
+                }
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static void collectFromMethod(CtMethod<?> method, TreeSet<String> out) {
+        if (method == null || method.getBody() == null) {
+            return;
+        }
+        for (CtConstructorCall<?> call : method.getBody()
+                .getElements(new TypeFilter<>(CtConstructorCall.class))) {
+            if (call.getType() == null || !TARGET_EXCEPTION.equals(call.getType().getSimpleName())) {
+                continue;
+            }
+            for (CtExpression<?> arg : call.getArguments()) {
+                collectLiterals(arg, out, arg instanceof CtBinaryOperator);
+            }
+        }
+    }
+
+    /**
+     * 인자 표현식에서 문자열 리터럴을 수집한다. 순수 리터럴은 전체를, 연결식 내부 조각은
+     * {@link #MIN_FRAGMENT_LENGTH}자 이상만 담는다(짧은 조각의 우연 포함 오탐 방지).
+     */
+    private static void collectLiterals(CtExpression<?> expr, TreeSet<String> out, boolean fragment) {
+        if (expr instanceof CtLiteral<?> lit && lit.getValue() instanceof String s) {
+            if (!fragment || s.length() >= MIN_FRAGMENT_LENGTH) {
+                out.add(s);
+            }
+        } else if (expr instanceof CtBinaryOperator<?> bin) {
+            collectLiterals(bin.getLeftHandOperand(), out, true);
+            collectLiterals(bin.getRightHandOperand(), out, true);
+        }
+    }
+}

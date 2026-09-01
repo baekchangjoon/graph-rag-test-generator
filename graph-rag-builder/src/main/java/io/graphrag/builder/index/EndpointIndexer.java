@@ -140,7 +140,9 @@ public class EndpointIndexer {
                         type.getQualifiedName().replace('$', '.'),
                         method.getSimpleName(),
                         params,
-                        authRequired(fullPath, authConfig)));
+                        authRequired(fullPath, authConfig),
+                        null,
+                        ErrorMessageLiteralExtractor.extract(method)));
             }
         }
         endpoints.sort((a, b) -> a.id().compareTo(b.id()));
