@@ -231,7 +231,23 @@ public class Generator {
         }
         String assertionsBlock = String.join("", assertionParts);
 
-        // Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성.
+        List<Map<String, Object>> kafkaEmits = buildKafkaEmits(path, fixture);
+
+        Map<String, Object> postCreateCleanup = postCreateCleanup(
+                endpoint.httpMethod(), path.expectedStatus(), path.outcome(), sql, client.tables(),
+                finalAssertions, fixture.deletes());
+        return new ScenarioMethod(
+                deriveMethodName(endpoint.id(), path.id()),
+                fixture.vars(), fixture.inserts(), fixture.deletes(),
+                mocks.block(), readPath, bodyExpr, endpoint.httpMethod().toLowerCase(),
+                requestPath,
+                path.expectedStatus(),
+                assertionsBlock, endpoint.authRequired(),
+                mocks.propagationMissing(), path.validationWarnings(), kafkaEmits, postCreateCleanup);
+    }
+
+    /** Kafka outbound-produce 캡처: 이 path가 발행한 이벤트마다 subscribe + consume/assert 블록 모델 생성. */
+    private List<Map<String, Object>> buildKafkaEmits(ExploredPath path, ComposedFixture fixture) {
         List<Map<String, Object>> kafkaEmits = new ArrayList<>();
         for (io.graphrag.model.CapturedEventEmit emit : client.capturedEventEmitsForPath(path.id())) {
             Map<String, Object> modelEmit = new HashMap<>();
@@ -250,18 +266,7 @@ public class Generator {
             }
             kafkaEmits.add(modelEmit);
         }
-
-        Map<String, Object> postCreateCleanup = postCreateCleanup(
-                endpoint.httpMethod(), path.expectedStatus(), path.outcome(), sql, client.tables(),
-                finalAssertions, fixture.deletes());
-        return new ScenarioMethod(
-                deriveMethodName(endpoint.id(), path.id()),
-                fixture.vars(), fixture.inserts(), fixture.deletes(),
-                mocks.block(), readPath, bodyExpr, endpoint.httpMethod().toLowerCase(),
-                requestPath,
-                path.expectedStatus(),
-                assertionsBlock, endpoint.authRequired(),
-                mocks.propagationMissing(), path.validationWarnings(), kafkaEmits, postCreateCleanup);
+        return kafkaEmits;
     }
 
     static String deriveMethodName(String endpointId, String pathId) {

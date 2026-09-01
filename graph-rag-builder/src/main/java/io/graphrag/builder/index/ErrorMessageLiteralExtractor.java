@@ -43,29 +43,32 @@ public final class ErrorMessageLiteralExtractor {
         TreeSet<String> out = new TreeSet<>();
         collectFromMethod(handler, out);
         // 동일 클래스 1단계 호출 메서드(가드를 헬퍼로 뽑아낸 관용) — 재귀 없음(v1).
-        // 선언부 해석(getExecutableDeclaration) 전에 참조 수준의 declaring-type FQN으로 선-필터한다:
-        // noClasspath 모델에서 라이브러리 호출마다 클래스로드 실패 경로를 타는 비용을 피하고,
-        // 동일 클래스 판정도 Spoon 심층 equals가 아니라 FQN 비교로 한다.
         CtType<?> owner = handler.getDeclaringType();
         if (handler.getBody() != null && owner != null) {
             java.util.Set<String> visited = new java.util.HashSet<>();
             for (CtInvocation<?> inv : handler.getBody().getElements(new TypeFilter<>(CtInvocation.class))) {
-                if (inv.getExecutable() == null || inv.getExecutable().getDeclaringType() == null) {
-                    continue;
-                }
-                if (!owner.getQualifiedName().equals(inv.getExecutable().getDeclaringType().getQualifiedName())) {
-                    continue;
-                }
-                if (!visited.add(inv.getExecutable().getSignature())) {
-                    continue;
-                }
-                CtExecutable<?> callee = inv.getExecutable().getExecutableDeclaration();
-                if (callee instanceof CtMethod<?> m) {
-                    collectFromMethod(m, out);
-                }
+                collectFromMethod(sameClassCallee(inv, owner, visited), out);
             }
         }
         return List.copyOf(out);
+    }
+
+    /**
+     * 호출식이 owner 클래스의 미방문 메서드를 가리키면 그 선언을 반환한다(아니면 null).
+     * 선언부 해석(getExecutableDeclaration) 전에 참조 수준의 declaring-type FQN으로 선-필터한다:
+     * noClasspath 모델에서 라이브러리 호출마다 클래스로드 실패 경로를 타는 비용을 피하고,
+     * 동일 클래스 판정도 Spoon 심층 equals가 아니라 FQN 비교로 한다.
+     */
+    private static CtMethod<?> sameClassCallee(CtInvocation<?> inv, CtType<?> owner,
+                                               java.util.Set<String> visited) {
+        boolean sameClass = inv.getExecutable() != null
+                && inv.getExecutable().getDeclaringType() != null
+                && owner.getQualifiedName().equals(inv.getExecutable().getDeclaringType().getQualifiedName());
+        if (!sameClass || !visited.add(inv.getExecutable().getSignature())) {
+            return null;
+        }
+        CtExecutable<?> callee = inv.getExecutable().getExecutableDeclaration();
+        return callee instanceof CtMethod<?> m ? m : null;
     }
 
     private static void collectFromMethod(CtMethod<?> method, TreeSet<String> out) {

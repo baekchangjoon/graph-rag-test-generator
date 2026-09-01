@@ -44,10 +44,10 @@ class ErrorMessageLiteralExtractorTest {
     void pureLiteral_andSameClassHelper_extracted_otherExceptionIgnored() {
         List<String> literals = ErrorMessageLiteralExtractor.extract(handler("create"));
 
+        // containsExactly가 타 예외("not a response status message") 미포함까지 함께 고정한다.
         assertThat(literals).containsExactly(
                 "nights must be between 1 and 30",
                 "tier is required");
-        assertThat(literals).doesNotContain("not a response status message");
     }
 
     @Test
